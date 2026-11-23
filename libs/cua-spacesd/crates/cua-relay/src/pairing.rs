@@ -33,9 +33,10 @@ use axum::routing::{delete, get};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::assertion::{now_secs, remove_stale_temps, write_private_with};
+use crate::assertion::{now_secs, remove_stale_temps};
 use crate::devices::AuditEvent;
 use crate::oidc::Identity;
+use crate::persist::{Durable, Pending, StateFile};
 use crate::server::Relay;
 use crate::storage::{store, Storage};
 
@@ -289,7 +290,7 @@ pub struct Mint<'a> {
 /// is configured.
 #[derive(Debug, Default)]
 pub struct PairingStore {
-    path: Option<PathBuf>,
+    file: StateFile,
     records: Mutex<BTreeMap<String, PairingRecord>>,
     /// Where write failures are counted and reported.
     storage: std::sync::Arc<Storage>,
@@ -329,7 +330,7 @@ impl PairingStore {
             Err(e) => return Err(e),
         };
         Ok(Self {
-            path: Some(path),
+            file: StateFile::new(Some(path), store::PAIRING, storage.clone()),
             records: Mutex::new(records),
             storage,
         })
@@ -341,36 +342,41 @@ impl PairingStore {
         self.storage.store_ok(store::PAIRING)
     }
 
-    /// Writes `next` (dropping records past [`KEEP_SECS`]: compact JSON
-    /// streamed to a temp file that replaces the file) and swaps it in. On
-    /// a failed write the records stay as they were and the caller gets the
-    /// error.
+    /// Queues the file's new content (compact JSON, streamed by the writer
+    /// thread to a temp file that replaces it). Never blocks on the disk.
+    fn persist(&self, map: &BTreeMap<String, PairingRecord>) -> Durable {
+        if !self.file.is_persisted() {
+            return Durable::ready();
+        }
+        let snapshot = map.values().cloned().collect::<Vec<_>>();
+        self.file.replace(move |out| {
+            serde_json::to_writer(&mut *out, &snapshot).map_err(std::io::Error::other)
+        })
+    }
+
+    /// Swaps `next` in (in memory) and queues its write; [`Self::settle`]
+    /// waits for it with the lock released.
     fn commit(
         &self,
-        records: &mut BTreeMap<String, PairingRecord>,
+        current: &mut BTreeMap<String, PairingRecord>,
         mut next: BTreeMap<String, PairingRecord>,
         now: u64,
-    ) -> Result<(), PairingError> {
+    ) -> Pending<String, PairingRecord> {
         next.retain(|_, r| r.expires_at.max(r.used_at.unwrap_or(0)) + KEEP_SECS > now);
-        if let Some(path) = &self.path {
-            let written = (|| {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                write_private_with(path, |out| {
-                    serde_json::to_writer(&mut *out, &next.values().collect::<Vec<_>>())
-                        .map_err(std::io::Error::other)
-                })
-            })();
-            self.storage.record(store::PAIRING, &written);
-            written.map_err(|e| PairingError::Storage(e.to_string()))?;
-        }
-        *records = next;
-        Ok(())
+        Pending::swap(current, next, |m| self.persist(m))
+    }
+
+    /// Waits until the change is on disk; on a failed write it is undone
+    /// (unless replaced since) and the caller gets the error.
+    async fn settle(&self, pending: Pending<String, PairingRecord>) -> Result<(), PairingError> {
+        pending
+            .settle(&self.records, &self.file, |m| self.persist(m))
+            .await
+            .map_err(|e| PairingError::Storage(e.to_string()))
     }
 
     /// Mints a code; returns its record and the code (canonical form).
-    pub fn mint(&self, m: Mint<'_>) -> Result<(PairingRecord, String), PairingError> {
+    pub async fn mint(&self, m: Mint<'_>) -> Result<(PairingRecord, String), PairingError> {
         let name = clean_text(m.name, 64, "machine name")?;
         let team = clean_text(m.team, 128, "team")?;
         let ttl = m
@@ -378,36 +384,39 @@ impl PairingStore {
             .unwrap_or(DEFAULT_TTL_SECS)
             .clamp(MIN_TTL_SECS, MAX_TTL_SECS);
         let now = now_secs();
-        let mut records = self.records.lock().expect("pairing");
-        let active = records
-            .values()
-            .filter(|r| r.account == m.who.account && r.state(now) == "active")
-            .count();
-        if active >= MAX_ACTIVE_PER_ACCOUNT {
-            return Err(PairingError::TooMany);
-        }
-        let code = new_code();
-        let record = PairingRecord {
-            id: new_id(),
-            code_sha256: hash(&code),
-            account: m.who.account.clone(),
-            user: m.who.user.clone(),
-            email: m.who.email.clone(),
-            owner_name: m.who.name.clone(),
-            name,
-            team,
-            created_by: m.device,
-            proven: m.proven,
-            created_at: now,
-            expires_at: now + ttl,
-            used_at: None,
-            machine: None,
-            revoked_at: None,
+        let (pending, out) = {
+            let mut records = self.records.lock().expect("pairing");
+            let active = records
+                .values()
+                .filter(|r| r.account == m.who.account && r.state(now) == "active")
+                .count();
+            if active >= MAX_ACTIVE_PER_ACCOUNT {
+                return Err(PairingError::TooMany);
+            }
+            let code = new_code();
+            let record = PairingRecord {
+                id: new_id(),
+                code_sha256: hash(&code),
+                account: m.who.account.clone(),
+                user: m.who.user.clone(),
+                email: m.who.email.clone(),
+                owner_name: m.who.name.clone(),
+                name,
+                team,
+                created_by: m.device,
+                proven: m.proven,
+                created_at: now,
+                expires_at: now + ttl,
+                used_at: None,
+                machine: None,
+                revoked_at: None,
+            };
+            let mut next = records.clone();
+            next.insert(record.id.clone(), record.clone());
+            (self.commit(&mut records, next, now), (record, code))
         };
-        let mut next = records.clone();
-        next.insert(record.id.clone(), record.clone());
-        self.commit(&mut records, next, now)?;
-        Ok((record, code))
+        self.settle(pending).await?;
+        Ok(out)
     }
 
     /// The active record for a presented code (not spent).
@@ -428,19 +437,22 @@ impl PairingStore {
 
     /// Spends code `id` on `machine`, if it is still active (single use:
     /// of two concurrent registrations only one gets it).
-    pub fn spend(&self, id: &str, machine: &str) -> Result<PairingRecord, PairingError> {
+    pub async fn spend(&self, id: &str, machine: &str) -> Result<PairingRecord, PairingError> {
         let now = now_secs();
-        let mut records = self.records.lock().expect("pairing");
-        let mut next = records.clone();
-        let r = next.get_mut(id).ok_or(PairingError::Invalid)?;
-        if r.state(now) != "active" {
-            return Err(PairingError::Invalid);
-        }
-        r.used_at = Some(now);
-        r.machine = Some(machine.to_owned());
-        let spent = r.clone();
-        self.commit(&mut records, next, now)?;
-        Ok(spent)
+        let (pending, out) = {
+            let mut records = self.records.lock().expect("pairing");
+            let mut next = records.clone();
+            let r = next.get_mut(id).ok_or(PairingError::Invalid)?;
+            if r.state(now) != "active" {
+                return Err(PairingError::Invalid);
+            }
+            r.used_at = Some(now);
+            r.machine = Some(machine.to_owned());
+            let spent = r.clone();
+            (self.commit(&mut records, next, now), spent)
+        };
+        self.settle(pending).await?;
+        Ok(out)
     }
 
     /// Undoes [`PairingStore::spend`] when the registration then failed, so
@@ -452,11 +464,9 @@ impl PairingStore {
         if let Some(r) = next.get_mut(id) {
             r.used_at = None;
             r.machine = None;
-            // A failed write is counted (store `pairing`); the code then
-            // stays spent.
-            if let Err(e) = self.commit(&mut records, next, now) {
-                tracing::warn!(error = %e, "pairing code not restored");
-            }
+            // Queued, not awaited: a failed write is counted (store
+            // `pairing`) and the next write saves it.
+            let _ = self.commit(&mut records, next, now);
         }
     }
 
@@ -486,31 +496,37 @@ impl PairingStore {
     /// that adds machines to it, whatever its state. Returns how many were
     /// removed. The file is rewritten every call, so a retry after a failed
     /// write finishes the job.
-    pub fn erase_account(&self, account: &str) -> Result<usize, PairingError> {
+    pub async fn erase_account(&self, account: &str) -> Result<usize, PairingError> {
         let now = now_secs();
-        let mut records = self.records.lock().expect("pairing");
-        let mut next = records.clone();
-        next.retain(|_, r| r.account != account && r.user != account);
-        let removed = records.len() - next.len();
-        self.commit(&mut records, next, now)?;
-        Ok(removed)
+        let (pending, out) = {
+            let mut records = self.records.lock().expect("pairing");
+            let mut next = records.clone();
+            next.retain(|_, r| r.account != account && r.user != account);
+            let removed = records.len() - next.len();
+            (self.commit(&mut records, next, now), removed)
+        };
+        self.settle(pending).await?;
+        Ok(out)
     }
 
     /// Revokes the account's code `id` (a no-op for one already used,
     /// revoked or expired).
-    pub fn revoke(&self, account: &str, id: &str) -> Result<PairingRecord, PairingError> {
+    pub async fn revoke(&self, account: &str, id: &str) -> Result<PairingRecord, PairingError> {
         let now = now_secs();
-        let mut records = self.records.lock().expect("pairing");
-        let mut next = records.clone();
-        let r = next
-            .get_mut(id)
-            .filter(|r| r.account == account)
-            .ok_or(PairingError::NotFound)?;
-        if r.state(now) == "active" {
-            r.revoked_at = Some(now);
-        }
-        let out = r.clone();
-        self.commit(&mut records, next, now)?;
+        let (pending, out) = {
+            let mut records = self.records.lock().expect("pairing");
+            let mut next = records.clone();
+            let r = next
+                .get_mut(id)
+                .filter(|r| r.account == account)
+                .ok_or(PairingError::NotFound)?;
+            if r.state(now) == "active" {
+                r.revoked_at = Some(now);
+            }
+            let out = r.clone();
+            (self.commit(&mut records, next, now), out)
+        };
+        self.settle(pending).await?;
         Ok(out)
     }
 }
@@ -598,14 +614,18 @@ async fn mint(
             Err(_) => return error(PairingError::NotFound),
         }
     }
-    match relay.pairing.mint(Mint {
-        who: &who,
-        name: body.name,
-        team: body.team,
-        ttl_secs: body.ttl_secs,
-        device: device.clone(),
-        proven,
-    }) {
+    match relay
+        .pairing
+        .mint(Mint {
+            who: &who,
+            name: body.name,
+            team: body.team,
+            ttl_secs: body.ttl_secs,
+            device: device.clone(),
+            proven,
+        })
+        .await
+    {
         Ok((record, code)) => {
             relay.devices.audit(
                 &who.account,
@@ -649,7 +669,7 @@ async fn revoke(
         Ok(a) => a,
         Err(r) => return r,
     };
-    match relay.pairing.revoke(&who.account, &id) {
+    match relay.pairing.revoke(&who.account, &id).await {
         Ok(record) => {
             if record.revoked_at.is_some() {
                 relay.devices.audit(
@@ -683,8 +703,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_failed_write_is_counted_and_mints_or_spends_nothing() {
+    #[tokio::test]
+    async fn a_failed_write_is_counted_and_mints_or_spends_nothing() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("state");
@@ -692,19 +712,21 @@ mod tests {
         let storage = std::sync::Arc::new(Storage::new(Some(state.clone()), Default::default()));
         let path = state.join("relay.pairing.json");
         let store = PairingStore::open_with(path.clone(), storage.clone()).unwrap();
-        let (first, code) = mint(&store, None);
+        let (first, code) = mint(&store, None).await;
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains('\n'), "compact JSON: {raw}");
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
-        let minted = store.mint(Mint {
-            who: &ada(),
-            name: None,
-            team: None,
-            ttl_secs: None,
-            device: None,
-            proven: true,
-        });
-        let spent = store.spend(&first.id, "machine-0001");
+        let minted = store
+            .mint(Mint {
+                who: &ada(),
+                name: None,
+                team: None,
+                ttl_secs: None,
+                device: None,
+                proven: true,
+            })
+            .await;
+        let spent = store.spend(&first.id, "machine-0001").await;
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         // Root ignores directory permissions; nothing to check then.
         if storage.failures(store::PAIRING) > 0 {
@@ -718,14 +740,14 @@ mod tests {
             assert!(!store.writes_ok());
             assert!(!storage.report().0);
             // Writable again: the spend goes through.
-            store.spend(&first.id, "machine-0001").unwrap();
+            store.spend(&first.id, "machine-0001").await.unwrap();
         }
         assert!(store.writes_ok());
         let again = PairingStore::open(path).unwrap();
         assert!(again.peek(&code).is_err(), "spent across a restart");
     }
 
-    fn mint(store: &PairingStore, ttl: Option<u64>) -> (PairingRecord, String) {
+    async fn mint(store: &PairingStore, ttl: Option<u64>) -> (PairingRecord, String) {
         store
             .mint(Mint {
                 who: &ada(),
@@ -735,6 +757,7 @@ mod tests {
                 device: Some("dev_1".into()),
                 proven: true,
             })
+            .await
             .unwrap()
     }
 
@@ -754,59 +777,64 @@ mod tests {
         assert_eq!(normalize(&display(&c)).as_deref(), Some(c.as_str()));
     }
 
-    #[test]
-    fn a_code_is_spent_once_and_can_be_restored_after_a_failed_registration() {
+    #[tokio::test]
+    async fn a_code_is_spent_once_and_can_be_restored_after_a_failed_registration() {
         let store = PairingStore::in_memory();
-        let (record, code) = mint(&store, None);
+        let (record, code) = mint(&store, None).await;
         assert_eq!(record.expires_at - record.created_at, DEFAULT_TTL_SECS);
         let found = store.peek(&display(&code).to_lowercase()).unwrap();
         assert_eq!(found.id, record.id);
-        store.spend(&record.id, "machine-1").unwrap();
+        store.spend(&record.id, "machine-1").await.unwrap();
         assert_eq!(store.peek(&code), Err(PairingError::Invalid));
         assert_eq!(
-            store.spend(&record.id, "machine-2"),
+            store.spend(&record.id, "machine-2").await,
             Err(PairingError::Invalid)
         );
         store.unspend(&record.id);
         assert!(store.peek(&code).is_ok());
     }
 
-    #[test]
-    fn revoked_and_expired_codes_are_refused_and_limits_hold() {
+    #[tokio::test]
+    async fn revoked_and_expired_codes_are_refused_and_limits_hold() {
         let store = PairingStore::in_memory();
-        let (record, code) = mint(&store, None);
-        assert_eq!(store.revoke("eve", &record.id), Err(PairingError::NotFound));
-        store.revoke("ada", &record.id).unwrap();
+        let (record, code) = mint(&store, None).await;
+        assert_eq!(
+            store.revoke("eve", &record.id).await,
+            Err(PairingError::NotFound)
+        );
+        store.revoke("ada", &record.id).await.unwrap();
         assert_eq!(store.peek(&code), Err(PairingError::Invalid));
         assert_eq!(store.list("ada")[0].state(now_secs()), "revoked");
 
         // Lifetimes clamp; an expired code is refused.
-        let (short, _) = mint(&store, Some(1));
+        let (short, _) = mint(&store, Some(1)).await;
         assert_eq!(short.expires_at - short.created_at, MIN_TTL_SECS);
-        let (long, _) = mint(&store, Some(10 * MAX_TTL_SECS));
+        let (long, _) = mint(&store, Some(10 * MAX_TTL_SECS)).await;
         assert_eq!(long.expires_at - long.created_at, MAX_TTL_SECS);
         assert_eq!(long.state(long.expires_at), "expired");
 
         for _ in 2..MAX_ACTIVE_PER_ACCOUNT {
-            mint(&store, None);
+            mint(&store, None).await;
         }
-        let too_many = store.mint(Mint {
-            who: &ada(),
-            name: None,
-            team: None,
-            ttl_secs: None,
-            device: None,
-            proven: false,
-        });
+        let too_many = store
+            .mint(Mint {
+                who: &ada(),
+                name: None,
+                team: None,
+                ttl_secs: None,
+                device: None,
+                proven: false,
+            })
+            .await;
         assert_eq!(too_many.unwrap_err(), PairingError::TooMany);
     }
 
-    #[test]
-    fn only_hashes_are_persisted() {
+    #[tokio::test]
+    async fn only_hashes_are_persisted() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pairing.json");
         let store = PairingStore::open(path.clone()).unwrap();
-        let (record, code) = mint(&store, None);
+        let (record, code) = mint(&store, None).await;
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains(&code));
         assert!(raw.contains(&record.code_sha256));

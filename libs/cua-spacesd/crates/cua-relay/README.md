@@ -514,9 +514,10 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_MAX_STREAMS` | `256` | Concurrent client streams per machine (app-level check; S7). |
 | `CUA_RELAY_MACHINE_MAX_STREAMS` | `256` | yamux's own per-machine stream cap (S7); keep `>=` the value above. |
 | `CUA_RELAY_MACHINE_WINDOW_BYTES` | `67108864` (64 MiB) | yamux's per-machine connection receive window (S7); must be `>=` `machine-max-streams * 256 KiB`. |
-| `CUA_RELAY_MAX_GLOBAL_STREAMS` | `4096` | Concurrent client streams across every machine at once: the relay-wide memory budget (S7). Tune to the pod's memory limit. |
+| `CUA_RELAY_MAX_GLOBAL_STREAMS` | from the memory limit | Concurrent client streams across every machine at once: the relay-wide memory budget (S7). Unset, the relay derives it from its container's memory limit (cgroup): half the limit divided by 768 KiB, the worst case one slow-reading stream buffers, between 64 and 4096. Without a limit, 4096. `/metrics` shows it as `cua_relay_client_streams_budget`, next to `cua_relay_client_streams` and `cua_relay_client_streams_refused_total`. |
 | `CUA_RELAY_IDLE_SECS` | `90` | Seconds without a heartbeat before a machine is dropped (min 5). |
-| `CUA_RELAY_SHUTDOWN_GRACE_SECS` | `10` | Seconds open requests get after SIGTERM / SIGINT. Machine tunnels and mesh connections are closed at once, so they reconnect to the next relay. |
+| `CUA_RELAY_SHUTDOWN_GRACE_SECS` | `10` | Seconds open requests get after SIGTERM / SIGINT, counted after the drain. |
+| `CUA_RELAY_DRAIN_SECS` | `0` | Connection draining on SIGTERM / SIGINT: new machine tunnels and mesh connections get 503 with `Retry-After` for this long at most, while client streams already open finish (tunnels stay up). Then every tunnel is closed cleanly (yamux GoAway, mesh close code 4000) just before exit, so they reconnect to the relay that takes over. `0` closes tunnels at once. The hard stop is drain plus grace: keep the pod's `terminationGracePeriodSeconds` above `preStop + drain + grace`. A longer drain also lengthens the time the next relay waits on the state lock. |
 | `CUA_RELAY_HEALTH_LISTEN` | unset | Probe address (`0.0.0.0:8081`) answering `GET /healthz` from start, standby included. Point the Kubernetes probes here for rolling deploys. |
 | `CUA_RELAY_WEB_CLIENT_ID` | unset | OIDC client id of the browser sign-in for share links (public client + PKCE; redirect URI `<CUA_RELAY_PUBLIC_URL>/v1/web/callback`). Needs account mode, `CUA_RELAY_PUBLIC_URL` and `CUA_RELAY_HOST_DOMAIN`. Unset: no browser sign-in, `/v1/web/*` is 404 and a browser without a token gets 401. |
 | `CUA_RELAY_WEB_CLIENT_SECRET` | unset | Client secret, for a confidential web client. |
@@ -608,7 +609,13 @@ jobs), snapshots up to 64 MiB, keyrings 4 MiB, the rest 64 KiB.
   `audit_events_dropped` and pool refusals. `503` when the probe fails or a
   store is failing. With one replica, do not make this the Kubernetes
   readiness probe (a full volume would take the whole relay, mesh included,
-  out of service); alert on it instead.
+  out of service); alert on it instead. A stalled volume (an I/O pause)
+  never holds the answer: one probe runs at a time in the background,
+  `/readyz` waits at most 0.5 s for it, and a pause shorter than 5 s keeps
+  the last result. A probe stuck for 5 s or more makes `/readyz` `503`
+  (`state volume not answering`), and `cua_relay_state_probe_running_seconds`
+  and `probe_running_secs` show how long. Do not restart the relay on this:
+  a restart does not unstall the disk and drops every connected machine.
 - `GET /metrics`: Prometheus text, no account data:
   `cua_relay_state_writes_total{store}`,
   `cua_relay_state_persist_failures_total{store}`,
@@ -657,6 +664,12 @@ load-balancer error page carries no marker at all. The values are fixed:
 `tests/probe_contract.rs` fails if one changes or disappears. Changing them
 means changing the probes in trycua/cloud in the same release.
 
+**Boot identity.** `/healthz` also carries `x-cua-relay-boot` (a random
+id, new on every process start), `x-cua-relay-started` (Unix seconds) and
+`x-cua-relay-version`. Two answers with the same boot id come from the same
+process; a new id means the relay restarted. Tests, canaries and
+dashboards use it to tell a rollout from an outage. It carries no secret.
+
 **Log lines to alert on** (stable message and `alert` field):
 `state persist failed` (`alert=state_persist_failed`, with `store` and
 `error`; at most one line per store per second, `since_last_line` counts
@@ -667,7 +680,8 @@ drops), `pool write refused` (`alert=pool_write_refused`, at powers of two).
 **Alert on:**
 
 1. `/readyz` not `200` (the probe fails or a store is failing), for 2
-   minutes.
+   minutes, or `cua_relay_state_probe_running_seconds > 5` for 1 minute
+   (a stalled volume).
 2. Free space under 20%: `/readyz` `disk.free_percent < 20`, or
    `cua_relay_state_volume_available_bytes / cua_relay_state_volume_bytes < 0.2`.
 3. Any persist failure: `increase(cua_relay_state_persist_failures_total[10m]) > 0`,

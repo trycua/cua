@@ -2,6 +2,8 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 
 import { REQUEST_SCHEMA_V2 } from './choose_action.js';
 import {
@@ -342,10 +344,19 @@ test('loopback body that stalls past the timeout is a bounded timeout', async ()
       model: 'openjev',
       timeoutMs: 200,
     });
-    await assert.rejects(
-      model.score(request()),
-      (error: unknown) => error instanceof OpenJevError && error.code === 'timeout'
-    );
+    // Collect garbage while the body stalls: the timeout must not depend on
+    // an unreferenced signal or abort hook surviving GC.
+    setFlagsFromString('--expose-gc');
+    const gc = runInNewContext('gc') as () => void;
+    const collector = setInterval(gc, 10);
+    try {
+      await assert.rejects(
+        model.score(request()),
+        (error: unknown) => error instanceof OpenJevError && error.code === 'timeout'
+      );
+    } finally {
+      clearInterval(collector);
+    }
     assert.deepEqual(hits, ['/v1/systemone']);
   } finally {
     server.closeAllConnections();

@@ -61,14 +61,58 @@ fn standalone_trust_gated_click_html() -> String {
   <span id="standalone-trust-gated-state" data-cua-id="standalone-trust-gated-state">
     activation=idle
   </span>
+  <div id="standalone-focus-only-host"></div>
+  <span id="standalone-focus-only-hint"></span>
 </fieldset>
 <script>
-  document.getElementById('standalone-trust-gated').addEventListener('click', event => {
-    document.getElementById('standalone-trust-gated-state').textContent = event.isTrusted
-      ? 'activation=accepted-trusted'
-      : 'activation=ignored-untrusted';
+  // A shadow button whose focus styles its host and the outer document and
+  // shows a hint beside it, with nothing on click. Focus is not activation,
+  // so none of that may confirm the click.
+  const focusOnlyHost = document.getElementById('standalone-focus-only-host');
+  const focusOnly = focusOnlyHost.attachShadow({ mode: 'open' });
+  focusOnly.innerHTML = '<button aria-label="standalone-shadow-focus-only">Focus only</button>';
+  focusOnly.querySelector('button').addEventListener('focus', () => {
+    focusOnlyHost.classList.add('focus-within');
+    document.body.classList.add('focus-visible');
+    Promise.resolve().then(() => {
+      document.getElementById('standalone-focus-only-hint').textContent = 'focused';
+    });
+  });
+  const trustGated = document.getElementById('standalone-trust-gated');
+  const trustGatedState = document.getElementById('standalone-trust-gated-state');
+  // An app that ignores an untrusted click leaves the page alone, so the
+  // fixture records that outcome for the harness in a later task. A
+  // MessageChannel task is not throttled in a background window.
+  const ignored = new MessageChannel();
+  ignored.port1.onmessage = () => {
+    trustGatedState.textContent = 'activation=ignored-untrusted';
+  };
+  trustGated.addEventListener('click', event => {
+    if (event.isTrusted) {
+      trustGatedState.textContent = 'activation=accepted-trusted';
+    } else {
+      ignored.port2.postMessage(null);
+    }
+  });
+  // A hover change that lands after a long microtask chain belongs to the
+  // hover, and must not confirm the ignored click.
+  trustGated.addEventListener('mouseenter', () => {
+    let chain = Promise.resolve();
+    for (let turn = 0; turn < 50; turn++) chain = chain.then(() => null);
+    chain.then(() => document.body.appendChild(document.createElement('span')));
   });
 </script>
+</body>"#,
+    )
+}
+
+/// The counter button sits under a transparent overlay that swallows clicks,
+/// so a trusted event at the button's center lands on the overlay instead.
+fn standalone_covered_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<div id="standalone-click-cover" aria-hidden="true"
+        style="position:fixed;inset:0;z-index:2147483647;background:transparent"></div>
 </body>"#,
     )
 }
@@ -1993,7 +2037,7 @@ fn run_roundtrip(spec: &BrowserSpec) {
                 "{}",
                 click.raw
             );
-            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(click.action_effect(), Some("confirmed"), "{}", click.raw);
             assert_eq!(
                 click.structured()["evidence"][0]["kind"],
                 "value_readback",
@@ -2089,6 +2133,24 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 "activation=ignored-untrusted",
             );
 
+            let focus_only_ref = ref_by_label(&snapshot, "standalone-shadow-focus-only");
+            let focus_only = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": focus_only_ref,
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                focus_only.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                focus_only.raw
+            );
+
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });
@@ -2169,7 +2231,7 @@ fn run_semantic_state(spec: &BrowserSpec) {
             );
             assert_eq!(
                 clicked.action_effect(),
-                Some("unverifiable"),
+                Some("confirmed"),
                 "{}",
                 clicked.raw
             );
@@ -2510,6 +2572,7 @@ fn run_web_type_text_verification(spec: &BrowserSpec) {
             launch_browser_with_html(spec, &scenario, standalone_generic_type_text_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let (x, y) = generic_editor_coordinates(&mut fixture);
+        fixture.driver.start_behavior_recording();
         let payload = "cua-web-verification-honesty";
         let typed = fixture.driver.call(
             "type_text",
@@ -2734,6 +2797,77 @@ fn run_trusted_click(spec: &BrowserSpec) {
     });
 }
 
+/// #2882: a trusted ref click whose point another element covers must refuse
+/// before dispatch, not report success after clicking the cover. The same ref
+/// on the explicit DOM route still reaches the button.
+fn run_trusted_click_covered_ref(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-trusted-click-covered-ref",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "trusted_click_covered_ref",
+            RefusalCode::BrowserInputTrustUnavailable,
+        ),
+        |evidence| {
+            let mut fixture =
+                launch_browser_with_html(spec, &scenario, standalone_covered_click_html());
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-trusted-click-covered-{}", fixture.pid);
+            prepare_same_space_attachment(&mut fixture, &session);
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let (target, tab, snapshot) = bind(fixture, &session);
+                let click_ref = ref_by_label(&snapshot, "id=btn-increment");
+                let refused = fixture.driver.call(
+                    "browser_click",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "input_route": "trusted",
+                        "delivery_mode": "foreground",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(refused.action_effect(), Some("refused"), "{}", refused.raw);
+                assert!(
+                    refused.text().contains("browser_input_trust_unavailable"),
+                    "{}",
+                    refused.raw
+                );
+                assert!(
+                    refused.text().contains("nothing was sent"),
+                    "{}",
+                    refused.raw
+                );
+                wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+
+                let synthetic = fixture.driver.call(
+                    "browser_click",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "input_route": "dom_event",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(synthetic.action_route(), Some("dom"), "{}", synthetic.raw);
+                wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+                Observation::refused(
+                    RefusalCode::BrowserInputTrustUnavailable,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
+            })
+        },
+    );
+}
+
 fn run_prepare_isolated_launch(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-prepare-isolated",
@@ -2846,7 +2980,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -2999,7 +3133,7 @@ fn run_reduced_motion_policy(spec: &BrowserSpec) {
         );
         assert_eq!(
             clicked.action_effect(),
-            Some("unverifiable"),
+            Some("confirmed"),
             "{}",
             clicked.raw
         );
@@ -3236,7 +3370,7 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3411,7 +3545,7 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3650,7 +3784,15 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
             let oopif_button = ref_by_frame_label(&snapshot, "oopif", "id=btn-increment");
             let oopif_input = ref_by_frame_label(&snapshot, "oopif", "id=txt-input");
 
-            for reference in [&shadow_button, &frame_button, &oopif_button] {
+            // The shadow button writes to its host's document and the OOPIF
+            // button to its own document, which the click watches. The
+            // same-process frame button writes only to the parent document,
+            // which the click does not watch.
+            for (reference, effect) in [
+                (&shadow_button, "confirmed"),
+                (&frame_button, "unverifiable"),
+                (&oopif_button, "confirmed"),
+            ] {
                 let clicked = fixture.driver.call(
                     "browser_click",
                     serde_json::json!({
@@ -3661,12 +3803,7 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(
-                    clicked.action_effect(),
-                    Some("unverifiable"),
-                    "{}",
-                    clicked.raw
-                );
+                assert_eq!(clicked.action_effect(), Some(effect), "{}", clicked.raw);
             }
             wait_for_text(&fixture.server, "standalone-shadow-state", "shadow=clicked");
             wait_for_text(&fixture.server, "standalone-frame-state", "iframe=clicked");
@@ -4006,7 +4143,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
             );
             assert_eq!(
                 clicked.action_effect(),
-                Some("unverifiable"),
+                Some("confirmed"),
                 "{}",
                 clicked.raw
             );
@@ -5820,6 +5957,10 @@ standalone_browser_test!(
     run_background_web_click_noop
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
+standalone_browser_test!(
+    standalone_browser_trusted_click_covered_ref,
+    run_trusted_click_covered_ref
+);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,
     run_prepare_isolated_launch

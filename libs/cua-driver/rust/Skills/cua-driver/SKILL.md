@@ -2,7 +2,7 @@
 name: cua-driver
 description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
 metadata:
-  version: 0.52.2 # x-release-please-version
+  version: 0.60.0 # x-release-please-version
   openclaw:
     requires:
       bins:
@@ -88,6 +88,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 | Large, truncated, or sparse tree; repeated reads          | [Bounded observation and `since` diffs](WORKFLOW.md#observe)                                                                                                        |
 | `surface_identity_unproven` or screenshot permission wait | [Wayland capture recovery](LINUX.md#capture-recovery)                                                                                                               |
 | `background_unavailable`                                  | Not a stop: that input route is closed, the task is not. Read `get_window_state` and act by element (`element_token`, `invoke_menu`); foreground only if authorized |
+| `window_scope_unproven`                                   | The driver could not prove the element belongs to that window, and sent nothing. Read that exact window again; on GNOME, see [GNOME notes](LINUX.md#gnomemutter)    |
 | Web page in a browser                                     | Refs from `get_browser_state` with `browser_click` / `browser_type`; pixel clicks only when no ref exists                                                           |
 | LibreOffice, Preview and other macOS editors              | [macOS recipes](MACOS.md#libreoffice-numbers-and-other-editors-in-the-background)                                                                                   |
 | Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)                                                                                         |

@@ -240,6 +240,9 @@ impl Tool for SetValueTool {
             Some((element_ptr, Some(element_index))),
             Some(window_id),
         );
+        // WebKit (not Chromium or Electron) web content: a field that ignores
+        // the write may take it once focused.
+        let webkit_field = ax_echo_surface && !super::type_text::is_chromium_embedder(pid);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -261,6 +264,7 @@ impl Tool for SetValueTool {
                         pid,
                         window_id,
                         &value,
+                        webkit_field,
                     )
                 })
                 .await
@@ -670,6 +674,7 @@ fn set_value_blocking(
     pid: i32,
     window_id: u32,
     value: &str,
+    webkit_field: bool,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
@@ -748,6 +753,37 @@ fn set_value_blocking(
                     numeric_target.is_some(),
                 );
             }
+            // WebKit form fields ignore an AXValue write while they are not
+            // the page's focused element and accept it once they are. Focus
+            // moves inside the app only; the app is not activated or raised.
+            let mut focused_retry = false;
+            if webkit_field && !secure && write_not_applied(verified, changed) {
+                let focused =
+                    unsafe { crate::ax::bindings::set_bool_attr_true(element, "AXFocused") };
+                if focused == kAXErrorSuccess
+                    && unsafe { set_string_attr(element, "AXValue", value) } == kAXErrorSuccess
+                {
+                    focused_retry = true;
+                    for _ in 0..NOT_APPLIED_REREADS {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        unsafe {
+                            crate::ax::enablement::flush_pending_web_updates_for_element(
+                                pid, element,
+                            )
+                        };
+                        after = unsafe { copy_string_attr(element, "AXValue") };
+                        (verified, changed) = classify_write(
+                            before.as_deref(),
+                            after.as_deref(),
+                            value,
+                            numeric_target.is_some(),
+                        );
+                        if !write_not_applied(verified, changed) {
+                            break;
+                        }
+                    }
+                }
+            }
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
@@ -763,7 +799,12 @@ fn set_value_blocking(
             };
             Ok(SetValueOutcome {
                 detail: format!(
-                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{}",
+                    "✅ Set AXValue on [{element_index}] {role}{}.{suffix}{}",
+                    if focused_retry {
+                        " after focusing it (the first write was not applied)"
+                    } else {
+                        ""
+                    },
                     document.note()
                 ),
                 value: after,
@@ -1138,20 +1179,12 @@ fn dismiss_popup_menu(popup: AXUIElementRef, pid: i32) {
     }
 }
 
-/// Whether a popup belongs to a Chromium renderer (Chrome-family browsers and
-/// Electron apps), whose `<select>` menu is a native popup.
-fn is_chromium_popup_owner(pid: i32) -> bool {
-    let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
-    super::type_text::is_chromium_identity(&bundle_id)
-        || crate::browser::electron_js::ElectronJs::is_electron(pid)
-}
-
 /// Whether pressing `element` would open a Chromium or Electron `<select>`
 /// menu: an `AXPopUpButton` inside web content of a Chromium renderer. The
 /// browser's own toolbar popups have no web-area ancestor and do not match.
 pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElementRef) -> bool {
     unsafe { copy_string_attr(element, "AXRole") }.as_deref() == Some("AXPopUpButton")
-        && is_chromium_popup_owner(pid)
+        && super::type_text::is_chromium_embedder(pid)
         && super::type_text::target_in_web_area(
             pid,
             Some((element as usize, None)),
@@ -1222,7 +1255,7 @@ fn select_chromium_popup_by_typeahead(
     if wanted.is_empty()
         || crate::apps::frontmost_pid() == Some(pid)
         || popup_menu_is_open(popup)
-        || !is_chromium_popup_owner(pid)
+        || !super::type_text::is_chromium_embedder(pid)
     {
         return None;
     }

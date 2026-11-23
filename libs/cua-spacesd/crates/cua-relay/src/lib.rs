@@ -50,14 +50,18 @@ pub mod mux;
 pub mod oidc;
 pub mod pairing;
 pub mod pending_deletions;
+pub mod persist;
 pub mod phone;
 pub mod pool;
+pub mod process_memory;
 pub mod proxies;
 pub mod push_api;
 pub mod route_marker;
 pub mod server;
 pub mod share_web;
 pub mod spaces;
+#[cfg(test)]
+mod stall_tests;
 pub mod storage;
 pub mod tcp_shares;
 mod transport;

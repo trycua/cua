@@ -27,6 +27,7 @@ import { avcCodecFromAnnexB } from "./h264";
 import {
   closeAction,
   coalesceText,
+  CommandSides,
   decodeControl,
   encodeControl,
   InputSequencer,
@@ -100,7 +101,8 @@ export interface MediaSessionOptions {
    * rebuilt in software from the next keyframe. */
   hardwareAcceleration?: HardwareAcceleration;
   /** Send the host's ⌘ as Control (a Mac viewing a Linux or Windows guest,
-   * where ⌘ would arrive as Super: ⌘C would type "c"). */
+   * where ⌘ would arrive as Super: ⌘C would type "c"). The right ⌘ held
+   * alone still goes as Super (`CommandSides`). */
   metaAsControl?: boolean;
   /** Send a ⌘ chord's press and release together (a Mac host): Chromium
    * does not fire the key-up of a key pressed with ⌘ held, and a press with
@@ -759,19 +761,23 @@ export class MediaSession {
       },
       { passive: false },
     );
-    const send = (input: InteractiveInputEvent | null) => {
-      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
+    const sides = new CommandSides();
+    const send = (input: InteractiveInputEvent | null, asSuper: boolean) => {
+      if (input) this.queueInput(this.options.metaAsControl && !asSuper ? commandAsControl(input) : input);
     };
     on("keydown", (event) => {
       event.preventDefault();
-      send(keyEventToInput(event, "down"));
-      if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) send(keyEventToInput(event, "up"));
+      const asSuper = sides.rightOnly(event, "down");
+      send(keyEventToInput(event, "down"), asSuper);
+      if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) {
+        send(keyEventToInput(event, "up"), asSuper);
+      }
     });
     on("keyup", (event) => {
       event.preventDefault();
-      const input = keyEventToInput(event, "up");
-      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
+      send(keyEventToInput(event, "up"), sides.rightOnly(event, "up"));
     });
+    on("blur", () => sides.reset());
   }
 }
 

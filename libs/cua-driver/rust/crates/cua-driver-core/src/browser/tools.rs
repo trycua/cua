@@ -26,6 +26,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
+use super::input::{confirm_ref_point, ref_point, refuse_in_focus_emulation, trusted_ref_point};
 use super::motion_policy::BrowserMotionPolicy;
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
@@ -87,6 +88,8 @@ const DOM_CLICK_READBACK_INTERVAL: Duration = Duration::from_millis(25);
 struct DomClickObservation {
     effect: ActionEffect,
     readback_available: bool,
+    /// The click's own handlers changed the page outside the target.
+    page_changed: bool,
 }
 
 async fn read_dom_click_state(
@@ -131,6 +134,7 @@ async fn observe_dom_click(
         return DomClickObservation {
             effect: effect_from_value_readback(false, false, false),
             readback_available: false,
+            page_changed: false,
         };
     };
     let started = Instant::now();
@@ -139,6 +143,7 @@ async fn observe_dom_click(
             return DomClickObservation {
                 effect: ActionEffect::Unverifiable,
                 readback_available: true,
+                page_changed: false,
             };
         }
         // The window only decides whether to start another read; each read
@@ -152,12 +157,14 @@ async fn observe_dom_click(
                 return DomClickObservation {
                     effect: effect_from_value_readback(true, true, true),
                     readback_available: true,
+                    page_changed: false,
                 };
             }
         } else {
             return DomClickObservation {
                 effect: effect_from_value_readback(false, false, false),
                 readback_available: false,
+                page_changed: false,
             };
         }
         tokio::time::sleep(DOM_CLICK_READBACK_INTERVAL).await;
@@ -178,7 +185,9 @@ fn click_readback_action_record(
     if observation.readback_available {
         builder = builder.evidence(ActionEvidence {
             kind: EvidenceKind::BrowserReadback,
-            detail: if observation.effect == ActionEffect::Confirmed {
+            detail: if observation.page_changed {
+                "the click's own handlers changed the page outside the target".to_owned()
+            } else if observation.effect == ActionEffect::Confirmed {
                 "bounded semantic target state changed".to_owned()
             } else {
                 "bounded semantic target state remained unchanged".to_owned()
@@ -1377,8 +1386,9 @@ impl BrowserClickTool {
                         "description": "\"trusted\" (default): Input.dispatchMouseEvent. \
                             It refuses rather than foregrounding a standalone browser. \
                             \"dom_event\": synthetic full-background DOM click, only \
-                            when explicitly requested. Dispatch does not prove the \
-                            control activated; refresh page state and verify the \
+                            when explicitly requested. Its effect is confirmed when the \
+                            target's own state changes or the click's handlers change \
+                            the page; otherwise refresh page state and verify the \
                             expected postcondition."
                     },
                 },
@@ -1605,33 +1615,17 @@ impl Tool for BrowserClickTool {
             };
             // Cursor feedback is best-effort and visual-only. A missing box
             // must not turn a valid DOM-event action into a refusal.
-            let _ = conn
-                .call(
-                    Some(cdp),
-                    "DOM.scrollIntoViewIfNeeded",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await;
-            if let Ok(box_model) = conn
-                .call(
-                    Some(cdp),
-                    "DOM.getBoxModel",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await
-            {
-                if let Some((x, y)) = quad_center(&box_model) {
-                    self.engine
-                        .visualize_browser_action(
-                            &session,
-                            &validated,
-                            cdp,
-                            x,
-                            y,
-                            BrowserVisualActionKind::Click,
-                        )
-                        .await;
-                }
+            if let Ok((x, y)) = ref_point(conn, cdp, backend).await {
+                self.engine
+                    .visualize_browser_action(
+                        &session,
+                        &validated,
+                        cdp,
+                        x,
+                        y,
+                        BrowserVisualActionKind::Click,
+                    )
+                    .await;
             }
             let before =
                 read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
@@ -1641,15 +1635,38 @@ impl Tool for BrowserClickTool {
                 json!({
                     "objectId": object_id,
                     "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
+                    "awaitPromise": true,
+                    "returnByValue": true,
                 }),
             );
-            let outcome = call_until_dialog(conn, cdp_target_id, click)
-                .await
-                .unwrap_or(Ok(json!({})));
+            // A sequence that threw counts nothing: its handlers' mutations
+            // may not include the click's.
+            let outcome = match call_until_dialog(conn, cdp_target_id, click).await {
+                Ok(Ok(reply)) if reply.get("exceptionDetails").is_none() => Ok(reply
+                    .pointer("/result/value/pageMutations")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)),
+                Ok(Ok(_)) | Err(_) => Ok(0),
+                Ok(Err(error)) => Err(error),
+            };
             return match (outcome, conn.dialog_state(cdp_target_id)) {
-                (Ok(_), None) => {
-                    let observation = observe_dom_click(conn, cdp, &object_id, before).await;
+                (Ok(count), None) => {
+                    let page_changed = count > 0;
+                    let observation = if page_changed {
+                        DomClickObservation {
+                            effect: ActionEffect::Confirmed,
+                            readback_available: true,
+                            page_changed,
+                        }
+                    } else {
+                        observe_dom_click(conn, cdp, &object_id, before).await
+                    };
                     let text = match observation.effect {
+                        ActionEffect::Confirmed if observation.page_changed => format!(
+                            "dispatched synthetic DOM click on {} in {tab_id}; its own handlers \
+                             changed the page outside the target",
+                            ext_ref.as_deref().unwrap_or("?")
+                        ),
                         ActionEffect::Confirmed => format!(
                             "dispatched synthetic DOM click on {} in {tab_id}; bounded semantic \
                              readback confirmed a target-state change",
@@ -1705,44 +1722,12 @@ impl Tool for BrowserClickTool {
         }
 
         // Trusted route: resolve a click point, then Input.dispatchMouseEvent.
+        // A ref's point must hit-test to the ref, or the event lands elsewhere.
         let (x, y) = match (backend_node_id, coords) {
-            (Some(backend), _) => {
-                // Best effort scroll-into-view; ignore failure (older Chromium).
-                let _ = conn
-                    .call(
-                        Some(cdp),
-                        "DOM.scrollIntoViewIfNeeded",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await;
-                let box_model = match conn
-                    .call(
-                        Some(cdp),
-                        "DOM.getBoxModel",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node has no layout box — it left the DOM or is hidden",
-                        )
-                        .to_tool_result()
-                    }
-                };
-                match quad_center(&box_model) {
-                    Some(pt) => pt,
-                    None => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node returned an unusable layout box",
-                        )
-                        .to_tool_result()
-                    }
-                }
-            }
+            (Some(backend), _) => match trusted_ref_point(conn, cdp, backend).await {
+                Ok(point) => point,
+                Err(refusal) => return refusal.to_tool_result(),
+            },
             (None, Some(pt)) => pt,
             (None, None) => unreachable!("validated above"),
         };
@@ -1803,6 +1788,13 @@ impl Tool for BrowserClickTool {
             .to_tool_result();
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        if let Some(backend) = backend_node_id {
+            if let Err(refusal) = confirm_ref_point(conn, cdp, backend, (x, y)).await {
+                return refuse_in_focus_emulation(conn, cdp, refusal)
+                    .await
+                    .to_tool_result();
+            }
+        }
 
         let mut delivery_error = None;
         let mut opened = None;
@@ -1891,6 +1883,7 @@ impl Tool for BrowserClickTool {
                 None => DomClickObservation {
                     effect: effect_from_value_readback(false, false, false),
                     readback_available: false,
+                    page_changed: false,
                 },
             };
             let text = match observation.effect {
@@ -1972,21 +1965,6 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
     })
 }
 
-/// Center of the content quad from a `DOM.getBoxModel` result.
-fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
-    let quad = box_model.get("model")?.get("content")?.as_array()?;
-    if quad.len() < 8 {
-        return None;
-    }
-    let nums: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
-    if nums.len() < 8 {
-        return None;
-    }
-    let xs = [nums[0], nums[2], nums[4], nums[6]];
-    let ys = [nums[1], nums[3], nums[5], nums[7]];
-    Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
-}
-
 /// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
 ///
 /// `HTMLElement.click()` fires only a bare `click` with no coordinates, so
@@ -1997,7 +1975,30 @@ fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
 /// a real click, `preventDefault()` on `pointerdown` suppresses the
 /// compatibility mouse events, and on `mousedown` suppresses the focus move.
 /// The events stay untrusted (`isTrusted === false`).
-const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
+///
+/// The phases run in one call, with a task boundary between hover, press and
+/// release. The microtask checkpoint before each boundary runs every microtask
+/// the previous phase's handlers queued, so hover and focus handlers, however
+/// deep their promise chains, settle outside both counts. A handler that
+/// re-renders between phases cannot move the press or click: all of them go
+/// to the point and descendant hit-tested first. A dialog a handler opens
+/// pauses the call, and the rest of the sequence runs once it is dismissed.
+///
+/// The press count covers `pointerdown` and `mousedown`, then focus moves; the
+/// release count covers `pointerup`, `mouseup` and `click`. Each count is the
+/// DOM mutations on nodes still in the page, outside the node's own subtree
+/// and its ancestors' attributes (across shadow roots to their hosts, as the
+/// node sits when the phase starts), from the phase's first event until the
+/// microtasks its handlers queued ran. No other task can run in that span, so
+/// those mutations are the handlers' own, for example a button that reveals
+/// fields elsewhere without changing its own state. Each count waits a bounded 256 microtask turns, not for a later
+/// task: a task boundary would let unrelated timers and network callbacks
+/// change the page inside the count. A handler whose change comes later than
+/// that leaves the click `unverifiable`, never falsely `confirmed`.
+///
+/// The boundary is a `MessageChannel` message, which background-tab timer
+/// throttling does not delay.
+const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
     const el = this; \
     const doc = el.ownerDocument; \
     const view = doc.defaultView; \
@@ -2014,18 +2015,46 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
           width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
     const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
         { ...base, buttons, detail: 0, ...extra })); \
+    const nextTask = () => new Promise(resolve => { \
+        const channel = new view.MessageChannel(); \
+        channel.port1.onmessage = () => { channel.port1.close(); resolve(); }; \
+        channel.port2.postMessage(null); \
+    }); \
+    const counted = async phase => { \
+        const ancestors = new Set(); \
+        for (let node = el; node; node = node.parentNode || node.host) ancestors.add(node); \
+        const records = []; \
+        const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
+        for (const scope of new Set([el.ownerDocument, el.getRootNode()])) observer.observe(scope, \
+            { subtree: true, childList: true, attributes: true, characterData: true }); \
+        const result = phase(); \
+        for (let turn = 0; turn < 256; turn++) await null; \
+        records.push(...observer.takeRecords()); \
+        observer.disconnect(); \
+        const mutations = records.filter(m => m.target.isConnected && !el.contains(m.target) \
+            && !(m.type === 'attributes' && ancestors.has(m.target))).length; \
+        return { result, mutations }; \
+    }; \
     P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
     M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
     P('pointermove', 0); M('mousemove', 0); \
-    const compat = P('pointerdown', 1); \
-    if (compat && M('mousedown', 1, { detail: 1 })) { \
-        const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
-        if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
-    } \
-    P('pointerup', 0); \
-    if (compat) M('mouseup', 0, { detail: 1 }); \
-    M('click', 0, { detail: 1 }); \
-    return true; \
+    await nextTask(); \
+    const press = await counted(() => { \
+        const compat = P('pointerdown', 1); \
+        const focusable = (compat && M('mousedown', 1, { detail: 1 })) \
+            ? target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]') \
+            : null; \
+        return { compat, focusable }; \
+    }); \
+    const { compat, focusable } = press.result; \
+    if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
+    await nextTask(); \
+    const release = await counted(() => { \
+        P('pointerup', 0); \
+        if (compat) M('mouseup', 0, { detail: 1 }); \
+        M('click', 0, { detail: 1 }); \
+    }); \
+    return { pageMutations: press.mutations + release.mutations }; \
 }";
 
 // ── browser_type ─────────────────────────────────────────────────────────────
@@ -2044,6 +2073,13 @@ const EDITABLE_AND_FOCUSED_CHECK: &str = "function() { \
     return !this.disabled && !this.readOnly && \
         !['button','checkbox','color','file','hidden','image','radio','range','reset','submit']\
         .includes((this.type || 'text').toLowerCase()); \
+}";
+
+/// Whether the element is a single-line field, where a newline cannot be
+/// content and conventionally means "submit". A textarea or contenteditable
+/// keeps a newline as text, so this is false for them.
+const SINGLE_LINE_FIELD_CHECK: &str = "function() { \
+    return !this.isContentEditable && this.tagName === 'INPUT'; \
 }";
 
 const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
@@ -2079,6 +2115,51 @@ const SELECT_ALL_IN_ELEMENT: &str = "function() { \
     } \
     return -1; \
 }";
+
+/// One phase of an Enter key press carrying the full key identity.
+///
+/// A `keyDown` with only `key: "Enter"` reaches `event.key` handlers but
+/// arrives with `code: ""` and `keyCode: 0`, so pages that check
+/// `event.keyCode === 13` (still common in chat and search boxes) ignore it.
+fn enter_key_event(phase: &str) -> Value {
+    let mut event = json!({
+        "type": phase,
+        "key": "Enter",
+        "code": "Enter",
+        "windowsVirtualKeyCode": 13,
+        "nativeVirtualKeyCode": 13,
+    });
+    if phase == "char" {
+        event["text"] = json!("\r");
+        event["unmodifiedText"] = json!("\r");
+    }
+    event
+}
+
+/// How far a trailing Enter got. A failed key event may still have reached
+/// the page (a reply timeout or a dropped socket looks the same as a refusal),
+/// so once one is sent a failure is uncertain, never "not delivered".
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnterDelivery {
+    NotSent,
+    Uncertain,
+    Pressed,
+}
+
+/// Press Enter as a complete keyDown/char/keyUp sequence.
+async fn press_enter(
+    conn: &CdpConnection,
+    cdp: &str,
+    delivery: &mut EnterDelivery,
+) -> anyhow::Result<()> {
+    *delivery = EnterDelivery::Uncertain;
+    for phase in ["keyDown", "char", "keyUp"] {
+        conn.call(Some(cdp), "Input.dispatchKeyEvent", enter_key_event(phase))
+            .await?;
+    }
+    *delivery = EnterDelivery::Pressed;
+    Ok(())
+}
 
 /// Put the element's entire content into the selection.
 ///
@@ -2205,7 +2286,10 @@ impl BrowserTypeTool {
                 mode=\"keystrokes\" dispatches per-character key events. Both insert \
                 at the caret, so typing into a field that already holds text appends \
                 to it; pass replace=true to set the field instead, or to clear it by \
-                typing an empty string. Pass a ref to an editable element from the \
+                typing an empty string. On a single-line input, a trailing newline \
+                is pressed as a real Enter (key, code, keyCode 13) after the text and \
+                the result reports enter_pressed; a textarea or contenteditable keeps \
+                it as content. Pass a ref to an editable element from the \
                 latest snapshot. A ref is required; heuristic bindings are refused."
                 .into(),
             input_schema: json!({
@@ -2214,7 +2298,7 @@ impl BrowserTypeTool {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
                     "session": schema_session(),
-                    "text": { "type": "string", "description": "Text to type." },
+                    "text": { "type": "string", "description": "Text to type. End it with \\n to press Enter after the text on a single-line input." },
                     "ref": schema_ref(),
                     "mode": {
                         "type": "string",
@@ -2408,52 +2492,78 @@ impl Tool for BrowserTypeTool {
             .to_tool_result();
         }
 
-        // Give the recording a visual target before text delivery. Keep this
-        // best-effort: editability/input semantics never depend on the overlay.
-        let _ = conn
-            .call(
-                Some(cdp),
-                "DOM.scrollIntoViewIfNeeded",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await;
-        if let Ok(box_model) = conn
-            .call(
-                Some(cdp),
-                "DOM.getBoxModel",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await
-        {
-            if let Some((x, y)) = quad_center(&box_model) {
-                self.engine
-                    .visualize_browser_action(
-                        &session,
-                        &validated,
-                        cdp,
-                        x,
-                        y,
-                        BrowserVisualActionKind::Type,
+        // A trailing newline on a single-line field is the usual way to type
+        // and submit. `Input.insertText` silently drops it there, and no key
+        // event fires, so split it off and press a real Enter afterwards.
+        // Multiline fields keep the newline as content.
+        let (text, submit_enter) = match text.strip_suffix('\n') {
+            Some(rest) => {
+                let single_line = conn
+                    .call(
+                        Some(cdp),
+                        "Runtime.callFunctionOn",
+                        json!({
+                            "objectId": object_id,
+                            "functionDeclaration": SINGLE_LINE_FIELD_CHECK,
+                            "returnByValue": true,
+                        }),
                     )
                     .await;
+                // Guessing "multiline" on a failed probe would send the newline
+                // through insertText, which a single-line input drops silently.
+                match single_line
+                    .ok()
+                    .and_then(|value| value["result"]["value"].as_bool())
+                {
+                    Some(true) => (rest.to_string(), true),
+                    Some(false) => (text, false),
+                    None => {
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserInputTrustUnavailable,
+                            "could not tell whether the ref is a single-line field, so the \
+                             trailing newline was not sent; nothing was typed",
+                        )
+                        .to_tool_result()
+                    }
+                }
             }
+            None => (text, false),
+        };
+
+        // Give the recording a visual target before text delivery. Keep this
+        // best-effort: editability/input semantics never depend on the overlay.
+        if let Ok((x, y)) = ref_point(conn, cdp, entry.backend_node_id).await {
+            self.engine
+                .visualize_browser_action(
+                    &session,
+                    &validated,
+                    cdp,
+                    x,
+                    y,
+                    BrowserVisualActionKind::Type,
+                )
+                .await;
         }
 
         let requested_chars = text.chars().count();
         let mut replaced_chars = 0usize;
+        let mut enter = EnterDelivery::NotSent;
         let (typed, delivered_chars) = if mode == "insert_text" {
-            if replace {
+            // Replacement and the trailing Enter are key-path input, which an
+            // inactive tab drops without focus emulation.
+            let emulate_focus = replace || submit_enter;
+            if emulate_focus {
                 if let Err(detail) =
                     enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
                 {
                     return BrowserRefusal::new(
                         BrowserRefusalCode::BrowserInputTrustUnavailable,
-                        format!(
-                            "the inactive tab could not prepare trusted replacement input: {detail}"
-                        ),
+                        format!("the inactive tab could not prepare trusted key input: {detail}"),
                     )
                     .to_tool_result();
                 }
+            }
+            if replace {
                 match select_all_in_element(conn, cdp, &object_id).await {
                     Ok(n) => replaced_chars = n,
                     Err(detail) => {
@@ -2514,7 +2624,13 @@ impl Tool for BrowserTypeTool {
                 conn.call(Some(cdp), "Input.insertText", json!({ "text": text }))
                     .await
             };
-            if replace {
+            let inserted = call.is_ok();
+            if inserted && submit_enter {
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    call = Err(error);
+                }
+            }
+            if emulate_focus {
                 if let Err(error) = conn
                     .call(
                         Some(cdp),
@@ -2528,7 +2644,7 @@ impl Tool for BrowserTypeTool {
             }
             match call {
                 Ok(_) => (Ok(()), requested_chars),
-                Err(error) => (Err(error), 0),
+                Err(error) => (Err(error), if inserted { requested_chars } else { 0 }),
             }
         } else {
             if let Err(error) = conn
@@ -2677,39 +2793,36 @@ impl Tool for BrowserTypeTool {
                 }
             }
             for ch in text.chars() {
-                let (key, key_text) = if ch == '\n' {
-                    ("Enter".to_string(), "\r".to_string())
-                } else {
-                    (ch.to_string(), ch.to_string())
-                };
-                let down = conn
-                    .call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({ "type": "keyDown", "key": key }),
+                let (down_params, char_params, up_params) = if ch == '\n' {
+                    (
+                        enter_key_event("keyDown"),
+                        enter_key_event("char"),
+                        enter_key_event("keyUp"),
                     )
-                    .await;
-                let character = if down.is_ok() {
-                    conn.call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
+                } else {
+                    let key = ch.to_string();
+                    (
+                        json!({ "type": "keyDown", "key": key }),
                         json!({
                             "type": "char",
                             "key": key,
-                            "text": key_text,
-                            "unmodifiedText": key_text,
+                            "text": key,
+                            "unmodifiedText": key,
                         }),
+                        json!({ "type": "keyUp", "key": key }),
                     )
-                    .await
+                };
+                let down = conn
+                    .call(Some(cdp), "Input.dispatchKeyEvent", down_params)
+                    .await;
+                let character = if down.is_ok() {
+                    conn.call(Some(cdp), "Input.dispatchKeyEvent", char_params)
+                        .await
                 } else {
                     Ok(json!({}))
                 };
                 let up = conn
-                    .call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({ "type": "keyUp", "key": key }),
-                    )
+                    .call(Some(cdp), "Input.dispatchKeyEvent", up_params)
                     .await;
                 if let Err(e) = down.and(character).and(up) {
                     result = Err(e);
@@ -2717,6 +2830,11 @@ impl Tool for BrowserTypeTool {
                 }
                 delivered += 1;
                 tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+            if result.is_ok() && submit_enter {
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    result = Err(error);
+                }
             }
             if let Err(error) = conn
                 .call(
@@ -2731,15 +2849,17 @@ impl Tool for BrowserTypeTool {
             (result, delivered)
         };
 
+        let enter_pressed = enter == EnterDelivery::Pressed;
         match typed {
-            Ok(()) => ToolResult::text(if replace {
-                format!(
-                    "typed {requested_chars} char(s) into {tab_id}, replacing \
-                     {replaced_chars} char(s)"
-                )
-            } else {
-                format!("typed {requested_chars} char(s) into {tab_id}")
-            })
+            Ok(()) => ToolResult::text(format!(
+                "typed {requested_chars} char(s) into {tab_id}{}{}",
+                if replace {
+                    format!(", replacing {replaced_chars} char(s)")
+                } else {
+                    String::new()
+                },
+                if enter_pressed { " and pressed Enter" } else { "" }
+            ))
             .with_structured(json!({
                 "status": "ok",
                 "target_id": target_id,
@@ -2755,16 +2875,35 @@ impl Tool for BrowserTypeTool {
                 // field" from "overwrote something" without re-reading the page.
                 "replace": replace,
                 "replaced_chars": replaced_chars,
+                // A trailing newline on a single-line field is pressed as a
+                // real Enter rather than typed; say so instead of counting it.
+                "enter_pressed": enter_pressed,
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,
-                format!(
-                    "trusted Input typing stopped after {delivered_chars} of {requested_chars} character(s): {e}"
-                ),
+                if enter == EnterDelivery::Uncertain {
+                    format!(
+                        "trusted Input typed all {requested_chars} character(s), but the \
+                         trailing Enter key press failed partway, so the page may or may not \
+                         have acted on it; read the page before retrying: {e}"
+                    )
+                } else if enter_pressed {
+                    // Only the focus-emulation cleanup after the Enter failed.
+                    format!(
+                        "trusted Input typed all {requested_chars} character(s) and pressed \
+                         Enter, but focus emulation could not be turned off: {e}"
+                    )
+                } else {
+                    format!(
+                        "trusted Input typing stopped after {delivered_chars} of {requested_chars} character(s): {e}"
+                    )
+                },
             )
             .with_detail(json!({
                 "requested_chars": requested_chars,
                 "delivered_chars": delivered_chars,
+                "enter_pressed": enter_pressed,
+                "enter_uncertain": enter == EnterDelivery::Uncertain,
                 "retryable": false,
             }))
             .to_tool_result(),
@@ -3471,6 +3610,10 @@ mod tests {
         /// Each launched browser raises a prompt, as a Chromium that reads
         /// its keychain secret does.
         prompt_on_launch: std::sync::atomic::AtomicBool,
+        /// What `managed_extension_policy` reports for every executable.
+        managed_extension_policy: std::sync::Mutex<Option<String>>,
+        /// The arguments of each isolated browser command core built.
+        launched_args: std::sync::Mutex<Vec<Vec<String>>>,
     }
 
     impl MockPlatform {
@@ -3635,14 +3778,28 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst)
         }
 
+        fn managed_extension_policy(&self, _executable: &str) -> Option<String> {
+            self.launches
+                .managed_extension_policy
+                .lock()
+                .unwrap()
+                .clone()
+        }
+
         fn spawn_isolated_browser(
             &self,
-            _command: std::process::Command,
+            command: std::process::Command,
             profile: &std::path::Path,
         ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
         {
             use std::sync::atomic::Ordering;
             self.launches.spawned.fetch_add(1, Ordering::SeqCst);
+            self.launches.launched_args.lock().unwrap().push(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+            );
             if self.launches.prompt_on_launch.load(Ordering::SeqCst) {
                 self.launches.prompt_open.store(true, Ordering::SeqCst);
             }
@@ -4136,6 +4293,49 @@ mod tests {
             0,
             "the user's own profile must never be launched or relaunched"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_launch_keeps_extensions_only_under_managed_extension_policy() {
+        let launches = Arc::new(LaunchSignals::default());
+        let engine = observed_launching_engine(std::time::Duration::ZERO, launches.clone());
+        // One named profile, launched and then relaunched under the policy.
+        let name = format!("managed-extensions-{}", uuid::Uuid::new_v4().simple());
+        let switches = [
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-extensions",
+        ];
+        for (policy, kept) in [
+            (None, true),
+            (
+                Some("/etc/opt/chrome/policies/managed/extensions.json".to_owned()),
+                false,
+            ),
+        ] {
+            *launches.managed_extension_policy.lock().unwrap() = policy;
+            let (session, owner) = start_lifecycle_session(None);
+            prepare_isolated(
+                &engine,
+                &session,
+                &owner,
+                json!({ "mode": "isolated_named", "name": name }),
+            )
+            .await;
+            crate::session::end_session(&session);
+            let args = launches.launched_args.lock().unwrap().pop().unwrap();
+            for switch in switches {
+                assert_eq!(
+                    args.iter().any(|arg| arg == switch),
+                    kept,
+                    "{switch}: {args:?}"
+                );
+            }
+            assert!(args.iter().any(|arg| arg == "--disable-default-apps"));
+        }
+        let root = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT").unwrap();
+        std::fs::remove_dir_all(std::path::Path::new(&root).join(name)).unwrap();
     }
 
     #[cfg(unix)]

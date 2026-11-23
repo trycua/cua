@@ -23,7 +23,7 @@ and reports 42 from the app itself.
 
 ## Before you start
 
-- macOS 14+ (macOS 26+ for Cua Spaces), Windows 10/11, or an x86_64 Linux desktop (X11 or XWayland, with AT-SPI 2)
+- macOS 14+ (macOS 26+ for Cua Spaces), Windows 10/11, or a 64-bit Linux desktop (x86_64 or ARM64) (X11 or XWayland, with AT-SPI 2)
 - An agent that supports MCP or skills, such as Claude Code or Codex
 - A desktop calculator app. On Linux, use your distribution's, such as GNOME Calculator.
 
@@ -84,7 +84,7 @@ off. Switching it on is what grants access.
   relaunch. If the daemon does not come back, run `cua-driver permissions grant` again.
 </Callout>
 
-A small Cua Driver window walks you through both switches, one at a time. It moves on by itself when a switch turns on, offers an app tile to drag into the list if Cua Driver isn't there, and closes when both are on. To check later:
+A small Cua Driver window walks you through both switches, one at a time. It moves on by itself when a switch turns on, tells you how to add Cua Driver if it isn't in the list (click **+** under the list and choose `/Applications/CuaDriver.app`; before macOS 27 you can also drag its app tile in), and closes when both are on. To check later:
 
 ```bash test="cli-shape" id="cua-driver-permissions-status"
 cua-driver permissions status

@@ -12,7 +12,6 @@
       "mcp": [
         ["--socket", "string"],
         ["--grant", "repeatable-string"],
-        ["--claude-code-computer-use-compat", "flag"],
         ["--embedded", "flag"],
         ["--host-bundle-id", "string"]
       ],
@@ -23,8 +22,6 @@
         ["--dangerously-bypass-approvals", "flag"],
         ["--capability-manifest", "string"],
         ["--approve-capability-manifest", "flag"],
-        ["--session-policy", "string"],
-        ["--approve-session-policy", "flag"],
         ["--no-permissions-gate", "flag"],
         ["--embedded", "flag"],
         ["--host-bundle-id", "string"]

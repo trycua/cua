@@ -202,7 +202,10 @@ pub fn shutdown() {
 /// Complete only after the owning cursor's arrival buffer receives a compositor
 /// frame callback. Queue loss, renderer failure and timeout refuse input.
 pub async fn animate_and_wait(key: CursorKey, x: f64, y: f64) -> anyhow::Result<()> {
-    if !CONFIG_ENABLED.load(Ordering::Acquire)
+    // A human-origin session draws no cursor (its client draws the person's
+    // own), so there is no glide to wait for and nothing to enable or move.
+    if !crate::overlay::draws_cursor(&key)
+        || !CONFIG_ENABLED.load(Ordering::Acquire)
         || crate::overlay::wayland_overlay_backend()
             != crate::overlay::WaylandOverlayBackend::LayerShell
     {

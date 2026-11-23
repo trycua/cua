@@ -32,6 +32,10 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Upper bound for a first existing-profile dial, whose handshake the browser
+/// holds until its remote-debugging prompt is answered. Longer than the
+/// person-consent bound of `browser_prepare`, which cancels the dial first.
+const CONSENT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// Connection-scoped command policy. Grant-owned personal-profile sockets
 /// always use the reviewed set below; callers cannot opt out or relax it.
@@ -50,6 +54,7 @@ const EXISTING_PROFILE_METHODS: &[&str] = &[
     "DOM.focus",
     "DOM.getBoxModel",
     "DOM.getDocument",
+    "DOM.getNodeForLocation",
     "DOM.resolveNode",
     "DOM.scrollIntoViewIfNeeded",
     "DOM.setFileInputFiles",
@@ -287,11 +292,14 @@ impl Drop for CdpConnection {
 
 impl CdpConnection {
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
+        Self::connect_within(ws_url, CONNECT_TIMEOUT).await
+    }
+
+    async fn connect_within(ws_url: &str, timeout: Duration) -> anyhow::Result<Self> {
         validate_loopback_ws_url(ws_url).map_err(|e| anyhow::anyhow!(e))?;
-        let (ws, _resp) =
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(ws_url))
-                .await
-                .map_err(|_| anyhow::anyhow!("CDP connect to {ws_url} timed out"))??;
+        let (ws, _resp) = tokio::time::timeout(timeout, tokio_tungstenite::connect_async(ws_url))
+            .await
+            .map_err(|_| anyhow::anyhow!("CDP connect to {ws_url} timed out"))??;
         let (write, read) = ws.split();
         let demux = Arc::new(Demux {
             pending: StdMutex::new(HashMap::new()),
@@ -703,6 +711,13 @@ pub struct CdpPool {
 }
 
 impl CdpPool {
+    /// Share the pool for internal asynchronous cleanup without creating new state.
+    pub(super) fn shared_handle(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_shared_socket_ttls(SHARED_SOCKET_IDLE_TTL, SHARED_SOCKET_ABSOLUTE_TTL)
     }
@@ -796,8 +811,11 @@ impl CdpPool {
 
         // The WebSocket handshake can wait for browser-owned consent UI.
         // Never hold the entry mutex across that wait: other sessions keep
-        // using their sockets and revocation stays responsive.
-        let conn = Arc::new(CdpConnection::connect(ws_url).await?);
+        // using their sockets and revocation stays responsive. The browser
+        // answers the handshake only once its prompt is approved, so the dial
+        // must outlive a person's answer; `browser_prepare` bounds the wait.
+        let conn =
+            Arc::new(CdpConnection::connect_within(ws_url, CONSENT_HANDSHAKE_TIMEOUT).await?);
         conn.restrict_to_existing_profile();
         let mut conns = self.inner.conns.lock().await;
         self.inner.insert_shared(

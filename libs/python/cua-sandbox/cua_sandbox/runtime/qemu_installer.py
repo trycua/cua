@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import platform
@@ -21,8 +22,10 @@ QEMU_PORTABLE_URL = (
 )
 QEMU_DIR = cua_home() / "cua-sandbox" / "qemu"
 QEMU_INNER_DIR = "qemu-portable-20241220"
+QEMU_PORTABLE_SHA256 = "6ec04bc4a57d802734c5a1ca744d2c7348fe3399d4a6c5a69500afb8be144388"
 
 WIMLIB_URL = "https://wimlib.net/downloads/wimlib-1.14.5-windows-x86_64-bin.zip"
+WIMLIB_SHA256 = "2f446d6fa3866582175f1a22a7be198eeee0aec7aba5b4e04ad25c99eae2d265"
 WIMLIB_DIR = cua_home() / "cua-sandbox" / "wimlib"
 
 
@@ -111,37 +114,48 @@ def wimlib_imagex() -> str:
     )
 
 
-def _download_zip(url: str, dest_dir: Path, description: str) -> None:
-    """Download and extract a zip to dest_dir."""
+def _download_zip(url: str, dest_dir: Path, description: str, sha256: str) -> None:
+    """Download a zip, check its SHA-256 and extract it to dest_dir.
+
+    The archive is staged in a fresh private directory (mode 0700, random name)
+    next to dest_dir, inside the user's own cua home, and opened with exclusive
+    create. It never goes through a predictable path or the shared system temp
+    directory, so another local user cannot redirect the write through a planted
+    link or swap the archive before it is checked and extracted.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Downloading {description} from {url} ...")
-    tmp = tempfile.mktemp(suffix=".zip")
-    try:
+    with tempfile.TemporaryDirectory(prefix=".download-", dir=dest_dir.parent) as staging:
+        archive = Path(staging) / "download.zip"
+        digest = hashlib.sha256()
         with httpx.Client(follow_redirects=True, timeout=300) as client:
             with client.stream("GET", url) as resp:
                 resp.raise_for_status()
                 total = int(resp.headers.get("content-length", 0))
                 downloaded = 0
-                with open(tmp, "wb") as f:
+                with open(archive, "xb") as f:
                     for chunk in resp.iter_bytes(chunk_size=1024 * 256):
                         f.write(chunk)
+                        digest.update(chunk)
                         downloaded += len(chunk)
                         if total:
                             pct = downloaded * 100 // total
                             print(f"\r  downloading {description} … {pct}%", end="", flush=True)
                 print()
 
+        actual = digest.hexdigest()
+        if actual != sha256:
+            raise RuntimeError(
+                f"{description} download from {url} failed its integrity check "
+                f"(expected SHA-256 {sha256}, got {actual}); nothing was installed."
+            )
+
         logger.info(f"Extracting to {dest_dir} ...")
-        with zipfile.ZipFile(tmp) as zf:
+        with zipfile.ZipFile(archive) as zf:
             zf.extractall(dest_dir)
 
-        logger.info(f"{description} installed successfully")
-    finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    logger.info(f"{description} installed successfully")
 
 
 def _download_portable() -> None:
@@ -149,7 +163,7 @@ def _download_portable() -> None:
     marker = QEMU_DIR / QEMU_INNER_DIR / "qemu-system-x86_64.exe"
     if marker.exists():
         return
-    _download_zip(QEMU_PORTABLE_URL, QEMU_DIR, "QEMU portable")
+    _download_zip(QEMU_PORTABLE_URL, QEMU_DIR, "QEMU portable", QEMU_PORTABLE_SHA256)
 
 
 def _download_wimlib() -> None:
@@ -157,4 +171,4 @@ def _download_wimlib() -> None:
     marker = WIMLIB_DIR / "wimlib-imagex.exe"
     if marker.exists():
         return
-    _download_zip(WIMLIB_URL, WIMLIB_DIR, "wimlib")
+    _download_zip(WIMLIB_URL, WIMLIB_DIR, "wimlib", WIMLIB_SHA256)

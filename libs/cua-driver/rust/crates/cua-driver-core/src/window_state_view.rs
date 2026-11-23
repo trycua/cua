@@ -85,7 +85,7 @@ pub fn schema_properties() -> Value {
         },
         "since": {
             "type": "string",
-            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise."
+            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change."
         },
         "verbose": {
             "type": "boolean",
@@ -274,14 +274,40 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
+    // A tree read records its rows for the window's ui_tree_revision. A
+    // screenshot-only read carries no rows and leaves the revision alone.
+    let revision = structured
+        .get("tree_markdown")
+        .and_then(Value::as_str)
+        .filter(|md| !md.trim().is_empty())
+        .map(|md| {
+            crate::ui_tree_revision::record(
+                ctx.pid,
+                ctx.window_id,
+                &ctx.key,
+                structured.get("snapshot_id").and_then(Value::as_str),
+                md,
+            )
+        });
+    if let Some(revision) = revision {
+        structured[crate::ui_tree_revision::UI_TREE_REVISION_ARG] = json!(revision);
+    }
     // Publish identity even for full_output and empty trees. It comes from the
     // completed structured result, never a guessed or not-yet-published id.
-    if let Some(sid) = structured.get("snapshot_id").and_then(Value::as_str) {
+    let sid = structured.get("snapshot_id").and_then(Value::as_str);
+    if sid.is_some() || revision.is_some() {
+        let mut identity = String::new();
+        if let Some(sid) = sid {
+            identity.push_str(&format!(" snapshot_id={sid}"));
+        }
+        if let Some(revision) = revision {
+            identity.push_str(&format!(" ui_tree_revision={revision}"));
+        }
         for part in content.iter_mut() {
             if let Content::Text { text, .. } = part {
                 if text.starts_with("window_id=") {
                     let end = text.find('\n').unwrap_or(text.len());
-                    text.insert_str(end, &format!(" snapshot_id={sid}"));
+                    text.insert_str(end, &identity);
                     break;
                 }
             }
@@ -1370,7 +1396,10 @@ mod tests {
         assert_eq!(s["tree_markdown"], OLD);
         assert_eq!(s["tree_format"], "markdown");
         let text = text_of(&content);
-        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000a1\n"));
+        let revision = s["ui_tree_revision"].as_u64().unwrap();
+        assert!(text.starts_with(&format!(
+            "window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000a1 ui_tree_revision={revision}\n"
+        )));
         assert!(text.contains("element_token for row [N] = s000000a1:N"));
         assert!(text.contains("row [1] is \"s000000a1:1\""));
         assert!(!text.contains("this read stops at row"));
@@ -1457,6 +1486,44 @@ mod tests {
         );
         assert_eq!(s3["since_status"], "no_change");
         assert_eq!(s3["since"], "s000000f2");
+    }
+
+    #[test]
+    fn ui_tree_revision_holds_on_no_change_and_moves_on_a_diff() {
+        let (mut c0, mut s0) = payload("s0000c3b0", OLD);
+        apply(&opts(json!({})), &ctx(7201), &mut c0, &mut s0);
+        let first = s0["ui_tree_revision"].as_u64().unwrap();
+
+        let (mut c1, mut s1) = payload("s0000c3b1", OLD);
+        apply(
+            &opts(json!({"since": "s0000c3b0"})),
+            &ctx(7201),
+            &mut c1,
+            &mut s1,
+        );
+        assert_eq!(s1["since_status"], "no_change");
+        assert_eq!(s1["ui_tree_revision"], first);
+
+        let edited = OLD.replace("\"a\"", "\"ab\"");
+        let (mut c2, mut s2) = payload("s0000c3b2", &edited);
+        apply(
+            &opts(json!({"since": "s0000c3b1"})),
+            &ctx(7201),
+            &mut c2,
+            &mut s2,
+        );
+        assert_eq!(s2["since_status"], "diff");
+        let moved = s2["ui_tree_revision"].as_u64().unwrap();
+        assert!(moved > first, "{moved} > {first}");
+        assert!(text_of(&c2).contains(&format!("ui_tree_revision={moved}")));
+    }
+
+    #[test]
+    fn a_read_without_rows_has_no_ui_tree_revision() {
+        let (mut content, mut s) = payload("s0000c3b3", "");
+        apply(&opts(json!({})), &ctx(7202), &mut content, &mut s);
+        assert!(s.get("ui_tree_revision").is_none());
+        assert!(!text_of(&content).contains("ui_tree_revision"));
     }
 
     fn query_ctx(window_id: u64, query: &str) -> ViewContext<'static> {
@@ -1636,10 +1703,19 @@ mod tests {
             &mut content,
             &mut s,
         );
+        let revision = s
+            .as_object_mut()
+            .unwrap()
+            .remove("ui_tree_revision")
+            .unwrap();
         assert_eq!(s, before);
         assert_eq!(
             text_of(&content),
-            text_before.replacen("elements=4", "elements=4 snapshot_id=s000000a2", 1)
+            text_before.replacen(
+                "elements=4",
+                &format!("elements=4 snapshot_id=s000000a2 ui_tree_revision={revision}"),
+                1
+            )
         );
         assert_eq!(s["elements"], before["elements"]);
         assert_eq!(s["_note"], before["_note"]);

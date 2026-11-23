@@ -5,8 +5,8 @@
 //!
 //! Shown by the startup gate when the bundled app is missing a permission.
 //! It follows the guide window in Cua Spaces (a step, a reason, a button to
-//! the right System Settings pane, and an app tile to drag into the list),
-//! drawn natively with AppKit through raw `objc2::msg_send!`, like
+//! the right System Settings pane, the + route with the app's path, and,
+//! before macOS 27, an app tile to drag into the list), drawn natively with AppKit through raw `objc2::msg_send!`, like
 //! `cursor/overlay.rs`.
 //!
 //! ```text
@@ -20,13 +20,18 @@
 //! │ ◌ Waiting for the switch to turn on…            │
 //! │ [ Open System Settings ]                        │
 //! │                                                 │
-//! │ If Cua Driver isn't in the list, drag this in:  │
+//! │ If Cua Driver isn't in the list, click + under  │
+//! │ it and choose /Applications/CuaDriver.app. Or   │
+//! │ drag this into it:                              │
 //! │ ┌─────────────────────────────────────────────┐ │
 //! │ │ [icon]  Cua Driver                    ✋ Drag │ │
 //! │ └─────────────────────────────────────────────┘ │
 //! │                                     [ Not Now ] │
 //! └─────────────────────────────────────────────────┘
 //! ```
+//!
+//! From macOS 27 the lists refuse a drop, so "Or drag this into it" and the
+//! tile show only before 27.
 //!
 //! A 1 Hz timer reads a fresh status (from a short-lived helper process,
 //! see `gate::fresh_status`) and feeds it to [`GuideMachine`], which moves
@@ -249,7 +254,7 @@ const DONE_TICKS: u32 = 2;
 
 /// The step view's rows, top to bottom: the gap above each and the least
 /// height it takes. Counter, title, why, how, waiting line, Open System
-/// Settings, drag hint, tile, note.
+/// Settings, add hint, drag tile, note.
 const ROWS: [(f64, f64); 9] = [
     (20.0, 16.0),
     (4.0, 26.0),
@@ -264,12 +269,24 @@ const ROWS: [(f64, f64); 9] = [
 /// Below the last row: a gap, then Not Now 16 pt above the bottom edge.
 const BELOW_ROWS: f64 = 20.0 + 32.0 + 16.0;
 
+/// The drag tile's place in `ROWS`.
+const TILE_ROW: usize = 7;
+
 /// Each row's top and height for the heights its contents need, and the
-/// window height that holds them.
-fn stack(needed: [f64; 9]) -> ([(f64, f64); 9], f64) {
+/// window height that holds them. Without the drag tile its row takes no
+/// room.
+fn stack(needed: [f64; 9], tile: bool) -> ([(f64, f64); 9], f64) {
     let mut y = 0.0;
     let mut rows = [(0.0, 0.0); 9];
-    for (row, ((gap, least), need)) in rows.iter_mut().zip(ROWS.into_iter().zip(needed)) {
+    for (i, (row, ((gap, least), need))) in rows
+        .iter_mut()
+        .zip(ROWS.into_iter().zip(needed))
+        .enumerate()
+    {
+        if i == TILE_ROW && !tile {
+            *row = (y, 0.0);
+            continue;
+        }
         y += gap;
         *row = (y, least.max(need.ceil()));
         y += row.1;
@@ -310,6 +327,8 @@ struct Views {
     spinner: usize,
     /// The step rows in `ROWS` order.
     rows: [usize; 9],
+    /// Whether the drag tile shows (`guide::lists_accept_drops`).
+    tile: bool,
     /// Content height, the most either step needs.
     win_h: f64,
 }
@@ -422,8 +441,14 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![open_btn, setKeyEquivalent: ns_string("\r")];
     let _: () = msg_send![step_view, addSubview: open_btn];
 
+    let bundle = app_bundle_path();
+    let drops = guide::lists_accept_drops(
+        crate::tools::health_report::sw_vers_product_version()
+            .as_deref()
+            .and_then(guide::macos_major),
+    );
     let hint = label(
-        &guide::for_app(guide::DRAG_HINT, &app_name),
+        &guide::add_hint(&app_name, bundle.as_deref(), drops),
         12.0,
         false,
         rect(PAD, 228.0, CONTENT_W, 18.0),
@@ -431,9 +456,9 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     set_secondary(hint);
     let _: () = msg_send![step_view, addSubview: hint];
 
-    let bundle = app_bundle_path();
     TILE_BUNDLE.with(|cell| *cell.borrow_mut() = bundle.clone());
     let tile = drag_tile(CONTENT_W, bundle.as_deref(), &app_name);
+    let _: () = msg_send![tile, setHidden: !drops];
     let _: () = msg_send![step_view, addSubview: tile];
 
     let note = label("", 11.0, false, rect(PAD, 320.0, CONTENT_W, 32.0));
@@ -506,6 +531,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
             counter, title, why, how, waiting, open_btn, hint, tile, note,
         ]
         .map(|v| v as usize),
+        tile: drops,
         win_h: WIN_H,
     };
     // Tall enough for either step, so the window keeps its size between them.
@@ -513,7 +539,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
         .into_iter()
         .map(|step| {
             set_words(&views, step, &app_name);
-            stack(views.rows.map(|v| needed_height(ptr(v)))).1
+            stack(views.rows.map(|v| needed_height(ptr(v))), views.tile).1
         })
         .fold(WIN_H, f64::max);
     // Not Now and the finished view keep their place from the bottom.
@@ -577,7 +603,7 @@ unsafe fn render(views: &Views, step: GuideStep, app: &str) {
         return;
     }
     set_words(views, step, app);
-    let (rows, _) = stack(views.rows.map(|v| needed_height(ptr(v))));
+    let (rows, _) = stack(views.rows.map(|v| needed_height(ptr(v))), views.tile);
     for (&view, (y, h)) in views.rows.iter().zip(rows) {
         let mut frame: NSRect = msg_send![ptr(view), frame];
         frame.origin.y = views.win_h - y - h;
@@ -855,7 +881,7 @@ unsafe fn drag_tile(width: f64, bundle: Option<&std::path::Path>, app: &str) -> 
     let _: () = msg_send![tile, addSubview: drag];
 
     // Tooltip, and the role VoiceOver reads.
-    let _: () = msg_send![tile, setToolTip: ns_string(&guide::for_app(guide::DRAG_HINT, app))];
+    let _: () = msg_send![tile, setToolTip: ns_string(&guide::for_app(guide::TILE_TOOLTIP, app))];
     tile
 }
 
@@ -1217,7 +1243,7 @@ mod tests {
 
     #[test]
     fn layout_fits_the_window() {
-        let (rows, win_h) = stack([0.0; 9]);
+        let (rows, win_h) = stack([0.0; 9], true);
         let tops: Vec<f64> = rows.iter().map(|&(y, _)| y).collect();
         assert_eq!(
             tops,
@@ -1232,12 +1258,22 @@ mod tests {
     }
 
     #[test]
+    fn without_the_drag_tile_its_row_takes_no_room() {
+        let (with, with_h) = stack([0.0; 9], true);
+        let (without, without_h) = stack([0.0; 9], false);
+        assert_eq!(without[TILE_ROW].1, 0.0);
+        assert_eq!(without[8].0, with[8].0 - ROWS[TILE_ROW].0 - TILE_H);
+        assert_eq!(without_h, with_h - ROWS[TILE_ROW].0 - TILE_H);
+        assert_eq!(without[..TILE_ROW], with[..TILE_ROW]);
+    }
+
+    #[test]
     fn rows_grow_to_fit_a_long_host_name() {
-        let (short, short_h) = stack([0.0; 9]);
+        let (short, short_h) = stack([0.0; 9], true);
         let mut needed = [0.0; 9];
         needed[1] = 52.0;
         needed[3] = 35.2;
-        let (long, long_h) = stack(needed);
+        let (long, long_h) = stack(needed, true);
         assert_eq!(long[1], (40.0, 52.0));
         assert_eq!(long[3], (140.0, 36.0));
         assert_eq!(long[8].0, short[8].0 + 26.0 + 18.0);

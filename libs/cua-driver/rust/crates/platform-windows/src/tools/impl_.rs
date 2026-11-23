@@ -402,6 +402,7 @@ use super::{
     launch_app::LaunchAppTool,
     list_apps::ListAppsTool,
     list_windows::ListWindowsTool,
+    mouse_move_relative::MouseMoveRelativeTool,
     move_cursor::MoveCursorTool,
     press_key::PressKeyTool,
     right_click::RightClickTool,
@@ -1451,6 +1452,7 @@ pub fn build_registry_with_provider(
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
     }));
+    r.register(Box::new(MouseMoveRelativeTool));
     r.register(Box::new(SetAgentCursorEnabledV2Tool {
         state: state.clone(),
     }));

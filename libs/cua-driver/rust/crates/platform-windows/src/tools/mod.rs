@@ -49,6 +49,8 @@ mod list_apps;
 #[cfg(target_os = "windows")]
 mod list_windows;
 #[cfg(target_os = "windows")]
+mod mouse_move_relative;
+#[cfg(target_os = "windows")]
 mod move_cursor;
 #[cfg(target_os = "windows")]
 pub(crate) mod page;

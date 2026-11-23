@@ -342,7 +342,8 @@ impl Tool for UserInputEventsTool {
                 `kind` (mouse_move, mouse_down, mouse_up, wheel, key_down, key_up), `source` \
                 (`hardware` for a physical device, `driver` for this driver's own input, \
                 `injected` for other injected input, including the driver's pen and touch \
-                background input, which Windows cannot tag), screen `x`/`y` for mouse input, \
+                background input, which Windows cannot tag; the driver's own cursor \
+                placements raise no event), screen `x`/`y` for mouse input, \
                 and the `pid` and `window_id` of the window the input went to: for mouse \
                 input the window holding mouse capture, or else the one under the pointer \
                 (the foreground window for the wheel when Windows routes it by focus); for \

@@ -43,7 +43,8 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorInfo, GetCursorPos, GetWindowRect, LoadCursorW, SendMessageTimeoutW,
-    WindowFromPoint, CURSORINFO, CURSOR_SHOWING, GA_ROOT, SMTO_ABORTIFHUNG, WM_NCHITTEST,
+    SetCursorPos, WindowFromPoint, CURSORINFO, CURSOR_SHOWING, GA_ROOT, SMTO_ABORTIFHUNG,
+    WM_NCHITTEST,
 };
 
 use crate::pointer_shape_map::{resolve_uia_chain, shape_for_idc, shape_for_nchittest, IDC_IDS};
@@ -156,7 +157,7 @@ impl PointerShapeBackend for WindowsPointerShapes {
     }
 
     fn warp_pointer(&self, x: f64, y: f64) -> bool {
-        unsafe { crate::input::set_cursor_pos(x.round() as i32, y.round() as i32) }.is_ok()
+        unsafe { SetCursorPos(x.round() as i32, y.round() as i32) }.is_ok()
     }
 
     fn limitation(&self) -> Option<String> {

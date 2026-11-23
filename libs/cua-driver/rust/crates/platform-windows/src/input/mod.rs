@@ -34,7 +34,7 @@ pub use mouse::{
     send_click_synthesized_desktop_mods, send_click_synthesized_mods, send_wheel_synthesized,
 };
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, POINT, RECT};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::Security::{
     GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
     TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
@@ -42,35 +42,7 @@ use windows::Win32::Security::{
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetClipCursor, GetCursorPos, GetWindowThreadProcessId, SetCursorPos,
-};
-
-/// Place the real cursor with `SetCursorPos`, noting the point so the input
-/// monitor counts the move as the driver's. The noted point is the request
-/// clamped to the cursor clip rectangle, where Windows puts the cursor. A
-/// placement where the cursor already is moves nothing, and one that failed
-/// is withdrawn.
-pub(crate) unsafe fn set_cursor_pos(x: i32, y: i32) -> windows::core::Result<()> {
-    let mut clip = RECT::default();
-    let target = match unsafe { GetClipCursor(&mut clip) } {
-        Ok(()) => crate::user_input_monitor::clip_point(
-            (x, y),
-            (clip.left, clip.top, clip.right, clip.bottom),
-        ),
-        Err(_) => (x, y),
-    };
-    let mut current = POINT::default();
-    let moves = unsafe { GetCursorPos(&mut current) }.is_err() || (current.x, current.y) != target;
-    if moves {
-        crate::user_input_monitor::expect_cursor_placement(target.0, target.1);
-    }
-    let placed = unsafe { SetCursorPos(x, y) };
-    if moves && placed.is_err() {
-        crate::user_input_monitor::withdraw_cursor_placement(target.0, target.1);
-    }
-    placed
-}
+use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
 /// Windows mandatory integrity-level RIDs. Higher = more privileged. See
 /// https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control

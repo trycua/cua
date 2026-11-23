@@ -55,8 +55,9 @@ use windows::Win32::UI::Input::Pointer::{
 use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
-    IsWindow, LockSetForegroundWindow, SetForegroundWindow, SetWindowLongPtrW, WindowFromPoint,
-    GA_ROOT, GWL_EXSTYLE, LSFW_LOCK, LSFW_UNLOCK, PT_PEN, PT_TOUCH, WS_EX_NOACTIVATE,
+    IsWindow, LockSetForegroundWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW,
+    WindowFromPoint, GA_ROOT, GWL_EXSTYLE, LSFW_LOCK, LSFW_UNLOCK, PT_PEN, PT_TOUCH,
+    WS_EX_NOACTIVATE,
 };
 
 #[derive(Default)]
@@ -848,9 +849,9 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
         // then restore, and restore once more to win the race. No-op for
         // pointer-aware targets (Chromium) that never moved the cursor.
         if have_cpos {
-            let _ = crate::input::set_cursor_pos(cpos.x, cpos.y);
+            let _ = SetCursorPos(cpos.x, cpos.y);
             sleep(Duration::from_millis(12));
-            let _ = crate::input::set_cursor_pos(cpos.x, cpos.y);
+            let _ = SetCursorPos(cpos.x, cpos.y);
         }
         // device intentionally NOT destroyed — see TOUCH_DEV.
         res.map_err(|e| {

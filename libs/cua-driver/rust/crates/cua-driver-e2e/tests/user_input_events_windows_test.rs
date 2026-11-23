@@ -110,15 +110,14 @@ fn the_drivers_input_and_another_processes_input_are_told_apart() {
         "the driver's wheel was reported as injected: {events:?}"
     );
 
-    // SetCursorPos carries no tag; the move it makes is still the driver's.
+    // SetCursorPos raises no low-level hook event, so a desktop move_cursor
+    // must leave nothing that reads as someone else's input.
     let moved = driver.call("move_cursor", json!({"scope": "desktop", "x": 40, "y": 40}));
     assert!(!moved.is_error(), "move_cursor failed: {}", moved.text());
-    let (events, cursor) = read_until(&mut driver, &cursor, |events| {
-        has(events, "mouse_move", "driver")
-    });
+    let (events, cursor) = read_until(&mut driver, &cursor, |_| false);
     assert!(
-        only(&events, "mouse_move", "driver"),
-        "the driver's cursor placement was not reported as the driver's alone: {events:?}"
+        !has(&events, "mouse_move", "injected") && !has(&events, "mouse_move", "hardware"),
+        "the driver's cursor placement was reported as someone else's input: {events:?}"
     );
 
     nudge_cursor_from_another_process();

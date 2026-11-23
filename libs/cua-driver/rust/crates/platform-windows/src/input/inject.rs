@@ -149,8 +149,18 @@ pub(crate) unsafe fn force_foreground_assisted(target: HWND) -> (bool, bool) {
 
     const VK_NONAME: u8 = 0xFC;
     unsafe {
-        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
-        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
+        keybd_event(
+            VK_NONAME,
+            0,
+            KEYBD_EVENT_FLAGS(0),
+            crate::user_input_monitor::DRIVER_INPUT_TAG,
+        );
+        keybd_event(
+            VK_NONAME,
+            0,
+            KEYEVENTF_KEYUP,
+            crate::user_input_monitor::DRIVER_INPUT_TAG,
+        );
     }
     for _ in 0..3 {
         if unsafe { force_foreground_attached(target) } {

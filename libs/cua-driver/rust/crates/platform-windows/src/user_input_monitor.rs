@@ -9,17 +9,16 @@
 //! hook wait on a reader), and passes the input on unchanged.
 //!
 //! The source comes from the hook's injected flag: input without it came
-//! from a device. The driver tags its `SendInput` mouse input with
-//! [`DRIVER_INPUT_TAG`] in `dwExtraInfo`, so that input reports as `driver`
-//! and other injected input as `injected`. Its keyboard input is not tagged:
-//! with the tag, WPF targets stopped reading typed text in the Windows E2E
-//! harness. So the driver's own keys, like its synthetic pen and touch input,
-//! report as `injected`. `SetCursorPos` raises no low-level hook event, so
-//! the driver's cursor placements are not reported at all.
+//! from a device. The driver tags every `SendInput` and `keybd_event` input
+//! with [`DRIVER_INPUT_TAG`] in `dwExtraInfo`, so its own input reports as
+//! `driver` and other injected input as `injected`. Synthetic pen and touch
+//! injection carries no tag and reports as `injected`. `SetCursorPos` raises
+//! no low-level hook event, so the driver's cursor placements are not
+//! reported at all.
 
 use cua_driver_core::user_input::{InputKind, InputSource, MouseButton};
 
-/// `dwExtraInfo` on the mouse input the driver sends with `SendInput`.
+/// `dwExtraInfo` on every input the driver sends with `SendInput`.
 pub(crate) const DRIVER_INPUT_TAG: usize = 0x6375_6164;
 
 const WM_KEYDOWN: u32 = 0x0100;

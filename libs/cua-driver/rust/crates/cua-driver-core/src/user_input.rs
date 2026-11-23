@@ -197,7 +197,7 @@ impl LogState {
         });
         while self.events.len() > capacity {
             if let Some(evicted) = self.events.pop_front() {
-                self.evicted_through = evicted.seq;
+                self.evicted_through = self.evicted_through.max(evicted.seq);
             }
         }
     }
@@ -245,8 +245,8 @@ impl UserInputLog {
 
     /// Record an input observed at `time_ms`. This never waits: the input
     /// goes into a channel, and when no read holds the log, up to
-    /// [`RECORD_DRAIN_LIMIT`] queued inputs are taken in; a read takes in the
-    /// rest. A platform hook can call it directly.
+    /// [`RECORD_DRAIN_LIMIT`] queued inputs are taken in; a read takes in up to
+    /// the log's capacity, which the queue holds at most. A platform hook can call it directly.
     pub fn record(&self, input: ObservedInput, time_ms: u64) {
         if let Err(mpsc::TrySendError::Full(_)) = self.inputs.try_send((input, time_ms)) {
             self.dropped.fetch_add(1, Ordering::AcqRel);
@@ -266,7 +266,7 @@ impl UserInputLog {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.take_inputs(&mut state, usize::MAX);
+        self.take_inputs(&mut state, self.capacity);
         let cursor = Cursor {
             epoch: self.epoch,
             seq: state.last_seq,
@@ -356,10 +356,10 @@ impl Tool for UserInputEventsTool {
                 watching: it returns a `cursor` and no events. Pass that cursor as `since` on \
                 the next call to get every input since, and a new cursor. Each event has \
                 `kind` (mouse_move, mouse_down, mouse_up, wheel, key_down, key_up), `source` \
-                (`hardware` for a physical device, `driver` for this driver's own mouse \
-                input, `injected` for other injected input, including the driver's keys and \
-                its pen and touch background input, which carry no tag; the driver's \
-                cursor placements raise no event), screen `x`/`y` for mouse input, \
+                (`hardware` for a physical device, `driver` for this driver's own input, \
+                `injected` for other injected input, including the driver's pen and touch \
+                background input, which Windows cannot tag; the driver's own cursor \
+                placements raise no event), screen `x`/`y` for mouse input, \
                 and the `pid` and `window_id` of the window the input went to: for mouse \
                 input the window holding mouse capture, or else the one under the pointer \
                 (the foreground window for the wheel when Windows routes it by focus); for \
@@ -561,6 +561,24 @@ mod tests {
         assert!(read.history_lost);
         assert_eq!(read.events.len(), 4);
         assert_eq!(read.cursor.seq, 6);
+    }
+
+    #[test]
+    fn history_lost_stays_lost_when_an_older_event_is_evicted_later() {
+        // A capacity above RECORD_DRAIN_LIMIT, so a record takes in part of
+        // the queue, marks the dropped inputs, and leaves older events that a
+        // later read evicts.
+        let log = UserInputLog::with_epoch(128, 1);
+        log.record(key(InputSource::Hardware), 10);
+        log.record(key(InputSource::Hardware), 10);
+        let cursor = log.read(None).unwrap().cursor;
+        let held = log.state.lock().unwrap();
+        for _ in 0..129 {
+            log.record(key(InputSource::Hardware), 11);
+        }
+        drop(held);
+        log.record(key(InputSource::Hardware), 12);
+        assert!(log.read(Some(cursor)).unwrap().history_lost);
     }
 
     #[test]

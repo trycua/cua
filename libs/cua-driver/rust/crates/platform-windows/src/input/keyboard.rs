@@ -1139,7 +1139,7 @@ fn sentinel_key_input(up: bool) -> INPUT {
                     KEYBD_EVENT_FLAGS(0)
                 },
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     }
@@ -1238,7 +1238,7 @@ fn unicode_key_input(unit: u16, up: bool) -> INPUT {
                 wScan: unit,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     }
@@ -1274,7 +1274,7 @@ fn scanned_key_input(vk: VIRTUAL_KEY, scan: u32, up: bool) -> INPUT {
                 wScan: scan,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     }

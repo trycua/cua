@@ -771,6 +771,9 @@ struct EisState {
     /// absolute pointer before seat binding, then a second live device. Waiting
     /// briefly for this stream to settle avoids dispatching to the transient one.
     last_device_event: Option<std::time::Instant>,
+    /// Last seat event. No event says the seat list is complete, so it is
+    /// taken as complete once seats have been quiet for [`QUIET_PERIOD`].
+    last_seat_event: Option<std::time::Instant>,
     /// The compositor's xkb keymap (delivered by the `ei_keyboard` device), so
     /// key typing follows the user's real layout. `None` until the `Keymap` event
     /// arrives, and typing keys is refused until it does.
@@ -792,8 +795,13 @@ struct SeatData {
     done: bool,
 }
 
+/// How long the device or seat stream must be quiet before the worker takes
+/// it as settled.
+const QUIET_PERIOD: Duration = Duration::from_millis(200);
+
 /// Every seat has announced its capabilities and none offers a relative
-/// pointer, so no relative pointer device will come.
+/// pointer, so no relative pointer device will come. Only meaningful once
+/// the seat list has settled.
 fn no_relative_pointer_offered<'a>(seats: impl IntoIterator<Item = &'a SeatData>) -> bool {
     let mut any = false;
     for seat in seats {
@@ -899,6 +907,11 @@ impl EisState {
                 }
             }
             Event::Seat(seat, ev) => {
+                self.last_seat_event = Some(std::time::Instant::now());
+                if let reis::ei::seat::Event::Destroyed { .. } = ev {
+                    self.seats.remove(&seat);
+                    return;
+                }
                 let data = self.seats.entry(seat.clone()).or_default();
                 match ev {
                     reis::ei::seat::Event::Capability { mask, interface } => {
@@ -1061,6 +1074,7 @@ impl EisState {
     /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
     fn cmd_ready(&self, cmd: &Cmd) -> bool {
         if matches!(cmd, Cmd::MoveRelative { .. })
+            && self.seats_are_settled()
             && no_relative_pointer_offered(self.seats.values())
         {
             return true;
@@ -1347,9 +1361,13 @@ impl EisState {
     }
 
     fn device_is_settled(&self) -> bool {
-        const DEVICE_QUIET_PERIOD: Duration = Duration::from_millis(200);
         self.last_device_event
-            .is_some_and(|last| last.elapsed() >= DEVICE_QUIET_PERIOD)
+            .is_some_and(|last| last.elapsed() >= QUIET_PERIOD)
+    }
+
+    fn seats_are_settled(&self) -> bool {
+        self.last_seat_event
+            .is_some_and(|last| last.elapsed() >= QUIET_PERIOD)
     }
 
     fn send_tap(&self, code: u32) -> anyhow::Result<()> {

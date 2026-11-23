@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use cua_driver_core::{
     action_record::ActionTransport,
-    protocol::{Content, ToolResult},
+    protocol::ToolResult,
     relative_pointer,
     tool::{Tool, ToolDef},
 };
@@ -59,14 +59,20 @@ impl Tool for MouseMoveRelativeTool {
                         .and_then(|guard| guard.refusal_at((at.x, at.y)))
                     {
                         Some(refused) => {
-                            let reason = refused
-                                .content
-                                .iter()
-                                .find_map(|content| match content {
-                                    Content::Text { text, .. } => Some(text.clone()),
-                                    _ => None,
-                                })
+                            // Said in its own words: the guard's refusal text
+                            // reports that nothing was sent, which is only
+                            // true before the first event.
+                            let window = refused
+                                .structured_content
+                                .as_ref()
+                                .map(|structured| structured["window"].clone())
                                 .unwrap_or_default();
+                            let reason = format!(
+                                "the next event would land over {} (pid {}), which is not the \
+                                 app in front, so the motion stopped there",
+                                window["app_name"].as_str().unwrap_or("another app"),
+                                window["pid"],
+                            );
                             refusal = Some(refused);
                             anyhow::bail!("{reason}")
                         }

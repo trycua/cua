@@ -48,16 +48,31 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Place the real cursor with `SetCursorPos`, noting the point so the input
 /// monitor counts the move as the driver's. A placement where the cursor
-/// already is moves nothing, and one that failed is withdrawn.
+/// already is moves nothing, and one that failed is withdrawn. When Windows
+/// clips the cursor elsewhere, that point is noted instead.
 pub(crate) unsafe fn set_cursor_pos(x: i32, y: i32) -> windows::core::Result<()> {
-    let mut current = POINT::default();
-    let moves = unsafe { GetCursorPos(&mut current) }.is_err() || (current.x, current.y) != (x, y);
+    let cursor = || {
+        let mut point = POINT::default();
+        unsafe { GetCursorPos(&mut point) }
+            .ok()
+            .map(|()| (point.x, point.y))
+    };
+    let before = cursor();
+    let moves = before != Some((x, y));
     if moves {
         crate::user_input_monitor::expect_cursor_placement(x, y);
     }
     let placed = unsafe { SetCursorPos(x, y) };
-    if moves && placed.is_err() {
-        crate::user_input_monitor::withdraw_cursor_placement(x, y);
+    if moves {
+        let after = cursor();
+        if placed.is_err() || after != Some((x, y)) {
+            crate::user_input_monitor::withdraw_cursor_placement(x, y);
+        }
+        if let Some((ax, ay)) =
+            after.filter(|&point| placed.is_ok() && point != (x, y) && Some(point) != before)
+        {
+            crate::user_input_monitor::expect_cursor_placement(ax, ay);
+        }
     }
     placed
 }

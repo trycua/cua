@@ -5,8 +5,8 @@
 //!
 //! Low-level mouse and keyboard hooks run on a thread of their own, started
 //! by the first read. Each hook decodes the input, attributes it to the
-//! window it went to, hands it to a recorder thread that appends it to the
-//! core log, and passes the input on unchanged.
+//! window it went to, records it in the core log (which never makes the
+//! hook wait on a reader), and passes the input on unchanged.
 //!
 //! The source comes from the hook's injected flag: input without it came
 //! from a device. The driver tags every `SendInput` event with
@@ -178,10 +178,12 @@ mod hook {
         UnhookWindowsHookEx, WindowFromPoint, GA_ROOT, GUITHREADINFO, HC_ACTION, KBDLLHOOKSTRUCT,
         LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL,
     };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, MOUSEWHEEL_ROUTING_MOUSE_POS, SPI_GETMOUSEWHEELROUTING,
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
 
-    /// The hooks hand each input to a recorder thread, so a callback never
-    /// waits on a reader holding the log.
-    static INPUTS: OnceLock<mpsc::Sender<(ObservedInput, u64)>> = OnceLock::new();
+    static LOG: OnceLock<Arc<UserInputLog>> = OnceLock::new();
     static RUNNING: AtomicBool = AtomicBool::new(false);
     static STARTING: Mutex<()> = Mutex::new(());
 
@@ -196,31 +198,18 @@ mod hook {
         if running() {
             return Ok(());
         }
-        if INPUTS.get().is_none() {
-            let (send, receive) = mpsc::channel::<(ObservedInput, u64)>();
-            let log = log.clone();
-            std::thread::Builder::new()
-                .name("cua-user-input-log".into())
-                .spawn(move || {
-                    for (input, time_ms) in receive {
-                        log.record(input, time_ms);
-                    }
-                })
-                .map_err(|error| format!("could not start the recorder thread: {error}"))?;
-            let _ = INPUTS.set(send);
-        }
+        let _ = LOG.set(log.clone());
         let (ready, started) = mpsc::channel();
         std::thread::Builder::new()
             .name("cua-user-input-hooks".into())
             .spawn(move || run(ready))
             .map_err(|error| format!("could not start the hook thread: {error}"))?;
         // The thread reports once both hooks are installed or one failed; a
-        // thread that ends without reporting drops `ready`.
+        // thread that ends without reporting drops `ready`. It sets RUNNING
+        // itself, so its exit is never overwritten here.
         started
             .recv()
-            .map_err(|_| "the hook thread ended before installing the hooks".to_owned())??;
-        RUNNING.store(true, Ordering::Release);
-        Ok(())
+            .map_err(|_| "the hook thread ended before installing the hooks".to_owned())?
     }
 
     fn run(ready: mpsc::Sender<Result<(), String>>) {
@@ -247,6 +236,7 @@ mod hook {
                     return;
                 }
             };
+        RUNNING.store(true, Ordering::Release);
         let _ = ready.send(Ok(()));
         // Low-level hooks are called through this thread's message loop.
         // GetMessageW returns 0 on WM_QUIT and -1 on failure.
@@ -271,24 +261,43 @@ mod hook {
         ((pid != 0).then_some(pid), Some(hwnd.0 as u64))
     }
 
-    /// The top-level window mouse input at `point` goes to: the one holding
-    /// mouse capture on the foreground thread, as during a drag, or else the
+    /// Whether the wheel goes to the window under the pointer, the Windows
+    /// default, rather than to the focused window.
+    fn wheel_follows_pointer() -> bool {
+        let mut routing = MOUSEWHEEL_ROUTING_MOUSE_POS;
+        let _ = unsafe {
+            SystemParametersInfoW(
+                SPI_GETMOUSEWHEELROUTING,
+                0,
+                Some(&mut routing as *mut u32 as *mut _),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        routing == MOUSEWHEEL_ROUTING_MOUSE_POS
+    }
+
+    /// The top-level window mouse input of `kind` at `point` goes to: the one
+    /// holding mouse capture on the foreground thread, as during a drag; for
+    /// the wheel, the foreground window when the wheel follows focus; else the
     /// one under the pointer.
-    fn mouse_target(point: POINT) -> HWND {
+    fn mouse_target(kind: InputKind, point: POINT) -> HWND {
         let mut info = GUITHREADINFO {
             cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
             ..Default::default()
         };
         let window = match unsafe { GetGUIThreadInfo(0, &mut info) } {
             Ok(()) if !info.hwndCapture.0.is_null() => info.hwndCapture,
+            _ if kind == InputKind::Wheel && !wheel_follows_pointer() => unsafe {
+                GetForegroundWindow()
+            },
             _ => unsafe { WindowFromPoint(point) },
         };
         unsafe { GetAncestor(window, GA_ROOT) }
     }
 
     fn record(input: ObservedInput) {
-        if let Some(inputs) = INPUTS.get() {
-            let _ = inputs.send((input, now_ms()));
+        if let Some(log) = LOG.get() {
+            log.record(input, now_ms());
         }
     }
 
@@ -304,7 +313,7 @@ mod hook {
                 {
                     source = super::InputSource::Driver;
                 }
-                let (pid, window_id) = owner(mouse_target(info.pt));
+                let (pid, window_id) = owner(mouse_target(kind, info.pt));
                 record(ObservedInput {
                     kind,
                     source,

@@ -140,6 +140,9 @@ pub struct UserInputLog {
     epoch: u64,
     capacity: usize,
     state: Mutex<LogState>,
+    /// Inputs recorded while a read held `state`, taken in by the next
+    /// record or read.
+    pending: Mutex<Vec<(ObservedInput, u64)>>,
 }
 
 #[derive(Default)]
@@ -151,36 +154,17 @@ struct LogState {
     read_through: u64,
 }
 
-impl UserInputLog {
-    pub fn new(capacity: usize) -> Self {
-        Self::with_epoch(capacity, now_ms())
-    }
-
-    pub fn with_epoch(capacity: usize, epoch: u64) -> Self {
-        Self {
-            epoch,
-            capacity: capacity.max(1),
-            state: Mutex::new(LogState::default()),
-        }
-    }
-
-    fn state(&self) -> std::sync::MutexGuard<'_, LogState> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Record an input observed at `time_ms`. A mouse move that continues the
-    /// newest event's run updates that event, as long as no read has returned
-    /// a cursor at or past it; otherwise it starts a new event, so no reader
-    /// gets a count or start time from before its cursor.
-    pub fn record(&self, input: ObservedInput, time_ms: u64) {
-        let mut state = self.state();
-        state.last_seq += 1;
-        let seq = state.last_seq;
-        let read_through = state.read_through;
+impl LogState {
+    /// A mouse move that continues the newest event's run updates that
+    /// event, as long as no read has returned a cursor at or past it;
+    /// otherwise it starts a new event, so no reader gets a count or start
+    /// time from before its cursor.
+    fn apply(&mut self, input: ObservedInput, time_ms: u64, capacity: usize) {
+        self.last_seq += 1;
+        let seq = self.last_seq;
+        let read_through = self.read_through;
         if input.kind == InputKind::MouseMove {
-            if let Some(tail) = state.events.back_mut() {
+            if let Some(tail) = self.events.back_mut() {
                 let same_run = tail.seq > read_through
                     && tail.input.kind == InputKind::MouseMove
                     && tail.input.source == input.source
@@ -196,24 +180,66 @@ impl UserInputLog {
                 }
             }
         }
-        state.events.push_back(UserInputEvent {
+        self.events.push_back(UserInputEvent {
             seq,
             input,
             first_time_ms: time_ms,
             time_ms,
             count: 1,
         });
-        while state.events.len() > self.capacity {
-            if let Some(evicted) = state.events.pop_front() {
-                state.evicted_through = evicted.seq;
+        while self.events.len() > capacity {
+            if let Some(evicted) = self.events.pop_front() {
+                self.evicted_through = evicted.seq;
             }
         }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+impl UserInputLog {
+    pub fn new(capacity: usize) -> Self {
+        Self::with_epoch(capacity, now_ms())
+    }
+
+    pub fn with_epoch(capacity: usize, epoch: u64) -> Self {
+        Self {
+            epoch,
+            capacity: capacity.max(1),
+            state: Mutex::new(LogState::default()),
+            pending: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn take_pending(&self, state: &mut LogState) {
+        let pending = std::mem::take(&mut *lock(&self.pending));
+        for (input, time_ms) in pending {
+            state.apply(input, time_ms, self.capacity);
+        }
+    }
+
+    /// Record an input observed at `time_ms`. This never waits on a reader:
+    /// while a read holds the log, the input waits in a queue the read or the
+    /// next record takes in, so a platform hook can call it directly.
+    pub fn record(&self, input: ObservedInput, time_ms: u64) {
+        lock(&self.pending).push((input, time_ms));
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return,
+        };
+        self.take_pending(&mut state);
     }
 
     /// The events after `since`, or none and the newest position when
     /// `since` is absent.
     pub fn read(&self, since: Option<Cursor>) -> Result<Read, ReadError> {
-        let mut state = self.state();
+        let mut state = lock(&self.state);
+        self.take_pending(&mut state);
         let cursor = Cursor {
             epoch: self.epoch,
             seq: state.last_seq,
@@ -307,8 +333,9 @@ impl Tool for UserInputEventsTool {
                 `injected` for other injected input, including the driver's pen and touch \
                 background input, which Windows cannot tag), screen `x`/`y` for mouse input, \
                 and the `pid` and `window_id` of the window the input went to: for mouse \
-                input the window holding mouse capture, or else the one under the pointer; \
-                for keys the foreground window. They name the target, not the sender. Keys \
+                input the window holding mouse capture, or else the one under the pointer \
+                (the foreground window for the wheel when Windows routes it by focus); for \
+                keys the foreground window. They name the target, not the sender. Keys \
                 are reported without their identity. Consecutive mouse moves from one source \
                 to one window fold into one event with a `count` until a read returns that \
                 event. `history_lost: true` means some events after your cursor were \
@@ -464,6 +491,18 @@ mod tests {
             fold(log.read(Some(middle)).unwrap().events),
             [(Some(4), 2, 12, 13)]
         );
+    }
+
+    #[test]
+    fn a_record_while_a_read_holds_the_log_is_seen_by_the_next_read() {
+        let log = UserInputLog::with_epoch(16, 1);
+        let cursor = start(&log);
+        let held = lock(&log.state);
+        log.record(key(InputSource::Hardware), 10);
+        drop(held);
+        let read = log.read(Some(cursor)).unwrap();
+        assert_eq!(read.events.len(), 1);
+        assert_eq!(read.cursor.seq, 1);
     }
 
     #[test]

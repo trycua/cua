@@ -1265,9 +1265,10 @@ mod tests {
     #[test]
     fn bundled_helper_uses_host_owned_modifier_badge_chips() {
         assert!(EXTENSION_SOURCE.contains("GetVersion()"));
-        // v12 draws the tip, not the canvas centre, on the cursor point.
-        assert!(EXTENSION_SOURCE.contains("return 12;"));
-        assert!(EXTENSION_SOURCE.contains("PlayCursorPath(trackJson)"));
+        // v13 hides the cursor when the client that drew it leaves the bus.
+        assert!(EXTENSION_SOURCE.contains("return 13;"));
+        assert_eq!(OWNED_CURSOR_API_VERSION, 13);
+        assert!(EXTENSION_SOURCE.contains("PlayCursorPathAsync([trackJson], invocation)"));
         assert!(EXTENSION_SOURCE.contains("SetCursorLook(lookJson)"));
         assert!(EXTENSION_SOURCE.contains("function drawCursorHalo"));
         assert_eq!(POSE_CURSOR_API_VERSION, 11);
@@ -1296,7 +1297,7 @@ mod tests {
         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
         let metadata: serde_json::Value =
             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
-        assert_eq!(metadata["version"], 12);
+        assert_eq!(metadata["version"], 13);
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

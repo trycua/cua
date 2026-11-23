@@ -8,9 +8,9 @@
 //! cursor and the driver's own windows (the agent cursor overlay) left out.
 //! ScreenCaptureKit delivers a complete frame only when the display content
 //! changed, and names the rectangles it redrew, so a frame's digest and dirty
-//! rectangles are the damage signal. A caller arms it for the window it acts
-//! on, so a repaint in another window (the user's blinking caret) does not end
-//! its wait.
+//! rectangles are the damage signal. A caller arms it for the rectangle of a
+//! window nothing covers, so a repaint in another window (the user's blinking
+//! caret) does not end its wait.
 //!
 //! A stream starts on the first arm for its display, in the background: that
 //! arm gets `None` and its caller sleeps the fixed time, so starting never
@@ -18,9 +18,11 @@
 //! [`IDLE_STOP`](cua_driver_core::damage_settle::IDLE_STOP) stops, and the
 //! next arm starts it again.
 //!
-//! Nothing starts without the Screen Recording grant and macOS's
-//! direct-capture consent ([`crate::capture_consent`]), so a background
-//! action never raises that alert.
+//! Nothing starts without the Screen Recording grant and a recorded
+//! direct-capture consent ([`crate::capture_consent::direct_capture_consented`]),
+//! so a background action never raises that alert. A display gets no new
+//! stream while its last one is still listed or stopping, so two never run at
+//! once.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -71,12 +73,14 @@ impl Watcher {
 struct Watchers {
     running: Vec<(u32, Watcher)>,
     starting: Vec<u32>,
+    stopping: Vec<u32>,
     reaping: bool,
 }
 
 static WATCHERS: Mutex<Watchers> = Mutex::new(Watchers {
     running: Vec::new(),
     starting: Vec::new(),
+    stopping: Vec::new(),
     reaping: false,
 });
 
@@ -85,12 +89,14 @@ fn watchers() -> MutexGuard<'static, Watchers> {
 }
 
 /// Watch the window with global `bounds` before an action, on the display
-/// that holds its centre. `None` while no stream runs there yet (one is
-/// started), or when capture is not allowed; the caller then sleeps the fixed
-/// time.
+/// that holds its centre. Damage anywhere in `bounds` counts, so the caller
+/// passes a window nothing else covers ([`crate::windows::uncovered_bounds`]).
+/// `None` while no usable stream runs there (one is started unless one is
+/// still starting or stopping), or when capture is not allowed; the caller
+/// then sleeps the fixed time.
 pub fn arm_for_window(bounds: &WindowBounds) -> Option<Armed> {
     if !crate::permissions::status::screen_recording_granted()
-        || crate::capture_consent::capture_blocked_reason().is_some()
+        || !crate::capture_consent::direct_capture_consented()
     {
         return None;
     }
@@ -99,12 +105,11 @@ pub fn arm_for_window(bounds: &WindowBounds) -> Option<Armed> {
         bounds.y + bounds.height / 2.0,
     )?;
     let mut watchers = watchers();
-    let running = watchers.running.iter().find(|(id, _)| *id == display);
-    if let Some(armed) = running.and_then(|(_, watcher)| watcher.signal.arm(watcher.region(bounds)))
-    {
-        return Some(armed);
+    if let Some((_, watcher)) = watchers.running.iter().find(|(id, _)| *id == display) {
+        // A failed stream stays listed until the idle check stops it.
+        return watcher.signal.arm(watcher.region(bounds));
     }
-    if !watchers.starting.contains(&display) {
+    if !watchers.starting.contains(&display) && !watchers.stopping.contains(&display) {
         watchers.starting.push(display);
         let spawned = std::thread::Builder::new()
             .name("damage-watch-start".into())
@@ -140,21 +145,12 @@ fn start_watching(display: u32) {
             return;
         }
     };
-    let replaced = watchers
-        .running
-        .iter()
-        .position(|(id, _)| *id == display)
-        .map(|index| watchers.running.swap_remove(index).1);
     watchers.running.push((display, watcher));
     if !watchers.reaping {
         watchers.reaping = std::thread::Builder::new()
             .name("damage-watch-idle".into())
             .spawn(stop_idle_watchers)
             .is_ok();
-    }
-    drop(watchers);
-    if let Some(old) = replaced {
-        old.stop();
     }
 }
 
@@ -247,24 +243,32 @@ fn record_frame(signal: &DamageSignal, sample: &CMSampleBuffer) {
     signal.frame(digest, dirty.as_deref());
 }
 
+/// Stop failed and idle streams until none runs. A stopped display stays in
+/// `stopping` until its stream has stopped, so no arm starts another first.
 fn stop_idle_watchers() {
     loop {
         std::thread::sleep(IDLE_CHECK);
         let now = Instant::now();
-        let mut watchers = watchers();
-        let (idle, busy): (Vec<_>, Vec<_>) = std::mem::take(&mut watchers.running)
+        let idle: Vec<(u32, Watcher)> = {
+            let mut watchers = watchers();
+            let (idle, busy): (Vec<_>, Vec<_>) = std::mem::take(&mut watchers.running)
+                .into_iter()
+                .partition(|(_, watcher)| watcher.signal.should_stop(now));
+            watchers.running = busy;
+            watchers.stopping.extend(idle.iter().map(|(id, _)| *id));
+            idle
+        };
+        let stopped: Vec<u32> = idle
             .into_iter()
-            .partition(|(_, watcher)| watcher.signal.should_stop(now));
-        watchers.running = busy;
-        let done = watchers.running.is_empty();
-        if done {
+            .map(|(id, watcher)| {
+                watcher.stop();
+                id
+            })
+            .collect();
+        let mut watchers = watchers();
+        watchers.stopping.retain(|id| !stopped.contains(id));
+        if watchers.running.is_empty() {
             watchers.reaping = false;
-        }
-        drop(watchers);
-        for (_, watcher) in idle {
-            watcher.stop();
-        }
-        if done {
             return;
         }
     }

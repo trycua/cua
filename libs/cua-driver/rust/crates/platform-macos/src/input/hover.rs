@@ -82,7 +82,9 @@ pub fn reveal_alternate_ui(pid: i32, window_id: u32, x: f64, y: f64) -> Option<A
         let armed = if hid_previous {
             None
         } else {
-            crate::windows::window_bounds_by_id(window_id)
+            // Only a window nothing covers: damage inside its bounds is then
+            // its own repaint, not a caret blinking in a window in front.
+            crate::windows::uncovered_bounds(window_id)
                 .and_then(|bounds| crate::damage_watch::arm_for_window(&bounds))
         };
         if perform_action(target, SHOW_ALTERNATE) != kAXErrorSuccess {

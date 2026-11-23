@@ -103,6 +103,34 @@ pub fn capture_blocked_reason() -> Option<String> {
     }
 }
 
+/// Whether a capture is known not to raise the consent alert: this macOS has
+/// no such alert, or it recorded this app bundle's approval. Unlike
+/// [`capture_blocked_reason`], an answer it cannot work out (a bare binary, an
+/// unreadable approvals file, the alert override) is no, for optional
+/// captures the user never asked for.
+pub fn direct_capture_consented() -> bool {
+    static CONSENTED: AtomicBool = AtomicBool::new(false);
+
+    if CONSENTED.load(Ordering::Relaxed) {
+        return true;
+    }
+    let consented = !macos_has_direct_capture_consent()
+        || own_app_bundle().is_some_and(|bundle| {
+            std::env::var_os("HOME").is_some_and(|home| {
+                consent_state(
+                    &Path::new(&home).join(APPROVALS_RELATIVE_PATH),
+                    &bundle,
+                    crate::tools::main_bundle_identifier().as_deref(),
+                    crate::tools::driver_daemon_direct_capture_evidence_store().as_ref(),
+                ) == ConsentState::Recorded
+            })
+        });
+    if consented {
+        CONSENTED.store(true, Ordering::Relaxed);
+    }
+    consented
+}
+
 fn blocked_message(bundle: &Path) -> String {
     format!(
         "{CONSENT_REQUIRED_CODE}: screen capture skipped. macOS has not yet asked whether {} \

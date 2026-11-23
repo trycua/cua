@@ -89,6 +89,14 @@ fn setup_page_proven(
             !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
         })
     });
+    // The checkbox is picked by position, so a second document could supply it.
+    let documents = nodes
+        .iter()
+        .filter(|node| role_is(node, &["document web", "document frame"]))
+        .count();
+    if documents > 1 {
+        return false;
+    }
     if let Some(exact_document) = document_is_setup_page(nodes, descriptor) {
         return exact_document && !has_contradictory_address_bar;
     }
@@ -946,6 +954,14 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "two rendered documents do not name one setup page"
+        );
+        let mut unreported = translated_setup_page(descriptor().setup_url);
+        unreported.push(node("document web", "other", None, &[]));
+        assert!(
+            exact_setup_checkbox(&unreported, descriptor(), true)
+                .unwrap()
+                .is_none(),
+            "a second document without a URI could hold the picked checkbox"
         );
     }
 

@@ -352,6 +352,44 @@ mod tests {
     }
 
     #[test]
+    fn a_late_refresh_never_releases_a_newer_entrys_refresh() {
+        let (cache, t0, generation) = fresh_cache();
+        cache.store("k".into(), Some(1), t0, generation);
+        let first_refresh = t0 + TTL * 2;
+        assert!(matches!(
+            cache.lookup("k", first_refresh, generation),
+            Lookup::Stale { refresh: true, .. }
+        ));
+        let replaced = t0 + TTL * STALE_CAP_FACTOR;
+        assert_eq!(cache.lookup("k", replaced, generation), Lookup::Miss);
+        cache.store("k".into(), Some(2), replaced, generation);
+        assert!(matches!(
+            cache.lookup("k", replaced + TTL, generation),
+            Lookup::Stale { refresh: true, .. }
+        ));
+
+        cache.store("k".into(), None, first_refresh, generation);
+        assert!(matches!(
+            cache.lookup("k", replaced + TTL * 2, generation),
+            Lookup::Stale { refresh: false, .. }
+        ));
+    }
+
+    #[test]
+    fn a_refresh_from_before_an_action_never_replaces_a_reply_from_after_it() {
+        let (cache, t0, generation) = fresh_cache();
+        cache.store("k".into(), Some(2), t0, generation + 1);
+        cache.store("k".into(), Some(1), t0 + TTL, generation);
+        assert_eq!(
+            cache.lookup("k", t0 + TTL, generation + 1),
+            Lookup::Stale {
+                value: 2,
+                refresh: true
+            }
+        );
+    }
+
+    #[test]
     fn keys_are_independent_and_bounded() {
         let (cache, t0, generation) = fresh_cache();
         for i in 0..=MAX_ENTRIES as u32 {

@@ -43,11 +43,19 @@ const MANIFEST_KEYS: &[&str] = &[
     "resources",
 ];
 
-/// Read from the unindented key lines rather than a parse, so an example
-/// that does not parse still reaches the loader and fails there.
+/// Read from the key lines at the body's root indent rather than a parse, so
+/// an example that does not parse still reaches the loader and fails there.
 fn is_manifest(body: &str) -> bool {
-    body.lines()
-        .filter(|line| !line.starts_with([' ', '\t', '#', '-']))
+    let content = || {
+        body.lines()
+            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+    };
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let Some(root) = content().map(indent).min() else {
+        return false;
+    };
+    content()
+        .filter(|line| indent(line) == root && !line.trim_start().starts_with('-'))
         .filter_map(|line| line.split_once(':'))
         .any(|(key, _)| MANIFEST_KEYS.contains(&key.trim().trim_matches(['"', '\''])))
 }
@@ -122,12 +130,14 @@ fn documented_capability_manifests_load_in_bounded_mode() {
 }
 
 #[test]
-fn selector_finds_nested_quoted_and_unparseable_manifests() {
+fn selector_finds_indented_quoted_and_unparseable_manifests() {
     let page = concat!(
         "```yaml\nallow:\n  tools: [click]\n```\n",
         "1. Write the manifest:\n\n   ```yaml\n   version: 4\n   allow:\n     tools: [click]\n   ```\n",
         "```yaml\n\"version\": 3\n```\n",
         "```yaml\nversion: 3\nversion: 3\n```\n",
+        "```yaml\n  version: 4\n  allow:\n    tools: [click]\n```\n",
+        "```yaml\n      - uses: example/action@v1\n        with:\n          version: 4\n```\n",
     );
     let found: Vec<_> = manifest_fences(page)
         .into_iter()
@@ -139,6 +149,7 @@ fn selector_finds_nested_quoted_and_unparseable_manifests() {
             (7, "version: 4".to_owned()),
             (12, "\"version\": 3".to_owned()),
             (15, "version: 3".to_owned()),
+            (19, "  version: 4".to_owned()),
         ]
     );
 }

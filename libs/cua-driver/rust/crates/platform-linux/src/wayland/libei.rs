@@ -1073,11 +1073,13 @@ impl EisState {
     /// run before their device exists fail with "no EIS device negotiated yet",
     /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
     fn cmd_ready(&self, cmd: &Cmd) -> bool {
-        if matches!(cmd, Cmd::MoveRelative { .. })
-            && self.seats_are_settled()
-            && no_relative_pointer_offered(self.seats.values())
-        {
-            return true;
+        if let Cmd::MoveRelative { .. } = cmd {
+            // Ready with a settled relative pointer device, or, so it refuses
+            // at once instead of timing out, once the settled seats rule one
+            // out.
+            return (self.device_is_settled()
+                && self.device_with_interface("ei_pointer").is_some())
+                || (self.seats_are_settled() && no_relative_pointer_offered(self.seats.values()));
         }
         if !self.device_is_settled() {
             return false;
@@ -1087,10 +1089,7 @@ impl EisState {
             Cmd::Click { .. } | Cmd::MoveAbsolute { .. } | Cmd::Drag { .. } => {
                 self.device_with_interface("ei_pointer_absolute").is_some()
             }
-            // Once the devices have settled, a session without a relative
-            // pointer refuses at once rather than waiting for one that never
-            // comes.
-            Cmd::MoveRelative { .. } => true,
+            Cmd::MoveRelative { .. } => unreachable!("decided above"),
             Cmd::Scroll { .. } => self.device_with_interface("ei_scroll").is_some(),
             Cmd::PressKey { .. } | Cmd::KeySequence { .. } => {
                 self.device_with_interface("ei_keyboard").is_some()

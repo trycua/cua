@@ -41,25 +41,23 @@ impl WindowUnderPoint {
     }
 }
 
-/// Topmost ordinary (layer 0, on-screen) window containing the desktop point
-/// `(x, y)` in screen points, skipping the driver's own windows (the cursor
-/// overlay). Blocking: enumerates windows.
-pub(crate) fn window_under_point(x: f64, y: f64) -> Option<WindowUnderPoint> {
+/// Topmost ordinary (layer 0, on-screen) window of `windows` containing the
+/// desktop point `(x, y)` in screen points, skipping the driver's own windows
+/// (the cursor overlay).
+fn window_under_point(
+    windows: &[crate::windows::WindowInfo],
+    x: f64,
+    y: f64,
+) -> Option<&crate::windows::WindowInfo> {
     let own = std::process::id() as i32;
-    let window = crate::windows::visible_windows()
-        .into_iter()
+    windows
+        .iter()
         .filter(|w| w.layer == 0 && w.is_on_screen && w.pid != own)
         .filter(|w| {
             let b = &w.bounds;
             x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height
         })
-        .max_by_key(|w| w.z_index)?;
-    Some(WindowUnderPoint {
-        pid: window.pid,
-        window_id: window.window_id,
-        app_name: window.app_name,
-        bundle_id: crate::apps::bundle_id_for_pid(window.pid).unwrap_or_default(),
-    })
+        .max_by_key(|w| w.z_index)
 }
 
 /// The refusal for a desktop-target pointer action at `point` over `under`,
@@ -176,8 +174,18 @@ pub(crate) async fn check(
     }
     tokio::task::spawn_blocking(move || {
         let frontmost = crate::apps::frontmost_pid();
+        let windows = crate::windows::visible_windows();
         points.into_iter().find_map(|point| {
-            let under = window_under_point(point.0, point.1);
+            // Over the frontmost app nothing refuses, so only another app's
+            // window needs its bundle id.
+            let under = window_under_point(&windows, point.0, point.1)
+                .filter(|window| Some(window.pid) != frontmost)
+                .map(|window| WindowUnderPoint {
+                    pid: window.pid,
+                    window_id: window.window_id,
+                    app_name: window.app_name.clone(),
+                    bundle_id: crate::apps::bundle_id_for_pid(window.pid).unwrap_or_default(),
+                });
             refusal_for(tool, point, under.as_ref(), frontmost, delivery)
         })
     })

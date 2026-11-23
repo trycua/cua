@@ -131,7 +131,7 @@ pub fn parse(args: &Value) -> Result<RelativeMove, ToolResult> {
 
 fn delta(args: &Value, name: &str) -> Result<i32, ToolResult> {
     match args.get(name).and_then(Value::as_i64) {
-        Some(value) if value.abs() <= MAX_DELTA => Ok(value as i32),
+        Some(value) if (-MAX_DELTA..=MAX_DELTA).contains(&value) => Ok(value as i32),
         _ => Err(invalid(format!(
             "{name} is required and must be an integer from {} to {MAX_DELTA}",
             -MAX_DELTA
@@ -152,7 +152,9 @@ impl RelativeMove {
     /// `round(d*i/n) - round(d*(i-1)/n)`, so the steps sum exactly to the
     /// requested delta with no drift. There is at most one step per
     /// [`STEP_INTERVAL_MS`] and never more steps than the larger delta, so
-    /// no step is empty. A zero move has no steps.
+    /// no step is empty. Each step is followed by an equal share of the
+    /// duration, so the move takes `duration_ms` whatever its step count. A
+    /// zero move has no steps.
     pub fn steps(&self) -> Vec<RelativeStep> {
         let span = i64::from(self.dx.unsigned_abs().max(self.dy.unsigned_abs()));
         if span == 0 {
@@ -175,7 +177,7 @@ impl RelativeMove {
             .map(|i| RelativeStep {
                 dx: (at(self.dx, i) - at(self.dx, i - 1)) as i32,
                 dy: (at(self.dy, i) - at(self.dy, i - 1)) as i32,
-                pause_after: if i == count { Duration::ZERO } else { pause },
+                pause_after: pause,
             })
             .collect()
     }
@@ -237,15 +239,7 @@ pub fn outcome(
         .with_action_record(ActionExecutionRecord::relative_pointer_move(
             transport, args, None,
         )),
-        Err(incomplete) if incomplete.sent_steps == 0 => ToolResult::error(format!(
-            "{TOOL_NAME}: no motion was sent: {:#}",
-            incomplete.error
-        ))
-        .with_structured(json!({
-            "code": "delivery_failed",
-            "tool": TOOL_NAME,
-            "detail": format!("{:#}", incomplete.error),
-        })),
+        Err(incomplete) if incomplete.sent_steps == 0 => not_sent(&incomplete.error),
         Err(incomplete) => ToolResult::text(format!(
             "Sent ({}, {}) of the requested ({dx}, {dy}) in {} of {steps} events, then the next \
              event failed: {:#}. The pointer has already moved by the part that was sent.",
@@ -257,6 +251,18 @@ pub fn outcome(
             Some(incomplete.sent_steps as u32),
         )),
     }
+}
+
+/// A move that failed before any event went out, such as a display or
+/// input device that could not be opened.
+pub fn not_sent(error: &anyhow::Error) -> ToolResult {
+    ToolResult::error(format!("{TOOL_NAME}: no motion was sent: {error:#}")).with_structured(
+        json!({
+            "code": "delivery_failed",
+            "tool": TOOL_NAME,
+            "detail": format!("{error:#}"),
+        }),
+    )
 }
 
 /// Refusal for a backend with no relative pointer route. Nothing was sent.
@@ -324,6 +330,16 @@ mod tests {
                 pause_after: Duration::ZERO
             }]
         );
+
+        // One count cannot be split, but the move still takes its duration.
+        let steps = RelativeMove {
+            dx: 1,
+            dy: 0,
+            duration_ms: 1000,
+        }
+        .steps();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].pause_after, Duration::from_millis(1000));
     }
 
     #[test]
@@ -337,8 +353,10 @@ mod tests {
         assert_eq!(steps.len(), 37);
         assert!(steps.iter().all(|step| step.dx != 0 || step.dy != 0));
         let paused: Duration = steps.iter().map(|step| step.pause_after).sum();
-        assert!(paused <= Duration::from_millis(300), "{paused:?}");
-        assert_eq!(steps.last().unwrap().pause_after, Duration::ZERO);
+        assert!(
+            paused <= Duration::from_millis(300) && paused > Duration::from_millis(290),
+            "{paused:?}"
+        );
 
         // Fewer counts than frames: one count per event.
         let (_, _, count) = sums(RelativeMove {
@@ -401,6 +419,8 @@ mod tests {
             json!({"dx": "1", "dy": 0}),
             json!({"dx": 32768, "dy": 0}),
             json!({"dx": 0, "dy": -32768}),
+            json!({"dx": i64::MIN, "dy": 0}),
+            json!({"dx": 0, "dy": i64::MAX}),
             json!({"dx": 0, "dy": 0, "duration_ms": -1}),
             json!({"dx": 0, "dy": 0, "duration_ms": 10_001}),
         ] {

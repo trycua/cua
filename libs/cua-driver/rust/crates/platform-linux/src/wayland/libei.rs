@@ -131,6 +131,8 @@ enum Cmd {
     MoveRelative {
         dx: f64,
         dy: f64,
+        /// The tool call this motion serves: nothing goes out once it is over.
+        action: Option<Arc<Action>>,
         reply: Sender<anyhow::Result<()>>,
     },
     Scroll {
@@ -344,6 +346,7 @@ pub fn move_relative(dx: f64, dy: f64) -> anyhow::Result<()> {
         .send(Cmd::MoveRelative {
             dx,
             dy,
+            action: crate::input::action::current(),
             reply: tx_r,
         })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
@@ -1049,12 +1052,10 @@ impl EisState {
             Cmd::Click { .. } | Cmd::MoveAbsolute { .. } | Cmd::Drag { .. } => {
                 self.device_with_interface("ei_pointer_absolute").is_some()
             }
-            // A session whose pointer is absolute only refuses at once
-            // rather than waiting for a relative device that never comes.
-            Cmd::MoveRelative { .. } => {
-                self.device_with_interface("ei_pointer").is_some()
-                    || self.device_with_interface("ei_pointer_absolute").is_some()
-            }
+            // Once the devices have settled, a session without a relative
+            // pointer refuses at once rather than waiting for one that never
+            // comes.
+            Cmd::MoveRelative { .. } => true,
             Cmd::Scroll { .. } => self.device_with_interface("ei_scroll").is_some(),
             Cmd::PressKey { .. } | Cmd::KeySequence { .. } => {
                 self.device_with_interface("ei_keyboard").is_some()
@@ -1203,19 +1204,24 @@ impl EisState {
                 ptr_abs.motion_absolute(*x as f32, *y as f32);
                 device.frame(serial, event_time_us());
             }
-            Cmd::MoveRelative { dx, dy, .. } => {
+            Cmd::MoveRelative { dx, dy, action, .. } => {
                 let device = self.device_with_interface("ei_pointer").ok_or_else(|| {
                     anyhow::anyhow!(
-                        "{}: the EIS session offers only an absolute pointer",
+                        "{}: the EIS session offers no relative pointer",
                         super::NO_RELATIVE_POINTER_MARKER
                     )
                 })?;
                 let serial = self.last_serial;
                 let pointer =
                     require_device_interface::<reis::ei::Pointer>(&self.devices, &device)?;
-
-                pointer.motion_relative(*dx as f32, *dy as f32);
-                device.frame(serial, event_time_us());
+                let send = || {
+                    pointer.motion_relative(*dx as f32, *dy as f32);
+                    device.frame(serial, event_time_us());
+                };
+                match action {
+                    Some(action) => action.admit(send)?,
+                    None => send(),
+                }
             }
             Cmd::Scroll { dx, dy, .. } => {
                 let device = self.device_with_interface("ei_scroll").ok_or_else(|| {
@@ -2341,6 +2347,18 @@ mod tests {
             ),
             "{events:?}"
         );
+    }
+
+    #[test]
+    fn relative_move_sends_nothing_once_its_call_is_over() {
+        let (result, events) = record(|| {
+            let over = crate::input::action::Action::new(std::time::Duration::ZERO);
+            let _bound = crate::input::action::bind(over);
+            move_relative(5.0, 5.0)
+        });
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("ran out of time"), "{error}");
+        assert_eq!(events, vec![]);
     }
 
     #[test]

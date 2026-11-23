@@ -65,7 +65,7 @@ impl Tool for MouseMoveRelativeTool {
             Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
                 input_error_result(error)
             }
-            Ok(Err(error)) => ToolResult::error(format!("mouse_move_relative: {error:#}")),
+            Ok(Err(error)) => relative_pointer::not_sent(&error),
             Err(error) => ToolResult::error(format!("Task error: {error}")),
         }
     }

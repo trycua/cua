@@ -44,20 +44,24 @@ impl Tool for MouseMoveRelativeTool {
         };
         let here = match tokio::task::spawn_blocking(crate::input::mouse::pointer_location).await {
             Ok(Ok(here)) => here,
-            Ok(Err(error)) => return ToolResult::error(format!("mouse_move_relative: {error:#}")),
+            Ok(Err(error)) => return relative_pointer::not_sent(&error),
             Err(error) => return ToolResult::error(format!("Task error: {error}")),
         };
-        if let Some(refusal) = super::desktop_pointer_guard::check(
-            relative_pointer::TOOL_NAME,
-            &args,
-            vec![(here.x, here.y)],
-        )
-        .await
+        let steps = request.steps();
+        let count = steps.len();
+        // Every step posts at the pointer's new location, so each one must be
+        // over the frontmost app or over no window.
+        let points = std::iter::once((here.x, here.y))
+            .chain(steps.iter().scan((here.x, here.y), |at, step| {
+                *at = (at.0 + f64::from(step.dx), at.1 + f64::from(step.dy));
+                Some(*at)
+            }))
+            .collect();
+        if let Some(refusal) =
+            super::desktop_pointer_guard::check(relative_pointer::TOOL_NAME, &args, points).await
         {
             return refusal;
         }
-        let steps = request.steps();
-        let count = steps.len();
         match tokio::task::spawn_blocking(move || {
             relative_pointer::send_steps(&steps, crate::input::mouse::post_relative_motion)
         })

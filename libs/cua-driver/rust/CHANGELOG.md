@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.59.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.4...cua-driver-rs-v0.59.5) (2026-11-23)
+
+
+### Bug Fixes
+
+* **cua-driver,spaces-macos:** give the + route in the macOS permission guides ([#8572](https://github.com/trycua/cua/issues/8572)) ([c7ed4ad](https://github.com/trycua/cua/commit/c7ed4ad7e3ae949123090c71869c097ba1daf6e3))
+* **cua-driver:** draw no agent cursor for a human viewer's desktop click on Wayland ([#8581](https://github.com/trycua/cua/issues/8581)) ([7632aad](https://github.com/trycua/cua/commit/7632aadee849a54239bf832ec4881010a27d991a))
+* **cua-driver:** match executable grants only on the attested process image ([#8584](https://github.com/trycua/cua/issues/8584)) ([7ab934f](https://github.com/trycua/cua/commit/7ab934f82f92a55b46e973aa3447a46dab872531)), closes [#8565](https://github.com/trycua/cua/issues/8565)
+
 ## [0.59.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.3...cua-driver-rs-v0.59.4) (2026-11-23)
 
 

@@ -442,12 +442,15 @@ enum CommandDocExtractor {
                 FlagDoc(name: "no-display", shortName: "d", help: "Compatibility alias for --display none", defaultValue: false),
                 FlagDoc(name: "detach", shortName: nil, help: "Run the VM in the background and return immediately", defaultValue: false),
                 FlagDoc(name: "clipboard", shortName: nil, help: "Sync the clipboard both ways over SSH. Automatic with the native macOS display", defaultValue: false),
+                FlagDoc(name: "no-audio-device", shortName: nil, help: "Leave the virtio sound device (host audio input and output) out of the VM, so the guest has no audio device", defaultValue: false),
+                FlagDoc(name: "no-clipboard-device", shortName: nil, help: "Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with --clipboard", defaultValue: false),
             ],
             subcommands: [],
             examples: [
                 ExampleDoc("lume run my-vm"),
                 ExampleDoc("lume run my-vm --shared-dir ~/src:ro --display none", "Headless, with a read-only shared folder"),
                 ExampleDoc("lume run my-vm --detach --display none --vnc disabled", "In the background with no VNC listener"),
+                ExampleDoc("lume run my-vm --no-audio-device --no-clipboard-device", "With no audio or clipboard-sharing device"),
             ]
         )
     }

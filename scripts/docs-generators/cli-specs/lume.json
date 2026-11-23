@@ -600,6 +600,10 @@
     {
      "command": "lume run my-vm --detach --display none --vnc disabled",
      "description": "In the background with no VNC listener"
+    },
+    {
+     "command": "lume run my-vm --no-audio-device --no-clipboard-device",
+     "description": "With no audio or clipboard-sharing device"
     }
    ],
    "flags": [
@@ -618,6 +622,16 @@
      "default_value": false,
      "help": "Sync the clipboard both ways over SSH. Automatic with the native macOS display",
      "name": "clipboard"
+    },
+    {
+     "default_value": false,
+     "help": "Leave the virtio sound device (host audio input and output) out of the VM, so the guest has no audio device",
+     "name": "no-audio-device"
+    },
+    {
+     "default_value": false,
+     "help": "Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with --clipboard",
+     "name": "no-clipboard-device"
     }
    ],
    "name": "run",

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.60.0...cua-driver-rs-v0.61.0) (2026-11-23)
+
+
+### Features
+
+* **cua-driver:** add ui_tree_revision and refuse actions with a stale one ([#8611](https://github.com/trycua/cua/issues/8611)) ([ec9c6e9](https://github.com/trycua/cua/commit/ec9c6e97fbc3c506970585df232891c4bd05e449))
+
 ## [0.60.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.5...cua-driver-rs-v0.60.0) (2026-11-23)
 
 

@@ -5177,31 +5177,54 @@ resources:
         );
     }
 
-    #[tokio::test]
-    async fn an_action_between_cached_window_reads_makes_the_next_read_live() {
-        struct WindowListProbe {
-            hits: Arc<AtomicUsize>,
-            def: super::ToolDef,
+    struct WindowListProbe {
+        hits: Arc<AtomicUsize>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for WindowListProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
         }
 
-        #[async_trait::async_trait]
-        impl super::Tool for WindowListProbe {
-            fn def(&self) -> &super::ToolDef {
-                &self.def
-            }
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            crate::protocol::ToolResult::text("Found 0 window(s).")
+                .with_structured(serde_json::json!({"windows": [], "current_space_id": null}))
+        }
+    }
 
-            async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
-                self.hits.fetch_add(1, Ordering::SeqCst);
-                crate::protocol::ToolResult::text("Found 0 window(s).")
-                    .with_structured(serde_json::json!({"windows": [], "current_space_id": null}))
-            }
+    /// A `click` that completes, or one that never returns until dropped.
+    struct ClickProbe {
+        completes: bool,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for ClickProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
         }
 
-        let hits = Arc::new(AtomicUsize::new(0));
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            if !self.completes {
+                std::future::pending::<()>().await;
+            }
+            crate::protocol::ToolResult::text("clicked")
+        }
+    }
+
+    /// A registry with a cached `list_windows` counting into `hits` and a
+    /// `click` that completes or never returns.
+    fn cached_window_registry(
+        hits: Arc<AtomicUsize>,
+        click_completes: bool,
+    ) -> super::ToolRegistry {
         let mut registry = super::ToolRegistry::new_with_protected_consent_provider(None);
         registry.register(Box::new(crate::read_cache::CachedReadTool::new(
             Arc::new(WindowListProbe {
-                hits: hits.clone(),
+                hits,
                 def: super::ToolDef {
                     name: "list_windows".into(),
                     description: "test observation".into(),
@@ -5214,8 +5237,8 @@ resources:
             }),
             crate::read_cache::MAX_READ_CACHE_TTL,
         )));
-        registry.register(Box::new(ObservationProbe {
-            hits: Arc::new(AtomicUsize::new(0)),
+        registry.register(Box::new(ClickProbe {
+            completes: click_completes,
             def: super::ToolDef {
                 name: "click".into(),
                 description: "test input".into(),
@@ -5226,6 +5249,13 @@ resources:
                 open_world: false,
             },
         }));
+        registry
+    }
+
+    #[tokio::test]
+    async fn an_action_between_cached_window_reads_makes_the_next_read_live() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = cached_window_registry(hits.clone(), true);
         let context = standard_context();
         let read = || {
             registry.invoke_with_context(
@@ -5245,6 +5275,38 @@ resources:
             )
             .await;
         assert_ne!(click.is_error, Some(true));
+        assert_ne!(read().await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_action_retires_window_reads_cached_while_it_ran() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = cached_window_registry(hits.clone(), false);
+        let context = standard_context();
+        let read = || {
+            registry.invoke_with_context(
+                "list_windows",
+                serde_json::json!({"session": "control"}),
+                context.clone(),
+            )
+        };
+        let click = registry.invoke_with_context(
+            "click",
+            serde_json::json!({"session": "control", "x": 10, "y": 20}),
+            context.clone(),
+        );
+
+        let (cancelled, during) = tokio::join!(
+            tokio::time::timeout(Duration::from_millis(200), click),
+            async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                read().await
+            }
+        );
+        assert!(cancelled.is_err(), "the click never returns");
+        assert_ne!(during.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_ne!(read().await.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 2);
     }

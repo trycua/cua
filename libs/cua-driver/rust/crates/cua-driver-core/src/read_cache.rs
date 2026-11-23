@@ -435,6 +435,31 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_never_releases_an_entry_that_started_on_the_same_tick() {
+        let (cache, t0) = fresh_cache();
+        store(&cache, Some(1), t0, (0, 0), None);
+        let at = t0 + TTL;
+        let Lookup::Stale {
+            refresh: Some(first),
+            ..
+        } = cache.lookup("k", at, 0)
+        else {
+            panic!("the first stale read owns the refresh");
+        };
+        store(&cache, Some(2), t0, (0, 0), None);
+        assert!(matches!(
+            cache.lookup("k", at, 0),
+            Lookup::Stale {
+                value: 2,
+                refresh: Some(_)
+            }
+        ));
+
+        store(&cache, None, at, (0, 0), Some(first));
+        assert_eq!(cache.lookup("k", at, 0), stale(2, None));
+    }
+
+    #[test]
     fn keys_are_independent_and_bounded() {
         let (cache, t0) = fresh_cache();
         for i in 0..=MAX_ENTRIES as u32 {

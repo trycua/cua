@@ -304,7 +304,8 @@ Windows-relevant notes:
   or Linux counterpart.
 - **`get_user_input_events` is a Windows-only tool.** It reports the mouse
   and keyboard input the system saw, each event with its `source`
-  (`hardware`, `driver` or `injected`) and the window it went to. Call it
+  (`hardware`, `driver` or `injected`) and the window it went to. Only the
+  driver's mouse input reports as `driver`; its keys report as `injected`. Call it
   once without `since` to get a cursor, then pass the cursor back after
   acting: a `hardware` event since then means the user touched the machine,
   so re-read the window before trusting an earlier observation.

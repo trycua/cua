@@ -21,5 +21,4 @@ This includes local/self-hosted models without configured pricing and the direct
 Gemini SDK loop, which reports token counts but no response price. Budgeted runs
 with that Gemini loop therefore stop after the first response. Runs without a
 spending limit can continue; their total cost remains unknown. This change does
-not estimate Gemini charges from token counts or reactivate this deprecated
-package's release pipeline.
+not estimate Gemini charges from token counts.

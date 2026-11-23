@@ -20,6 +20,7 @@
 use std::sync::Mutex;
 
 use core_foundation::base::{CFEqual, CFRelease, CFTypeRef};
+use cua_driver_core::damage_settle;
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_bool_attr, copy_children, copy_element_attr,
@@ -34,6 +35,10 @@ const SHOW_ALTERNATE: &str = "AXShowAlternateUI";
 const SHOW_DEFAULT: &str = "AXShowDefaultUI";
 /// How deep to count the target's subtree when checking for new controls.
 const SUBTREE_DEPTH: usize = 4;
+/// Longest wait for the window to repaint after `AXShowAlternateUI` before
+/// the subtree is counted again. The wait ends at the window's first changed
+/// frame when the damage watcher runs ([`crate::damage_watch`]).
+const REVEAL_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// The element whose alternate UI the last hover revealed: (pid, retained
 /// AXUIElementRef as usize). Moving the hover elsewhere restores its default
@@ -70,8 +75,16 @@ pub fn reveal_alternate_ui(pid: i32, window_id: u32, x: f64, y: f64) -> Option<A
             restore_default_ui(None);
             return None;
         };
-        restore_default_ui(Some(target));
+        // Hiding another element's controls repaints the window too, so its
+        // first changed frame would not be this reveal: wait the fixed time.
+        let hid_previous = restore_default_ui(Some(target));
         let elements_before = subtree_size(target, SUBTREE_DEPTH);
+        let armed = if hid_previous {
+            None
+        } else {
+            crate::windows::window_bounds_by_id(window_id)
+                .and_then(|bounds| crate::damage_watch::arm_for_window(&bounds))
+        };
         if perform_action(target, SHOW_ALTERNATE) != kAXErrorSuccess {
             CFRelease(target as CFTypeRef);
             return None;
@@ -82,7 +95,7 @@ pub fn reveal_alternate_ui(pid: i32, window_id: u32, x: f64, y: f64) -> Option<A
             visible: copy_bool_attr(target, "AXAlternateUIVisible"),
             elements_before,
             elements_after: {
-                std::thread::sleep(std::time::Duration::from_millis(150));
+                damage_settle::settle(armed, REVEAL_SETTLE);
                 subtree_size(target, SUBTREE_DEPTH)
             },
         };
@@ -138,17 +151,20 @@ unsafe fn alternate_ui_target(pid: i32, window_id: u32, x: f64, y: f64) -> Optio
 
 /// Put the previously revealed element back to its default UI, unless it is
 /// `keep` (the element about to be revealed again).
-unsafe fn restore_default_ui(keep: Option<AXUIElementRef>) {
+/// Hide the last revealed element's alternate UI unless it is `keep`.
+/// Returns whether it hid one.
+unsafe fn restore_default_ui(keep: Option<AXUIElementRef>) -> bool {
     let mut slot = REVEALED.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((_, prev)) = *slot else { return };
+    let Some((_, prev)) = *slot else { return false };
     if let Some(k) = keep {
         if CFEqual(prev as CFTypeRef, k as CFTypeRef) != 0 {
-            return;
+            return false;
         }
     }
     perform_action(prev as AXUIElementRef, SHOW_DEFAULT);
     CFRelease(prev as CFTypeRef);
     *slot = None;
+    true
 }
 
 unsafe fn first_label(element: AXUIElementRef) -> String {

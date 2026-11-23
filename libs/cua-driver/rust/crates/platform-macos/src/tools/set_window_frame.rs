@@ -133,6 +133,15 @@ fn initial_mutations(requested: Frame, current: Frame) -> &'static [FrameMutatio
     }
 }
 
+// The frame that decides whether the size changes. With Stage Manager on, a
+// window in the recent-app strip keeps its logical size in AX while
+// WindowServer reports the strip thumbnail (about 44 x 104 for Calculator's
+// 230 x 408 window), so WindowServer would turn a pure move into a resize and
+// refuse a fixed-size window. AX describes the frame the AXSize write targets.
+fn size_reference(ax: Option<Frame>, window_server: Option<Frame>) -> Option<Frame> {
+    ax.filter(|frame| frame.is_valid()).or(window_server)
+}
+
 fn window_server_frame(window_id: u32) -> Option<Frame> {
     crate::windows::window_bounds_by_id(window_id).map(|bounds| Frame {
         x: bounds.x,
@@ -217,9 +226,11 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
         let result = if let Some(target) = target {
             AXUIElementSetMessagingTimeout(target, 2.0);
             let before = window_server_frame(window_id);
-            let mutations = before.map_or(&FRAME_MUTATION_ORDER[..], |before| {
-                initial_mutations(requested, before)
-            });
+            let logical = element_screen_rect(target).map(Frame::from_ax);
+            let mutations = size_reference(logical, before)
+                .map_or(&FRAME_MUTATION_ORDER[..], |current| {
+                    initial_mutations(requested, current)
+                });
             if !is_attribute_settable(target, "AXPosition") {
                 Err(format!(
                     "window_id {window_id} does not expose a settable AXPosition"
@@ -469,6 +480,57 @@ mod tests {
             ),
             &FRAME_MUTATION_ORDER
         );
+    }
+
+    #[test]
+    fn a_stage_manager_strip_thumbnail_does_not_turn_a_move_into_a_resize() {
+        // Calculator in the Stage Manager strip: AX keeps the logical
+        // 230 x 408 window, WindowServer reports the 44 x 104 thumbnail.
+        let logical = Frame {
+            x: 414.0,
+            y: 560.0,
+            width: 230.0,
+            height: 408.0,
+        };
+        let thumbnail = Frame {
+            x: 3381.0,
+            y: 1123.0,
+            width: 44.0,
+            height: 104.0,
+        };
+        let move_to_agent_display = Frame {
+            x: -1100.0,
+            y: 150.0,
+            ..logical
+        };
+        let current = size_reference(Some(logical), Some(thumbnail)).expect("a reference frame");
+        assert_eq!(
+            initial_mutations(move_to_agent_display, current),
+            &POSITION_ONLY
+        );
+    }
+
+    #[test]
+    fn size_reference_falls_back_to_window_server_without_a_usable_ax_frame() {
+        let window_server = Frame {
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        };
+        let empty_ax = Frame {
+            width: 0.0,
+            ..window_server
+        };
+        assert_eq!(
+            size_reference(None, Some(window_server)).map(|f| f.width),
+            Some(800.0)
+        );
+        assert_eq!(
+            size_reference(Some(empty_ax), Some(window_server)).map(|f| f.width),
+            Some(800.0)
+        );
+        assert!(size_reference(None, None).is_none());
     }
 
     #[test]

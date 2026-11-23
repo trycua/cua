@@ -33,8 +33,26 @@ fn collect_mdx(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// YAML fences with a top-level `version:` key, as (line, body). Policy
-/// files have no version, so this selects only capability manifests.
+/// Top-level keys only a capability manifest has. Policy files use just
+/// `allow` and `deny`.
+const MANIFEST_KEYS: &[&str] = &[
+    "version",
+    "mode",
+    "expires_after",
+    "idle_timeout",
+    "resources",
+];
+
+fn is_manifest(body: &str) -> bool {
+    let Ok(serde_yaml_ng::Value::Mapping(map)) = serde_yaml_ng::from_str(body) else {
+        return false;
+    };
+    map.keys()
+        .filter_map(serde_yaml_ng::Value::as_str)
+        .any(|key| MANIFEST_KEYS.contains(&key))
+}
+
+/// YAML fences that are capability manifests, as (line, body).
 fn manifest_fences(text: &str) -> Vec<(usize, String)> {
     let mut fences = Vec::new();
     let mut open: Option<(usize, String)> = None;
@@ -44,7 +62,7 @@ fn manifest_fences(text: &str) -> Vec<(usize, String)> {
             None if trimmed.starts_with("```yaml") => open = Some((index + 1, String::new())),
             Some(_) if trimmed.starts_with("```") => {
                 let (start, body) = open.take().unwrap();
-                if body.lines().any(|line| line.starts_with("version:")) {
+                if is_manifest(&body) {
                     fences.push((start, body));
                 }
             }

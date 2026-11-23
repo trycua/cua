@@ -93,14 +93,46 @@ pub const WINDOW_TITLE: &str = "Set up Cua Driver";
 pub const DONE_TITLE: &str = "All set. Cua Driver can now use this Mac.";
 pub const OPEN_SETTINGS_BUTTON: &str = "Open System Settings";
 pub const NOT_NOW_BUTTON: &str = "Not Now";
-pub const DRAG_HINT: &str = "If Cua Driver isn't in the list, drag this into it:";
+pub const ADD_HINT: &str =
+    "If Cua Driver isn't in the list, click + under it and choose Cua Driver in Applications.";
+pub const OR_DRAG: &str = " Or drag this into it:";
 pub const TILE_NAME: &str = "Cua Driver";
 pub const TILE_DRAG_LABEL: &str = "Drag";
+pub const TILE_TOOLTIP: &str = "Drag Cua Driver into the list in System Settings.";
 pub const WAITING_LINE: &str = "Waiting for the switch to turn on…";
 pub const TURNED_ON_LINE: &str = "Turned on.";
 
 pub fn for_app(text: &str, app: &str) -> String {
     text.replace(APP_NAME, app)
+}
+
+/// Whether System Settings' privacy lists take an app dragged in. From
+/// macOS 27 they refuse a drop and only the + button adds an app, so the
+/// drag tile shows only before 27. An unknown version gets no tile.
+pub fn lists_accept_drops(macos_major: Option<u32>) -> bool {
+    macos_major.is_some_and(|major| major < 27)
+}
+
+/// The macOS major version from a product version such as "26.6.2".
+pub fn macos_major(product_version: &str) -> Option<u32> {
+    product_version.split('.').next()?.parse().ok()
+}
+
+/// The line under Open System Settings: the + route with the app's exact
+/// path (`bundle`, when the host runs from one), plus the drag tile's
+/// prompt where the list still takes a drop.
+pub fn add_hint(app: &str, bundle: Option<&Path>, drops: bool) -> String {
+    let mut hint = for_app(ADD_HINT, app);
+    if let Some(path) = bundle {
+        hint = hint.replace(
+            &format!(" choose {app} in Applications."),
+            &format!(" choose {}.", path.display()),
+        );
+    }
+    if drops {
+        hint.push_str(OR_DRAG);
+    }
+    hint
 }
 
 /// What the guide must do after reading a status.
@@ -503,8 +535,10 @@ mod tests {
             DONE_TITLE,
             OPEN_SETTINGS_BUTTON,
             NOT_NOW_BUTTON,
-            DRAG_HINT,
+            ADD_HINT,
+            OR_DRAG,
             TILE_NAME,
+            TILE_TOOLTIP,
             WAITING_LINE,
             TURNED_ON_LINE,
         ];
@@ -547,7 +581,7 @@ mod tests {
 
     #[test]
     fn every_name_in_the_copy_follows_the_host_app() {
-        let mut all = vec![WINDOW_TITLE, DONE_TITLE, DRAG_HINT, TILE_NAME];
+        let mut all = vec![WINDOW_TITLE, DONE_TITLE, ADD_HINT, TILE_NAME, TILE_TOOLTIP];
         for step in [
             GuideStep::Accessibility,
             GuideStep::ScreenRecording,
@@ -566,6 +600,38 @@ mod tests {
             "In System Settings, turn on the switch next to Host App."
         );
         assert_eq!(for_app(TILE_NAME, "Host App"), "Host App");
+    }
+
+    #[test]
+    fn add_hint_gives_the_plus_route_and_the_exact_path() {
+        let bundle = Path::new("/Applications/CuaDriver.app");
+        assert_eq!(
+            add_hint(APP_NAME, Some(bundle), false),
+            "If Cua Driver isn't in the list, click + under it and choose \
+             /Applications/CuaDriver.app."
+        );
+        assert_eq!(
+            add_hint("Host App", Some(Path::new("/Users/u/Apps/Host.app")), true),
+            "If Host App isn't in the list, click + under it and choose \
+             /Users/u/Apps/Host.app. Or drag this into it:"
+        );
+        assert_eq!(
+            add_hint(APP_NAME, None, false),
+            "If Cua Driver isn't in the list, click + under it and choose \
+             Cua Driver in Applications."
+        );
+    }
+
+    #[test]
+    fn the_drag_tile_shows_only_before_macos_27() {
+        assert_eq!(macos_major("26.6.2"), Some(26));
+        assert_eq!(macos_major("27.0"), Some(27));
+        assert_eq!(macos_major(""), None);
+        assert!(lists_accept_drops(macos_major("26.6.2")));
+        assert!(lists_accept_drops(Some(15)));
+        assert!(!lists_accept_drops(macos_major("27.0")));
+        assert!(!lists_accept_drops(Some(28)));
+        assert!(!lists_accept_drops(None));
     }
 
     #[test]

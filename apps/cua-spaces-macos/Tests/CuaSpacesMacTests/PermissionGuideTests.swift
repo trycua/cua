@@ -77,29 +77,59 @@ struct PermissionGuideTests {
     }
 
     /// Every state gets the panel under System Settings, with its own words
-    /// (CUA-3551: a listed-but-off app got only a banner at the top).
+    /// (CUA-3551: a listed-but-off app got only a banner at the top). The
+    /// way in is + with this copy's exact path: from macOS 27 the list
+    /// refuses a drop.
     @Test func thePanelSaysWhatThePaneNeeds() {
         let name = "Cua Spaces Local"
-        let absent = PermissionGuide.guidance(for: .screenRecording, state: .absent, appName: name, paneName: "Screen Recording")
-        #expect(absent.title == "Drag **Cua Spaces Local** into the list above to allow **Screen Recording**.")
-        #expect(absent.showsApp)
-        let off = PermissionGuide.guidance(for: .accessibility, state: .off, appName: name, paneName: "Accessibility")
+        let path = "/Users/u/Applications/Cua Spaces Local.app"
+        func words(_ pane: PermissionFlowPane, _ state: PermissionGuide.PaneState, drops: Bool = false) -> PermissionFlowGuidance {
+            PermissionGuide.guidance(for: pane, state: state, appName: name,
+                                     paneName: pane == .screenRecording ? "Screen Recording" : "Accessibility",
+                                     appPath: path, acceptsDrops: drops)
+        }
+        let absent = words(.screenRecording, .absent)
+        #expect(absent.title == "Click **+** under the list above and choose **Cua Spaces Local** to allow **Screen Recording**.")
+        #expect(absent.detail == "It's at /Users/u/Applications/Cua Spaces Local.app. Then make sure its switch is on.")
+        #expect(!absent.showsApp)
+        let off = words(.accessibility, .off)
         #expect(off.title == "Turn on the switch next to **Cua Spaces Local** in the list above.")
-        #expect(off.showsApp, "the tile stays for a row an older build left")
         // A rebuilt Cua Spaces Local: its old row looks on, but this copy has no grant.
-        #expect(off.detail == "Already on, or not in the list? Drag this in.")
-        let unknown = PermissionGuide.guidance(for: .accessibility, state: .unknown, appName: name, paneName: "Accessibility")
-        #expect(unknown.showsApp)
-        #expect(unknown.detail == "Not in the list? Drag this in.")
-        let on = PermissionGuide.guidance(for: .screenRecording, state: .on, appName: name, paneName: "Screen Recording")
+        #expect(off.detail == "Already on, or not in the list? Click + and choose /Users/u/Applications/Cua Spaces Local.app.")
+        let unknown = words(.accessibility, .unknown)
+        #expect(unknown.detail == "Not in the list? Click + and choose /Users/u/Applications/Cua Spaces Local.app.")
+        for state in [PermissionGuide.PaneState.absent, .off, .unknown] {
+            #expect(!words(.accessibility, state).showsApp, "no tile where the list refuses a drop: \(state)")
+        }
+        let on = words(.screenRecording, .on)
         #expect(on.title == "**Screen Recording** is on for **Cua Spaces Local**.")
         #expect(!on.showsApp)
         #expect(on.detail?.contains("Quit & Reopen") == true)
-        #expect(PermissionGuide.guidance(for: .accessibility, state: .on, appName: name, paneName: "Accessibility").detail == nil)
+        #expect(words(.accessibility, .on).detail == nil)
         for state in [PermissionGuide.PaneState.absent, .off, .unknown, .on] {
-            let words = PermissionGuide.guidance(for: .accessibility, state: state, appName: name, paneName: "Accessibility")
-            for jargon in ["TCC", "AX", "daemon", "database"] { #expect(!words.title.contains(jargon)) }
+            for jargon in ["TCC", "AX", "daemon", "database"] { #expect(!words(.accessibility, state).title.contains(jargon)) }
         }
+    }
+
+    /// Before macOS 27 the list still takes a drop: the tile shows beside
+    /// the + route, and stays for a row an older build left.
+    @Test func theTileShowsOnlyWhereTheListTakesADrop() {
+        let path = "/Applications/Cua Spaces.app"
+        func words(_ state: PermissionGuide.PaneState) -> PermissionFlowGuidance {
+            PermissionGuide.guidance(for: .accessibility, state: state, appName: "Cua Spaces",
+                                     paneName: "Accessibility", appPath: path, acceptsDrops: true)
+        }
+        #expect(words(.absent).showsApp)
+        #expect(words(.absent).detail == "It's at /Applications/Cua Spaces.app. Or drag this in. Then make sure its switch is on.")
+        #expect(words(.off).showsApp)
+        #expect(words(.off).detail == "Already on, or not in the list? Click + and choose /Applications/Cua Spaces.app. Or drag this in.")
+        #expect(words(.unknown).showsApp)
+        #expect(!words(.on).showsApp)
+        func version(_ major: Int) -> OperatingSystemVersion { .init(majorVersion: major, minorVersion: 0, patchVersion: 0) }
+        #expect(PermissionGuide.listsAcceptDrops(operatingSystemVersion: version(26)))
+        #expect(PermissionGuide.listsAcceptDrops(operatingSystemVersion: version(15)))
+        #expect(!PermissionGuide.listsAcceptDrops(operatingSystemVersion: version(27)))
+        #expect(!PermissionGuide.listsAcceptDrops(operatingSystemVersion: version(28)))
     }
 
     @Test func readsWhatAFreshProcessReports() {
@@ -170,12 +200,14 @@ struct PermissionGuideTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              telemetry: FixtureTelemetry())
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        let (savedOpen, savedShows, savedHook, savedRead, savedStore) =
+        let (savedOpen, savedShows, savedHook, savedRead, savedStore, savedRequest, savedRequested) =
             (PermissionGuide.openPane, PermissionGuide.showsGuide, PermissionGuide.grantedHook,
-             PermissionGuide.readStates, PermissionGuide.resumeStore)
+             PermissionGuide.readStates, PermissionGuide.resumeStore, PermissionGuide.requestAccess,
+             PermissionGuide.requested)
         defer {
             (PermissionGuide.openPane, PermissionGuide.showsGuide, PermissionGuide.grantedHook,
-             PermissionGuide.readStates, PermissionGuide.resumeStore) = (savedOpen, savedShows, savedHook, savedRead, savedStore)
+             PermissionGuide.readStates, PermissionGuide.resumeStore, PermissionGuide.requestAccess,
+             PermissionGuide.requested) = (savedOpen, savedShows, savedHook, savedRead, savedStore, savedRequest, savedRequested)
         }
         let suite = "PermissionGuideTests.bridge.\(UUID().uuidString)"
         let store = UserDefaults(suiteName: suite)!
@@ -183,7 +215,9 @@ struct PermissionGuideTests {
         PermissionGuide.resumeStore = store
         var opened: [String] = []
         var granted: [PermissionFlowPane] = []
+        var asked: [PermissionFlowPane] = []
         PermissionGuide.openPane = { opened.append($0.absoluteString) }
+        PermissionGuide.requestAccess = { asked.append($0) }
         PermissionGuide.showsGuide = false
         PermissionGuide.grantedHook = { granted.append($0) }
         // Not on for the first reads (no row, or a row switched off); then
@@ -200,17 +234,24 @@ struct PermissionGuideTests {
         let reads = Reads()
         PermissionGuide.readStates = { await reads.next() }
 
-        // A switched-off (listed) app and a never-asked one both go to the pane.
-        for before in [PermissionGuide.PaneState.off, .absent] {
+        // A switched-off (listed) app and a never-asked one both go to the
+        // pane. Only the one with no row asks macOS, whose prompt adds the
+        // row, and only once a run.
+        PermissionGuide.requested = []
+        let cases: [(PermissionGuide.PaneState, [PermissionFlowPane])] =
+            [(.off, []), (.absent, [.accessibility]), (.absent, [])]
+        for (before, expectAsked) in cases {
             await reads.reset(before)
             opened = []
             granted = []
+            asked = []
             let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
             _ = try await bridge.handle("host.openSettings", ["url": url])
             #expect(opened == [url], "before: \(before)")
             #expect(store.dictionary(forKey: PermissionGuide.resumeKey)?["pane"] as? String == PermissionFlowPane.accessibility.rawValue)
             for _ in 0..<200 where granted.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
             #expect(granted == [.accessibility], "before: \(before)")
+            #expect(asked == expectAsked, "before: \(before)")
         }
 
         // The pages read the live state on every call.

@@ -809,7 +809,7 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
 /// macOS 27 and later answer EPERM when an app without Full Disk Access or a
 /// per-app grant reads a protected browser profile folder, root and
 /// LaunchAgents included.
-const PROFILE_PROTECTION_HINT: &str = "on macOS 27 and later, reading this browser's profile folder needs Full Disk Access or a per-app grant; grant Full Disk Access to CuaDriver.app and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
+const PROFILE_PROTECTION_HINT: &str = "on macOS 27 and later, reading this browser's profile folder needs Full Disk Access or a per-app grant; in System Settings → Privacy & Security → Full Disk Access, click + and choose /Applications/CuaDriver.app, turn its switch on, and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
 
 fn devtools_active_port_read_refusal(error: &std::io::Error) -> BrowserRefusal {
     let message = format!("could not read the browser's DevToolsActivePort file: {error}");
@@ -1974,6 +1974,10 @@ mod tests {
         assert_eq!(detail["resource"], "browser_profile");
         assert_eq!(detail["os_error"], libc::EPERM);
         assert_eq!(detail["hint"], PROFILE_PROTECTION_HINT);
+        assert!(
+            PROFILE_PROTECTION_HINT.contains("click + and choose /Applications/CuaDriver.app"),
+            "{PROFILE_PROTECTION_HINT}"
+        );
 
         let mode_bits =
             devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EACCES));

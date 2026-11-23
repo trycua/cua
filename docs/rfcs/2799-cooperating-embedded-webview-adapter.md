@@ -6,7 +6,7 @@ created: 2026-11-23
 last_updated: 2026-11-23
 status: review
 discussion: https://github.com/trycua/cua/issues/2799
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/8571
 implementation:
   - https://github.com/railapex/webview-adapter-example
 supersedes:
@@ -87,9 +87,10 @@ same-URL sibling panes.
 - On Windows, `browser_endpoints_for_pid` in
   `libs/cua-driver/rust/crates/platform-windows/src/browser_platform.rs` lets a
   native embedded host use a DevTools endpoint owned by its classified
-  `msedgewebview2.exe` descendants. That finds renderer targets. It does not say
-  which native control owns which target, so several candidates refuse with
-  `browser_binding_ambiguous`.
+  `msedgewebview2.exe` descendants. That discovers DevTools endpoints, and
+  `select_unique_owned_endpoint` refuses with `browser_binding_ambiguous` when
+  more than one endpoint qualifies, before any page target is chosen. Neither
+  step says which native control owns which renderer target.
 - `WindowElement` in `cua-driver-contract` has no platform control ID. RFC
   #2798 proposes that field; this RFC consumes it and does not add it.
 
@@ -130,12 +131,13 @@ through the exact webview object the host holds. Success means the host
 accepted the request; the driver treats navigation as complete only after it
 observes the next committed document generation through `snapshot`.
 
-### Windows transport
+### Windows transport (prototype)
 
-The first transport is an owner-local named pipe. Requests and responses are
-newline-framed JSON capped below 64 KiB, with five-second I/O timeouts. The host
-caps the pane inventory at 256 entries and URLs at 4096 bytes. The pipe's access
-list admits only the interactive user that owns the host.
+The prototype uses an owner-local named pipe. Its parameters are inputs to
+review, not settled protocol limits: requests and responses are newline-framed
+JSON capped below 64 KiB with five-second I/O timeouts, the host caps the pane
+inventory at 256 entries and URLs at 4096 bytes, and the pipe's access list
+admits only the user that owns the host.
 
 ### Other platforms
 
@@ -146,10 +148,12 @@ driver reports the route as unsupported there.
 
 ### Driver surface
 
-Browser tools that bind a tab gain a route kind for cooperating hosts. A bound
-logical tab records the pane instance and both generations, and every later
-call through it checks them. The existing refusal codes carry the failures; a
-new code is added only where none fits.
+The issue thread leaves the driver side to build: selector resolution, binding
+a logical tab, and routing later browser tool calls through the driver. One
+possible shape, for review: browser tools that bind a tab gain a route kind for
+cooperating hosts, and a bound logical tab records the pane instance and both
+generations so every later call through it checks them. Which refusal codes
+carry the failures is open.
 
 ## Trust boundary
 
@@ -178,7 +182,7 @@ The adapter is optional and off by default. Native and browser automation paths
 are unchanged. A host that does not opt in keeps the current exact-ownership
 refusal. Capabilities are negotiated, and unsupported methods fail without
 approximation. The protocol carries an explicit version so later methods are
-additive. Rollback is removing the route kind; nothing else depends on it.
+additive.
 
 ## Security, privacy, and telemetry
 
@@ -201,8 +205,8 @@ target ID, or secret. No adapter traffic or page metadata goes to telemetry.
 5. Update `BROWSER.md` and the support table with the exact route and its
    refusals.
 
-Each step is its own pull request and leaves the non-cooperating path
-unchanged.
+The split above is a proposal for review. Every step leaves the
+non-cooperating path unchanged.
 
 ## Test and acceptance plan
 
@@ -211,7 +215,10 @@ unchanged.
   document generation, closed pane, unsupported method, invalid scheme,
   oversized and malformed frames. Each asserts the exact refusal code.
 - A Windows desktop E2E against a two-pane fixture host such as
-  [railapex/webview-adapter-example](https://github.com/railapex/webview-adapter-example):
+  [railapex/webview-adapter-example](https://github.com/railapex/webview-adapter-example).
+  That example is a standalone host and PowerShell client: it has no driver
+  side and did not launch remote or different-user clients, so it is a fixture,
+  not evidence of driver routing. The E2E covers
   late attach, distinct binding for same-URL siblings, navigation of one pane
   with the sibling's URL and document generation unchanged, recovery after
   webview recreation and host restart.

@@ -162,14 +162,14 @@ fn unique_match(candidates: &[Candidate], wanted: Option<u32>) -> Option<&Candid
 }
 
 /// The display number of a local `DISPLAY` (`:0`, `:0.0`, `unix:1`,
-/// `unix/:2`), or
-/// `None` for a remote, forwarded or malformed one.
+/// `unix/:2`), or `None` for a remote, forwarded or malformed one.
 fn local_display_number(display: &OsStr) -> Option<u32> {
     let display = display.to_str()?;
     let rest = ["unix/:", "unix:", ":"]
         .iter()
         .find_map(|prefix| display.strip_prefix(prefix))?;
-    let number = rest.split_once('.').map_or(rest, |(number, _)| number);
+    let (number, screen) = rest.split_once('.').unwrap_or((rest, "0"));
+    parse_number(screen)?;
     parse_number(number)
 }
 
@@ -200,10 +200,12 @@ fn scan_proc(proc_root: &Path, uid: u32) -> Option<Vec<Candidate>> {
 /// `uid` whose cookie is safe to adopt and which is still running once the
 /// cookie has been checked.
 fn candidate_from_pid(pid_dir: &Path, uid: u32) -> Option<Candidate> {
+    // Everything below is read after this start time, so the closing check
+    // catches a PID reused at any point in between.
+    let started = start_time(&std::fs::read_to_string(pid_dir.join("stat")).ok()?)?;
     if std::fs::metadata(pid_dir).ok()?.uid() != uid {
         return None;
     }
-    let started = start_time(&std::fs::read_to_string(pid_dir.join("stat")).ok()?)?;
     let comm = std::fs::read_to_string(pid_dir.join("comm")).ok()?;
     if !matches!(comm.trim_end_matches('\n'), "Xwayland" | "Xorg" | "X") {
         return None;
@@ -367,6 +369,8 @@ mod tests {
         assert_eq!(local_display_number(OsStr::new("unix/:3")), Some(3));
         assert_eq!(local_display_number(OsStr::new("localhost:10.0")), None);
         assert_eq!(local_display_number(OsStr::new(":")), None);
+        assert_eq!(local_display_number(OsStr::new("unix/:3.bad")), None);
+        assert_eq!(local_display_number(OsStr::new(":0.")), None);
         assert_eq!(local_display_number(OsStr::new("")), None);
     }
 

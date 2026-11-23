@@ -43,13 +43,13 @@ const MANIFEST_KEYS: &[&str] = &[
     "resources",
 ];
 
+/// Read from the unindented key lines rather than a parse, so an example
+/// that does not parse still reaches the loader and fails there.
 fn is_manifest(body: &str) -> bool {
-    let Ok(serde_yaml_ng::Value::Mapping(map)) = serde_yaml_ng::from_str(body) else {
-        return false;
-    };
-    map.keys()
-        .filter_map(serde_yaml_ng::Value::as_str)
-        .any(|key| MANIFEST_KEYS.contains(&key))
+    body.lines()
+        .filter(|line| !line.starts_with([' ', '\t', '#', '-']))
+        .filter_map(|line| line.split_once(':'))
+        .any(|(key, _)| MANIFEST_KEYS.contains(&key.trim().trim_matches(['"', '\''])))
 }
 
 /// YAML fences that are capability manifests, as (line, body).

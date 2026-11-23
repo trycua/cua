@@ -639,6 +639,8 @@ export default class WinRectsExtension extends Extension {
       null,
       null
     );
+    this._cursorOwner = null;
+    this._cursorOwnerWatch = 0;
     this._action = 'idle';
     // Whether cua-driver asked for the current action's cue.
     this._cueRequested = false;
@@ -789,6 +791,7 @@ export default class WinRectsExtension extends Extension {
     });
   }
   disable() {
+    this._releaseCursorOwner();
     for (const entry of this._captureClones.values()) {
       GLib.source_remove(entry.timeout);
       entry.clone.destroy();
@@ -824,7 +827,7 @@ export default class WinRectsExtension extends Extension {
     }
   }
   GetVersion() {
-    return 12;
+    return 13;
   }
   GetRects() {
     const actors = global.get_window_actors();
@@ -988,7 +991,46 @@ export default class WinRectsExtension extends Extension {
       return GLib.SOURCE_REMOVE;
     });
   }
-  MoveCursor(x, y) {
+  // The cursor belongs to the bus client that last drew it, and hides when
+  // that client leaves the bus: a daemon that exits, crashes or restarts
+  // cannot leave its cursor painted.
+  MoveCursorAsync([x, y], invocation) {
+    this._claimCursor(invocation.get_sender());
+    this._moveCursor(x, y);
+    invocation.return_value(null);
+  }
+  ClickPulseAsync([x, y], invocation) {
+    this._claimCursor(invocation.get_sender());
+    this._clickPulse(x, y);
+    invocation.return_value(null);
+  }
+  PlayCursorPathAsync([trackJson], invocation) {
+    this._claimCursor(invocation.get_sender());
+    this._playCursorPath(trackJson);
+    invocation.return_value(null);
+  }
+  _claimCursor(sender) {
+    if (!sender || sender === this._cursorOwner) return;
+    this._releaseCursorOwner();
+    this._cursorOwner = sender;
+    this._cursorOwnerWatch = Gio.bus_watch_name(
+      Gio.BusType.SESSION,
+      sender,
+      Gio.BusNameWatcherFlags.NONE,
+      null,
+      () => {
+        if (this._cursorOwner !== sender) return;
+        this._releaseCursorOwner();
+        this.HideCursor();
+      }
+    );
+  }
+  _releaseCursorOwner() {
+    if (this._cursorOwnerWatch) Gio.bus_unwatch_name(this._cursorOwnerWatch);
+    this._cursorOwnerWatch = 0;
+    this._cursorOwner = null;
+  }
+  _moveCursor(x, y) {
     if (!this._cursor) return;
     this._stopPath();
     const revealBadge = !this._cursor.visible;
@@ -1004,7 +1046,7 @@ export default class WinRectsExtension extends Extension {
     this._positionBadge(x, y, 480);
     if (revealBadge) this._revealBadge();
   }
-  ClickPulse(x, y) {
+  _clickPulse(x, y) {
     if (!this._cursor) return;
     const revealBadge = !this._cursor.visible;
     // A move still settling onto the click point finishes by itself.
@@ -1046,7 +1088,7 @@ export default class WinRectsExtension extends Extension {
     this._look = look;
     if (this._cursor) this._cursor.queue_repaint();
   }
-  PlayCursorPath(trackJson) {
+  _playCursorPath(trackJson) {
     if (!this._cursor) return;
     const track = parseCursorPath(trackJson);
     if (!track) return;

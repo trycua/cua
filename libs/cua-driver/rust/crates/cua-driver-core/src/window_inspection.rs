@@ -186,9 +186,11 @@ pub fn related_by_owner_chain(
 /// dialog's owner, or every window of its UI thread. So an enabled target is
 /// blocked by nothing, and a disabled one by the only related window still
 /// enabled that a modal loop could have disabled it for: one the target
-/// owns, or one on the target's UI thread, whichever window owns it. An
-/// enabled window on another thread with no owner link to the target is no
-/// evidence: an app can disable a window for its own reasons. With none or
+/// owns, or one on the target's UI thread, whichever window owns it. A
+/// window the target is attached to is never one: a modal loop that left it
+/// enabled disabled the target for nothing. An enabled window on another
+/// thread with no owner link to the target is no evidence either: an app can
+/// disable a window for its own reasons. With none or
 /// several candidates, Win32 does not say which one blocks: `None`, so the
 /// caller reports the relation as unobservable.
 pub fn block_disabled_target(
@@ -205,6 +207,7 @@ pub fn block_disabled_target(
     }
     let mut live = related.iter_mut().filter(|window| {
         enabled(window.window_id)
+            && window.owner != WindowOwnership::Ancestor
             && (window.owner == WindowOwnership::Target || on_target_thread(window.window_id))
     });
     let (Some(blocker), None) = (live.next(), live.next()) else {
@@ -650,6 +653,26 @@ mod tests {
             block_disabled_target(other_window, false, |_| true, |_| false),
             None
         );
+    }
+
+    #[test]
+    fn an_enabled_ancestor_does_not_block_a_disabled_target() {
+        // The app disabled its modeless palette 1 itself; its owner 2 on the
+        // same thread stays enabled and runs no modal loop.
+        let related = vec![window(2, WindowOwnership::Ancestor, false, false)];
+        assert_eq!(
+            block_disabled_target(related, false, |_| true, |_| true),
+            None
+        );
+        // The target's own dialog is the one blocker, its enabled owner aside.
+        let related = vec![
+            window(2, WindowOwnership::Ancestor, false, false),
+            window(3, WindowOwnership::Target, false, true),
+        ];
+        let facts = block_disabled_target(related, false, |_| true, |_| true).unwrap();
+        let context = interaction_context(&Some(facts));
+        assert_eq!(context["related_surfaces"][0]["relation"], "modal_child");
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 3);
     }
 
     #[test]

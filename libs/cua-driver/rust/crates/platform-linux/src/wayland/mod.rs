@@ -57,6 +57,7 @@ pub(crate) mod portal_screencast;
 pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
 
 use cua_driver_core::action_record::ActionTransport;
+use cua_driver_core::relative_pointer::{Incomplete, RelativeStep};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
@@ -2680,6 +2681,12 @@ fn scroll_vptr(
 static SYNTH_CURSOR_POS: std::sync::OnceLock<std::sync::Mutex<Option<(i32, i32)>>> =
     std::sync::OnceLock::new();
 
+fn forget_synth_cursor() {
+    if let Some(Ok(mut g)) = SYNTH_CURSOR_POS.get().map(|cell| cell.lock()) {
+        *g = None;
+    }
+}
+
 fn record_synth_cursor(x: i32, y: i32) {
     let cell = SYNTH_CURSOR_POS.get_or_init(|| std::sync::Mutex::new(None));
     if let Ok(mut g) = cell.lock() {
@@ -2743,6 +2750,65 @@ fn move_cursor_absolute_vptr(
     sess.motion(px, py)?;
     record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
     sess.finish()
+}
+
+/// Sentinel substring in the error of a relative move on a libei session
+/// whose pointer is absolute only.
+pub const NO_RELATIVE_POINTER_MARKER: &str = "no-ei-relative-pointer";
+
+/// True when [`move_pointer_relative`] failed because this desktop has no
+/// relative pointer route: neither the wlroots virtual pointer nor a libei
+/// relative pointer.
+pub fn relative_pointer_unavailable(error: &anyhow::Error) -> bool {
+    is_no_vptr(error) || error.to_string().contains(NO_RELATIVE_POINTER_MARKER)
+}
+
+/// Send relative pointer motion to whatever surface has the pointer: the
+/// wlroots virtual pointer's relative `motion`, or the libei relative pointer
+/// on compositors without it. A compositor hands this motion to a client that
+/// holds a pointer lock as relative-pointer deltas. Fails before sending
+/// anything when no route opens; a failed send partway through comes back as
+/// the inner [`relative_pointer::Incomplete`].
+///
+/// [`relative_pointer::Incomplete`]: cua_driver_core::relative_pointer::Incomplete
+pub fn move_pointer_relative(
+    steps: &[RelativeStep],
+) -> anyhow::Result<(ActionTransport, Result<(), Incomplete>)> {
+    let sent = with_libei_fallback(
+        || {
+            move_pointer_relative_vptr(steps)
+                .map(|sent| (ActionTransport::LinuxWaylandVirtualPointer, sent))
+        },
+        || match cua_driver_core::relative_pointer::send_steps(steps, libei_move_relative) {
+            Err(incomplete) if incomplete.sent_steps == 0 => Err(incomplete.error),
+            sent => Ok((ActionTransport::LinuxLibei, sent)),
+        },
+    )?;
+    // The pointer is no longer where this process last put it.
+    forget_synth_cursor();
+    Ok(sent)
+}
+
+/// wlroots virtual-pointer implementation of [`move_pointer_relative`].
+fn move_pointer_relative_vptr(steps: &[RelativeStep]) -> anyhow::Result<Result<(), Incomplete>> {
+    let mut sess = open_vptr_session(None)?;
+    // Relative motion addresses no point; on niri, admit it as desktop input.
+    let mut gate = if niri::is_session() {
+        let space = (sess.origin_x, sess.origin_y, sess.output_w, sess.output_h);
+        niri::prepare_target(niri::Target::Desktop, space, &[])?
+    } else {
+        None
+    };
+    let sent = cua_driver_core::relative_pointer::send_steps(steps, |dx, dy| {
+        niri_gate_holds(&mut gate)?;
+        sess.send(|vptr| vptr.motion(event_time_ms(), f64::from(dx), f64::from(dy)))
+    });
+    if let Err(error) = sess.finish() {
+        // Every sent step already waited for the compositor, so the motion
+        // stands; only the virtual pointer's teardown failed.
+        tracing::warn!("relative pointer motion: virtual pointer teardown failed: {error:#}");
+    }
+    Ok(sent)
 }
 
 /// Press-drag-release on a native Wayland toplevel. Emits one button press at
@@ -3264,6 +3330,10 @@ fn libei_move_absolute(_x: i32, _y: i32) -> anyhow::Result<()> {
     unreachable!("libei fallback compiled out (no portal-input feature)")
 }
 #[cfg(not(feature = "portal-input"))]
+fn libei_move_relative(_dx: i32, _dy: i32) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
 #[allow(clippy::too_many_arguments)]
 fn libei_drag(
     _from_x: i32,
@@ -3301,6 +3371,11 @@ fn libei_wait_pointer_ready() -> anyhow::Result<()> {
 #[cfg(feature = "portal-input")]
 fn libei_wait_scroll_ready() -> anyhow::Result<()> {
     libei::wait_scroll_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_move_relative(dx: i32, dy: i32) -> anyhow::Result<()> {
+    libei::move_relative(f64::from(dx), f64::from(dy))
 }
 
 #[cfg(feature = "portal-input")]

@@ -128,6 +128,11 @@ enum Cmd {
         y: f64,
         reply: Sender<anyhow::Result<()>>,
     },
+    MoveRelative {
+        dx: f64,
+        dy: f64,
+        reply: Sender<anyhow::Result<()>>,
+    },
     Scroll {
         dx: f64,
         dy: f64,
@@ -325,6 +330,22 @@ pub fn move_absolute(x: f64, y: f64) -> anyhow::Result<()> {
     let (tx_r, rx_r) = bounded(1);
     tx()?
         .send(Cmd::MoveAbsolute { x, y, reply: tx_r })
+        .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
+    wait_for_reply(rx_r)
+}
+
+/// Move the pointer by (dx, dy) through the relative `ei_pointer`
+/// interface, which a client holding a pointer lock receives as motion
+/// deltas.
+pub fn move_relative(dx: f64, dy: f64) -> anyhow::Result<()> {
+    ensure_started()?;
+    let (tx_r, rx_r) = bounded(1);
+    tx()?
+        .send(Cmd::MoveRelative {
+            dx,
+            dy,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -1028,6 +1049,12 @@ impl EisState {
             Cmd::Click { .. } | Cmd::MoveAbsolute { .. } | Cmd::Drag { .. } => {
                 self.device_with_interface("ei_pointer_absolute").is_some()
             }
+            // A session whose pointer is absolute only refuses at once
+            // rather than waiting for a relative device that never comes.
+            Cmd::MoveRelative { .. } => {
+                self.device_with_interface("ei_pointer").is_some()
+                    || self.device_with_interface("ei_pointer_absolute").is_some()
+            }
             Cmd::Scroll { .. } => self.device_with_interface("ei_scroll").is_some(),
             Cmd::PressKey { .. } | Cmd::KeySequence { .. } => {
                 self.device_with_interface("ei_keyboard").is_some()
@@ -1174,6 +1201,20 @@ impl EisState {
                     require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
 
                 ptr_abs.motion_absolute(*x as f32, *y as f32);
+                device.frame(serial, event_time_us());
+            }
+            Cmd::MoveRelative { dx, dy, .. } => {
+                let device = self.device_with_interface("ei_pointer").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}: the EIS session offers only an absolute pointer",
+                        super::NO_RELATIVE_POINTER_MARKER
+                    )
+                })?;
+                let serial = self.last_serial;
+                let pointer =
+                    require_device_interface::<reis::ei::Pointer>(&self.devices, &device)?;
+
+                pointer.motion_relative(*dx as f32, *dy as f32);
                 device.frame(serial, event_time_us());
             }
             Cmd::Scroll { dx, dy, .. } => {
@@ -1549,6 +1590,7 @@ impl Cmd {
             Cmd::WaitReady { reply, .. }
             | Cmd::Click { reply, .. }
             | Cmd::MoveAbsolute { reply, .. }
+            | Cmd::MoveRelative { reply, .. }
             | Cmd::Scroll { reply, .. }
             | Cmd::TypeText { reply, .. }
             | Cmd::PressKey { reply, .. }
@@ -1862,6 +1904,7 @@ pub(super) mod local_eis {
     #[derive(Clone, Debug, PartialEq)]
     pub(in crate::wayland) enum Emitted {
         Motion(String, f32, f32),
+        RelativeMotion(String, f32, f32),
         Button(u32, bool),
         Scroll(f32, f32),
         Key(u32, bool),
@@ -1918,7 +1961,8 @@ pub(super) mod local_eis {
                         let converter = EisRequestConverter::new(&self.ctx, resp, 1);
                         let _ = converter.handle().add_seat(
                             Some("seat"),
-                            DeviceCapability::PointerAbsolute
+                            DeviceCapability::Pointer
+                                | DeviceCapability::PointerAbsolute
                                 | DeviceCapability::Button
                                 | DeviceCapability::Scroll
                                 | DeviceCapability::Keyboard
@@ -1948,7 +1992,8 @@ pub(super) mod local_eis {
                         let device = bind.seat.add_device(
                             Some(name),
                             reis::eis::device::DeviceType::Virtual,
-                            BitFlags::from(DeviceCapability::PointerAbsolute)
+                            BitFlags::from(DeviceCapability::Pointer)
+                                | DeviceCapability::PointerAbsolute
                                 | DeviceCapability::Button
                                 | DeviceCapability::Scroll,
                             |device| {
@@ -1981,6 +2026,11 @@ pub(super) mod local_eis {
                     m.device.name().unwrap_or_default().to_owned(),
                     m.dx_absolute,
                     m.dy_absolute,
+                )),
+                EisRequest::PointerMotion(m) => log.push(Emitted::RelativeMotion(
+                    m.device.name().unwrap_or_default().to_owned(),
+                    m.dx,
+                    m.dy,
                 )),
                 EisRequest::Button(b) => log.push(Emitted::Button(
                     b.button,
@@ -2277,6 +2327,20 @@ mod tests {
         let (result, events) = record(|| move_absolute(0.0, 0.0));
         result.unwrap();
         assert_eq!(events, vec![motion("wide", 0.0, 0.0)]);
+    }
+
+    #[test]
+    fn relative_move_sends_the_delta_through_the_relative_pointer() {
+        // Relative motion has no position, so any pointer device carries it.
+        let (result, events) = record(|| move_relative(240.0, -30.0));
+        result.unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Emitted::RelativeMotion(_, dx, dy)] if (*dx, *dy) == (240.0, -30.0)
+            ),
+            "{events:?}"
+        );
     }
 
     #[test]

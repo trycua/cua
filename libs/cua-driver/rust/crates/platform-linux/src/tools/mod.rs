@@ -53,6 +53,8 @@ mod mouse_button_up;
 #[cfg(target_os = "linux")]
 mod mouse_drag;
 #[cfg(target_os = "linux")]
+mod mouse_move_relative;
+#[cfg(target_os = "linux")]
 mod move_cursor;
 #[cfg(target_os = "linux")]
 pub(crate) mod page;

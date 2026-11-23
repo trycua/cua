@@ -1066,6 +1066,27 @@ impl Relay {
         self.draining.load(Ordering::SeqCst)
     }
 
+    /// Waits (off the async workers, at most 20 s) until every state
+    /// writer has put the last changes on disk: at shutdown.
+    pub async fn flush_state(&self) {
+        let storage = self.storage.clone();
+        #[cfg(feature = "hosted")]
+        let plans = self.plans.clone();
+        let tcp = self.tcp.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let limit = Duration::from_secs(20);
+            storage.flush_writers(limit);
+            #[cfg(feature = "hosted")]
+            if let Some(p) = plans {
+                p.flush_blocking(limit);
+            }
+            if let Some(t) = tcp {
+                t.flush_blocking(limit);
+            }
+        })
+        .await;
+    }
+
     /// Connection draining, run once the stop signal has arrived. In order:
     ///
     /// 1. New machine tunnels and mesh connections are refused (503 with
@@ -1176,6 +1197,7 @@ impl Relay {
             // across a restart.
             handle.meter.persist(true);
             handle.mesh.flush_last_seen();
+            handle.flush_state().await;
         })
         .await
     }
@@ -1204,6 +1226,7 @@ impl Relay {
                 // across a restart.
                 handle.meter.persist(true);
                 handle.mesh.flush_last_seen();
+                handle.flush_state().await;
             }
         };
         tokio::pin!(stop);
@@ -1720,6 +1743,11 @@ async fn mesh_status(State(relay): State<Relay>, headers: HeaderMap) -> Response
     axum::Json(crate::mesh::status(&relay)).into_response()
 }
 
+/// How long `/readyz` waits for a fresh write probe, and for the report
+/// (free space is a `statvfs` on the volume), before answering without them.
+const READYZ_PROBE_WAIT: Duration = Duration::from_millis(500);
+const READYZ_REPORT_WAIT: Duration = Duration::from_secs(2);
+
 /// `GET /readyz`: writes, fsyncs and removes a small file in the state
 /// directory and reports free space and each store's last write; 503 when
 /// the probe fails or a store's last write failed. Liveness is `/healthz`.
@@ -1729,14 +1757,37 @@ async fn readyz(State(relay): State<Relay>, headers: HeaderMap) -> Response {
     // whether the relay is ready.
     let details = relay.config.push.is_none() || require_admin(&relay, &headers).is_ok();
     let storage = relay.storage.clone();
-    let (ready, mut body) = tokio::task::spawn_blocking(move || storage.report())
+    // The disk must never hold this answer: a stalled volume (an I/O pause)
+    // has no effect on serving, so the probe runs in the background (one at
+    // a time) and we wait for it only briefly. A probe stuck for
+    // `PROBE_STUCK` is reported as failing; shorter pauses keep the last
+    // result.
+    let refresh = {
+        let storage = storage.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = storage.probe();
+        })
+    };
+    let _ = tokio::time::timeout(READYZ_PROBE_WAIT, refresh).await;
+    let report = {
+        let storage = storage.clone();
+        tokio::time::timeout(
+            READYZ_REPORT_WAIT,
+            tokio::task::spawn_blocking(move || storage.report_nowait()),
+        )
         .await
-        .unwrap_or_else(|e| {
-            (
-                false,
-                serde_json::json!({"ready": false, "error": e.to_string()}),
-            )
-        });
+    };
+    let (ready, mut body) = match report {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => (
+            false,
+            serde_json::json!({"ready": false, "error": e.to_string()}),
+        ),
+        Err(_) => (
+            false,
+            serde_json::json!({"ready": false, "error": "state volume not answering"}),
+        ),
+    };
     if !details {
         body = serde_json::json!({ "ready": ready });
     } else {
@@ -3565,6 +3616,72 @@ mod tests {
             host_domain: domain.map(str::to_owned),
             ..RelayConfig::default()
         })
+    }
+
+    /// A stalled state volume (an I/O pause) must not hold `/readyz` or
+    /// `/metrics`, and `/healthz` stays disk-free: a short pause keeps the
+    /// last result (ready) and a long wedge reports not ready, with the
+    /// stuck time in the body and the metric.
+    #[tokio::test]
+    async fn a_stalled_volume_does_not_block_readyz_and_a_long_wedge_is_reported() {
+        use tower::ServiceExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let relay = Relay::new(RelayConfig {
+            state_file: Some(dir.path().join("relay.json")),
+            ..RelayConfig::default()
+        });
+        let router = relay.router();
+        let get = |path: &'static str| {
+            let router = router.clone();
+            async move {
+                let started = Instant::now();
+                let r = router
+                    .oneshot(
+                        axum::http::Request::get(path)
+                            .body(axum::body::Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let status = r.status();
+                let bytes = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+                (
+                    status,
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                    started.elapsed(),
+                )
+            }
+        };
+        let (s, _, _) = get("/readyz").await;
+        assert_eq!(s, StatusCode::OK);
+
+        relay.storage.stall_probe_for_test(Duration::from_secs(8));
+        tokio::time::sleep(Duration::from_millis(1100)).await; // cached probe expires
+        let (s, body, took) = get("/readyz").await;
+        assert_eq!(
+            s,
+            StatusCode::OK,
+            "a short pause keeps the last result: {body}"
+        );
+        assert!(took < Duration::from_secs(2), "readyz took {took:?}");
+        let (s, _, took) = get("/healthz").await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+        assert!(took < Duration::from_millis(500), "healthz took {took:?}");
+
+        tokio::time::sleep(crate::storage::PROBE_STUCK).await;
+        let (s, body, took) = get("/readyz").await;
+        assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(body.contains("not answering"), "{body}");
+        assert!(took < Duration::from_secs(2), "readyz took {took:?}");
+        let (_, metrics, took) = get("/metrics").await;
+        assert!(took < Duration::from_secs(2), "metrics took {took:?}");
+        assert!(
+            metrics.contains("cua_relay_state_probe_running_seconds 5")
+                || metrics.contains("cua_relay_state_probe_running_seconds 6"),
+            "{metrics}"
+        );
+        let (s, _, _) = get("/healthz").await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
     }
 
     #[test]

@@ -53,10 +53,11 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::assertion::{now_secs, remove_stale_temps, write_private_with};
+use crate::assertion::{now_secs, remove_stale_temps};
 use crate::auth_log::{self, Reason, Route};
 use crate::clock::Clock;
 use crate::oidc::Identity;
+use crate::persist::{Durable, StateFile};
 use crate::server::{account_token, bearer, Relay};
 use crate::storage::{store, Storage};
 
@@ -484,8 +485,8 @@ pub struct Meter {
     directory: RwLock<Option<Arc<dyn TeamDirectory>>>,
     plans_mtime: Mutex<Option<SystemTime>>,
     last_persist: Mutex<Instant>,
-    /// Where write failures of the usage file are counted and reported.
-    storage: Arc<Storage>,
+    /// The usage file, written off the accounting loop.
+    file: StateFile,
 }
 
 /// Why a new session was refused (account over its plan's cap).
@@ -629,6 +630,7 @@ impl Meter {
                 Err(e) => return Err(e),
             }
         }
+        let config_usage_file = config.usage_file.clone();
         let meter = Self {
             config,
             state: Mutex::new(state),
@@ -636,7 +638,7 @@ impl Meter {
             directory: RwLock::new(None),
             plans_mtime: Mutex::new(None),
             last_persist: Mutex::new(Instant::now()),
-            storage,
+            file: StateFile::new(config_usage_file, store::USAGE, storage),
         };
         meter.reload_plans();
         // Restored users get their real plan and team.
@@ -1191,9 +1193,9 @@ impl Meter {
     /// `usage` on `/readyz` and `/metrics`) and the totals stay dirty, so
     /// the next call writes them again.
     pub fn persist(&self, force: bool) {
-        let Some(path) = &self.config.usage_file else {
+        if !self.file.is_persisted() {
             return;
-        };
+        }
         {
             let mut last = self.last_persist.lock().expect("persist");
             if !force && last.elapsed() < PERSIST_EVERY {
@@ -1203,27 +1205,36 @@ impl Meter {
         }
         let saved = {
             let mut st = self.state.lock().expect("meter");
-            if !st.dirty {
+            // After a failed write the totals are written again.
+            if !st.dirty && self.file.last_ok() {
                 return;
             }
             st.dirty = false;
             saved_of(&st)
         };
-        let written = write_private_with(path, |out| {
+        self.write(saved).detach();
+    }
+
+    /// Waits until the usage file holds every write queued so far
+    /// (shutdown, tests). Blocks the calling thread.
+    pub fn flush_blocking(&self, timeout: Duration) -> bool {
+        self.file.flush_blocking(timeout)
+    }
+
+    /// Queues `saved` as the usage file (compact JSON, written by the
+    /// writer thread to a temp file that replaces it).
+    fn write(&self, saved: Saved) -> Durable {
+        self.file.replace(move |out| {
             serde_json::to_writer(&mut *out, &saved).map_err(std::io::Error::other)
-        });
-        self.storage.record(store::USAGE, &written);
-        if written.is_err() {
-            self.state.lock().expect("meter").dirty = true;
-        }
+        })
     }
 
     /// Account deletion: forgets `user` (usage, team pool membership, queued
     /// PostHog events about them) and rewrites the usage file without them.
     /// True when the user was known in memory. The file is rewritten every
     /// call, so a retry after a failed write finishes the job.
-    pub fn erase_user(&self, user: &str) -> std::io::Result<bool> {
-        let saved = {
+    pub async fn erase_user(&self, user: &str) -> std::io::Result<bool> {
+        let (existed, written) = {
             let mut st = self.state.lock().expect("meter");
             let mut existed = st.users.remove(user).is_some();
             st.teams.retain(|_, members| {
@@ -1235,23 +1246,11 @@ impl Meter {
             st.events
                 .retain(|e| e.get("distinct_id").and_then(|d| d.as_str()) != Some(id.as_str()));
             existed |= st.events.len() != before;
-            if existed {
-                st.dirty = true;
-            }
-            (existed, saved_of(&st))
+            // Queued under the lock: what is written is current.
+            st.dirty = false;
+            (existed, self.write(saved_of(&st)))
         };
-        let (existed, saved) = saved;
-        if let Some(path) = &self.config.usage_file {
-            let written = write_private_with(path, |out| {
-                serde_json::to_writer(&mut *out, &saved).map_err(std::io::Error::other)
-            });
-            self.storage.record(store::USAGE, &written);
-            written?;
-            // What was just written is current.
-            if existed {
-                self.state.lock().expect("meter").dirty = false;
-            }
-        }
+        written.await?;
         Ok(existed)
     }
 
@@ -1318,7 +1317,11 @@ impl Meter {
                 let now = Instant::now();
                 meter.tick(now.duration_since(last), now_secs());
                 last = now;
-                meter.reload_plans();
+                // The plans file is read off the async workers.
+                {
+                    let m = meter.clone();
+                    let _ = tokio::task::spawn_blocking(move || m.reload_plans()).await;
+                }
                 meter.persist(false);
                 let (Some(ph), Some(http)) = (&meter.config.posthog, &http) else {
                     continue;
@@ -1878,6 +1881,7 @@ mod tests {
         m.persist(false); // too soon after open: skipped
         assert!(!path.exists());
         m.persist(true);
+        m.flush_blocking(Duration::from_secs(10));
         drop(g);
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.len() < 200, "{raw}");
@@ -1885,8 +1889,8 @@ mod tests {
         assert_eq!(m.usage(&ada).hours_used, 1.5);
     }
 
-    #[test]
-    fn erasing_a_user_drops_usage_events_and_the_file_row() {
+    #[tokio::test]
+    async fn erasing_a_user_drops_usage_events_and_the_file_row() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("machines.usage.json");
         let config = MeterConfig {
@@ -1904,6 +1908,7 @@ mod tests {
         m.tick(Duration::ZERO, now);
         m.tick(Duration::from_secs(3600), now);
         m.persist(true);
+        m.flush_blocking(Duration::from_secs(10));
         drop((ga, gb));
         assert!(std::fs::read_to_string(&path).unwrap().contains("ada-sub"));
         // Queue the hourly events for both.
@@ -1916,7 +1921,7 @@ mod tests {
                 push_event(&mut st, e);
             }
         }
-        assert!(m.erase_user("ada-sub").unwrap());
+        assert!(m.erase_user("ada-sub").await.unwrap());
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains("ada-sub") && raw.contains("bob-sub"), "{raw}");
         let events = m.take_events(false);
@@ -1924,7 +1929,7 @@ mod tests {
         assert_ne!(events[0]["distinct_id"], id.as_str());
         assert!(m.all().iter().all(|r| r.user != "ada-sub"));
         // Again: nothing known, same file; and a restart does not bring it back.
-        assert!(!m.erase_user("ada-sub").unwrap());
+        assert!(!m.erase_user("ada-sub").await.unwrap());
         let m = meter(config);
         assert!(m.all().iter().all(|r| r.user != "ada-sub"));
         assert_eq!(m.usage(&bob).hours_used, 1.0);
@@ -1951,6 +1956,7 @@ mod tests {
         m.tick(Duration::from_secs(3600), now);
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
         m.persist(true);
+        m.flush_blocking(Duration::from_secs(10));
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         drop(g);
         // Root ignores directory permissions; nothing to check then.
@@ -1958,10 +1964,11 @@ mod tests {
             assert!(!path.exists());
             assert!(!storage.store_ok(store::USAGE));
             assert!(!storage.report().0);
-            assert!(m.state.lock().unwrap().dirty, "kept for the next write");
+            assert!(!m.file.last_ok(), "written again by the next persist");
         }
         // The next write saves the totals (nothing else changed since).
         m.persist(true);
+        m.flush_blocking(Duration::from_secs(10));
         assert!(storage.store_ok(store::USAGE));
         assert_eq!(Meter::open(config).unwrap().usage(&ada).hours_used, 1.0);
     }

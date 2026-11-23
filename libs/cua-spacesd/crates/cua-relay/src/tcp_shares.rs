@@ -379,7 +379,8 @@ struct Live {
 /// The relay's TCP shares.
 pub struct TcpShares {
     config: TcpShareConfig,
-    file: Option<PathBuf>,
+    /// The allocations file, written off the request path.
+    file: crate::persist::StateFile,
     allocations: Mutex<BTreeMap<u16, Allocation>>,
     live: Mutex<HashMap<u16, Live>>,
     per_ip: Mutex<HashMap<IpAddr, Bucket>>,
@@ -415,7 +416,8 @@ impl TcpShares {
         }
         Ok(Self {
             config,
-            file,
+            // A failed write is logged (store `tcp_shares`), as before.
+            file: crate::persist::StateFile::new(file, "tcp_shares", Default::default()),
             allocations: Mutex::new(allocations),
             live: Mutex::default(),
             per_ip: Mutex::default(),
@@ -432,19 +434,26 @@ impl TcpShares {
         &self.config
     }
 
+    /// Queues the allocations file (written by the writer thread: the
+    /// allocations lock is never held across the disk).
     fn save(&self, allocations: &BTreeMap<u16, Allocation>) {
-        let Some(path) = &self.file else { return };
+        if !self.file.is_persisted() {
+            return;
+        }
         let body = Persisted {
             allocations: allocations.values().cloned().collect(),
         };
-        let Ok(bytes) = serde_json::to_vec_pretty(&body) else {
-            return;
-        };
-        let tmp = path.with_extension("tcp.json.tmp");
-        let result = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
-        if let Err(e) = result {
-            tracing::warn!(error = %e, "tcp shares: could not save allocations");
-        }
+        self.file
+            .replace(move |out| {
+                serde_json::to_writer_pretty(&mut *out, &body).map_err(std::io::Error::other)
+            })
+            .detach();
+    }
+
+    /// Waits until the allocations file holds every write queued so far
+    /// (shutdown, tests).
+    pub fn flush_blocking(&self, timeout: Duration) -> bool {
+        self.file.flush_blocking(timeout)
     }
 
     /// Current allocations.
@@ -1663,6 +1672,7 @@ mod tests {
         let file = dir.path().join("relay.tcp.json");
         let t = TcpShares::open(TcpShareConfig::default(), Some(file.clone())).unwrap();
         let a = t.allocate("m1", "ada", &req('a', 25565)).unwrap();
+        assert!(t.flush_blocking(Duration::from_secs(10)));
         let again = TcpShares::open(TcpShareConfig::default(), Some(file)).unwrap();
         assert_eq!(again.list(), vec![a]);
     }

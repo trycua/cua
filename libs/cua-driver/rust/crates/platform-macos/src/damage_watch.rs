@@ -62,11 +62,16 @@ impl Watcher {
         }
     }
 
-    fn stop(self) {
-        if let Err(error) = self.stream.stop_capture() {
-            tracing::debug!(%error, "damage watch stream did not stop cleanly");
-        }
+    /// Stop the stream; whether ScreenCaptureKit confirmed it stopped.
+    fn stop(self) -> bool {
         self.signal.fail();
+        match self.stream.stop_capture() {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::debug!(%error, "damage watch stream did not confirm its stop");
+                false
+            }
+        }
     }
 }
 
@@ -245,6 +250,8 @@ fn record_frame(signal: &DamageSignal, sample: &CMSampleBuffer) {
 
 /// Stop failed and idle streams until none runs. A stopped display stays in
 /// `stopping` until its stream has stopped, so no arm starts another first.
+/// A display whose stop ScreenCaptureKit did not confirm stays there for the
+/// life of the process, and its actions keep the fixed wait.
 fn stop_idle_watchers() {
     loop {
         std::thread::sleep(IDLE_CHECK);
@@ -260,10 +267,7 @@ fn stop_idle_watchers() {
         };
         let stopped: Vec<u32> = idle
             .into_iter()
-            .map(|(id, watcher)| {
-                watcher.stop();
-                id
-            })
+            .filter_map(|(id, watcher)| watcher.stop().then_some(id))
             .collect();
         let mut watchers = watchers();
         watchers.stopping.retain(|id| !stopped.contains(id));

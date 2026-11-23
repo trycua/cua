@@ -12,6 +12,7 @@
 //! reports: what a client does about an intervention is its own policy.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -144,8 +145,12 @@ pub struct UserInputLog {
     epoch: u64,
     capacity: usize,
     state: Mutex<LogState>,
-    /// Recorded inputs not yet taken into `state`. Sending never blocks.
-    inputs: mpsc::Sender<(ObservedInput, u64)>,
+    /// Recorded inputs not yet taken into `state`, at most `capacity` of
+    /// them. Sending never blocks; an input that finds it full is dropped
+    /// and counted in `dropped`.
+    inputs: mpsc::SyncSender<(ObservedInput, u64)>,
+    /// Inputs dropped since `state` last took the channel in.
+    dropped: AtomicU64,
 }
 
 struct LogState {
@@ -204,10 +209,11 @@ impl UserInputLog {
     }
 
     pub fn with_epoch(capacity: usize, epoch: u64) -> Self {
-        let (inputs, received) = mpsc::channel();
+        let capacity = capacity.max(1);
+        let (inputs, received) = mpsc::sync_channel(capacity);
         Self {
             epoch,
-            capacity: capacity.max(1),
+            capacity,
             state: Mutex::new(LogState {
                 inputs: received,
                 events: VecDeque::new(),
@@ -216,6 +222,7 @@ impl UserInputLog {
                 read_through: 0,
             }),
             inputs,
+            dropped: AtomicU64::new(0),
         }
     }
 
@@ -227,6 +234,13 @@ impl UserInputLog {
             };
             state.apply(input, time_ms, self.capacity);
         }
+        // Dropped inputs take sequence numbers and count as lost history, so
+        // a reader whose cursor is before them gets history_lost.
+        let dropped = self.dropped.swap(0, Ordering::AcqRel);
+        if dropped > 0 {
+            state.last_seq += dropped;
+            state.evicted_through = state.last_seq;
+        }
     }
 
     /// Record an input observed at `time_ms`. This never waits: the input
@@ -234,7 +248,9 @@ impl UserInputLog {
     /// [`RECORD_DRAIN_LIMIT`] queued inputs are taken in; a read takes in the
     /// rest. A platform hook can call it directly.
     pub fn record(&self, input: ObservedInput, time_ms: u64) {
-        let _ = self.inputs.send((input, time_ms));
+        if let Err(mpsc::TrySendError::Full(_)) = self.inputs.try_send((input, time_ms)) {
+            self.dropped.fetch_add(1, Ordering::AcqRel);
+        }
         let mut state = match self.state.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -351,7 +367,8 @@ impl Tool for UserInputEventsTool {
                 are reported without their identity. Consecutive mouse moves from one source \
                 to one window fold into one event with a `count` until a read returns that \
                 event. `history_lost: true` means some events after your cursor were \
-                dropped. Input the driver posts straight to a window's message queue does not \
+                dropped. No events does not prove nobody acted: Windows can remove a slow \
+                input hook without notice. Input the driver posts straight to a window's message queue does not \
                 pass through the system input queue and does not appear."
                 .into(),
             input_schema: json!({
@@ -529,6 +546,21 @@ mod tests {
         log.record(key(InputSource::Hardware), 11);
         assert_eq!(log.state.lock().unwrap().events.len(), RECORD_DRAIN_LIMIT);
         assert_eq!(log.read(Some(cursor)).unwrap().events.len(), 101);
+    }
+
+    #[test]
+    fn inputs_beyond_the_queue_while_a_read_holds_the_log_count_as_lost() {
+        let log = UserInputLog::with_epoch(4, 1);
+        let cursor = start(&log);
+        let held = log.state.lock().unwrap();
+        for _ in 0..6 {
+            log.record(key(InputSource::Hardware), 10);
+        }
+        drop(held);
+        let read = log.read(Some(cursor)).unwrap();
+        assert!(read.history_lost);
+        assert_eq!(read.events.len(), 4);
+        assert_eq!(read.cursor.seq, 6);
     }
 
     #[test]

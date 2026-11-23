@@ -1,8 +1,11 @@
 //! `cua agents ...` and the `cua auth login` flows (browser PKCE with a
 //! loopback redirect, device code, the automatic fallback) with the agent
 //! onboarding, against a fake OIDC issuer in a temporary HOME. PATH is
-//! reduced to system dirs so no real agent CLI is ever found or run, and
-//! app bundles are hidden (`CUA_AGENT_APP_DIRS`).
+//! reduced to system dirs and the fallback install dirs (`/opt/homebrew/bin`,
+//! `/usr/local/bin`, ...) are dropped (`CUA_AGENT_BIN_DIRS`), so no real
+//! agent CLI is ever found or run, and app bundles are hidden
+//! (`CUA_AGENT_APP_DIRS`). The result does not depend on what is installed
+//! on the machine running the tests.
 
 mod common;
 use common::*;
@@ -17,13 +20,23 @@ use tokio::io::AsyncBufReadExt;
 /// A home with no ambient agents.
 fn home() -> Home {
     let mut h = Home::new();
-    h.set("PATH", "/usr/bin:/bin").set("CUA_AGENT_APP_DIRS", "");
+    h.set("PATH", "/usr/bin:/bin")
+        .set("CUA_AGENT_BIN_DIRS", "")
+        .set("CUA_AGENT_APP_DIRS", "");
     h
 }
 
 fn mkdirs(h: &Home, rels: &[&str]) {
     for r in rels {
         std::fs::create_dir_all(h.dir.path().join(r)).unwrap();
+    }
+}
+
+/// Files only the agent itself writes, so cua's own setup output in the same
+/// folder doesn't make the agent look uninstalled.
+fn agent_owned(h: &Home, rels: &[&str]) {
+    for r in rels {
+        std::fs::write(h.dir.path().join(r), "{}").unwrap();
     }
 }
 
@@ -186,7 +199,7 @@ async fn browser_pkce_login_then_onboards_the_named_agents() {
         !seen.contains("WXYZ"),
         "no device code in the browser flow: {seen}"
     );
-    assert!(seen.contains("[5/5]"), "{seen}");
+    assert!(seen.contains("[6/6]"), "{seen}");
     assert!(
         seen.contains("Kiro: ~/.kiro/settings/mcp.json (added)"),
         "{seen}"
@@ -245,6 +258,7 @@ async fn login_falls_back_to_device_when_loopback_is_not_allowed_and_remote_skip
 async fn agents_commands_round_trip_and_protect_malformed_files() {
     let h = home();
     mkdirs(&h, &[".codex", ".cursor", ".gemini"]);
+    agent_owned(&h, &[".codex/auth.json"]);
     std::fs::write(
         h.dir.path().join(".gemini/settings.json"),
         "{\"mcpServers\": {",
@@ -371,7 +385,10 @@ async fn agents_commands_round_trip_and_protect_malformed_files() {
     o.ok();
     let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
     assert_eq!(codex, "# mine\n[mcp_servers.other]\ncommand = \"o\"\n");
-    assert!(!h.dir.path().join(".agents/skills/cua-driver").exists());
+    // The default skills include Cua Driver's: it is not Cua Spaces', so it
+    // stays; the Spaces skills go.
+    assert!(!h.dir.path().join(".agents/skills/cua-spaces").exists());
+    assert!(h.dir.path().join(".agents/skills/cua-driver").is_dir());
 
     // Unknown agents are a usage error.
     let o = h
@@ -380,10 +397,307 @@ async fn agents_commands_round_trip_and_protect_malformed_files() {
     assert_eq!(o.code, 2, "{o:?}");
 }
 
+/// The Local CLI (`CUA_CHANNEL=local`, its own home) registers `cua-local`
+/// beside the Stable `cua` in the same agent config, installs `-local` skill
+/// copies beside Stable's, and removes only its own (CUA-1776).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_local_cli_registers_cua_local_beside_stables_cua() {
+    let mut h = home();
+    mkdirs(&h, &[".cursor"]);
+    let cursor = h.dir.path().join(".cursor/mcp.json");
+    let stable_skill = h.dir.path().join(".agents/skills/cua-spaces");
+    let local_skill = h.dir.path().join(".agents/skills/cua-spaces-local");
+
+    // Stable first: `cua`.
+    let o = h
+        .run(&[
+            "agents",
+            "setup",
+            "--agents",
+            "cursor",
+            "--yes",
+            "--mcp-command",
+            "/opt/cua/bin/cua",
+        ])
+        .await;
+    o.ok();
+    let before = std::fs::read_to_string(&cursor).unwrap();
+    assert!(
+        before.contains("\"cua\"") && !before.contains("cua-local"),
+        "{before}"
+    );
+    assert!(stable_skill.join("SKILL.md").is_file());
+
+    // Then the Local CLI, in its own home.
+    let local_home = h.dir.path().join(".cua-local");
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    let o = h
+        .run(&[
+            "--json",
+            "agents",
+            "setup",
+            "--agents",
+            "cursor",
+            "--yes",
+            "--mcp-command",
+            "/opt/cua-local/bin/cua-local",
+        ])
+        .await;
+    o.ok();
+    let v = o.json();
+    let mcp: Vec<&str> = v["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["target"] == "mcp")
+        .map(|m| m["item"].as_str().unwrap())
+        .collect();
+    assert_eq!(mcp, ["cua-local"], "{v}");
+    let both: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert_eq!(both["mcpServers"]["cua"]["command"], "/opt/cua/bin/cua");
+    assert_eq!(
+        both["mcpServers"]["cua-local"]["command"],
+        "/opt/cua-local/bin/cua-local"
+    );
+    assert!(local_skill.join("SKILL.md").is_file());
+    assert!(
+        std::fs::read_to_string(local_skill.join("SKILL.md"))
+            .unwrap()
+            .contains("name: cua-spaces-local")
+    );
+    assert!(local_home.join("agent-setup.json").is_file());
+
+    let o = h.run(&["--json", "agents", "status"]).await;
+    o.ok();
+    let v = o.json();
+    let c = v["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "cursor")
+        .unwrap();
+    assert_eq!(
+        (c["cua_configured"].clone(), c["cua_managed"].clone()),
+        (true.into(), true.into()),
+        "{c}"
+    );
+    assert!(
+        v["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["name"].as_str().unwrap().ends_with("-local")),
+        "{v}"
+    );
+
+    // Removing Local's setup leaves Stable's entry and skills.
+    h.run(&["agents", "remove", "--yes"]).await.ok();
+    let left: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert_eq!(left["mcpServers"]["cua"]["command"], "/opt/cua/bin/cua");
+    assert!(left["mcpServers"]["cua-local"].is_null(), "{left}");
+    assert!(stable_skill.join("SKILL.md").is_file() && !local_skill.exists());
+}
+
+/// A stand-in cua-driver whose `mcp` answers one MCP `initialize`.
+#[cfg(unix)]
+fn fake_driver(h: &Home) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let p = h.dir.path().join("opt/drv/cua-driver");
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(
+        &p,
+        "#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p.display().to_string()
+}
+
+/// What `uninstall-local.sh` runs (`cua-local agents remove --yes`) removes
+/// Local's own MCP server and skills and nothing of the released app's: its
+/// `cua` and `cua-driver` entries and skills stay, also when Local was asked to
+/// set up `cua-driver` itself after Stable had (CUA-1776).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_local_cli_removes_only_its_own_entries_and_leaves_stables_cua_and_cua_driver() {
+    let mut h = home();
+    let drv = fake_driver(&h);
+    mkdirs(&h, &[".cursor"]);
+    let cursor = h.dir.path().join(".cursor/mcp.json");
+    let root = h.dir.path().to_path_buf();
+    let skill = move |name: &str| root.join(".agents/skills").join(name);
+    let servers = |p: &std::path::Path| -> Vec<String> {
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap();
+        let mut names: Vec<String> = v["mcpServers"]
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+
+    // The released app: `cua`, and Cua Driver's `cua-driver`.
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/cua/bin/cua",
+    ])
+    .await
+    .ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        &drv,
+    ])
+    .await
+    .ok();
+    assert_eq!(servers(&cursor), ["cua", "cua-driver"]);
+    let stable_config = std::fs::read_to_string(&cursor).unwrap();
+    assert!(skill("cua-spaces").join("SKILL.md").is_file());
+    assert!(skill("cua-driver").join("SKILL.md").is_file());
+
+    // Local, in its own home: `cua-local`, and (asked to) `cua-driver` too.
+    let local_home = h.dir.path().join(".cua-local");
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/cua-local/bin/cua-local",
+    ])
+    .await
+    .ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        &drv,
+    ])
+    .await
+    .ok();
+    assert_eq!(servers(&cursor), ["cua", "cua-driver", "cua-local"]);
+    assert!(skill("cua-spaces-local").join("SKILL.md").is_file());
+
+    // The uninstaller's call.
+    h.run(&["agents", "remove", "--yes"]).await.ok();
+    assert_eq!(
+        servers(&cursor),
+        ["cua", "cua-driver"],
+        "only Local's server went"
+    );
+    let left: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    let before: serde_json::Value = serde_json::from_str(&stable_config).unwrap();
+    assert_eq!(left, before, "Stable's entries are exactly as they were");
+    assert!(!skill("cua-spaces-local").exists(), "Local's skills went");
+    assert!(
+        skill("cua-spaces").join("SKILL.md").is_file()
+            && skill("cua-driver").join("SKILL.md").is_file(),
+        "Stable's skills, cua-driver's included, stay"
+    );
+}
+
+/// The other order: Local registered `cua-driver` first and the released app
+/// later set up the same command. Local's record still says it wrote the entry,
+/// but the name is Cua Driver's, so removing Local's setup leaves it, and the
+/// released app's `cua-driver` skill, alone.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first() {
+    let mut h = home();
+    let drv = fake_driver(&h);
+    mkdirs(&h, &[".cursor"]);
+    let cursor = h.dir.path().join(".cursor/mcp.json");
+    let root = h.dir.path().to_path_buf();
+    let skill = move |name: &str| root.join(".agents/skills").join(name);
+    let driver = [
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        &drv,
+    ];
+
+    let local_home = h.dir.path().join(".cua-local");
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    h.run(&driver).await.ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/cua-local/bin/cua-local",
+    ])
+    .await
+    .ok();
+    // Then the released app, its own home, the same command.
+    let stable_home = h.dir.path().join(".cua").display().to_string();
+    h.set("CUA_CHANNEL", "stable").set("CUA_HOME", stable_home);
+    h.run(&driver).await.ok();
+    assert!(skill("cua-driver").join("SKILL.md").is_file());
+
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    h.run(&["agents", "remove", "--yes"]).await.ok();
+    let left: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert!(left["mcpServers"]["cua-local"].is_null(), "{left}");
+    assert_eq!(
+        left["mcpServers"]["cua-driver"]["command"],
+        drv.as_str(),
+        "Cua Driver's server stays: {left}"
+    );
+    assert!(
+        skill("cua-driver").join("SKILL.md").is_file(),
+        "the released app's cua-driver skill stays"
+    );
+    // `cua-driver-local` is Cua Driver's own sibling skill
+    // (`is_cua_driver_name`), so it stays like `cua-driver`; only Cua Spaces'
+    // skill goes.
+    assert!(
+        skill("cua-driver-local").exists(),
+        "Cua Driver's Local skill stays"
+    );
+    assert!(
+        !skill("cua-spaces-local").exists(),
+        "Local's own skills went"
+    );
+}
+
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     let h = home();
+    let drv = fake_driver(&h);
     mkdirs(&h, &[".codex", ".claude"]);
+    agent_owned(&h, &[".codex/auth.json", ".claude/settings.json"]);
     std::fs::write(
         h.dir.path().join(".codex/config.toml"),
         "[mcp_servers.other]\ncommand = \"o\"\n",
@@ -400,7 +714,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "all",
             "--yes",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -417,9 +731,9 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert!(!o.stdout.contains("not installed yet"), "{o:?}");
     let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
     assert!(
-        codex.contains(
-            "[mcp_servers.cua-driver]\ncommand = \"/opt/drv/cua-driver\"\nargs = [\"mcp\"]"
-        ),
+        codex.contains(&format!(
+            "[mcp_servers.cua-driver]\ncommand = \"{drv}\"\nargs = [\"mcp\"]"
+        )),
         "{codex}"
     );
     assert!(
@@ -445,7 +759,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "--agents",
             "codex",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -470,8 +784,28 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert_eq!(codex["cua_driver_configured"], true, "{codex}");
     assert_eq!(codex["cua_configured"], false, "{codex}");
 
-    // Without an installed cua-driver it points at the bare name and says how
-    // to install it.
+    // Plain `cua agents remove` leaves it: it removes Cua Spaces' entries
+    // only. `--include-cua-driver` undoes it.
+    let o = h.run(&["agents", "remove", "--yes"]).await;
+    o.ok();
+    let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
+    assert!(codex.contains("[mcp_servers.cua-driver]"), "{codex}");
+    assert!(h.dir.path().join(".claude/skills/cua-driver").is_dir());
+    let o = h
+        .run(&["agents", "remove", "--include-cua-driver", "--yes"])
+        .await;
+    o.ok();
+    let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
+    assert_eq!(codex, "[mcp_servers.other]\ncommand = \"o\"\n");
+    assert!(!h.dir.path().join(".claude/skills/cua-driver").exists());
+}
+
+/// Without an installed cua-driver nothing is written: the row fails with
+/// the reason and the CLI says how to install it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agents_setup_cua_driver_without_cua_driver_writes_nothing() {
+    let h = home();
+    mkdirs(&h, &[".claude"]);
     let o = h
         .run(&[
             "agents",
@@ -483,7 +817,8 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "--yes",
         ])
         .await;
-    o.ok();
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stdout.contains("isn't installed"), "{o:?}");
     // The install one-liner is PowerShell's `-Only` on Windows, sh's `--only`
     // elsewhere.
     let hint = if cfg!(windows) {
@@ -492,18 +827,188 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
         "--only cua-driver"
     };
     assert!(o.stdout.contains(hint), "{o:?}");
-
-    // `cua agents remove` undoes it.
-    let o = h.run(&["agents", "remove", "--yes"]).await;
-    o.ok();
-    let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
-    assert_eq!(codex, "[mcp_servers.other]\ncommand = \"o\"\n");
-    assert!(!h.dir.path().join(".claude/skills/cua-driver").exists());
+    assert!(!h.dir.path().join(".claude.json").exists());
 }
 
+/// `cua agents remove` (what the uninstaller runs) takes Cua Spaces' `cua`
+/// server and skills and leaves Cua Driver's `cua-driver` server and skill,
+/// in the configs of Claude Code, Codex and Cursor; `--dry-run` lists exactly
+/// that and changes nothing; `--include-cua-driver` takes Cua Driver's too.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
+    let h = home();
+    let drv = fake_driver(&h);
+    mkdirs(&h, &[".claude", ".codex", ".cursor"]);
+    let at = |rel: &str| h.dir.path().join(rel);
+    std::fs::write(
+        at(".claude.json"),
+        "{\"mcpServers\": {\"other\": {\"command\": \"o\"}}}",
+    )
+    .unwrap();
+    std::fs::write(
+        at(".codex/config.toml"),
+        "[mcp_servers.other]\ncommand = \"o\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        at(".cursor/mcp.json"),
+        "{\"mcpServers\": {\"other\": {\"command\": \"o\"}}}",
+    )
+    .unwrap();
+    let agents = "claude,codex,cursor";
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        agents,
+        "--yes",
+        "--mcp-command",
+        "/opt/cua/bin/cua",
+    ])
+    .await
+    .ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        agents,
+        "--yes",
+        "--mcp-command",
+        &drv,
+    ])
+    .await
+    .ok();
+    let configs = [".claude.json", ".codex/config.toml", ".cursor/mcp.json"];
+    let read = |rel: &str| std::fs::read_to_string(at(rel)).unwrap();
+    for c in configs {
+        let text = read(c);
+        assert!(text.contains("/opt/cua/bin/cua"), "{c}: {text}");
+        assert!(text.contains(&drv), "{c}: {text}");
+    }
+    let state = at(".cua/agent-setup.json");
+    let snapshot = || -> Vec<String> {
+        configs
+            .iter()
+            .map(|c| read(c))
+            .chain([std::fs::read_to_string(&state).unwrap()])
+            .chain(["cua-spaces", "cua-volume", "cua-driver"].map(|s| {
+                std::fs::read_to_string(at(&format!(".claude/skills/{s}/SKILL.md"))).unwrap()
+            }))
+            .collect()
+    };
+    let before = snapshot();
+
+    // The preview needs no --yes, lists each entry and skill it would
+    // remove, names what it keeps, and writes nothing.
+    let o = h.run(&["agents", "remove", "--dry-run"]).await;
+    o.ok();
+    assert_eq!(snapshot(), before, "{o:?}");
+    let out = &o.stdout;
+    assert!(out.contains("Dry run: nothing is changed."), "{o:?}");
+    for (cfg, shown) in [
+        (".claude.json", "~/.claude.json"),
+        (".codex/config.toml", "~/.codex/config.toml"),
+        (".cursor/mcp.json", "~/.cursor/mcp.json"),
+    ] {
+        let _ = cfg;
+        assert!(
+            out.contains(&format!("would remove MCP server cua: {shown}")),
+            "{o:?}"
+        );
+        assert!(
+            out.contains(&format!("MCP server cua-driver: {shown} kept")),
+            "{o:?}"
+        );
+    }
+    for skill in [
+        "cua-spaces",
+        "cua-volume",
+        "cua-sandboxes",
+        "gui-automation",
+        "supercomputer",
+    ] {
+        assert!(
+            out.contains(&format!(
+                "would remove skill {skill}: ~/.claude/skills/{skill}"
+            )),
+            "{o:?}"
+        );
+    }
+    assert!(
+        out.contains("skill cua-driver: ~/.claude/skills/cua-driver kept"),
+        "{o:?}"
+    );
+    assert!(!out.contains("would remove MCP server cua-driver"), "{o:?}");
+    assert!(!out.contains("would remove skill cua-driver"), "{o:?}");
+
+    // The JSON preview carries the same rows.
+    let o = h.run(&["--json", "agents", "remove", "--dry-run"]).await;
+    o.ok();
+    let v = o.json();
+    assert_eq!(v["dry_run"], true, "{v}");
+    let removed: Vec<&str> = v["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["change"] == "removed")
+        .map(|x| x["item"].as_str().unwrap())
+        .collect();
+    assert!(removed.contains(&"cua"), "{v}");
+    assert!(!removed.contains(&"cua-driver"), "{v}");
+    assert_eq!(snapshot(), before);
+
+    // The real run removes what the preview listed, and only that.
+    let o = h.run(&["agents", "remove", "--yes"]).await;
+    o.ok();
+    assert!(
+        !o.stdout.contains("cua-driver: ~/.claude.json removed"),
+        "{o:?}"
+    );
+    for c in configs {
+        let text = read(c);
+        assert!(!text.contains("/opt/cua/bin/cua"), "{c}: {text}");
+        assert!(text.contains(&drv), "{c}: {text}");
+        assert!(text.contains("other"), "{c}: {text}");
+    }
+    assert!(!at(".claude/skills/cua-spaces").exists());
+    assert!(at(".claude/skills/cua-driver/SKILL.md").is_file());
+    let o = h.run(&["agents", "remove", "--dry-run"]).await;
+    o.ok();
+    assert!(!o.stdout.contains("would remove"), "{o:?}");
+
+    // Asked for, Cua Driver's go too; the previews say so first.
+    let o = h
+        .run(&["agents", "remove", "--include-cua-driver", "--dry-run"])
+        .await;
+    o.ok();
+    assert!(
+        o.stdout
+            .contains("would remove MCP server cua-driver: ~/.codex/config.toml"),
+        "{o:?}"
+    );
+    assert!(
+        o.stdout
+            .contains("would remove skill cua-driver: ~/.claude/skills/cua-driver"),
+        "{o:?}"
+    );
+    h.run(&["agents", "remove", "--include-cua-driver", "--yes"])
+        .await
+        .ok();
+    for c in configs {
+        let text = read(c);
+        assert!(!text.contains("cua-driver"), "{c}: {text}");
+        assert!(text.contains("other"), "{c}: {text}");
+    }
+    assert!(!at(".claude/skills/cua-driver").exists());
+}
+
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_says_where_the_skill_went_and_no_skills_skips_it() {
     let h = home();
+    let drv = fake_driver(&h);
     mkdirs(&h, &[".codex", ".claude"]);
     let skill = |rel: &str| h.dir.path().join(rel).join("cua-driver/SKILL.md");
 
@@ -517,7 +1022,7 @@ async fn agents_setup_cua_driver_says_where_the_skill_went_and_no_skills_skips_i
             "claude",
             "--yes",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -542,7 +1047,7 @@ async fn agents_setup_cua_driver_says_where_the_skill_went_and_no_skills_skips_i
             "--no-skills",
             "--yes",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -694,6 +1199,7 @@ async fn interactive_login_onboarding_prompts() {
         .set("CUA_OIDC_POLL_UNIT_MS", "5")
         .set("CUA_AUTH_FLOW", "device");
     mkdirs(&h, &[".claude", ".codex"]);
+    agent_owned(&h, &[".claude/settings.json", ".codex/auth.json"]);
     let h = h;
     tokio::task::spawn_blocking(move || {
         // Yes to onboarding, default (yes) to skills, no to MCP.
@@ -706,16 +1212,16 @@ async fn interactive_login_onboarding_prompts() {
         p.send("y\r");
         let at = p.expect("✓ Claude Code", at);
         let at = p.expect("✗ Cursor", at);
-        let at = p.expect("Install 5 default cua skills? [Y/n]", at);
+        let at = p.expect("Install 6 default cua skills? [Y/n]", at);
         p.send("\r");
-        let at = p.expect("[1/5] ✓ cua-driver (installed, 2 locations)", at);
-        let at = p.expect("[5/5]", at);
+        let at = p.expect("[1/6] ✓ cua-driver (installed, 2 locations)", at);
+        let at = p.expect("[6/6]", at);
         p.expect("Configure cua MCP server connection? [Y/n]", at);
         p.send("n\r");
         let (code, out) = p.wait();
         assert_eq!(code, 0, "{out}");
         assert!(
-            out.contains("Done: 5 skills in 2 locations; MCP configured for 0 agents."),
+            out.contains("Done: 6 skills in 2 locations; MCP configured for 0 agents."),
             "{out}"
         );
         assert!(

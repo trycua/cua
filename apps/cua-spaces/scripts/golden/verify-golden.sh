@@ -90,7 +90,7 @@ for stale in "/Applications/RCDP Host.app" "$HOME/.local/bin/rcdp-handoff" \
              "$HOME/Library/LaunchAgents/com.trycua.rcdphost.plist" \
              "$HOME/Library/LaunchAgents/com.trycua.rcdp-handoff.plist" \
              "$HOME/Library/LaunchAgents/com.trycua.computer_server.plist" \
-             "$HOME/.cua/spacesd/token"; do
+             "$HOME/.cua/spacesd/token" "$HOME/.cua/spacesd/machine-seal.key"; do
   if [ -e "$stale" ]; then
     printf '\033[1;31m    STALE   %s must not ship\033[0m\n' "$stale"
     missing=$((missing + 1))

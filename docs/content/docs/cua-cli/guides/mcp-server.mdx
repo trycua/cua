@@ -16,16 +16,19 @@ claude mcp add cua -- cua daemon mcp
 claude mcp add cua -- cua mcp --sandbox dev --permissions sandbox:readonly,computer:all
 ```
 
-`cua agents setup` adds this entry for the agents it detects. `--sandbox`
+`cua connect setup` adds this entry for the agents it detects. `--sandbox`
 (`CUA_SANDBOX`) sets the default sandbox for the computer tools, and each call
 can pass its own `sandbox`. Every tool is listed in
 [MCP tools](/cua-cli/reference/mcp-tools).
 
 ## Supported agents
 
-`cua agents setup --agents <id>` installs the cua skills and adds the `cua`
+`cua connect setup --agents <id>` installs the cua skills and adds the `cua`
 server to these user-level configs. It keeps your other servers and comments,
-and `cua agents remove` takes out only what cua added.
+and `cua connect remove` takes out only what cua added for Cua Spaces: the `cua`
+server and the Cua Spaces skills. Cua Driver's `cua-driver` server and skill stay
+(`--include-cua-driver` removes them too), and `cua connect remove --dry-run` lists
+exactly what it would remove.
 
 | Agent | id | Skills | MCP config |
 |-------|----|--------|------------|
@@ -46,6 +49,7 @@ and `cua agents remove` takes out only what cua added.
 | VS Code (Copilot agent mode) | `vscode` | `~/.agents/skills` | `mcp.json` in the Code user folder |
 | Google Antigravity | `antigravity` | `~/.gemini/config/skills` | `~/.gemini/config/mcp_config.json` |
 | Hermes Agent (Nous Research) | `hermes` | `~/.hermes/skills` | `~/.hermes/config.yaml` (`mcp_servers`) |
+| T3 Code | `t3code` | `~/.agents/skills` | Codex's `~/.codex/config.toml` (`mcp_servers`): T3 Code runs Codex |
 
 Agent home overrides are honored (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
 `HERMES_HOME`, ...). On Windows, Hermes lives in `%LOCALAPPDATA%\hermes`.

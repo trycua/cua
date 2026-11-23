@@ -26,6 +26,15 @@ final class SyntheticStreamProvider: SpaceStreamSourceProviding, @unchecked Send
     let startOffset: Int
     /// The fixture Space's OS (`linux`, `macos`): a Linux one takes ⌘ as Control.
     let guestOS: String
+    /// The windows `availableWindows` lists (none by default): tests give it the ones a Space shows.
+    var windows: [StreamWindow] = []
+    private let openedLock = NSLock()
+    private var opened: [StreamSource] = []
+    /// The sources sessions were opened on, oldest first (tests read which one a slot asked for).
+    var openedSources: [StreamSource] {
+        openedLock.lock(); defer { openedLock.unlock() }
+        return opened
+    }
 
     init(units: [AccessUnit], size: CGSize, fps: Double, startOffset: Int = 0, guestOS: String = "") {
         self.units = units
@@ -67,12 +76,13 @@ final class SyntheticStreamProvider: SpaceStreamSourceProviding, @unchecked Send
         return units
     }
 
-    func availableWindows() async throws -> [StreamWindow] { [] }
+    func availableWindows() async throws -> [StreamWindow] { windows }
 
     /// The last session opened (tests read what it was sent).
     private(set) weak var lastMedia: SyntheticMedia?
 
     func openSession(_ source: StreamSource, frames: FrameSink, audio: AudioSink?) async throws -> SpaceStreamSession {
+        openedLock.lock(); opened.append(source); openedLock.unlock()
         let media = SyntheticMedia(provider: self, sink: frames)
         lastMedia = media
         return media
@@ -201,6 +211,12 @@ final class SyntheticMedia: SpaceStreamSession, @unchecked Sendable {
         lock.lock(); jumpToKeyframe = true; lock.unlock()
     }
 
+    /// The transport ends under the session (the Space stopped, the machine
+    /// went away): the socket's close, as the media client reports it.
+    func dropTransport() {
+        sink.onEvent(event: MediaEvent(kind: "closed", json: #"{"code":1006,"reason":"reset"}"#))
+    }
+
     override func sendText(json: String) throws {
         lock.lock()
         inputBatches += 1
@@ -241,18 +257,45 @@ extension FixtureSpacesBackend {
         // `m1`) shares its desktop and runs that Cua (see `peerHealth`).
         if environment["CUA_SPACES_FIXTURE_PEER_CUA"] != nil {
             base.append(AppSpaceRow(
-                id: "relay:m1", name: "ellieln", provider: "relay", spacesdVersion: "0.7.0",
+                id: "relay:m1", name: "ellieln", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
                 features: ["desktop_stream", "window_stream", "host_spaces"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
-                kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
+                kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
             // A Space it provides, for comparison with its desktop row.
             base.append(AppSpaceRow(
-                id: "relay:m1/xm1", name: "0123456789ab", provider: "relay", spacesdVersion: "0.7.0",
+                id: "relay:m1/xm1", name: "0123456789ab", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
                 features: ["desktop_stream"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
-                kind: nil, arch: nil, reachable: true, error: nil, host: "m1", hostName: "ellieln",
-                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
+                kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: "m1", hostName: "ellieln",
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
+        }
+        // `CUA_SPACES_FIXTURE_WARMING_HOME=hidden|visible`: the home that warms for Home's prompt box,
+        // running: `hidden` before a person writes into it (in no top bar view), `visible` after.
+        if let state = environment["CUA_SPACES_FIXTURE_WARMING_HOME"], ["hidden", "visible"].contains(state) {
+            base.append(AppSpaceRow(
+                id: "local:home-claude-code", name: "home-claude-code", displayName: nil, provider: "local",
+                spacesdVersion: "0.7.0", features: ["desktop_stream"], addedAt: nil,
+                os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
+                kind: .container, arch: nil, hidden: state == "hidden", reachable: true, error: nil, host: nil,
+                hostName: nil, power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil,
+                stopReason: nil, sharing: nil, parent: nil))
+        }
+        // `CUA_SPACES_FIXTURE_STOPPED=<n>`: `n` suspended or stopped Spaces that
+        // one of your machines provides, with no recorded add date (so they read
+        // as seen just now), the notch's ordering regression.
+        if let k = environment["CUA_SPACES_FIXTURE_STOPPED"].flatMap(Int.init), k > 0 {
+            let names = ["cua-builder", "onb-new", "onb-old", "windows-aws", "dev-box", "ci-runner", "scratch", "qa-mac"]
+            for i in 0..<min(k, names.count) {
+                let state = i % 2 == 0 ? "suspended" : "stopped"
+                base.append(AppSpaceRow(
+                    id: "relay:ip-172-31-46-222/\(names[i])", name: names[i], displayName: nil, provider: "relay",
+                    spacesdVersion: "0.7.0", features: ["desktop_stream"], addedAt: nil,
+                    os: .unknown, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
+                    kind: nil, arch: nil, hidden: false, reachable: false, error: nil, host: "ip-172-31-46-222",
+                    hostName: "ip-172-31-46-222", power: i % 2 == 0 ? "suspend" : "stop", powerState: state,
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
+            }
         }
         guard let n = environment["CUA_SPACES_FIXTURE_SPACES"].flatMap(Int.init), n > 0,
               let template = base.first else { return base }

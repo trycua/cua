@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! TextEdit delivery integration checks for macOS.
 //!
 //! Covers the accessibility route and confirmed value read-back on a real
@@ -153,6 +156,44 @@ fn wait_for_editor_text(
     }
 }
 
+/// The editor's current value in TextEdit window `window_id`, from a fresh
+/// snapshot.
+fn editor_text(driver: &mut McpDriver, pid: i64, window_id: u64) -> String {
+    let state = driver.call(
+        "get_window_state",
+        serde_json::json!({ "pid": pid, "window_id": window_id, "capture_mode": "ax" }),
+    );
+    state.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["role"] == "AXTextArea")
+                .and_then(|element| element["value"].as_str())
+        })
+        .unwrap_or_else(|| panic!("TextEdit exposed no AXTextArea value:\n{}", state.text()))
+        .to_owned()
+}
+
+/// The window id of TextEdit's window titled `title`.
+fn textedit_window_titled(driver: &mut McpDriver, pid: i64, title: &str) -> u64 {
+    let listed = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+    listed.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["title"] == title)
+                .and_then(|window| window["window_id"].as_u64())
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "TextEdit has no window titled {title:?}:\n{}",
+                listed.text()
+            )
+        })
+}
+
 fn osascript(script: &str) -> String {
     let output = Command::new("osascript")
         .args(["-e", script])
@@ -183,15 +224,33 @@ fn wait_for_frontmost(bundle_id: &str) -> bool {
     false
 }
 
+/// Make `bundle_id` the frontmost app and keep it there for a settle window.
+///
+/// On hosted macOS runners Finder (and other login-session helpers) can take
+/// the front a moment after an `activate` already reported success, so a single
+/// "is it frontmost right now" sample is a race. Re-activate with a bounded
+/// deadline until the app has held the front for `FRONT_SETTLE` in a row.
 fn ensure_frontmost(bundle_id: &str) {
-    for _ in 0..3 {
-        osascript(&format!(r#"tell application id "{bundle_id}" to activate"#));
-        if wait_for_frontmost(bundle_id) {
-            return;
+    const FRONT_SETTLE: Duration = Duration::from_millis(1500);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut stable_since: Option<Instant> = None;
+    while Instant::now() < deadline {
+        if frontmost_bundle_id() == bundle_id {
+            let since = *stable_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= FRONT_SETTLE {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        } else {
+            stable_since = None;
+            osascript(&format!(r#"tell application id "{bundle_id}" to activate"#));
+            std::thread::sleep(Duration::from_millis(300));
         }
-        std::thread::sleep(Duration::from_millis(500));
     }
-    panic!("could not make {bundle_id} frontmost for the TextEdit foreground check");
+    panic!(
+        "could not make {bundle_id} stay frontmost for the TextEdit foreground check; frontmost is {}",
+        frontmost_bundle_id()
+    );
 }
 
 fn focused_textedit_window_title() -> String {
@@ -201,8 +260,9 @@ fn focused_textedit_window_title() -> String {
 }
 
 /// Open a second TextEdit document. TextEdit focuses the new document, so the
-/// first one becomes an unfocused sibling of a frontmost app.
-fn open_sibling_document(text: &str) {
+/// first one becomes an unfocused sibling of a frontmost app. Returns the
+/// sibling's document name.
+fn open_sibling_document(text: &str) -> String {
     // Unsaved document names need not match their AX window titles (for
     // example, TextEdit can append an edited suffix). Use a stable file name.
     let sibling_title = format!("{text}.txt");
@@ -224,7 +284,16 @@ fn open_sibling_document(text: &str) {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+    // Re-settle: the front must still be TextEdit (and the sibling focused)
+    // right before the chord is sent, not just at some earlier sample.
+    ensure_frontmost(TEXTEDIT_BUNDLE);
+    assert_eq!(
+        focused_textedit_window_title(),
+        sibling_title,
+        "the sibling document lost the keyboard focus while the front settled"
+    );
     std::fs::remove_file(path).expect("remove sibling document fixture");
+    sibling_title
 }
 
 // ── End-to-end ladder behavior (interactive; needs a GUI session) ────────────
@@ -472,6 +541,71 @@ fn foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app() 
             &document,
             |value| value.contains(&replacement) && !value.contains(&seed),
             &format!("replaced {seed:?} with {replacement:?}: cmd+a did not select the document"),
+        );
+        Observation::delivered(
+            vec![OracleKind::AxState, OracleKind::Focus],
+            Default::default(),
+        )
+    });
+}
+
+/// A window-only `delivery_mode:"foreground"` type_text addressed at a
+/// document types into that document, never into the sibling document of the
+/// same app that held the keyboard focus (#3574).
+#[test]
+#[ignore]
+fn foreground_window_type_text_never_lands_in_the_focused_sibling() {
+    let cell_id = "macos-textedit-type-text-window-foreground-sibling";
+    let marker = unique_marker("target");
+    let case = CaseSpec::delivered(
+        cell_id,
+        "textedit",
+        "appkit",
+        "type_text",
+        Targeting::NotApplicable,
+        Delivery::Foreground,
+        Scope::Window,
+        DriverRoute::MacosCgEventPid,
+        vec![OracleKind::AxState, OracleKind::Focus],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let document = launch_textedit_document(&mut driver);
+
+        let sibling_text = unique_marker("sibling");
+        let sibling = open_sibling_document(&sibling_text);
+        let sibling_window = textedit_window_titled(&mut driver, document.pid, &sibling);
+        let sibling_before = editor_text(&mut driver, document.pid, sibling_window);
+        driver.start_behavior_recording();
+        let typed = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": document.pid, "window_id": document.window_id,
+                "text": marker, "delivery_mode": "foreground"
+            }),
+        );
+        let sibling_after = editor_text(&mut driver, document.pid, sibling_window);
+        assert!(
+            !sibling_after.contains(&marker),
+            "keys addressed at window {} typed into the focused sibling {sibling:?}: {sibling_after:?}",
+            document.window_id
+        );
+        assert_eq!(
+            sibling_after, sibling_before,
+            "the sibling document changed"
+        );
+        assert!(
+            !typed.is_error(),
+            "foreground type_text failed: {}",
+            typed.text()
+        );
+        wait_for_editor_text(
+            &mut driver,
+            &document,
+            |value| value.contains(&marker),
+            &format!("held {marker:?} after a foreground type_text addressed at it"),
         );
         Observation::delivered(
             vec![OracleKind::AxState, OracleKind::Focus],

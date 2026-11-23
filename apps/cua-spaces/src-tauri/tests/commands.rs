@@ -327,8 +327,7 @@ async fn cloud_creates_fail_because_cua_cloud_has_ended() {
 }
 
 /// A `cloud:` Space registered before Cua Cloud ended stays in the roster.
-/// Every action on it answers the one ended message, with no Fleet client
-/// and no network call, and "Remove from List" still forgets it.
+/// Every action on it answers the one ended message, with no network call, and "Remove from List" still forgets it.
 #[tokio::test]
 async fn a_legacy_cloud_space_is_listed_answers_the_ended_message_and_can_be_removed() {
     let home = tempfile::tempdir().unwrap();
@@ -420,7 +419,7 @@ async fn default_location_is_stored_in_the_cua_home_config() {
         .set_default_location("direct:127.0.0.1:3211")
         .unwrap_err();
     assert!(e.contains("one computer"), "{e}");
-    let e = app.set_default_location("fleet").unwrap_err();
+    let e = app.set_default_location("elsewhere").unwrap_err();
     assert!(e.contains("cloud"), "{e}");
     assert_eq!(app.set_default_location("local").unwrap().value, "local");
 }

@@ -15,7 +15,6 @@ async-trait = "0.1"
 cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
-pip-preview = { path = "../pip-preview" }
 zeroize = { workspace = true }
 getrandom = { workspace = true }
 # IndexMap gives the keyed cursor render collection deterministic
@@ -26,9 +25,9 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-rs = "0.3.5"
-keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
+cua-driver-core = { path = "../cua-driver-core", features = ["keyring"] }
 image = { workspace = true }
-windows = { version = "0.58", features = [
+windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_Accessibility",
     "Win32_UI_WindowsAndMessaging",
@@ -39,6 +38,9 @@ windows = { version = "0.58", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
+    # GetApplicationUserModelId / GetPackageFamilyName: the OS-attested
+    # package identity list_apps uses to match running packaged apps.
+    "Win32_Storage_Packaging_Appx",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
     "Win32_UI_Input_KeyboardAndMouse",
@@ -56,6 +58,9 @@ windows = { version = "0.58", features = [
     # token an elevated Driver uses to run isolated browsers.
     "Win32_Security_AppLocker",
     "Win32_System_Com",
+    # VARIANT and the UIA/MSAA methods that take or return it.
+    "Win32_System_Ole",
+    "Win32_System_Variant",
     "Win32_Storage_Xps",
     "Win32_Storage_FileSystem",
     "Win32_UI_Shell",

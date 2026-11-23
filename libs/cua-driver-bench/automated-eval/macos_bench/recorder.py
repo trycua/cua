@@ -23,6 +23,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+import desktop_runtime as desktop
+from bench_core import write_atomic
+from desktop_runtime import stop_group, tool
+
 
 class McpStdioClient:
     """Minimal MCP client over a child process' stdio (newline-delimited JSON-RPC)."""
@@ -44,6 +48,12 @@ class McpStdioClient:
             bufsize=1,
             start_new_session=True,
         )
+        try:
+            desktop.record_pid(self.proc.pid, "mcp-client")
+        except BaseException:
+            desktop.stop_group(self.proc.pid)
+            self.proc.wait()
+            raise
         self._next = 0
         self._responses: dict[int, dict[str, Any]] = {}
         self._cond = threading.Condition()
@@ -125,7 +135,8 @@ class McpStdioClient:
         try:
             self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            self.proc.kill()
+            stop_group(self.proc.pid)
+            self.proc.wait(timeout=5)
 
 
 class NullRecorder:
@@ -150,6 +161,7 @@ class CuaRecorder:
         self.binary, self.socket, self.env = binary, socket, env
         self.client: McpStdioClient | None = None
         self.active_dir: Path | None = None
+        self.last_video: Path | None = None
         self.last_error: str | None = None
 
     def _connect(self) -> McpStdioClient:
@@ -166,7 +178,8 @@ class CuaRecorder:
             state = client.call_tool(
                 "start_recording", {"output_dir": str(out_dir), "record_video": True}, timeout=30
             )
-            self.active_dir = out_dir
+            self.active_dir = out_dir if state.get("video_active") else None
+            self.last_video = None
             self.last_error = state.get("last_error")
             return bool(state.get("video_active"))
         except (OSError, TimeoutError, RuntimeError) as error:
@@ -175,28 +188,35 @@ class CuaRecorder:
             return False
 
     def stop(self) -> Path | None:
+        if self.active_dir is None:
+            return self.last_video
         try:
             client = self._connect()
             state = client.call_tool("stop_recording", {}, timeout=60)
+            self.active_dir = None
             path = state.get("last_video_path")
             if not path:
                 state = client.call_tool("get_recording_state", {}, timeout=15)
                 path = state.get("last_video_path")
             self.last_error = state.get("last_error") or self.last_error
             if path and Path(path).is_file():
-                return Path(path)
+                self.last_video = Path(path)
+                return self.last_video
         except (OSError, TimeoutError, RuntimeError) as error:
             self.last_error = f"{type(error).__name__}: {error}"
             self.client = None
         return None
 
     def close(self) -> None:
+        if self.active_dir is not None:
+            self.stop()
         if self.client is not None:
             self.client.close()
             self.client = None
 
 
-def capture_detail(path: Path, ffmpeg: str = "/opt/homebrew/bin/ffmpeg") -> str:
+def capture_detail(path: Path, ffmpeg: str | None = None) -> str:
+    ffmpeg = ffmpeg or tool("ffmpeg")
     done = subprocess.run(
         [
             ffmpeg,
@@ -236,7 +256,7 @@ def ffprobe_duration(path: Path) -> float | None:
     try:
         done = subprocess.run(
             [
-                "/opt/homebrew/bin/ffprobe",
+                tool("ffprobe"),
                 "-v",
                 "error",
                 "-show_entries",
@@ -254,11 +274,10 @@ def ffprobe_duration(path: Path) -> float | None:
         return None
 
 
-def compress_video(
-    raw: Path, dest_dir: Path, ffmpeg: str = "/opt/homebrew/bin/ffmpeg"
-) -> dict[str, Any]:
+def compress_video(raw: Path, dest_dir: Path, ffmpeg: str | None = None) -> dict[str, Any]:
     """H.264 (libx264, crf 28, yuv420p, faststart) full-size copy plus a 720p copy; delete the raw
     file only when both copies exist and decode to a plausible duration."""
+    ffmpeg = ffmpeg or tool("ffmpeg")
     dest_dir.mkdir(parents=True, exist_ok=True)
     full = dest_dir / "video.mp4"
     small = dest_dir / "video-720p.mp4"
@@ -309,12 +328,20 @@ def compress_video(
         raw_duration_s=raw_s,
     )
     if full_s and raw_s and abs(full_s - raw_s) <= max(1.0, 0.1 * raw_s):
-        raw.unlink(missing_ok=True)
-        result["raw_deleted"] = True
+        result["raw_deleted"] = True  # by CompressQueue, once video.json is on disk
     else:
         result["raw_deleted"] = False
         result["error"] = "duration mismatch; raw kept"
     return result
+
+
+def compressed(dest_dir: Path) -> bool:
+    """True when ``dest_dir/video.json`` records a finished compression. A missing, torn or error record means the
+    raw video (kept in every such case) still has to be compressed."""
+    try:
+        return not json.loads((dest_dir / "video.json").read_text("utf-8")).get("error")
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 class CompressQueue:
@@ -334,10 +361,16 @@ class CompressQueue:
                 return
             raw, dest = item
             try:
-                self.results[str(dest)] = compress_video(raw, dest)
-                (dest / "video.json").write_text(
-                    json.dumps(self.results[str(dest)], indent=2) + "\n", "utf-8"
-                )
+                self.results[str(dest)] = result = compress_video(raw, dest)
+                # video.json is the record that compression finished: the videos reach the disk first, then the
+                # record is published whole, then the raw file goes. A runner or host lost at any point leaves
+                # either the raw file to redo or a complete record of videos that are on disk.
+                for name in ("video.mp4", "video-720p.mp4") if not result.get("error") else ():
+                    with (dest / name).open("rb") as video:
+                        os.fsync(video.fileno())
+                write_atomic(dest / "video.json", json.dumps(result, indent=2) + "\n")
+                if result.get("raw_deleted"):
+                    raw.unlink(missing_ok=True)
             except Exception as error:  # noqa: BLE001 - compression must never kill the run
                 self.results[str(dest)] = {"error": f"{type(error).__name__}: {error}"}
             finally:

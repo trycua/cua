@@ -1,0 +1,28 @@
+# Maestro smoke flow on the iOS Simulator against the sample-data build
+# (EXPO_PUBLIC_CUA_SAMPLE=1; see scripts/e2e.sh).
+appId: ai.cua.spaces.mobile
+---
+- launchApp
+- assertVisible: "Spaces"
+- assertVisible: "Sample data. Not your account."
+- assertVisible: ".*Needs you.*"
+# Open the Space that needs you; the push card is the newest entry.
+- tapOn:
+    text: "Claude Code.*"
+    index: 0
+- assertVisible: ".*Needs you, approval.*"
+- assertVisible: ".*wants to push a branch.*"
+- tapOn: "Push and open PR"
+- assertVisible: "Approved the push and pull request.*"
+- assertNotVisible: ".*wants to push a branch.*"
+# Task the agent and see its reply stream in.
+- tapOn:
+    id: "composer-input"
+- inputText: "@claude status?"
+- tapOn:
+    id: "composer-send"
+- extendedWaitUntil:
+    visible: ".*Got it.*"
+    timeout: 20000
+- tapOn: "Back to Spaces"
+- assertVisible: "Spaces"

@@ -1,0 +1,253 @@
+{"cases": [
+{"name": "cmd_run_basic", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo hi"]],
+ ["commands.run", ["printf 'no newline'"]],
+ ["commands.run", ["true"]]
+]},
+{"name": "cmd_exit_codes", "tags": ["commands"], "steps": [
+ ["commands.run", ["exit 3"]],
+ ["commands.run", ["exit 255"]],
+ ["commands.run", ["exit 256"]],
+ ["commands.run", ["nonexistent-command-xyz"]],
+ ["commands.run", ["echo out; echo err >&2; exit 4"]],
+ ["commands.run", ["kill -9 $$"]],
+ ["commands.run", ["kill -15 $$"]],
+ ["commands.run", ["sh -c 'kill -SEGV $$'"]],
+ ["commands.run", ["/etc/passwd"]],
+ ["commands.run", ["false"]]
+]},
+{"name": "cmd_users", "tags": ["commands"], "steps": [
+ ["commands.run", ["id -un; echo $HOME; pwd"]],
+ ["commands.run", ["id -un; echo $HOME; pwd"], {"user": "root"}],
+ ["commands.run", ["id -un"], {"user": "nobody-such-user"}],
+ ["commands.run", ["sudo -n id -un"]],
+ ["commands.run", ["id -Gn"], {"user": "root"}]
+]},
+{"name": "cmd_envs", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo \"[$A][$B][$C]\""], {"envs": {"A": "1", "B": "", "C": "multi\nline"}}],
+ ["commands.run", ["echo \"$U\""], {"envs": {"U": "héllo 🌍"}}],
+ ["commands.run", ["echo \"$Q\""], {"envs": {"Q": "it's \"quoted\" $x `y`"}}],
+ ["commands.run", ["env | grep -c '^ZZ_'"], {"envs": {"ZZ_1": "a", "ZZ_2": "b", "ZZ_3": "c"}}],
+ ["commands.run", ["echo $ZZ_1"]]
+]},
+{"name": "cmd_envs_override", "tags": ["commands"], "sandbox": "own", "create": {"timeout": 120, "envs": {"BASE": "from-create", "OVER": "create"}}, "steps": [
+ ["commands.run", ["echo $BASE $OVER"]],
+ ["commands.run", ["echo $BASE $OVER"], {"envs": {"OVER": "run"}}],
+ ["commands.run", ["echo $BASE $OVER"], {"user": "root"}],
+ ["commands.run", ["echo $BASE"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["@wait", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_cwd", "tags": ["commands"], "steps": [
+ ["commands.run", ["mkdir -p /tmp/c/cwd/sub && pwd"], {"cwd": "/tmp"}],
+ ["commands.run", ["pwd"], {"cwd": "/tmp/c/cwd/sub"}],
+ ["commands.run", ["pwd"], {"cwd": "/tmp/c/cwd/does-not-exist"}],
+ ["commands.run", ["pwd"], {"cwd": "c/cwd"}],
+ ["commands.run", ["pwd"], {"cwd": "~"}],
+ ["commands.run", ["pwd"], {"cwd": "/tmp/c/cwd/sub/.."}],
+ ["commands.run", ["pwd"], {"cwd": "/proc"}],
+ ["commands.run", ["pwd"], {"cwd": "/root"}],
+ ["commands.run", ["pwd"], {"cwd": "/root", "user": "root"}]
+]},
+{"name": "cmd_timeout", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 10"], {"timeout": 2}],
+ ["commands.run", ["echo fast"], {"timeout": 5}],
+ ["commands.run", ["sleep 0.5; echo ok"], {"timeout": 10}],
+ ["commands.run", ["sleep 3; echo late"], {"timeout": 1, "on_stdout": {"$cb": "so"}}]
+]},
+{"name": "cmd_timeout_process_survives", "tags": ["commands"], "steps": [
+ ["commands.run", ["sh -c 'sleep 3; echo survived > /tmp/c-timeout-marker' & sleep 20"], {"timeout": 1, "user": "root"}],
+ ["sleep", [5]],
+ ["commands.run", ["cat /tmp/c-timeout-marker; rm -f /tmp/c-timeout-marker"], {"user": "root"}]
+]},
+{"name": "cmd_stream_order", "tags": ["commands"], "steps": [
+ ["commands.run", ["for i in 1 2 3 4; do echo o$i; sleep 0.25; echo e$i >&2; sleep 0.25; done"], {"on_stdout": {"$cb": "order", "prefix": "o:"}, "on_stderr": {"$cb": "order", "prefix": "e:"}}],
+ ["commands.run", ["for i in $(seq 1 200); do echo line$i; done"], {"on_stdout": {"$cb": "lines", "join": true}}]
+]},
+{"name": "cmd_stream_chunking", "tags": ["commands"], "steps": [
+ ["commands.run", ["printf 'a'; sleep 0.3; printf 'b\\n'; sleep 0.3; printf 'c'"], {"on_stdout": {"$cb": "chunks", "join": true}}],
+ ["commands.run", ["head -c 300000 /dev/zero | tr '\\0' 'x'; echo"], {}, {"pick": ["exit_code"]}]
+]},
+{"name": "cmd_large_output", "tags": ["commands", "large"], "steps": [
+ ["commands.run", ["head -c 5000000 /dev/zero | tr '\\0' 'y'"], {"timeout": 60}, {"pick": ["exit_code", "stdout", "stderr"]}],
+ ["commands.run", ["seq 1 200000"], {"timeout": 60}, {"pick": ["exit_code", "stdout"]}]
+]},
+{"name": "cmd_binary_unicode_output", "tags": ["commands"], "steps": [
+ ["commands.run", ["printf '\\xff\\xfe\\x00ok'"]],
+ ["commands.run", ["echo 'héllo wörld 日本語 🌍'"]],
+ ["commands.run", ["printf 'a\\0b'"]],
+ ["commands.run", ["printf '\\xe2\\x82'"]],
+ ["commands.run", ["echo 'x' >&2; printf '\\xff' >&2"]]
+]},
+{"name": "cmd_special_cmds", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo \"a b\" 'c d' | tr a-z A-Z"]],
+ ["commands.run", ["cat <<'EOF'\nheredoc $HOME\nEOF"]],
+ ["commands.run", ["echo $((6*7)); echo `echo bt`; echo $(echo sub)"]],
+ ["commands.run", ["set -e; false; echo not-reached"]],
+ ["commands.run", ["echo a && echo b || echo c; (exit 2) || echo ee"]],
+ ["commands.run", [""]],
+ ["commands.run", ["   "]],
+ ["commands.run", ["# just a comment"]]
+]},
+{"name": "cmd_shell_environment", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo $0; echo $SHELL; shopt -q login_shell && echo login || echo nologin; [ -t 0 ] && echo tty0 || echo notty0; [ -t 1 ] && echo tty1 || echo notty1"]],
+ ["commands.run", ["echo \"HOME=$HOME USER=$USER LOGNAME=$LOGNAME\""]]
+]},
+{"name": "cmd_background", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 1; echo done"], {"background": true, "on_stdout": {"$cb": "so"}}, {"as": "h"}],
+ ["@exit_code", [], {}, {"on": "h", "as": "code_before"}],
+ ["@wait", [], {}, {"on": "h", "as": "r"}],
+ ["@wait", [], {}, {"on": "h"}],
+ ["@exit_code", [], {}, {"on": "h"}],
+ ["@stdout", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_background_nonzero", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo x; exit 5"], {"background": true}, {"as": "h"}],
+ ["@wait", [], {}, {"on": "h"}],
+ ["@exit_code", [], {}, {"on": "h"}],
+ ["@error", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_background_kill", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 60"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["@kill", [], {}, {"on": "h"}],
+ ["@wait", [], {}, {"on": "h"}],
+ ["@kill", [], {}, {"on": "h"}],
+ ["commands.kill", ["$h.pid"]],
+ ["@exit_code", [], {}, {"on": "h"}],
+ ["@error", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_kill_pid", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 60"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["commands.kill", ["$h.pid"]],
+ ["commands.kill", ["$h.pid"]],
+ ["commands.kill", [999999]],
+ ["commands.kill", [0]],
+ ["commands.kill", [-5]],
+ ["@wait", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_kill_other_user_process", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 60"], {"background": true, "timeout": 0, "user": "root"}, {"as": "h"}],
+ ["commands.kill", ["$h.pid"]],
+ ["@wait", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_background_disconnect_continues", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 2; echo late > /tmp/c-late.txt"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["@disconnect", [], {}, {"on": "h"}],
+ ["sleep", [4]],
+ ["commands.run", ["cat /tmp/c-late.txt; rm -f /tmp/c-late.txt"]]
+]},
+{"name": "cmd_list", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 30"], {"background": true, "timeout": 0, "envs": {"LISTENV": "1"}, "cwd": "/tmp"}, {"as": "h"}],
+ ["commands.list", [], {}, {"grep": "sleep 30", "pick": ["cmd", "args", "cwd", "tag", "envs.LISTENV"]}],
+ ["commands.kill", ["$h.pid"]],
+ ["commands.list", [], {}, {"grep": "sleep 30"}]
+]},
+{"name": "cmd_connect_existing", "tags": ["commands"], "steps": [
+ ["commands.run", ["sleep 1; echo joined"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["@disconnect", [], {}, {"on": "h"}],
+ ["commands.connect", ["$h.pid"], {"on_stdout": {"$cb": "so"}}, {"as": "h2"}],
+ ["@wait", [], {}, {"on": "h2"}],
+ ["commands.connect", [999999]],
+ ["commands.connect", ["$h.pid"]]
+]},
+{"name": "cmd_connect_from_new_client", "tags": ["commands", "reconnect"], "steps": [
+ ["commands.run", ["sleep 2; echo from-bg"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["Sandbox.connect", ["$sb.sandbox_id"], {}, {"as": "sb2", "pick": []}],
+ ["commands.connect", ["$h.pid"], {"on_stdout": {"$cb": "so"}}, {"on": "sb2", "as": "h2"}],
+ ["@wait", [], {}, {"on": "h2"}],
+ ["commands.run", ["echo second-client"], {}, {"on": "sb2"}],
+ ["commands.list", [], {}, {"on": "sb2", "pick": ["cmd"], "quiet": true}]
+]},
+{"name": "cmd_stdin", "tags": ["commands"], "steps": [
+ ["commands.run", ["cat"], {"background": true, "stdin": true, "timeout": 0, "on_stdout": {"$cb": "so", "join": true}}, {"as": "h"}],
+ ["commands.send_stdin", ["$h.pid", "hello\n"]],
+ ["commands.send_stdin", ["$h.pid", "wörld 🌍\n"]],
+ ["commands.send_stdin", ["$h.pid", {"$bytes": {"n": 8, "seed": 3}}]],
+ ["commands.close_stdin", ["$h.pid"]],
+ ["@wait", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_stdin_read_line", "tags": ["commands"], "steps": [
+ ["commands.run", ["read line; echo got:$line"], {"background": true, "stdin": true, "timeout": 0}, {"as": "h"}],
+ ["commands.send_stdin", ["$h.pid", "hello\n"]],
+ ["@wait", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_stdin_errors", "tags": ["commands"], "steps": [
+ ["commands.send_stdin", [999999, "x"]],
+ ["commands.close_stdin", [999999]],
+ ["commands.run", ["echo nostdin"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["sleep", [1]],
+ ["@wait", [], {}, {"on": "h"}],
+ ["commands.send_stdin", ["$h.pid", "late"]]
+]},
+{"name": "cmd_stdin_not_enabled", "tags": ["commands"], "steps": [
+ ["commands.run", ["cat"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["sleep", [1]],
+ ["commands.send_stdin", ["$h.pid", "hello\n"]],
+ ["commands.close_stdin", ["$h.pid"]],
+ ["commands.kill", ["$h.pid"]]
+]},
+{"name": "cmd_stdin_large", "tags": ["commands", "large"], "steps": [
+ ["commands.run", ["wc -c"], {"background": true, "stdin": true, "timeout": 0}, {"as": "h"}],
+ ["commands.send_stdin", ["$h.pid", {"$bytes": {"n": 200000, "seed": 9}}]],
+ ["commands.send_stdin", ["$h.pid", {"$bytes": {"n": 200000, "seed": 10}}]],
+ ["commands.close_stdin", ["$h.pid"]],
+ ["@wait", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_parallel", "tags": ["commands", "concurrency"], "steps": [
+ ["parallel", [], {}, {"n": 20, "step": {"op": "commands.run", "args": ["echo par"]}, "quiet": false, "pick": []}]
+]},
+{"name": "cmd_long_running_stream", "tags": ["commands"], "steps": [
+ ["commands.run", ["for i in 1 2 3 4 5 6; do echo tick$i; sleep 0.5; done"], {"on_stdout": {"$cb": "ticks"}, "timeout": 30}]
+]},
+{"name": "cmd_request_timeout", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo ok"], {"request_timeout": 30}],
+ ["commands.list", [], {"request_timeout": 30}, {"pick": ["pid"], "quiet": true}]
+]},
+{"name": "cmd_exit_exception_fields", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo stdout-text; echo stderr-text >&2; exit 7"], {"on_stdout": {"$cb": "so"}, "on_stderr": {"$cb": "se"}}]
+]},
+{"name": "cmd_pty_basic", "tags": ["commands", "pty"], "steps": [
+ ["pty.create", [{"$size": {"rows": 24, "cols": 80}}], {"on_data": {"$cb": "pty", "as": "text", "probe": ["24 80", "pty-3", "logout"]}, "timeout": 0}, {"as": "p"}],
+ ["sleep", [1]],
+ ["pty.send_stdin", ["$p.pid", {"$utf8": "stty size; echo pty-$((1+2)); exit 3\n"}]],
+ ["@wait", [], {}, {"on": "p"}]
+]},
+{"name": "cmd_pty_resize_kill_connect", "tags": ["commands", "pty"], "steps": [
+ ["pty.create", [{"$size": {"rows": 24, "cols": 80}}], {"on_data": {"$cb": "pty", "as": "text", "probe": ["40 100"]}, "timeout": 0}, {"as": "p"}],
+ ["sleep", [1]],
+ ["pty.resize", ["$p.pid", {"$size": {"rows": 40, "cols": 100}}]],
+ ["pty.send_stdin", ["$p.pid", {"$utf8": "stty size\n"}]],
+ ["sleep", [1]],
+ ["pty.connect", ["$p.pid"], {"on_data": {"$cb": "pty2", "as": "text", "probe": ["second"]}, "timeout": 0}, {"as": "p2"}],
+ ["pty.send_stdin", ["$p.pid", {"$utf8": "echo second\n"}]],
+ ["sleep", [1]],
+ ["pty.kill", ["$p.pid"]],
+ ["@wait", [], {}, {"on": "p"}],
+ ["pty.kill", ["$p.pid"]],
+ ["pty.resize", [999999, {"$size": {"rows": 10, "cols": 10}}]],
+ ["pty.send_stdin", [999999, {"$utf8": "x"}]]
+]},
+{"name": "cmd_pty_user_cwd_envs", "tags": ["commands", "pty"], "steps": [
+ ["pty.create", [{"$size": {"rows": 24, "cols": 80}}], {"on_data": {"$cb": "pty", "as": "text", "probe": ["[root][/tmp][yes][xterm-256color]"]}, "timeout": 0, "user": "root", "cwd": "/tmp", "envs": {"PTYENV": "yes"}}, {"as": "p"}],
+ ["sleep", [1]],
+ ["pty.send_stdin", ["$p.pid", {"$utf8": "echo [$(id -un)][$PWD][$PTYENV][$TERM]; exit\n"}]],
+ ["@wait", [], {}, {"on": "p"}]
+]},
+{"name": "cmd_stream_input", "tags": ["commands", "stdin"], "sdk_min": "2.58.0", "steps": [
+ ["commands.run", ["cat"], {"background": true, "stdin": true, "timeout": 0, "on_stdout": {"$cb": "so", "join": true}}, {"as": "h"}],
+ ["commands.stream_input", ["$h.pid"], {}, {"as": "ih", "quiet": true}],
+ ["@send", ["streamed one\n"], {}, {"on": "ih"}],
+ ["@send", [{"$utf8": "streamed two ü\n"}], {}, {"on": "ih"}],
+ ["@close", [], {}, {"on": "ih"}],
+ ["commands.close_stdin", ["$h.pid"]],
+ ["@wait", [], {}, {"on": "h"}]
+]},
+{"name": "cmd_stdin_not_enabled_running", "tags": ["commands", "stdin"], "steps": [
+ ["commands.run", ["sleep 30"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["commands.send_stdin", ["$h.pid", "x"]],
+ ["commands.close_stdin", ["$h.pid"]],
+ ["commands.kill", ["$h.pid"]]
+]},
+{"name": "cmd_env_path_override", "tags": ["commands"], "steps": [
+ ["commands.run", ["echo \"[$PATH]\" | head -c 0; echo ok"], {"envs": {"PATH": "/custom"}}, {"pick": ["stdout", "exit_code"]}]
+]}
+]}

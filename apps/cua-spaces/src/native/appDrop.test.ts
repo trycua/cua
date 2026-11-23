@@ -8,7 +8,7 @@ import { createFallbackTeleportAppsBridge, FIXTURE_CATALOG } from "./teleportApp
 
 // Fixture catalog and fixture paths only: nothing reads this machine's apps.
 const apps = createFallbackTeleportAppsBridge();
-const space = { id: "cloud:aurora", name: "Aurora" };
+const space = { id: "direct:aurora", name: "Aurora" };
 
 describe("app drops on a Space", () => {
   it("opens the picker preselected with a dropped app and its files", async () => {
@@ -21,7 +21,7 @@ describe("app drops on a Space", () => {
     );
     expect(handled).toBe(true);
     expect(open).toHaveBeenCalledWith(
-      "cloud:aurora",
+      "direct:aurora",
       "Aurora",
       { id: "vscode", name: "Visual Studio Code" },
       JSON.parse(FIXTURE_CATALOG[1]!.json),
@@ -39,6 +39,6 @@ describe("app drops on a Space", () => {
   it("still opens the full catalog for an app it cannot read", async () => {
     const open = vi.fn();
     expect(await handleAppDrop(["/Applications/Unknown Thing.app"], space, open, apps)).toBe(true);
-    expect(open).toHaveBeenCalledWith("cloud:aurora", "Aurora", null, null, []);
+    expect(open).toHaveBeenCalledWith("direct:aurora", "Aurora", null, null, []);
   });
 });

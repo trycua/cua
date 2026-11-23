@@ -1,18 +1,78 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import CuaSDK
 import Darwin
 import Foundation
 import Observation
+
+/// `resources.get`'s snapshot from the SDK's `Spaces.resources` (the
+/// daemon's one sampler): this Mac, each of its Spaces, your other
+/// computers' summaries and what your Spaces on them take there, in the
+/// page's `ResourcesSnapshot` shape (a missing optional is `NSNull`).
+func resourcesJSON(_ s: CuaSDK.ResourcesSnapshot) -> [String: Any] {
+    func warning(_ w: CuaSDK.DiskWarning) -> [String: Any] {
+        let level: String
+        switch w.level {
+        case .ok: level = "ok"
+        case .low: level = "low"
+        case .critical: level = "critical"
+        }
+        return ["level": level, "free": w.free, "total": w.total, "threshold": w.threshold]
+    }
+    func computer(_ c: CuaSDK.ComputerResources) -> [String: Any] {
+        [
+            "id": c.id, "name": c.name, "online": c.online, "sampledAtMs": c.sampledAtMs,
+            "cpuCount": c.cpuCount, "cpuPercent": c.cpuPercent, "loadAverage1m": c.loadAverage1m,
+            "memoryTotal": c.memoryTotal, "memoryUsed": c.memoryUsed,
+            "diskTotal": c.diskTotal, "diskFree": c.diskFree,
+            "spacesCount": c.spacesCount, "spacesRunning": c.spacesRunning,
+            "spacesCpuAllocated": c.spacesCpuAllocated, "spacesMemoryAllocated": c.spacesMemoryAllocated,
+            "spacesMemoryUsed": c.spacesMemoryUsed, "spacesDiskBytes": c.spacesDiskBytes,
+            "spacesDiskExact": c.spacesDiskExact, "warning": warning(c.warning),
+        ]
+    }
+    func space(_ r: CuaSDK.SpaceResources) -> [String: Any] {
+        var usage: Any = NSNull()
+        if let u = r.usage {
+            usage = [
+                "cpuCount": u.cpuCount, "cpuPercent": u.cpuPercent, "loadAverage1m": u.loadAverage1m,
+                "memoryUsed": u.memoryUsed, "memoryTotal": u.memoryTotal, "memoryLimited": u.memoryLimited,
+                // No size of its own is null, never a sentinel.
+                "diskUsed": u.diskUsed, "diskTotal": u.diskTotal.map { $0 as Any } ?? NSNull(),
+                "diskLimited": u.diskLimited,
+            ] as [String: Any]
+        }
+        var disk: Any = NSNull()
+        if let d = r.diskOnHost {
+            disk = ["bytes": d.bytes.map { $0 as Any } ?? NSNull(), "allocated": d.allocated,
+                    "sharesSpace": d.sharesSpace] as [String: Any]
+        }
+        var base: Any = NSNull()
+        if let b = r.base {
+            base = ["key": b.key, "image": b.image, "bytes": b.bytes.map { $0 as Any } ?? NSNull(),
+                    "sharedWith": b.sharedWith] as [String: Any]
+        }
+        return [
+            "id": r.id, "powerState": r.powerState, "cpuAllocated": r.cpuAllocated,
+            "memoryAllocated": r.memoryAllocated, "diskAllocated": r.diskAllocated,
+            "usage": usage, "diskOnHost": disk, "base": base,
+        ]
+    }
+    return [
+        "sequence": s.sequence, "sampledAtMs": s.sampledAtMs, "thisMac": computer(s.thisMac),
+        "spaces": s.spaces.map(space), "computers": s.computers.map(computer), "warning": warning(s.warning),
+    ]
+}
 
 /// This Mac's processor, memory and disk (CUA-1880), read by the app itself:
 /// the core count, how busy the cores were since the last read, memory in
 /// use, and the free space on the volume that holds your home folder (where
 /// Spaces live). Numbers only: never file names, paths or process names.
 ///
-/// The daemon's `resources` snapshot adds each Space's numbers; until a
-/// build carries it, the page's `resources.get` and the menu bar warning use
-/// this sample.
+/// The page's `resources.get` answers the SDK's snapshot
+/// (`resourcesJSON`); this sample is its answer only while the SDK can't
+/// (starting, or the daemon is down), and the menu bar warning's.
 public struct HostResourceSample: Equatable, Sendable {
     public var cores: Int
     /// 0 to 100 since the last sample; nil on the first.
@@ -32,7 +92,8 @@ public struct HostResourceSample: Equatable, Sendable {
     }
 
     /// `resources.get`'s snapshot with this Mac only (the "API (as built)"
-    /// `ResourcesSnapshot`): no Space numbers until the daemon serves them.
+    /// `ResourcesSnapshot`): no Space numbers, for while the SDK can't
+    /// answer.
     func snapshot(now: Date = Date()) -> [String: Any] {
         let ms = Int64(now.timeIntervalSince1970 * 1000)
         let warning = DiskWarning(free: diskFree, total: diskTotal).wire(free: diskFree, total: diskTotal)

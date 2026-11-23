@@ -1,0 +1,51 @@
+name: "CI: Close fork PRs that change CI"
+
+# Closes pull requests from forks that change .github/workflows/ or .github/actions/.
+# It runs on a schedule from the default branch rather than on pull_request: fork runs from new
+# contributors wait for approval, so a pull_request trigger would not run until someone approved
+# the very run we want to stop, and pull_request_target is banned in this repository. It checks out
+# only the script, from the default branch, and reads pull requests as API data. It never checks
+# out or executes pull request code.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List matching pull requests without closing them"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: close-fork-workflow-prs
+  cancel-in-progress: false
+
+jobs:
+  close:
+    name: close-fork-workflow-prs
+    if: github.repository == 'trycua/cua'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the script from the default branch
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts/close_fork_workflow_prs.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Close fork pull requests that change CI files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+        run: |
+          if [ "$DRY_RUN" = true ]; then
+            python3 .github/scripts/close_fork_workflow_prs.py --dry-run
+          else
+            python3 .github/scripts/close_fork_workflow_prs.py
+          fi

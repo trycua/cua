@@ -34,7 +34,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "System: macOS",
@@ -76,7 +75,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "System: macOS",
@@ -118,7 +116,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "System: macOS",
@@ -160,7 +157,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Cancelling… 18%",
               "System: macOS",
@@ -202,7 +198,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Cancelling… 18%",
               "System: macOS",
@@ -244,7 +239,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Cancelling… 18%",
               "System: macOS",
@@ -301,7 +295,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "System: Linux"
@@ -342,7 +335,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading image…",
               "System: Linux"
@@ -383,7 +375,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Cancelling… 42%",
               "System: Linux"
@@ -424,7 +415,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Failed",
               "System: Linux"

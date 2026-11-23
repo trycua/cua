@@ -35,7 +35,7 @@ The old computer-use compatibility flag does not add a screenshot tool. Use `get
 
 For multi-call work, prefer a short public label and pass the same label on every call that accepts it. Passing it once is not sticky: omission uses the transport's implicit session. Named CLI state is shared only within the daemon's CLI namespace, not with arbitrary MCP connections or a new daemon generation.
 
-`start_session` is optional: actions can establish the run. Use it to configure the initial cursor theme or revive a name after `end_session`. The default idle TTL is five minutes; do not assume a long human permission wait preserves handles.
+`start_session` is optional: actions can establish the run. Use it to configure the initial cursor theme or revive a name after `end_session`. The default idle TTL is five minutes. After an idle end, the next action or window read with the same label (or none) starts the session again, but its old snapshots and element tokens stay retired, so re-read the window state after a long wait. Only `end_session` makes a label refuse until `start_session`.
 
 ```bash
 cua-driver start_session '{"session":"run-1"}'
@@ -43,7 +43,7 @@ cua-driver start_session '{"session":"run-1"}'
 cua-driver end_session '{"session":"run-1"}'
 ```
 
-Explicit targets own observation/input modality, not session configuration. There is no `deescalate_session`. Do not use retired `capture_scope` settings or legacy escalation-session tools in new workflows. Reserved fields such as `_session_id` belong to the transport, never to an agent.
+Explicit targets own observation/input modality, not session configuration. Do not use retired `capture_scope` settings; the `escalate_session` and `get_session_state` tools were removed, so choose window or desktop on each action and use `get_session` for session state. Reserved fields such as `_session_id` belong to the transport, never to an agent.
 
 Keep one controller per shared desktop. Separate sessions/cursors do not isolate global keyboard focus, physical input, a single-instance application, or another observer's snapshot cache. `creates_new_application_instance:true` requests a separate instance where supported; verify distinct processes/windows before concurrent work. For independent MCP work, use independent connections as well.
 
@@ -83,8 +83,9 @@ cua-driver mcp \
 Capability manifest v3 omits file-level `mode` and `ask.tools`. Its
 `allow.tools` list is nonempty. Lifetime fields are optional in `standard` and
 `unrestricted`; `bounded` requires both `expires_after` and `idle_timeout`.
-The older `--session-policy` names remain compatibility aliases and must not be
-used in new configurations.
+The older `--session-policy` and `--approve-session-policy` flags have been
+removed; `cua-driver` refuses them and names `--capability-manifest` or
+`--approve-capability-manifest` instead.
 
 Starting, ending, naming, reconnecting, or omitting a session never changes
 permission authority. A public session label is lifecycle metadata, never a
@@ -98,7 +99,7 @@ On Linux, ordinary `move_cursor({x,y})` moves only this synthetic cursor. The ex
 
 Pixel `click` already animates the cursor. Do not precede it with `move_cursor` at the same point: that adds a second glide. Use `move_cursor` to indicate a location without clicking or seed the cursor before accessibility actions.
 
-The default theme provides session-colored pointer/glow, action marks, and activity animations. Named sessions have stable palette colors. Native hosts own delivery/target badges separately from theme artwork; cursor state is scoped to the private lifecycle.
+The default theme is a session-colored arrow with a soft halo (`cursor.halo`, on by default) that floats gently at rest and while moving (a slow sway, bob and tilt), settling to exactly zero before every click, drag, scroll and typing (`cursor.float`, on by default). While it moves its tip points along the path (`cursor.rotate`: `heading` by default, or `lean` or `off`); it is upright again on arrival, so clicks, typing and scrolling are upright. The cursor never draws action marks (the retired `cursor.marks` setting is ignored); the glow/ripple/squish motion effects are opt-in (off by default). Named sessions have stable palette colors. Native hosts own delivery/target badges separately from theme artwork; cursor state is scoped to the private lifecycle.
 
 `set_agent_cursor_enabled` controls idle visibility. `set_agent_cursor_motion` takes `style` (`signature_arc` default, `spring_settle`, `magnetic`, `comet_swoop`, `adaptive`, `classic`), `timing` (`native`, `fitts`, `fixed`), `effects` (`trail`, `glow`, `magnet`, `ripple`, `squish` as `on`, `off`, or `default`; `default` restores the style default, and an omitted effect keeps its current setting), and the arc knobs `start_handle`, `end_handle`, `arc_size`, `arc_flow` (bezier styles) plus `spring` and `turn_radius` (`classic`) where advertised. Choose preinstalled artwork with `set_agent_cursor_theme`; `cursor_id` on input tools is not a theme selector. Never supply inline theme code or arbitrary source paths through agent tools. The trusted local `cursor-theme` workflow owns validation, compilation, preview, installation, and removal.
 

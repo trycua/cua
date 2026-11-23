@@ -77,7 +77,9 @@ export interface GuestUsage {
   memoryTotal: number;
   memoryLimited: boolean;
   diskUsed: number;
-  diskTotal: number;
+  /** Null: the guest's file system has no size of its own (gVisor's root
+   * overlay) or didn't say. Never a sentinel such as 2^63. */
+  diskTotal: number | null;
   diskLimited: boolean;
 }
 
@@ -104,8 +106,22 @@ export interface SpaceResources {
   diskAllocated: number;
   /** Null while stopped or unreachable. */
   usage: GuestUsage | null;
-  /** Null: nothing to say (a container). */
+  /** Its own data on this Mac (never the base it shares); null: nothing to measure. */
   diskOnHost: DiskOnHost | null;
+  /** The base image it is a copy-on-write copy of, counted once; absent from older hosts. */
+  base?: SharedBase | null;
+}
+
+/** A base image several Spaces share copy-on-write (`SharedBase`). */
+export interface SharedBase {
+  /** Spaces with the same key share the same blocks. */
+  key: string;
+  /** `ghcr.io/trycua/linux:24.04`. */
+  image: string;
+  /** What it takes, once; null: the runtime can't tell it apart. */
+  bytes: number | null;
+  /** Local Spaces that use it, this one included. */
+  sharedWith: number;
 }
 
 /** `cua_spaces::resources::ResourcesSnapshot` (the SDK's `Spaces.resources(visible)`). */

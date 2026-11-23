@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Reliable framed write to the cua-driver daemon socket.
 //!
 //! Split out of `serve.rs::send_request` so its EAGAIN-retry logic is unit

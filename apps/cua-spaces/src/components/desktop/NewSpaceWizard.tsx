@@ -7,7 +7,7 @@ import { core } from "../../core";
 import { NO_EXPERIMENTS, type Experiments } from "../../model/experiments";
 import type { Placement, SandboxImage } from "../../model/images";
 import type { Runtime } from "../../model/types";
-import type { CloudPricing, GpuChoice } from "../../native/fleet";
+import type { GpuChoice } from "../../native/spacesBridge";
 import type { LocalStorage } from "../../native/local";
 import { telemetryBridge, type TelemetryBridge } from "../../native/telemetry";
 import { hostOs } from "../../model/host";
@@ -44,8 +44,6 @@ export interface NewSpaceWizardProps {
   /** Where "Run on" starts: the configured default location (Settings,
    * `cua config set default.on`). */
   defaultLocation?: Placement;
-  /** Cua Cloud has ended: the app passes `false`. */
-  cloudAvailable: boolean;
   /** Local needs a container backend (docker / runsc) or Lume. */
   localAvailable: boolean;
   /** Why local is unavailable, shown on the disabled tile. */
@@ -67,8 +65,6 @@ export interface NewSpaceWizardProps {
   hostArch?: string;
   /** Free space where local Spaces are written, and what is pulled. */
   storage?: LocalStorage | null;
-  /** Cua Cloud rates (always none: it has ended). */
-  cloudPricing?: CloudPricing | null;
   /** The GPU option of each runtime that has one (`gpu_support`); a
    * runtime not listed gets no GPU row. */
   gpus?: readonly GpuChoice[] | null;
@@ -217,7 +213,7 @@ interface WizardView {
   nameError: string | null;
   openWhenReady: boolean;
   streamNote: string | null;
-  summary: { label: string; value: string }[];
+  summary: { label: string; value: string; help?: string | null }[];
   canContinue: boolean;
   showBack: boolean;
   primaryLabel: string;
@@ -251,7 +247,6 @@ interface GpuRow {
  */
 export function NewSpaceWizard({
   defaultLocation = "local",
-  cloudAvailable,
   localAvailable,
   localReason,
   localBackends,
@@ -262,7 +257,6 @@ export function NewSpaceWizard({
   maxCpus = Math.max(2, Math.min(16, globalThis.navigator?.hardwareConcurrency || 8)),
   hostArch,
   storage,
-  cloudPricing,
   gpus,
   onOpenExternal,
   startActions,
@@ -276,14 +270,12 @@ export function NewSpaceWizard({
   const env = useMemo(
     () => ({
       defaultLocation,
-      cloudAvailable,
       localAvailable,
       localReason: localReason ?? null,
       localBackends: localBackends ? [...localBackends] : null,
       maxCpus,
       hostArch: hostArch ?? null,
       storage: storage ?? null,
-      cloudPricing: cloudPricing ?? null,
       clouds: clouds ? [...clouds] : [],
       hosts: hosts ? [...hosts] : [],
       experiments: experiments ?? NO_EXPERIMENTS,
@@ -291,14 +283,12 @@ export function NewSpaceWizard({
     }),
     [
       defaultLocation,
-      cloudAvailable,
       localAvailable,
       localReason,
       localBackends,
       maxCpus,
       hostArch,
       storage,
-      cloudPricing,
       clouds,
       hosts,
       experiments,
@@ -307,7 +297,7 @@ export function NewSpaceWizard({
   );
   const [state, setState] = useState<WizardState>(() =>
     (quick ? [{ type: "choose-os", os: quick }] : (startActions ?? [])).reduce<WizardState>(
-      (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env }),
+      (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env, hostOs: hostOs() }),
       // The wasm core has no randomness: a seed for the name an unnamed
       // Space gets (the core shows it and creates the Space with it).
       core<WizardState>("wizard.initial", { env: { ...env, nameSeed: nameSeed() } }),
@@ -321,11 +311,18 @@ export function NewSpaceWizard({
     onCancel();
   };
   const dispatch = (action: WizardAction) =>
-    setState((s) => core<WizardState>("wizard.reduce", { state: s, action, env }));
+    setState((s) => core<WizardState>("wizard.reduce", { state: s, action, env, hostOs: hostOs() }));
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens); the core ignores it once they picked.
   useEffect(() => {
-    setState((s) => core<WizardState>("wizard.reduce", { state: s, action: { type: "sync-default", location: defaultLocation }, env }));
+    setState((s) =>
+      core<WizardState>("wizard.reduce", {
+        state: s,
+        action: { type: "sync-default", location: defaultLocation },
+        env,
+        hostOs: hostOs(),
+      }),
+    );
   }, [defaultLocation, env]);
   const v = core<WizardView>("wizard.view", { state, env, hostOs: hostOs() });
   // Before paint, so a quick create never shows the sheet; once, because StrictMode runs mount effects twice.
@@ -391,9 +388,11 @@ export function NewSpaceWizard({
                       </button>
                       {v.advanced && (
                         <div className="wz-stack" role="group" aria-label={v.labels.advanced}>
-                          {v.fields.filter((f) => f.advanced).map((f) => (
-                            <SystemField key={f.id} field={f} view={v} dispatch={dispatch} />
-                          ))}
+                          {v.fields
+                            .filter((f) => f.advanced)
+                            .map((f) => (
+                              <SystemField key={f.id} field={f} view={v} dispatch={dispatch} />
+                            ))}
                         </div>
                       )}
                     </div>
@@ -449,39 +448,39 @@ export function NewSpaceWizard({
                   </span>
                 </label>
               )}
-                {v.diskEditable && (
-                  <div className="wz-disk">
-                    <label className="dw-field">
-                      <span>{label(v, "disk")}</span>
-                      <span className="wz-slider" title={v.diskHelp ?? undefined}>
-                        <input
-                          type="range"
-                          min={v.minDiskGb}
-                          max={v.maxDiskGb}
-                          step={1}
-                          value={v.diskGb}
-                          aria-label={label(v, "disk")}
-                          onChange={(event) => dispatch({ type: "set-disk", diskGb: Number(event.target.value) })}
-                        />
-                        <output>{v.diskText}</output>
-                      </span>
-                    </label>
-                    {(v.diskNote || v.diskResetLabel) && (
-                      <div className="wz-disk-note">
-                        {v.diskNote && <p className="wz-help">{v.diskNote}</p>}
-                        {v.diskResetLabel && (
-                          <button
-                            type="button"
-                            className="dw-btn dw-btn-quiet"
-                            onClick={() => dispatch({ type: "reset-disk" })}
-                          >
-                            {v.diskResetLabel}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+              {v.diskEditable && (
+                <div className="wz-disk">
+                  <label className="dw-field">
+                    <span>{label(v, "disk")}</span>
+                    <span className="wz-slider" title={v.diskHelp ?? undefined}>
+                      <input
+                        type="range"
+                        min={v.minDiskGb}
+                        max={v.maxDiskGb}
+                        step={1}
+                        value={v.diskGb}
+                        aria-label={label(v, "disk")}
+                        onChange={(event) => dispatch({ type: "set-disk", diskGb: Number(event.target.value) })}
+                      />
+                      <output>{v.diskText}</output>
+                    </span>
+                  </label>
+                  {(v.diskNote || v.diskResetLabel) && (
+                    <div className="wz-disk-note">
+                      {v.diskNote && <p className="wz-help">{v.diskNote}</p>}
+                      {v.diskResetLabel && (
+                        <button
+                          type="button"
+                          className="dw-btn dw-btn-quiet"
+                          onClick={() => dispatch({ type: "reset-disk" })}
+                        >
+                          {v.diskResetLabel}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {v.gpu && <GpuField row={v.gpu} dispatch={dispatch} onOpenExternal={onOpenExternal} />}
               {v.price && (
                 <p className="wz-price" aria-label={t("spaces.wizard.cost_label")}>
@@ -556,7 +555,10 @@ export function NewSpaceWizard({
                 {v.summary.map((fact) => (
                   <Fragment key={fact.label}>
                     <dt>{fact.label}</dt>
-                    <dd>{fact.label === "Image" ? <code>{fact.value}</code> : fact.value}</dd>
+                    <dd>
+                      {fact.label === "Image" ? <code>{fact.value}</code> : fact.value}
+                      {fact.help && <InfoTip label={fact.label} text={fact.help} />}
+                    </dd>
                   </Fragment>
                 ))}
               </dl>
@@ -644,6 +646,36 @@ function label(v: WizardView, id: string): string {
   return field(v, id)?.label ?? "";
 }
 
+/** A small info icon: the full text as a tooltip on hover and focus, and shown below on click. */
+function InfoTip({ label, text }: { label: string; text: string }) {
+  const t = useT("spaces");
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="wz-info">
+      <button
+        type="button"
+        className="wz-info-btn"
+        aria-label={t("spaces.wizard.info_details", { label })}
+        aria-expanded={open}
+        title={text}
+        onClick={() => setOpen((o) => !o)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+      >
+        <Sym name="info.circle" size={12} />
+      </button>
+      {open && (
+        <span role="tooltip" className="wz-info-pop">
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** The "Run on" menu's last entry: it opens a flow instead of picking a place. */
+const ADD_CLOUD = "add:cloud";
+
 /** One field of the System step, drawn by its core `id`. */
 function SystemField({
   field: f,
@@ -656,6 +688,7 @@ function SystemField({
   dispatch: (action: WizardAction) => void;
   onConnectCloud?: () => void;
 }) {
+  const t = useT("spaces");
   switch (f.id) {
     case "os":
       return (
@@ -690,13 +723,21 @@ function SystemField({
               aria-label={f.label}
               value={v.placementId}
               title={chosen?.detail || undefined}
-              onChange={(event) => dispatch({ type: "choose-placement", on: event.target.value })}
+              onChange={(event) => {
+                if (event.target.value === ADD_CLOUD) onConnectCloud?.();
+                else dispatch({ type: "choose-placement", on: event.target.value });
+              }}
             >
               {v.placements.map((o) => (
                 <option key={o.id} value={o.id} disabled={!o.enabled} title={o.detail || undefined}>
                   {o.label}
                 </option>
               ))}
+              {onConnectCloud && v.fields.some((x) => x.id === "connect-cloud") && (
+                <option value={ADD_CLOUD} title={t("spaces.wizard.add_cloud_hint")}>
+                  {t("spaces.wizard.add_cloud")}
+                </option>
+              )}
             </select>
           </label>
           {f.error && (
@@ -746,22 +787,9 @@ function SystemField({
           </select>
         </label>
       );
+    // Reached from the "Run on" menu's last entry, not drawn here.
     case "connect-cloud":
-      return onConnectCloud ? (
-        <div>
-          <button type="button" className="dw-btn-link" onClick={onConnectCloud}>
-            {f.label}
-          </button>
-        </div>
-      ) : null;
-    case "connect-by-address":
-      return (
-        <div>
-          <button type="button" className="dw-btn-link" onClick={() => dispatch({ type: "show-address" })}>
-            {f.label}
-          </button>
-        </div>
-      );
+      return null;
     default:
       return null;
   }

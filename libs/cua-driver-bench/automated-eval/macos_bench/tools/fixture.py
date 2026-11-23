@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+import desktop_runtime as desktop
+
 PROBES = ROOT / "probes"
 DEFAULT_BUILD = ROOT.parent.parent / "build"
 
@@ -67,11 +70,11 @@ def setup(task: str, seed: int, d: Path, build: Path = DEFAULT_BUILD) -> dict[st
     home.mkdir(exist_ok=True)
     meta = task_meta(task)
     (d / "brief.txt").write_text(render(task, seed), "utf-8")
-    exe = next((build / "BenchLab.app" / "Contents" / "MacOS").iterdir())
-    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "TMPDIR": str(d)}
+    argv = desktop.bench_app_argv("BenchLab", build)
+    env = desktop.desktop_env(home)
     proc = subprocess.Popen(
         [
-            str(exe),
+            *argv,
             *meta["app_args"],
             "--seed",
             str(seed),
@@ -130,7 +133,10 @@ def reset(task: str, d: Path) -> dict[str, Any]:
             os.kill(int(p["pid"].read_text()), signal.SIGKILL)
         except (OSError, ValueError):
             pass
-    sweep("BenchLab.app/Contents/MacOS/BenchLab")
+    if desktop.detect_platform() == "linux":
+        subprocess.run(["pkill", "-x", "BenchLab"], capture_output=True)
+    else:
+        sweep("BenchLab.app/Contents/MacOS/BenchLab")
     meta = task_meta(task)
     for app in meta.get("needs_apps", []):
         sweep(f"/{app}.app/Contents/MacOS/{app}")

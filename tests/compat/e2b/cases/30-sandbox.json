@@ -1,0 +1,282 @@
+{"cases": [
+{"name": "sbx_create_info", "tags": ["lifecycle"], "sandbox": "own", "create": {"timeout": 120, "metadata": {"suite": "$run_id", "k": "v"}, "envs": {"E": "1"}}, "steps": [
+ ["get_info", [], {}, {"pick": ["state", "metadata", "name", "network", "lifecycle", "volume_mounts", "end_at", "allow_internet_access"]}],
+ ["is_running", []],
+ ["@sandbox_id", [], {}, {"quiet": true}],
+ ["Sandbox.get_info", ["$sb.sandbox_id"], {}, {"pick": ["state", "metadata"]}],
+ ["Sandbox.get_info", ["nonexistent00000000000"]],
+ ["Sandbox.get_info", ["../../etc/passwd"]]
+]},
+{"name": "sbx_create_secure", "tags": ["lifecycle", "urls"], "sandbox": "own", "create": {"timeout": 120, "secure": false}, "steps": [
+ ["get_host", [49983], {}, {"as": "envd_host", "quiet": true}],
+ ["files.write", ["/tmp/c/sec/pub.txt", "public"], {"user": "root"}],
+ ["http", ["https://${envd_host}/files?path=/tmp/c/sec/pub.txt&username=root"]],
+ ["http", ["https://${envd_host}/health"]]
+]},
+{"name": "sbx_create_secure_true", "tags": ["lifecycle", "urls"], "sandbox": "own", "create": {"timeout": 120, "secure": true}, "steps": [
+ ["get_host", [49983], {}, {"as": "envd_host", "quiet": true}],
+ ["files.write", ["/tmp/c/sec/priv.txt", "private"], {"user": "root"}],
+ ["http", ["https://${envd_host}/files?path=/tmp/c/sec/priv.txt&username=root"]],
+ ["http", ["https://${envd_host}/health"]]
+]},
+{"name": "sbx_create_errors", "tags": ["lifecycle", "errors"], "sandbox": "none", "steps": [
+ ["Sandbox.create", [], {"template": "no-such-template-xyz", "timeout": 60}],
+ ["Sandbox.create", [], {"no_template": true, "timeout": 60, "api_key": "e2b_0000000000000000000000000000000000000000"}],
+ ["Sandbox.create", [], {"no_template": true, "timeout": 60, "api_key": "not-a-key"}],
+ ["Sandbox.create", [], {"no_template": true, "timeout": -5}],
+ ["Sandbox.create", [], {"no_template": true, "timeout": 60, "metadata": {"k": 1}}],
+ ["Sandbox.create", [], {"no_template": true, "timeout": 60, "envs": {"A": "ok"}, "allow_internet_access": true}, {"as": "okbox", "quiet": true}],
+ ["kill", [], {}, {"on": "okbox"}]
+]},
+{"name": "sbx_connect_new_client", "tags": ["lifecycle", "reconnect"], "sandbox": "own", "create": {"timeout": 120}, "steps": [
+ ["files.write", ["/tmp/c/rc/state.txt", "from-first-client"]],
+ ["Sandbox.connect", ["$sb.sandbox_id"], {}, {"as": "sb2", "quiet": true}],
+ ["files.read", ["/tmp/c/rc/state.txt"], {}, {"on": "sb2"}],
+ ["commands.run", ["echo second-client; whoami"], {}, {"on": "sb2"}],
+ ["Sandbox.connect", ["$sb.sandbox_id"], {"timeout": 300}, {"as": "sb3", "quiet": true}],
+ ["get_info", [], {}, {"on": "sb3", "pick": ["state", "end_at"]}],
+ ["Sandbox.connect", ["nonexistent00000000000"]],
+ ["kill", [], {}, {"on": "sb2"}],
+ ["commands.run", ["echo after-kill"], {"request_timeout": 20}],
+ ["is_running", [], {}, {"on": "sb3"}],
+ ["kill", [], {}, {"on": "sb3"}]
+]},
+{"name": "sbx_kill_idempotent", "tags": ["lifecycle"], "sandbox": "own", "create": {"timeout": 120}, "steps": [
+ ["kill", []],
+ ["kill", []],
+ ["is_running", []],
+ ["Sandbox.kill", ["$sb.sandbox_id"]],
+ ["Sandbox.kill", ["nonexistent00000000000"]],
+ ["Sandbox.kill", [""]],
+ ["get_info", []],
+ ["commands.run", ["echo x"], {"request_timeout": 20}],
+ ["files.read", ["/etc/hostname"], {"request_timeout": 20}],
+ ["pause", []],
+ ["set_timeout", [60]],
+ ["get_metrics", []],
+ ["create_snapshot", []],
+ ["connect", []]
+]},
+{"name": "sbx_set_timeout", "tags": ["lifecycle"], "sandbox": "own", "create": {"timeout": 60}, "steps": [
+ ["get_info", [], {}, {"pick": ["end_at"]}],
+ ["set_timeout", [600]],
+ ["get_info", [], {}, {"pick": ["end_at"]}],
+ ["set_timeout", [60]],
+ ["get_info", [], {}, {"pick": ["end_at"]}],
+ ["set_timeout", [0]],
+ ["is_running", []]
+]},
+{"name": "sbx_timeout_expiry", "tags": ["lifecycle", "slow"], "sandbox": "own", "create": {"timeout": 4}, "steps": [
+ ["commands.run", ["echo alive"]],
+ ["is_running", [], {}, {"until": {"path": "", "equals": false, "timeout": 90, "interval": 3}}],
+ ["commands.run", ["echo dead"], {"request_timeout": 20}],
+ ["files.read", ["/etc/hostname"], {"request_timeout": 20}],
+ ["get_info", []],
+ ["Sandbox.connect", ["$sb.sandbox_id"]],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}}}}, {"paginate": true, "pick": ["metadata"]}]
+]},
+{"name": "sbx_connect_extends_timeout", "tags": ["lifecycle", "slow"], "sandbox": "own", "create": {"timeout": 6}, "steps": [
+ ["Sandbox.connect", ["$sb.sandbox_id"], {"timeout": 300}, {"as": "sb2", "quiet": true}],
+ ["sleep", [10]],
+ ["is_running", []],
+ ["commands.run", ["echo still-alive"]]
+]},
+{"name": "sbx_pause_resume", "tags": ["lifecycle", "pause"], "sandbox": "own", "create": {"timeout": 300, "metadata": {"suite": "$run_id"}}, "steps": [
+ ["files.write", ["/tmp/c/pr/kept.txt", "kept"]],
+ ["commands.run", ["sleep 300"], {"background": true, "timeout": 0}, {"as": "bg", "quiet": true}],
+ ["commands.run", ["echo 'mem' > /dev/shm/c-mem.txt"]],
+ ["pause", []],
+ ["get_info", [], {}, {"pick": ["state", "metadata"]}],
+ ["is_running", []],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}, "state": ["running"]}}}, {"paginate": true, "pick": ["state"]}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}, "state": ["paused"]}}}, {"paginate": true, "pick": ["state"]}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}, "state": ["running", "paused"]}}}, {"paginate": true, "pick": ["state"]}],
+ ["commands.run", ["echo while-paused"], {"request_timeout": 30}],
+ ["files.read", ["/tmp/c/pr/kept.txt"], {"request_timeout": 30}],
+ ["pause", []],
+ ["Sandbox.pause", ["$sb.sandbox_id"]],
+ ["connect", [], {"timeout": 300}, {"as": "resumed", "quiet": true}],
+ ["get_info", [], {}, {"pick": ["state"]}],
+ ["files.read", ["/tmp/c/pr/kept.txt"]],
+ ["commands.run", ["cat /dev/shm/c-mem.txt; pgrep -x sleep >/dev/null && echo sleep-alive || echo sleep-gone"]],
+ ["connect", [], {"timeout": 300}, {"quiet": true}],
+ ["pause", []],
+ ["Sandbox.connect", ["$sb.sandbox_id"], {"timeout": 300}, {"as": "again", "quiet": true}],
+ ["commands.run", ["echo second-resume"], {}, {"on": "again"}]
+]},
+{"name": "sbx_pause_modes", "tags": ["lifecycle", "pause"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["commands.run", ["sleep 300"], {"background": true, "timeout": 0}, {"as": "bg", "quiet": true}],
+ ["files.write", ["c-pm/disk.txt", "on-disk"]],
+ ["commands.run", ["sync; echo mem > /dev/shm/c-mem2.txt"]],
+ ["pause", [], {"mode": "filesystem"}],
+ ["connect", [], {"timeout": 300}, {"quiet": true}],
+ ["files.read", ["c-pm/disk.txt"]],
+ ["commands.run", ["cat /dev/shm/c-mem2.txt; pgrep -x sleep >/dev/null && echo sleep-alive || echo sleep-gone"]],
+ ["pause", [], {"mode": "full"}],
+ ["connect", [], {"timeout": 300, "on_resume": "reboot"}, {"quiet": true}],
+ ["commands.run", ["cat /dev/shm/c-mem2.txt; pgrep -x sleep >/dev/null && echo sleep-alive || echo sleep-gone"]],
+ ["files.read", ["c-pm/disk.txt"]]
+]},
+{"name": "sbx_lifecycle_auto_pause", "tags": ["lifecycle", "pause", "slow"], "sandbox": "own", "create": {"timeout": 5, "lifecycle": {"on_timeout": "pause", "auto_resume": true}, "metadata": {"suite": "$run_id"}}, "steps": [
+ ["files.write", ["/tmp/c/ap/f.txt", "persist"]],
+ ["get_info", [], {}, {"pick": ["state", "lifecycle"], "until": {"path": "state", "equals": "paused", "timeout": 120, "interval": 3}}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}, "state": ["paused"]}}}, {"paginate": true, "pick": ["state"]}],
+ ["files.read", ["/tmp/c/ap/f.txt"], {"request_timeout": 60}],
+ ["get_info", [], {}, {"pick": ["state"]}],
+ ["commands.run", ["echo auto-resumed"]]
+]},
+{"name": "sbx_lifecycle_pause_no_resume", "tags": ["lifecycle", "pause", "slow"], "sandbox": "own", "create": {"timeout": 5, "lifecycle": {"on_timeout": "pause"}}, "steps": [
+ ["get_info", [], {}, {"pick": ["state", "lifecycle"], "until": {"path": "state", "equals": "paused", "timeout": 120, "interval": 3}}],
+ ["commands.run", ["echo x"], {"request_timeout": 30}],
+ ["connect", [], {"timeout": 120}, {"quiet": true}],
+ ["commands.run", ["echo resumed-by-connect"]]
+]},
+{"name": "sbx_list_pagination", "tags": ["lifecycle", "list"], "sandbox": "none", "steps": [
+ ["Sandbox.create", [], {"timeout": 120, "metadata": {"suite": "$run_id", "n": "1"}}, {"as": "a", "quiet": true}],
+ ["Sandbox.create", [], {"timeout": 120, "metadata": {"suite": "$run_id", "n": "2"}}, {"as": "b", "quiet": true}],
+ ["Sandbox.create", [], {"timeout": 120, "metadata": {"suite": "$run_id", "n": "3"}}, {"as": "c", "quiet": true}],
+ ["sleep", [3]],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}}}}, {"paginate": true, "pick": ["metadata", "state"], "sort": true}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id", "n": "2"}}}}, {"paginate": true, "pick": ["metadata"]}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "no-such-suite"}}}}, {"paginate": true}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}}}, "limit": 1}, {"as": "pg", "quiet": true}],
+ ["@has_next", [], {}, {"on": "pg"}],
+ ["@next_items", [], {}, {"on": "pg", "as": "p1", "pick": ["metadata"]}],
+ ["@has_next", [], {}, {"on": "pg"}],
+ ["@next_items", [], {}, {"on": "pg", "pick": ["metadata"]}],
+ ["@next_items", [], {}, {"on": "pg", "pick": ["metadata"]}],
+ ["@has_next", [], {}, {"on": "pg"}],
+ ["@next_items", [], {}, {"on": "pg"}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}, "state": ["paused"]}}}, {"paginate": true}],
+ ["kill", [], {}, {"on": "a"}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}}}}, {"paginate": true, "pick": ["metadata.n"], "sort": true, "until": {"path": "#", "equals": 2, "timeout": 60, "interval": 3}}],
+ ["kill", [], {}, {"on": "b"}],
+ ["kill", [], {}, {"on": "c"}]
+]},
+{"name": "sbx_snapshots", "tags": ["lifecycle", "snapshots"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["files.write", ["/tmp/c/sn/world.txt", "baked"]],
+ ["commands.run", ["echo mem > /dev/shm/c-snap-mem.txt"]],
+ ["create_snapshot", [], {}, {"as": "snap", "pick": ["names"]}],
+ ["@snapshot_id", [], {}, {"on": "snap", "quiet": true}],
+ ["list_snapshots", [], {}, {"as": "sl", "quiet": true}],
+ ["@next_items", [], {}, {"on": "sl", "pick": ["names"], "grep": "never"}],
+ ["Sandbox.create", [], {"template": "$snap.snapshot_id", "timeout": 120}, {"as": "child", "quiet": true}],
+ ["files.read", ["/tmp/c/sn/world.txt"], {}, {"on": "child"}],
+ ["commands.run", ["cat /dev/shm/c-snap-mem.txt"], {}, {"on": "child"}],
+ ["files.write", ["/tmp/c/sn/child-only.txt", "child"], {}, {"on": "child"}],
+ ["files.exists", ["/tmp/c/sn/child-only.txt"]],
+ ["kill", [], {}, {"on": "child"}],
+ ["Sandbox.delete_snapshot", ["$snap.snapshot_id"]],
+ ["Sandbox.delete_snapshot", ["$snap.snapshot_id"]],
+ ["Sandbox.delete_snapshot", ["nonexistent00000000000"]],
+ ["Sandbox.create", [], {"template": "$snap.snapshot_id", "timeout": 60}]
+]},
+{"name": "sbx_snapshot_named", "tags": ["lifecycle", "snapshots"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["create_snapshot", [], {"name": "c-named-${run_id}"}, {"as": "snap", "pick": ["names"]}],
+ ["list_snapshots", [], {}, {"as": "sl", "quiet": true}],
+ ["Sandbox.create", [], {"template": "c-named-${run_id}", "timeout": 120}, {"as": "child", "quiet": true}],
+ ["commands.run", ["echo from-named"], {}, {"on": "child"}],
+ ["kill", [], {}, {"on": "child"}],
+ ["Sandbox.delete_snapshot", ["c-named-${run_id}"]]
+]},
+{"name": "sbx_snapshot_modes", "tags": ["lifecycle", "snapshots"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["files.write", ["c-sm/f.txt", "disk"]],
+ ["commands.run", ["echo mem > /dev/shm/c-sm-mem.txt"]],
+ ["create_snapshot", [], {"mode": "filesystem"}, {"as": "snap", "quiet": true}],
+ ["Sandbox.create", [], {"template": "$snap.snapshot_id", "timeout": 120}, {"as": "child", "quiet": true}],
+ ["files.read", ["c-sm/f.txt"], {}, {"on": "child"}],
+ ["commands.run", ["cat /dev/shm/c-sm-mem.txt"], {}, {"on": "child"}],
+ ["kill", [], {}, {"on": "child"}],
+ ["Sandbox.delete_snapshot", ["$snap.snapshot_id"]]
+]},
+{"name": "sbx_fork", "tags": ["lifecycle", "snapshots"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["files.write", ["/tmp/c/fk/base.txt", "base"]],
+ ["commands.run", ["echo fork-marker > /dev/shm/c-fork-pid"]],
+ ["fork", [], {"count": 2, "timeout": 120}, {"as": "forks", "quiet": true}],
+ ["files.read", ["/tmp/c/fk/base.txt"], {}, {"on": "forks.0"}],
+ ["files.write", ["/tmp/c/fk/only-first.txt", "x"], {}, {"on": "forks.0"}],
+ ["files.exists", ["/tmp/c/fk/only-first.txt"], {}, {"on": "forks.1"}],
+ ["files.exists", ["/tmp/c/fk/only-first.txt"]],
+ ["commands.run", ["cat /dev/shm/c-fork-pid"], {}, {"on": "forks.1"}],
+ ["kill", [], {}, {"on": "forks.0"}],
+ ["kill", [], {}, {"on": "forks.1"}],
+ ["fork", [], {"count": 1}, {"as": "single", "quiet": true}],
+ ["kill", [], {}, {"on": "single.0"}]
+]},
+{"name": "sbx_get_host", "tags": ["lifecycle", "urls"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["files.write", ["/tmp/c/gh/www/index.html", "hello-from-8080"]],
+ ["commands.run", ["python3 -m http.server 8080"], {"background": true, "cwd": "/tmp/c/gh/www", "timeout": 0}, {"as": "srv", "quiet": true}],
+ ["sleep", [3]],
+ ["get_host", [8080], {}, {"as": "host", "quiet": true}],
+ ["http", ["https://${host}/"]],
+ ["http", ["https://${host}/index.html"]],
+ ["http", ["https://${host}/missing"], {}, {"pick": ["status"]}],
+ ["get_host", [9999], {}, {"as": "host2", "quiet": true}],
+ ["http", ["https://${host2}/"]],
+ ["@kill", [], {}, {"on": "srv"}]
+]},
+{"name": "sbx_public_traffic", "tags": ["lifecycle", "urls", "network"], "sandbox": "own", "create": {"timeout": 300, "network": {"allow_public_traffic": false}}, "steps": [
+ ["files.write", ["/tmp/c/pt/www/index.html", "private-page"]],
+ ["commands.run", ["python3 -m http.server 8081"], {"background": true, "cwd": "/tmp/c/pt/www", "timeout": 0}, {"as": "srv", "quiet": true}],
+ ["sleep", [3]],
+ ["get_host", [8081], {}, {"as": "host", "quiet": true}],
+ ["http", ["https://${host}/"]],
+ ["http", ["https://${host}/"], {"headers": {"e2b-traffic-access-token": "$sb.traffic_access_token"}}],
+ ["http", ["https://${host}/"], {"headers": {"e2b-traffic-access-token": "wrong"}}],
+ ["get_info", [], {}, {"pick": ["network"]}],
+ ["@kill", [], {}, {"on": "srv"}]
+]},
+{"name": "sbx_network_internet_off", "tags": ["lifecycle", "network"], "sandbox": "own", "create": {"timeout": 300, "allow_internet_access": false}, "steps": [
+ ["commands.run", ["printf 'cloudflare:'; curl -s -o /dev/null -m 6 -w '%{http_code}' https://1.1.1.1 || true; echo"], {"timeout": 30}],
+ ["commands.run", ["echo still-works"]],
+ ["get_info", [], {}, {"pick": ["allow_internet_access", "network"]}]
+]},
+{"name": "sbx_network_allow_deny", "tags": ["lifecycle", "network"], "sandbox": "own", "create": {"timeout": 300, "network": {"deny_out": ["0.0.0.0/0"], "allow_out": ["1.1.1.1/32"]}}, "steps": [
+ ["commands.run", ["printf 'allowed:'; curl -s -o /dev/null -m 6 -w '%{http_code}' https://1.1.1.1 || true; echo"], {"timeout": 30}],
+ ["commands.run", ["printf 'denied:'; curl -s -o /dev/null -m 6 -w '%{http_code}' https://8.8.8.8 || true; echo"], {"timeout": 30}],
+ ["commands.run", ["timeout 5 getent hosts example.com >/dev/null && echo dns-ok || echo dns-blocked"], {"timeout": 30}],
+ ["get_info", [], {}, {"pick": ["network", "allow_internet_access"]}]
+]},
+{"name": "sbx_network_update", "tags": ["lifecycle", "network"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["commands.run", ["printf 'before:'; curl -s -o /dev/null -m 6 -w '%{http_code}' https://8.8.8.8 || true; echo"], {"timeout": 30}],
+ ["update_network", [{"deny_out": ["8.8.8.8/32"]}]],
+ ["commands.run", ["printf 'after:'; curl -s -o /dev/null -m 6 -w '%{http_code}' https://8.8.8.8 || true; echo"], {"timeout": 30}],
+ ["commands.run", ["printf 'other:'; curl -s -o /dev/null -m 6 -w '%{http_code}' https://1.1.1.1 || true; echo"], {"timeout": 30}],
+ ["get_info", [], {}, {"pick": ["network"]}],
+ ["update_network", [{"deny_out": []}]],
+ ["commands.run", ["printf 'cleared:'; curl -s -o /dev/null -m 6 -w '%{http_code}' https://8.8.8.8 || true; echo"], {"timeout": 30}]
+]},
+{"name": "sbx_metrics", "tags": ["lifecycle"], "sandbox": "own", "create": {"timeout": 300}, "steps": [
+ ["sleep", [30]],
+ ["get_metrics", [], {}, {"first": true, "pick": ["cpu_count"]}],
+ ["Sandbox.get_metrics", ["$sb.sandbox_id"], {}, {"quiet": true}],
+ ["Sandbox.get_metrics", ["nonexistent00000000000"]]
+]},
+{"name": "sbx_git", "tags": ["git"], "steps": [
+ ["commands.run", ["rm -rf /tmp/c/git && mkdir -p /tmp/c/git"]],
+ ["git.init", ["/tmp/c/git/repo"]],
+ ["git.configure_user", ["Conf", "conf@example.com"], {"scope": "global"}],
+ ["files.write", ["/tmp/c/git/repo/a.txt", "a"]],
+ ["git.add", ["/tmp/c/git/repo"]],
+ ["git.status", ["/tmp/c/git/repo"], {}, {"pick": ["current_branch", "is_clean", "has_staged", "has_untracked", "file_status"]}],
+ ["git.commit", ["/tmp/c/git/repo", "first"], {}, {"pick": ["exit_code"]}],
+ ["git.branches", ["/tmp/c/git/repo"], {}, {"pick": ["current_branch", "branches"]}],
+ ["git.create_branch", ["/tmp/c/git/repo", "feature"], {}, {"pick": ["exit_code"]}],
+ ["git.status", ["/tmp/c/git/repo"], {}, {"pick": ["current_branch", "is_clean"]}],
+ ["git.status", ["/tmp/c/git/nope"]]
+]},
+{"name": "sbx_list_order", "tags": ["lifecycle", "list"], "sandbox": "none", "sdk_min": "2.56.0", "steps": [
+ ["Sandbox.create", [], {"timeout": 120, "metadata": {"suite": "$run_id", "n": "1"}}, {"as": "a", "quiet": true}],
+ ["Sandbox.create", [], {"timeout": 120, "metadata": {"suite": "$run_id", "n": "2"}}, {"as": "b", "quiet": true}],
+ ["Sandbox.create", [], {"timeout": 120, "metadata": {"suite": "$run_id", "n": "3"}}, {"as": "c", "quiet": true}],
+ ["sleep", [3]],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}}}, "limit": 2, "order": "desc"}, {"as": "pgd", "quiet": true}],
+ ["@next_items", [], {}, {"on": "pgd", "pick": ["metadata.n"]}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}}}, "limit": 2, "order": "asc"}, {"as": "pga", "quiet": true}],
+ ["@next_items", [], {}, {"on": "pga", "pick": ["metadata.n"]}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}, "template": "no-such-template"}}}, {"paginate": true}],
+ ["kill", [], {}, {"on": "a"}],
+ ["kill", [], {}, {"on": "b"}],
+ ["kill", [], {}, {"on": "c"}]
+]}
+]}

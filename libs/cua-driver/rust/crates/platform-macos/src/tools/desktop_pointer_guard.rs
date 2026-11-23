@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Desktop-target pointer input drives the user's real pointer.
 //!
 //! `move_cursor`, `click`, `drag` and `scroll` with a desktop target post
@@ -204,7 +207,7 @@ mod tests {
             (384.0, 490.0),
             Some(&chrome()),
             Some(1),
-            DeliveryMode::Background,
+            DeliveryMode::BackgroundPreferred,
         )
         .expect("refuses");
         assert_eq!(refusal.is_error, Some(true));
@@ -235,7 +238,7 @@ mod tests {
                 (10.0, 10.0),
                 Some(&benchlab()),
                 Some(1),
-                DeliveryMode::Background,
+                DeliveryMode::BackgroundPreferred,
             )
             .expect("refuses");
             let message = text(&refusal);
@@ -258,7 +261,7 @@ mod tests {
             (1.0, 1.0),
             Some(&chrome()),
             Some(8601),
-            DeliveryMode::Background,
+            DeliveryMode::BackgroundPreferred,
         )
         .is_none());
         // The caller explicitly accepted using the real pointer.
@@ -276,7 +279,7 @@ mod tests {
             (1.0, 1.0),
             None,
             Some(1),
-            DeliveryMode::Background,
+            DeliveryMode::BackgroundPreferred,
         )
         .is_none());
     }
@@ -288,7 +291,7 @@ mod tests {
             (1.0, 1.0),
             Some(&benchlab()),
             None,
-            DeliveryMode::Background,
+            DeliveryMode::BackgroundPreferred,
         )
         .is_some());
     }

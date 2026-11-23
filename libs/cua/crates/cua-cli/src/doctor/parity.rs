@@ -31,7 +31,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 /// `cua doctor parity` arguments.
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Clone)]
 pub struct ParityArgs {
     /// First variant (a sandbox ref or a spacesd URL).
     pub a: String,
@@ -59,6 +59,21 @@ pub struct ParityArgs {
     /// Doctor budget per variant, seconds.
     #[arg(long, default_value_t = 240)]
     pub timeout: u64,
+}
+
+impl std::fmt::Debug for ParityArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParityArgs")
+            .field("a", &self.a)
+            .field("b", &self.b)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_b", &self.token_b.as_ref().map(|_| "<redacted>"))
+            .field("tasks", &self.tasks)
+            .field("allow_diff", &self.allow_diff)
+            .field("out", &self.out)
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 /// One task run's outcome.

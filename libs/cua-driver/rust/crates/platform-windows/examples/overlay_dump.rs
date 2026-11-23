@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Capture the daemon's overlay window content directly via PrintWindow.
 
 #[cfg(target_os = "windows")]
@@ -9,7 +12,6 @@ use std::time::{Duration, Instant};
 fn main() {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -84,10 +86,10 @@ fn main() {
 
     // PrintWindow capture.
     unsafe {
-        let screen_dc = GetDC(HWND::default());
-        let mem_dc = CreateCompatibleDC(screen_dc);
+        let screen_dc = GetDC(None);
+        let mem_dc = CreateCompatibleDC(Some(screen_dc));
         let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
-        let old = SelectObject(mem_dc, bitmap);
+        let old = SelectObject(mem_dc, bitmap.into());
         // PW_RENDERFULLCONTENT = 0x2 — needed for layered windows
         let ok = PrintWindow(hwnd, mem_dc, PRINT_WINDOW_FLAGS(0x2));
         println!("PrintWindow returned: {}", ok.as_bool());
@@ -150,9 +152,9 @@ fn main() {
         }
 
         SelectObject(mem_dc, old);
-        let _ = DeleteObject(bitmap);
+        let _ = DeleteObject(bitmap.into());
         let _ = DeleteDC(mem_dc);
-        ReleaseDC(HWND::default(), screen_dc);
+        ReleaseDC(None, screen_dc);
     }
 }
 

@@ -19,7 +19,7 @@ Usage::
 To control the local machine, use cua-driver (its SDK or MCP server).
 """
 
-__version__ = "0.9.1"  # x-release-please-version
+__version__ = "0.11.18"  # x-release-please-version
 
 from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
@@ -40,6 +40,13 @@ from cua_sandbox.runtime.compat import (
     skip_if_unsupported,
 )
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
+from cua_sandbox.sandbox_pool import (
+    SandboxPool,
+    create_pool,
+    delete_pool,
+    get_pool,
+    list_pools,
+)
 from cua_sandbox.transport.env import EnvTransport
 
 __all__ = [
@@ -48,6 +55,11 @@ __all__ = [
     "whoami",
     "Image",
     "ImageInfo",
+    "SandboxPool",
+    "create_pool",
+    "get_pool",
+    "list_pools",
+    "delete_pool",
     "ServiceHandle",
     "Container",
     "RegistrySecret",

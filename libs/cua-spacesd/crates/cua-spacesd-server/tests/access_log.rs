@@ -204,6 +204,26 @@ async fn view_only_shares_are_refused_everything_but_watching() {
         let resp = r.clone().oneshot(as_viewer(path)).await.unwrap();
         assert_eq!(resp.headers().get("grpc-status").unwrap(), "7", "{path}");
     }
+    // The tunnel calls that open a path out of the Space (an exit, the host's
+    // ports, a public TCP share slot) are the owner's, never a viewer's, and
+    // the refusal names the exact call.
+    for path in [
+        "/cua.env.v1.TunnelService/StartExit",
+        "/cua.env.v1.TunnelService/StopExit",
+        "/cua.env.v1.TunnelService/StartHostPorts",
+        "/cua.env.v1.TunnelService/StopHostPorts",
+        "/cua.env.v1.TunnelService/PublishShareSlot",
+        "/cua.env.v1.TunnelService/UnpublishShareSlot",
+        "/cua.env.v1.TunnelService/ListShareSlots",
+    ] {
+        let resp = r.clone().oneshot(as_viewer(path)).await.unwrap();
+        let h = resp.headers();
+        assert_eq!(h.get("grpc-status").unwrap(), "7", "{path}");
+        assert_eq!(
+            percent_decode(h.get("grpc-message").unwrap().to_str().unwrap()),
+            format!("view-only share: ada@example.test (acct-123) cannot call {path}")
+        );
+    }
     // Watching is allowed (the call reaches the service).
     let ok = r
         .clone()

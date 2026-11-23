@@ -17,6 +17,8 @@
 #   - cua-seed-token.service: the image has no cloud-init, so the spacesd
 #     token of a local SDK boot is read from its NoCloud seed (token and
 #     spacesd.env only; ignored when a claim share is present);
+#   - cua-ipopts.service: CVE-2026-98432 interim guard (drops inbound IPv4
+#     packets with IP options; this disk's kernel is the upstream 6.5);
 #   - netplan DHCP on any en*/eth* NIC (KubeVirt), cloud-init network off;
 #   - /dev/uinput for the `input` group, `user` in `input`;
 #   - /etc/X11/xorg.conf.d/10-cua-noblank.conf: no X screen saver or DPMS;
@@ -30,6 +32,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH="$(cd "$HERE/.." && pwd)"
 REPO="$(cd "$HERE/../../../../.." && pwd)"
 DESK="$REPO/libs/images/linux/files"
+# CVE-2026-98432 interim guard shared by every Linux VM variant.
+COMMON_VM="$REPO/libs/images/common/vm/files/cua-ipopts"
 WORK="$OUT/work"
 mkdir -p "$WORK" "$OUT"
 export LIBGUESTFS_BACKEND="${LIBGUESTFS_BACKEND:-direct}"
@@ -87,6 +91,8 @@ mkdir-p /etc/systemd/system/cua-spacesd.service.d
 mkdir-p /etc/systemd/system/cua-env-token-sync.service.d
 mkdir-p /etc/cloud/cloud.cfg.d
 mkdir-p /etc/modules-load.d
+mkdir-p /etc/sysctl.d
+mkdir-p /etc/systemd/system/sysinit.target.wants
 mkdir-p /etc/X11/xorg.conf.d
 upload $SPACESD /usr/local/bin/cua-spacesd
 chmod 0755 /usr/local/bin/cua-spacesd
@@ -118,6 +124,12 @@ ln-sf /etc/systemd/system/cua-spacesd.service /etc/systemd/system/multi-user.tar
 ln-sf /etc/systemd/system/cua-env-token-sync.service /etc/systemd/system/multi-user.target.wants/cua-env-token-sync.service
 ln-sf /etc/systemd/system/cua-spacesd.service /etc/systemd/system/cua-env-driver.service
 ln-sf /etc/systemd/system/cua-spacesd.service /etc/systemd/system/cua-guestd.service
+upload $COMMON_VM/cua-ipopts-guard /opt/cua/bin/cua-ipopts-guard
+chmod 0755 /opt/cua/bin/cua-ipopts-guard
+upload $COMMON_VM/cua-ipopts.nft /etc/cua-image/cua-ipopts.nft
+upload $COMMON_VM/cua-ipopts.service /etc/systemd/system/cua-ipopts.service
+upload $COMMON_VM/90-cua-ipopts.conf /etc/sysctl.d/90-cua-ipopts.conf
+ln-sf /etc/systemd/system/cua-ipopts.service /etc/systemd/system/sysinit.target.wants/cua-ipopts.service
 upload $HERE/files/99-cua-dhcp.yaml /etc/netplan/99-cua-dhcp.yaml
 chmod 0600 /etc/netplan/99-cua-dhcp.yaml
 upload $HERE/files/99-cua-disable-network-config.cfg /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
@@ -146,8 +158,9 @@ is-file /usr/local/bin/cua-spacesd
 is-symlink /etc/systemd/system/multi-user.target.wants/cua-spacesd.service
 cat /etc/systemd/system/cua-spacesd.service.d/10-osworld.conf
 is-file /home/user/server/main.py
+is-symlink /etc/systemd/system/sysinit.target.wants/cua-ipopts.service
 EOF
-[ "$(grep -c '^true$' "$WORK/verify.txt")" = 3 ] || { echo "verification failed" >&2; exit 1; }
+[ "$(grep -c '^true$' "$WORK/verify.txt")" = 4 ] || { echo "verification failed" >&2; exit 1; }
 log "sparsify (fstrim) + flatten"
 virt-sparsify --in-place "$overlay"
 qemu-img convert -O qcow2 -c -p -m 8 -W "$overlay" "$OUT/disk.img"

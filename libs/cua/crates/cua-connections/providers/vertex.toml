@@ -1,0 +1,20 @@
+id = "vertex"
+name = "Google Vertex AI"
+icon = "google"
+tier = "more"
+rank = 380
+kind = "cloud"
+hidden = true
+hidden_reason = "Not built yet: needs the Google sign-in (ADC) method with project and region."
+aliases = ["gcp", "google cloud"]
+wire = "openai-chat"
+base_url = ""
+default_model = ""
+hermes_id = "vertex"
+key_help = "Use your Google Cloud sign-in with a project and region."
+
+[[method]]
+id = "adc"
+kind = "adc"
+label = "Use your Google Cloud sign-in"
+help = "Uses the application default credentials on this machine."

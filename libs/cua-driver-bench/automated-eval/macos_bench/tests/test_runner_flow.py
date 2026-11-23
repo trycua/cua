@@ -19,6 +19,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
@@ -54,6 +56,7 @@ def make_ctx(tmp: str, **overrides: object) -> rb.Ctx:
         schedule_seed=1,
         build_dir=None,
         offline=False,
+        disk_floor_gb=rb.DISK_FLOOR_GB,
     )
     for key, value in overrides.items():
         setattr(args, key, value)
@@ -88,6 +91,7 @@ def test_browser_cli_auth_rejected_before_provisioning(tmp_path):
             rb.make_ctx(args)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="browser CLI arm is macOS-only")
 def test_browser_cli_run_fails_closed(tmp_path):
     with tempfile.TemporaryDirectory() as tmp:
         ctx = make_ctx(tmp, no_model_preflight=True, build_dir=None)
@@ -232,11 +236,16 @@ class CodexAuthPreflightTest(unittest.TestCase):
                 stack.enter_context(
                     mock.patch.dict(
                         "os.environ",
-                        {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)},
+                        {
+                            "CDB_CODEX_AUTH": "chatgpt",
+                            "CDB_CODEX_AUTH_FILE": str(source),
+                            "DISPLAY": os.environ.get("DISPLAY") or ":99",
+                        },
                     )
                 )
                 ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))
                 for owner, name, result in (
+                    (rb.desktop, "capture_screenshot", None),
                     (rb, "task_spec", {}),
                     (rb, "kill_bench_apps", None),
                     (rb, "reset_needs_apps", None),
@@ -319,6 +328,132 @@ class CodexAuthPreflightTest(unittest.TestCase):
                     [label for label, status, _ in checks if status == "pass"],
                 )
                 fetch.assert_called_once()
+
+    def linux_evidence_trial(self, *, replace_link: bool, screenshot_error, copy_error=None):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            ctx = make_ctx(
+                tmp,
+                timeout_s=60,
+                max_turns=3,
+                effort="low",
+                idle_min=0,
+                no_sentinel=True,
+                build_dir=tmp,
+                check_occlusion=False,
+                tell_budget=False,
+            )
+            ctx.tasks["MB-01"] = argparse.Namespace(id="MB-01", tags=[], timeout_s=60)
+            arm = "cx-codex-cu"
+            entry = {**ENTRY, "arm": arm}
+            source = Path(tmp) / "shared-auth.json"
+            source.write_text("FAKE_TOKEN")
+            mcp = Path(tmp) / "mcp.json"
+            mcp.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "sky": {
+                                "command": "node",
+                                "env": {"CUA_REPL_ENABLED_SURFACES": "computer"},
+                            }
+                        }
+                    }
+                )
+            )
+            ctx.mcp[arm] = (mcp, "cua_repl")
+            stack.enter_context(
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "CDB_CODEX_AUTH": "chatgpt",
+                        "CDB_CODEX_AUTH_FILE": str(source),
+                        "DISPLAY": ":99",
+                    },
+                )
+            )
+            ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))
+            mocks = {}
+            for owner, name, result in (
+                (rb.desktop, "detect_platform", "linux"),
+                (rb, "task_spec", {}),
+                (rb, "kill_bench_apps", None),
+                (rb, "reset_needs_apps", None),
+                (rb.subprocess, "run", None),
+                (rb.pilot, "hid_idle_seconds", 1000),
+                (rb.pilot, "sweep_processes", 0),
+                (rb.pilot, "prepare_probe", ("BRIEF", {})),
+                (rb.pilot, "launch_lab", None),
+                (rb.ca, "prepare_cwd", Path(tmp)),
+                (rb, "apps_running", {}),
+                (rb, "evaluate_probe", {"passed": True}),
+                (rb, "FrontWatcher", None),
+            ):
+                mocks[name] = stack.enter_context(
+                    mock.patch.object(owner, name, return_value=result)
+                )
+            sentinel = stack.enter_context(mock.patch.object(rb.pilot, "Sentinel"))
+            sentinel.return_value.enabled = False
+            sentinel.return_value.summary.return_value = {}
+            stack.enter_context(mock.patch.object(rb.pilot, "IdleSampler"))
+
+            def capture(display, path):
+                if path.name == "startup.png":
+                    return None
+                if screenshot_error is not None:
+                    raise screenshot_error
+
+            stack.enter_context(
+                mock.patch.object(rb.desktop, "capture_screenshot", side_effect=capture)
+            )
+            log = Path(tmp) / "recorder.log"
+            log.write_text("log")
+            stack.enter_context(mock.patch.object(rb.ca, "RECORDER_STATE", Path(tmp)))
+            Path(tmp, "daemon.log").write_text("log")
+            if copy_error is not None:
+                stack.enter_context(
+                    mock.patch.object(rb.shutil, "copyfile", side_effect=copy_error)
+                )
+
+            def run_codex(cmd, env, *args, **kwargs):
+                link = Path(env["CODEX_HOME"]) / "auth.json"
+                self.assertTrue(link.is_symlink())
+                if replace_link:
+                    link.unlink()
+                    link.write_text("FAKE_TOKEN")
+                return {"returncode": 0, "result_seen": True, "wall_s": 0}
+
+            stack.enter_context(mock.patch.object(rb.cxn, "run_codex", side_effect=run_codex))
+            row = rb.run_attempt(ctx, entry, 1)
+            trial = ctx.run_dir / "trials" / entry["trial_id"] / "a1"
+            link = trial / "codex-home/.codex/auth.json"
+            self.assertFalse(link.is_symlink())
+            self.assertEqual(source.read_text(), "FAKE_TOKEN")
+            mocks["sweep_processes"].assert_called()
+            mocks["kill_bench_apps"].assert_called()
+            errors = trial / "artifacts" / "screenshot-error.txt"
+            return row, (errors.read_text() if errors.is_file() else None)
+
+    def test_linux_screenshot_failure_still_unlinks_auth(self) -> None:
+        row, errors = self.linux_evidence_trial(
+            replace_link=False, screenshot_error=AttributeError("secret /path")
+        )
+        self.assertNotEqual(row["infra_failure"], "harness_exception")
+        self.assertEqual(errors, "screenshot: AttributeError")
+
+    def test_linux_log_copy_failure_still_unlinks_auth(self) -> None:
+        row, errors = self.linux_evidence_trial(
+            replace_link=False, screenshot_error=None, copy_error=OSError("secret /path")
+        )
+        self.assertNotEqual(row["infra_failure"], "harness_exception")
+        self.assertIn("recorder log: OSError", errors)
+        self.assertNotIn("secret", errors)
+
+    def test_linux_evidence_failure_keeps_credential_integrity_error(self) -> None:
+        row, _ = self.linux_evidence_trial(
+            replace_link=True, screenshot_error=AttributeError("boom")
+        )
+        self.assertEqual(row["infra_failure"], "harness_exception")
+        self.assertIn("shared ChatGPT credential symlink replaced", row["infra_message"])
 
 
 def attempt_row(
@@ -573,6 +708,7 @@ class PreflightTest(unittest.TestCase):
                     ),
                 ) as capture,
                 mock.patch.object(rb, "reset_needs_apps") as reset,
+                mock.patch.object(rb, "capture_subject", contextlib.nullcontext),
                 mock.patch.object(rb, "mcp_list_tools") as probe,
                 mock.patch.object(rb, "ensure_agent_daemon") as daemon,
             ):
@@ -615,22 +751,30 @@ class PreflightTest(unittest.TestCase):
                 raw.write_bytes(b"video")
                 ctx.recorder.stop.return_value = raw
                 for blank in (True, False):
-                    with (
-                        mock.patch.object(rb.time, "sleep"),
-                        mock.patch.object(rb.rec, "ffprobe_duration", return_value=3),
-                        mock.patch.object(
-                            rb.rec,
-                            "capture_detail",
-                            side_effect=RuntimeError("blank image") if blank else None,
-                            return_value=f"2x1 bytes=5 path={raw}",
-                        ),
-                    ):
+                    with contextlib.ExitStack() as patches:
+                        patches.enter_context(mock.patch.object(rb.time, "sleep"))
+                        patches.enter_context(
+                            mock.patch.object(rb.rec, "ffprobe_duration", return_value=3)
+                        )
+                        patches.enter_context(
+                            mock.patch.object(
+                                rb.rec,
+                                "capture_detail",
+                                side_effect=RuntimeError("blank image") if blank else None,
+                                return_value=f"2x1 bytes=5 path={raw}",
+                            )
+                        )
                         rows = rb.preflight(ctx)
                     recording = next(r for r in rows if r[0].startswith("recorder real capture"))
                     self.assertEqual(recording[1], "fail" if blank else "pass")
 
 
 class ExecuteTrialTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def test_daemon_setup_failure_retries_with_restart_then_excludes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -746,6 +890,27 @@ class ExecuteTrialTest(unittest.TestCase):
             self.assertEqual(err.reason, "AUTH")
             self.assertEqual(len(pauses), 1)
 
+    def test_resumed_trial_numbers_after_recorded_attempts_and_keeps_its_budget(self) -> None:
+        # A run killed after one recorded mcp_start retry: the resume must not reuse a1 or grant a second retry.
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            core.append_row(ctx.results_path, attempt_row(1, "mcp_start"))
+            seen: list[int] = []
+
+            def fake_attempt(_ctx: rb.Ctx, _entry: dict, attempt: int) -> dict:
+                seen.append(attempt)
+                return attempt_row(attempt, "mcp_start")
+
+            with (
+                mock.patch.object(rb, "run_attempt", fake_attempt),
+                mock.patch.object(rb, "log_pause"),
+            ):
+                row = rb.execute_trial(ctx, dict(ENTRY))
+            self.assertEqual(seen, [2])
+            self.assertTrue(row["final"] and row["excluded"])
+            saved = core.load_rows(ctx.results_path)
+            self.assertEqual([(r["attempt"], r["final"]) for r in saved], [(1, False), (2, True)])
+
     def test_agent_failures_are_not_retried(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -757,6 +922,11 @@ class ExecuteTrialTest(unittest.TestCase):
 
 
 class GateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def test_quota_stop_rule_blocks_new_trials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -867,6 +1037,131 @@ class FinalizeTest(unittest.TestCase):
             self.assertEqual(rb.finalize(ctx)["blocks_complete"], 1)
             self.assertFalse(any(r["block_incomplete"] for r in core.load_rows(ctx.results_path)))
 
+    def test_preflight_never_runs_in_a_live_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            held = core.lock_run(ctx.run_dir)
+            args = argparse.Namespace(**vars(ctx.args), command="preflight", run_id="run")
+            with (
+                mock.patch.object(rb, "make_ctx", return_value=ctx),
+                mock.patch.object(rb, "setup_arms") as setup,
+            ):
+                self.assertEqual(rb.cmd_preflight(args), 2)
+            setup.assert_not_called()
+            held.close()
+
+    def test_finalize_waits_for_a_live_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            held = core.lock_run(ctx.run_dir)
+            args = argparse.Namespace(**vars(ctx.args), command="finalize")
+            with mock.patch.object(rb, "make_ctx", return_value=ctx):
+                self.assertEqual(rb.cmd_finalize(args), 5)
+                held.close()
+                self.assertEqual(rb.cmd_finalize(args), 0)
+
+    def test_resume_refuses_a_row_missing_an_identity_key_even_when_none_is_expected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, max_turns=None, timeout_s=None, effort="high")
+            ctx.tasks = {"MB-01": mock.Mock(timeout_s=240, spec={})}
+            entry = core.flat_entries(ctx.blocks())[0]
+            row = {"trial_id": entry["trial_id"], **rb.trial_identity(ctx, entry)}
+            self.assertIsNone(row["condition"])  # not a v2 run
+            core.append_row(ctx.results_path, row)
+            self.assertEqual(rb.resume_conflicts(ctx), [])
+            del row["condition"]
+            ctx.results_path.write_text(json.dumps(row) + "\n")
+            self.assertEqual(len(rb.resume_conflicts(ctx)), 1)
+
+    def test_recorder_start_requeues_video_whose_compression_was_cut_short(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, no_recorder=False)
+            records = {"T1": None, "T2": {}, "T3": {"error": "ffmpeg failed; raw kept"}}
+            for trial, record in records.items():
+                attempt = ctx.run_dir / "trials" / trial / "a1"
+                (attempt / "rec").mkdir(parents=True)
+                (attempt / "rec" / "recording.mp4").write_bytes(b"raw")
+                if record is not None:
+                    (attempt / "video").mkdir()
+                    (attempt / "video" / "video.json").write_text(json.dumps(record))
+                core.append_row(ctx.results_path, {"trial_id": trial, "attempt": 1, "video": "x"})
+            queue = mock.Mock()
+            with (
+                mock.patch.object(rb.ca, "start_cua_daemon"),
+                mock.patch.object(rb.rec, "CuaRecorder"),
+                mock.patch.object(rb.rec, "CompressQueue", return_value=queue),
+            ):
+                rb.start_recorder(ctx)
+            want = [ctx.run_dir / "trials" / t / "a1" for t in ("T1", "T3")]
+            self.assertEqual(
+                [c.args for c in queue.submit.call_args_list],
+                [(a / "rec" / "recording.mp4", a / "video") for a in want],
+            )
+
+    def test_resume_refuses_a_different_driver_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, max_turns=None, timeout_s=None, effort="high")
+            ctx.tasks = {"MB-01": mock.Mock(timeout_s=240, spec={})}
+            driver, skills = Path(tmp) / "cua-driver", Path(tmp) / "skills"
+            driver.write_bytes(b"build 1")
+            skills.mkdir()
+            (skills / "SKILL.md").write_text("skill")
+            build = rb.ca.CUA_BUILDS["cc-cua-driver"]
+            entry = next(e for e in core.flat_entries(ctx.blocks()) if e["arm"] == "cc-cua-driver")
+            row = {
+                "trial_id": entry["trial_id"],
+                **rb.trial_identity(ctx, entry),
+                "cua_driver_sha256": rb.ca.sha256_file(driver),
+                "skills_tree_sha256": rb.ca.sha256_tree(skills),
+            }
+            core.append_row(ctx.results_path, row)
+            same = rb.replace(build, executable=driver, skills=skills)
+            with mock.patch.dict(rb.ca.CUA_BUILDS, {"cc-cua-driver": same}):
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                # cx-cua-driver rows record no skill tree: only what a row recorded is compared
+                ctx.results_path.write_text(json.dumps({**row, "skills_tree_sha256": None}) + "\n")
+                (skills / "SKILL.md").write_text("another skill")
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                other = next(
+                    e for e in core.flat_entries(ctx.blocks()) if e["arm"] == "cc-codex-cu"
+                )
+                recorder_row = {"trial_id": other["trial_id"], **rb.trial_identity(ctx, other)}
+                recorder_row["cua_driver_sha256"] = row["cua_driver_sha256"]  # the recorder build
+                core.append_row(ctx.results_path, recorder_row)
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                ctx.results_path.write_text(json.dumps(row) + "\n")
+                (skills / "SKILL.md").write_text("skill")
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                driver.write_bytes(b"build 2")
+                self.assertEqual(
+                    [c.split(":")[0] for c in rb.resume_conflicts(ctx)],
+                    [f"{entry['trial_id']} cua_driver_sha256"],
+                )
+
+    def test_compression_keeps_the_raw_video_until_its_record_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw, dest = Path(tmp) / "recording.mp4", Path(tmp) / "video"
+            raw.write_bytes(b"raw")
+            dest.mkdir()
+            for name in ("video.mp4", "video-720p.mp4"):
+                (dest / name).write_bytes(b"h264")
+            seen: list[bool] = []
+
+            def write(path: Path, text: str) -> None:
+                seen.append(raw.exists())  # the raw file is still there while video.json is written
+                path.write_text(text)
+
+            queue = rb.rec.CompressQueue()
+            with (
+                mock.patch.object(rb.rec, "compress_video", return_value={"raw_deleted": True}),
+                mock.patch.object(rb.rec, "write_atomic", write),
+            ):
+                queue.submit(raw, dest)
+                queue.join()
+            queue.close()
+            self.assertEqual(seen, [True])
+            self.assertFalse(raw.exists())
+
     def test_resume_skips_final_ids_only(self) -> None:
         rows = [
             {"trial_id": "a", "final": True},
@@ -874,6 +1169,63 @@ class FinalizeTest(unittest.TestCase):
             {"trial_id": "c", "smoke": True, "final": True},
         ]
         self.assertEqual(core.completed_trial_ids(rows), {"a"})
+
+
+class LinuxSetupTest(unittest.TestCase):
+    def test_macos_arms_are_skipped_before_setup(self) -> None:
+        import contextlib
+        import io
+        import desktop_runtime as desktop
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = rb.build_parser().parse_args(
+            [
+                "dry-run",
+                "--ledger",
+                str(Path(tmp.name) / "ledger.jsonl"),
+                "--bench-v2",
+                "--arms",
+                "cc-cua-driver",
+                "cc-codex-cu",
+                "cc-claude-cu-helper",
+            ]
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(desktop, "detect_platform", return_value="linux"),
+            contextlib.redirect_stderr(output),
+        ):
+            ctx = rb.make_ctx(args)
+        self.assertEqual(ctx.arm_names, ["cc-cua-driver"])
+        self.assertIn("unsupported-platform: cc-codex-cu requires macOS", output.getvalue())
+        self.assertIn(
+            "unsupported-platform: cc-claude-cu-helper requires macOS",
+            ctx.versions["unsupported_arms"],
+        )
+
+    def test_no_supported_arms_fails_clearly(self) -> None:
+        import desktop_runtime as desktop
+
+        args = rb.build_parser().parse_args(["dry-run", "--arms", "cc-codex-cu"])
+        with (
+            mock.patch.object(desktop, "detect_platform", return_value="linux"),
+            self.assertRaisesRegex(SystemExit, "no supported arms remain"),
+        ):
+            rb.make_ctx(args)
+
+    def test_linux_pack_descriptor_selection(self) -> None:
+        import cdb_adapter
+        import desktop_runtime as desktop
+
+        with mock.patch.object(desktop, "detect_platform", return_value="linux"):
+            descriptor = cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})
+        self.assertEqual(descriptor["platform"], "linux")
+        self.assertTrue(any("libreoffice" in " ".join(a["command"]) for a in descriptor["apps"]))
+        with mock.patch.object(desktop, "detect_platform", return_value="macos"):
+            self.assertEqual(
+                cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})["platform"], "macos"
+            )
 
 
 class MiscTest(unittest.TestCase):
@@ -904,3 +1256,31 @@ class MiscTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParkPointerFlowTests(unittest.TestCase):
+    def test_failed_park_raises_and_success_returns_record(self):
+        point = rb.PARK_POINT
+        ok = mock.Mock(stdout=json.dumps({"x": point[0], "y": point[1]}))
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),
+            mock.patch.object(rb.ca, "cua_cli", return_value=ok),
+        ):
+            record = rb.park_pointer(mock.Mock())
+        self.assertTrue(record["ok"])
+        self.assertEqual(record["read_back"], [float(point[0]), float(point[1])])
+        off = mock.Mock(stdout=json.dumps({"x": 162, "y": 158}))
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),
+            mock.patch.object(rb.ca, "cua_cli", return_value=off),
+        ):
+            with self.assertRaises(rb.ParkFailed):
+                rb.park_pointer(mock.Mock())
+
+    def test_unsupported_platform_fails_instead_of_faking(self):
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="linux"),
+            mock.patch.object(rb.shutil, "which", return_value=None),
+        ):
+            with self.assertRaises(rb.ParkFailed):
+                rb.park_pointer(mock.Mock())

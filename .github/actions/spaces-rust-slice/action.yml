@@ -8,20 +8,55 @@ description: >-
   that main already built restores the slice instead of compiling for 33 to
   60 minutes. The key is the git blob list of the inputs of the build: the
   Rust workspace without documentation and the non-Rust language packages,
-  the cua-spacesd pin, the target and the toolchain. A miss builds (with the
-  Rust dependency cache) and saves. Signing and verification of the app stay
-  in cd-cua-spaces.yml and run on whatever this action leaves in place. Run
-  after actions/checkout.
+  every file outside it that the crates of the build read at compile time
+  (found by .github/scripts/spaces_rust_slice_inputs.py from their
+  `include_str!` calls and build scripts: the image catalog, the shared
+  keybindings, the cua-spacesd pin, the skills, the cargo config), the target
+  and the toolchain. A miss builds (with the Rust dependency cache) and
+  saves. Signing and verification of the app stay in cd-cua-spaces.yml and
+  run on whatever this action leaves in place. Run after actions/checkout.
+
+  With `build: "false"` the action only restores (ci-cua-spaces-macos.yml:
+  a pull request that does not change the Rust inputs takes main's compiled
+  library and skips the 30 to 60 minute build; one that does falls back to
+  its own build). Same key either way, so there is one definition of it.
 
 inputs:
   triple:
     description: "Rust target triple (aarch64-apple-darwin or x86_64-apple-darwin)."
     required: true
+  build:
+    description: >-
+      "true" (default): build on a miss and save, as the producer and the
+      release do. "false": restore only; on a miss nothing is built or saved
+      and the caller builds for itself.
+    required: false
+    default: "true"
+  compile-cache:
+    description: >-
+      How the workspace crates (the 52 `cua-*` crates; rust-cache drops them,
+      so each run used to recompile them, about an hour on a hosted macOS
+      runner) are cached on a miss. "none" (default): not at all; the release
+      (cd-cua-spaces.yml) builds from scratch. "read": restore main's sccache
+      directory and compile only the crates whose source, or whose
+      dependencies' source, changed (a pull request). "seed": compile
+      everything from scratch (SCCACHE_RECACHE, so the library stays a clean
+      build) and write each crate's object to sccache; main saves the
+      directory, once a day, for the pull requests to read (the producer).
+    required: false
+    default: "none"
+  verify-key:
+    description: >-
+      "true": after a build, fail if the compiler or a build script read a
+      tracked file the cache key does not hash (the producer does this; the
+      release does not, so a stale key can never block a release).
+    required: false
+    default: "false"
 
 outputs:
   cache-hit:
     description: "true when the slice came from the cache."
-    value: ${{ steps.cache.outputs.cache-hit }}
+    value: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit }}
   key:
     description: "The cache key."
     value: ${{ steps.key.outputs.key }}
@@ -36,18 +71,38 @@ runs:
         TRIPLE: ${{ inputs.triple }}
       run: |
         set -euo pipefail
-        # Hash the staged blobs (mode, object id, path) of what the build
-        # reads. Documentation and the Kotlin, Python and TypeScript packages
+        # Hash the staged blobs (mode, object id, path) of everything the
+        # build reads: libs/cua and the files outside it that its crates
+        # embed. Documentation and the Kotlin, Python and TypeScript packages
         # are not inputs: a changelog or README edit must not cost a rebuild.
-        inputs_hash="$( { git ls-files -s -- libs/cua libs/cua-spacesd/VERSION \
-          ':(exclude)libs/cua/kotlin' ':(exclude)libs/cua/python' \
-          ':(exclude)libs/cua/typescript' ':(exclude)libs/cua/skills' \
-          ':(exclude,glob)**/*.md'; } | git hash-object --stdin)"
+        inputs_hash="$(python3 .github/scripts/spaces_rust_slice_inputs.py key)"
         repo="${CUA_RELEASE_REPOSITORY//\//-}"
-        echo "key=swiftui-rust-v2-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+        echo "key=swiftui-rust-v3-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+    # Restore and save are separate steps (not the combined actions/cache): its
+    # automatic save runs in the post phase, after Swatinem/rust-cache's post
+    # step has already cleaned the target directory, which deletes the
+    # compiled slice, so nothing was saved ("Path Validation Error") whenever
+    # the dependency cache was not an exact hit. The save below runs right
+    # after the build instead.
     - name: Restore the compiled slice
       id: cache
-      uses: actions/cache@v4
+      continue-on-error: true
+      if: inputs.build == 'true'
+      uses: actions/cache/restore@v4
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
+      with:
+        path: |
+          libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
+          libs/cua/target/${{ inputs.triple }}/release/cua-spaces-cli
+        key: ${{ steps.key.outputs.key }}
+    - name: Restore the compiled slice (restore only)
+      id: restore
+      continue-on-error: true
+      if: inputs.build != 'true'
+      uses: actions/cache/restore@v4
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -56,18 +111,38 @@ runs:
     - name: Report the cache
       shell: bash
       env:
-        HIT: ${{ steps.cache.outputs.cache-hit || 'false' }}
+        HIT: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit || 'false' }}
         KEY: ${{ steps.key.outputs.key }}
       run: echo "::notice::SwiftUI Rust slice cache hit = ${HIT} (${KEY})"
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: dtolnay/rust-toolchain@1.97.1
       with:
         targets: ${{ inputs.triple }}
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Install protoc
       uses: ./.github/actions/setup-protoc
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
+        # rust-cache hashes every CARGO*, CC*, CFLAGS*, CXX*, CMAKE* and RUST*
+        # variable it sees into the dependency cache key, and skips empty
+        # ones. The caller's tuning variables (set at workflow or job level:
+        # CARGO_BUILD_JOBS, CARGO_NET_RETRY, CARGO_HTTP_TIMEOUT,
+        # CARGO_HTTP_MULTIPLEXING) change how a build runs, not what it
+        # produces, but they used to change the key: the producer on main
+        # (a reusable workflow that does not inherit them) saved under one
+        # hash and ci-cua-spaces-macos.yml looked under another, so a pull
+        # request never found main's dependency cache and compiled the whole
+        # tree cold (an hour or more), long enough for a force-pushed bot PR
+        # to cancel it every time (cua#8486). Blank them for this step only,
+        # so every caller computes the same key. The build step sets
+        # CARGO_BUILD_JOBS itself. A variable that does change the output
+        # (RUSTFLAGS) is left alone and still keys the cache.
+        CARGO_BUILD_JOBS: ""
+        CARGO_NET_RETRY: ""
+        CARGO_HTTP_TIMEOUT: ""
+        CARGO_HTTP_MULTIPLEXING: ""
       with:
         workspaces: libs/cua -> target
         shared-key: swiftui-rust-${{ inputs.triple }}
@@ -76,17 +151,46 @@ runs:
         # within the hour. Only the default branch saves it.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
-    - if: steps.cache.outputs.cache-hit != 'true'
+    # Content-addressed cache of the workspace crates, the crates rust-cache
+    # drops. After rust-cache on purpose: rust-cache hashes RUSTC_WRAPPER into
+    # the dependency cache's key, and this step exports it.
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true' && inputs.compile-cache != 'none'
+      name: Cache the workspace crates (sccache)
+      uses: ./.github/actions/rust-cache
+      with:
+        workspaces: libs/cua
+        shared-key: swiftui-slice-${{ inputs.triple }}
+        save-if: ${{ inputs.compile-cache == 'seed' }}
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Build the slice
       shell: bash
       working-directory: libs/cua
       env:
         CARGO_BUILD_JOBS: 4
-        # build-release.sh's stable channel (--channel is not passed).
+        # Release builds, betas included, default to production
+        # (build-release.sh sets the same empty default).
         CUA_DEFAULT_ENV: ""
         TRIPLE: ${{ inputs.triple }}
-      run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE"
+        # The producer writes every crate's object without reading one.
+        SCCACHE_RECACHE: ${{ inputs.compile-cache == 'seed' && '1' || '' }}
+      # sccache puts every CARGO_* variable the process has into a crate's
+      # key, so the callers' network tuning (set in the workflow env of the
+      # pull request workflow, not in the producer's) made the keys differ and
+      # every crate miss. The same settings go in as cargo configuration,
+      # which is not hashed, and the variables are removed for this command.
+      run: |
+        env -u CARGO_NET_RETRY -u CARGO_HTTP_TIMEOUT -u CARGO_HTTP_MULTIPLEXING \
+          cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE" \
+          --config net.retry=10 --config http.timeout=120 --config http.multiplexing=false
+    # Ground truth for the key: what rustc and the build scripts really read.
+    - if: inputs.build == 'true' && inputs.verify-key == 'true' && steps.cache.outputs.cache-hit != 'true'
+      name: The cache key covers every file the build read
+      shell: bash
+      env:
+        TRIPLE: ${{ inputs.triple }}
+      run: python3 .github/scripts/spaces_rust_slice_inputs.py verify "libs/cua/target/${TRIPLE}/release"
     - name: Check the slice
+      if: inputs.build == 'true' || steps.restore.outputs.cache-hit == 'true'
       shell: bash
       env:
         TRIPLE: ${{ inputs.triple }}
@@ -95,3 +199,15 @@ runs:
         for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
           test -s "libs/cua/target/${TRIPLE}/release/$f" || { echo "::error::missing or empty $f"; exit 1; }
         done
+    # Save now, while the files exist (see the restore step above). A failed
+    # save never fails the build: the caller hands the slice over as an
+    # artifact, and the cache is only an optimisation for later runs.
+    - name: Save the compiled slice
+      if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
+          libs/cua/target/${{ inputs.triple }}/release/cua-spaces-cli
+        key: ${{ steps.key.outputs.key }}

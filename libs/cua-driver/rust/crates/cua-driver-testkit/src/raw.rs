@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Raw JSON-RPC transport — lockstep send/recv with **no** auto-initialize.
 //!
 //! [`crate::McpDriver`] auto-`initialize`s on spawn and only exposes
@@ -69,13 +72,9 @@ impl RawDriver {
     }
 
     /// Spawn a daemon-backed raw driver with the certified platform overlay
-    /// host enabled. Cursor protocol tests use this deliberately; ordinary
-    /// protocol tests keep the no-overlay daemon so they remain headless.
-    pub fn spawn_with_overlay() -> Option<Self> {
-        Self::spawn_daemon_backed(driver_binary(), true, &[])
-    }
-
-    /// Spawn an overlay-enabled daemon with explicit trusted launch settings.
+    /// host enabled, with explicit trusted launch settings. Cursor protocol
+    /// tests use this deliberately; ordinary protocol tests keep the
+    /// no-overlay daemon so they remain headless.
     pub fn spawn_with_overlay_and_env(env: &[(&str, &str)]) -> Option<Self> {
         Self::spawn_daemon_backed(driver_binary(), true, env)
     }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Extended browser pointer actions.
 //!
 //! This module deliberately shares the exact-or-refused posture of the
@@ -18,6 +21,10 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
+use super::input::{
+    confirm_ref_point, ref_point, refuse_in_focus_emulation, trusted_ref_point,
+    trusted_ref_point_in_place,
+};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::required_session_schema;
@@ -251,45 +258,6 @@ async fn resolve_object(
         .ok_or_else(|| stale("the ref's node has no live object in the page"))
 }
 
-async fn point_for_ref(
-    conn: &CdpConnection,
-    cdp_session: &str,
-    backend_node_id: i64,
-) -> Result<(f64, f64), ToolResult> {
-    let _ = conn
-        .call(
-            Some(cdp_session),
-            "DOM.scrollIntoViewIfNeeded",
-            json!({ "backendNodeId": backend_node_id }),
-        )
-        .await;
-    let model = conn
-        .call(
-            Some(cdp_session),
-            "DOM.getBoxModel",
-            json!({ "backendNodeId": backend_node_id }),
-        )
-        .await
-        .map_err(|_| stale("the ref's node has no live layout box"))?;
-    quad_center(&model).ok_or_else(|| stale("the ref's node returned an unusable layout box"))
-}
-
-fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
-    let quad = box_model.get("model")?.get("content")?.as_array()?;
-    if quad.len() < 8 {
-        return None;
-    }
-    let values = quad
-        .iter()
-        .take(8)
-        .map(Value::as_f64)
-        .collect::<Option<Vec<_>>>()?;
-    Some((
-        (values[0] + values[2] + values[4] + values[6]) / 4.0,
-        (values[1] + values[3] + values[5] + values[7]) / 4.0,
-    ))
-}
-
 pub struct BrowserPointerTool {
     def: ToolDef,
     engine: Arc<BrowserEngine>,
@@ -415,7 +383,7 @@ impl BrowserPointerTool {
                 Err(result) => return result,
             };
 
-        if let Ok((x, y)) = point_for_ref(conn, &origin.cdp_session, origin.backend_node_id).await {
+        if let Ok((x, y)) = ref_point(conn, &origin.cdp_session, origin.backend_node_id).await {
             self.engine
                 .visualize_browser_action(
                     session,
@@ -442,7 +410,29 @@ impl BrowserPointerTool {
                 json!([]),
             ),
             PointerAction::Scroll => (
-                "function(dx,dy) { const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view:this.ownerDocument.defaultView}; this.dispatchEvent(new WheelEvent('wheel',o)); let n=this; while (n && n !== this.ownerDocument.documentElement) { const s=this.ownerDocument.defaultView.getComputedStyle(n); if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break; n=n.parentElement; } const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement; const beforeX=target.scrollLeft; const beforeY=target.scrollTop; target.scrollBy(dx,dy); const changed=target.scrollLeft !== beforeX || target.scrollTop !== beforeY; if (changed) target.dispatchEvent(new Event('scroll')); return changed; }",
+                r#"async function(dx,dy) {
+                    const view=this.ownerDocument.defaultView;
+                    const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view};
+                    this.dispatchEvent(new WheelEvent('wheel',o));
+                    let n=this;
+                    while (n && n !== this.ownerDocument.documentElement) {
+                        const s=view.getComputedStyle(n);
+                        if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break;
+                        n=n.parentElement;
+                    }
+                    const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement;
+                    const beforeX=target.scrollLeft;
+                    const beforeY=target.scrollTop;
+                    target.scrollBy(dx,dy);
+                    // Smooth scrolling can start after this JavaScript task returns.
+                    const deadline=view.performance.now()+250;
+                    while (target.scrollLeft === beforeX && target.scrollTop === beforeY) {
+                        if (view.performance.now() >= deadline) return false;
+                        await new Promise(resolve => view.setTimeout(resolve,25));
+                    }
+                    target.dispatchEvent(new Event('scroll'));
+                    return true;
+                }"#,
                 json!([{ "value": request.delta_x }, { "value": request.delta_y }]),
             ),
             PointerAction::Drag => {
@@ -486,6 +476,7 @@ impl BrowserPointerTool {
                     "functionDeclaration": function,
                     "arguments": arguments,
                     "returnByValue": true,
+                    "awaitPromise": request.action == PointerAction::Scroll,
                 }),
             )
             .await
@@ -579,9 +570,11 @@ impl BrowserPointerTool {
         let origin = match (&request.origin, origin_ref) {
             (Location::Coordinates(x, y), None) => (*x, *y),
             (Location::Ref(_), Some(reference)) => {
-                match point_for_ref(conn, &reference.cdp_session, reference.backend_node_id).await {
+                match trusted_ref_point(conn, &reference.cdp_session, reference.backend_node_id)
+                    .await
+                {
                     Ok(point) => point,
-                    Err(result) => return result,
+                    Err(refusal) => return refusal.to_tool_result(),
                 }
             }
             _ => unreachable!("origin resolution matches request"),
@@ -589,13 +582,30 @@ impl BrowserPointerTool {
         let destination = match (&request.destination, destination_ref) {
             (Some(Location::Coordinates(x, y)), None) => Some((*x, *y)),
             (Some(Location::Ref(_)), Some(reference)) => {
-                match point_for_ref(conn, &reference.cdp_session, reference.backend_node_id).await {
+                match trusted_ref_point(conn, &reference.cdp_session, reference.backend_node_id)
+                    .await
+                {
                     Ok(point) => Some(point),
-                    Err(result) => return result,
+                    Err(refusal) => return refusal.to_tool_result(),
                 }
             }
             (None, None) => None,
             _ => unreachable!("destination resolution matches request"),
+        };
+        // Scrolling the destination ref into view can move the origin, so
+        // prove the origin again where it now is, without scrolling.
+        let origin = match (origin_ref, destination_ref) {
+            (Some(reference), Some(_)) => match trusted_ref_point_in_place(
+                conn,
+                &reference.cdp_session,
+                reference.backend_node_id,
+            )
+            .await
+            {
+                Ok(point) => point,
+                Err(refusal) => return refusal.to_tool_result(),
+            },
+            _ => origin,
         };
 
         self.engine
@@ -624,6 +634,24 @@ impl BrowserPointerTool {
             .to_tool_result();
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
+        let rechecks = [
+            origin_ref.map(|reference| (reference, origin)),
+            destination_ref.zip(destination),
+        ];
+        for (reference, point) in rechecks.into_iter().flatten() {
+            if let Err(refusal) = confirm_ref_point(
+                conn,
+                &reference.cdp_session,
+                reference.backend_node_id,
+                point,
+            )
+            .await
+            {
+                return refuse_in_focus_emulation(conn, cdp_session, refusal)
+                    .await
+                    .to_tool_result();
+            }
+        }
 
         let delivery = self
             .dispatch_trusted(conn, cdp_session, request, origin, destination)
@@ -746,7 +774,7 @@ impl Tool for BrowserPointerTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -756,7 +784,7 @@ impl Tool for BrowserPointerTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_pointer").await
         } else {
@@ -980,18 +1008,6 @@ mod tests {
             &pointer,
             PointerAction::RightClick
         ));
-    }
-
-    #[test]
-    fn quad_center_rejects_malformed_models() {
-        assert_eq!(
-            quad_center(&json!({ "model": { "content": [0, 0, 10, 0, 10, 20, 0, 20] } })),
-            Some((5.0, 10.0))
-        );
-        assert_eq!(
-            quad_center(&json!({ "model": { "content": [0, 0] } })),
-            None
-        );
     }
 
     #[test]

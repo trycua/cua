@@ -260,6 +260,7 @@ async fn list_targets(env: &SpacesdClient) -> Result<Vec<Target>, Error> {
         .call_json(
             "/cua.env.v1.StreamService/ListTargets".into(),
             json!({"includeWindows": true}).to_string(),
+            None,
         )
         .await?;
     let v: Value = serde_json::from_str(&raw)?;

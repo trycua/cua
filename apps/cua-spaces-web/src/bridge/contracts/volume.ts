@@ -22,15 +22,18 @@ export type { DriveCheckInput, DriveS3Input, DriveStorageInput, DriveStorageUpda
 
 /* ---- Experiments ----------------------------------------------------------- */
 
-/** `experiments::Experiments`: Settings, Experiments' switches (all off by default except sharing, on unless turned off). */
+/** `experiments::Experiments`: Settings, Experiments' switches (all off by default). */
 export interface Experiments {
   cuaVolume?: boolean;
-  yourCloud?: boolean;
-  sharing?: boolean;
-  webUi?: boolean;
+  /** CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`, the CI Runners page). Off unless turned on; the `cua` command enforces it. */
+  ciRunners?: boolean;
+  /** Public TCP shares: share a game server or another TCP service at a public address. Off unless turned on; the daemon enforces it. */
+  tcpShares?: boolean;
+  /** Mobile: the computer answers the Cua Spaces phone app. Off unless turned on; the daemon enforces it. */
+  mobile?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: false, sharing: true, webUi: false };
+export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, ciRunners: false, tcpShares: false, mobile: false };
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

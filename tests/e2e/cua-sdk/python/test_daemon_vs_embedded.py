@@ -133,7 +133,11 @@ def _shared_sandbox(daemon: e2e.Daemon, target: dict) -> None:
 
 def _compare(target: dict, tmp_path) -> None:
     embedded = e2e.run_async(
-        script(cua.embedded(state_dir=str(tmp_path / "emb")), target, "emb"),
+        script(
+            cua.embedded(state_dir=str(tmp_path / "emb"), spaces_home=str(tmp_path / "emb-spaces")),
+            target,
+            "emb",
+        ),
         timeout=900,
     )
     with e2e.cua_daemon() as d:

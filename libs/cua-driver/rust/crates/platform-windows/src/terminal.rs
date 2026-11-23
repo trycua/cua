@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Terminal-emulator detection for the Windows `type_text` path.
 //!
 //! Terminal emulators (Windows Terminal, mintty / Git-Bash, Vim, NeoVim,

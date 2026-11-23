@@ -48,6 +48,15 @@ impl Policy {
         Self::resolve(std::env::var(ENV).ok().as_deref())
     }
 
+    /// The `CUA_MESH` value that chooses this policy.
+    pub fn as_env(self) -> &'static str {
+        match self {
+            Self::Prefer => "prefer",
+            Self::Require => "require",
+            Self::Off => "off",
+        }
+    }
+
     /// Whether this policy uses the mesh at all.
     pub fn uses_mesh(self) -> bool {
         self != Self::Off

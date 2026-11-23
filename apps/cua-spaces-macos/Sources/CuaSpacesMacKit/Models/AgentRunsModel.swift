@@ -34,7 +34,6 @@ public final class AgentRunsModel {
         do {
             let runs = try await backend.agentRuns(id: spaceId)
             load = .ready(runs)
-            onRead?(runs.count)
         } catch {
             load = .failed(LiveSpacesBackend.words(error))
         }

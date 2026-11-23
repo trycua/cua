@@ -1,6 +1,6 @@
 {
   "name": "@trycua/cua",
-  "version": "0.7.0",
+  "version": "0.31.0",
   "description": "The cua SDK for Node and the browser: sandboxes, cua-spacesd, media streaming, Spaces and the cua daemon, on a Rust core",
   "type": "module",
   "license": "MIT",
@@ -80,14 +80,14 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
     "uniffi-bindgen-react-native": "0.31.0-3",
-    "@modelcontextprotocol/client": "2.1.0"
+    "@modelcontextprotocol/client": "2.2.0"
   },
   "dependencies": {
     "@ubjs/core": "0.31.0-3",
     "@ubjs/node": "0.31.0-3"
   },
   "peerDependencies": {
-    "@modelcontextprotocol/client": "^2.1.0"
+    "@modelcontextprotocol/client": "^2.2.0"
   },
   "peerDependenciesMeta": {
     "@modelcontextprotocol/client": {

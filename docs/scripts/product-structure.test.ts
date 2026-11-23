@@ -17,6 +17,7 @@ const PRODUCTS: Array<[string, string]> = [
   ['spaces', 'Cua Spaces'],
   ['cua-driver', 'Cua Driver'],
   ['lume', 'Lume'],
+  ['hoy', 'Hoy'],
   ['cua-sdk', 'Cua SDK'],
   ['cua-cli', 'Cua CLI'],
   ['cua-bench', 'Cua Bench'],
@@ -27,6 +28,7 @@ const ROOT_ORDER = [
   'spaces',
   'cua-driver',
   'lume',
+  'hoy',
   'cua-sdk',
   'cua-cli',
   'cua-bench',
@@ -39,6 +41,8 @@ const ROOT_ORDER = [
 // `guides/install`, ...), so each group is a sidebar section of its own.
 const SECTIONS = ['index', 'quickstart', 'guides', 'examples', 'reference'];
 const OPTIONAL = new Set(['examples']);
+// Products with no generated reference (their pages are hand-written guides).
+const NO_REFERENCE = new Set(['hoy']);
 const INTRO_PAGES = new Set(['what-is-computer-use']);
 const SECTION_TITLES: Record<string, string> = {
   guides: 'Guides',
@@ -95,7 +99,12 @@ test('the root lists every product in order, with no group headings', () => {
   const dirs = readdirSync(content).filter((name) =>
     statSync(path.join(content, name)).isDirectory()
   );
-  assert.deepEqual(dirs.sort(), PRODUCTS.map(([dir]) => dir).sort());
+  // `agents` holds the pages an AI agent reads from a one-line prompt
+  // (cua.ai/docs/agents/*). It is not a product: no sidebar entry, no sections.
+  assert.deepEqual(
+    dirs.sort(),
+    [...PRODUCTS.map(([dir]) => dir), 'agents'].sort()
+  );
 });
 
 test('the docs home features its examples with real pages and media', () => {
@@ -155,7 +164,7 @@ for (const [dir, title] of PRODUCTS) {
     const concepts = all.filter((p) => p.startsWith('concepts/'));
     const pages = all.filter((p) => !p.startsWith('concepts/') && !INTRO_PAGES.has(p));
     const expected = SECTIONS.filter(
-      (section) => !OPTIONAL.has(section) || pages.includes(section)
+      (section) => !(OPTIONAL.has(section) || (section === 'reference' && NO_REFERENCE.has(dir))) || pages.includes(section)
     );
     assert.deepEqual(pages, expected, `${dir}/meta.json pages must be ${expected.join(', ')}`);
     // Concept pages sit between the Quickstart and the Guides, and no page is left out.

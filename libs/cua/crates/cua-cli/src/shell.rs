@@ -16,6 +16,9 @@ pub fn command_of(argv: &[String]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        request_id: None,
+        epoch: None,
+        scrollback_bytes: None,
         kill_on_disconnect: false,
     }
 }
@@ -159,6 +162,64 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// Bytes one read of stdin takes.
+const STDIN_READ: usize = 64 * 1024;
+/// Most bytes one `SendInput` carries. Each send is a round trip, which
+/// through the relay is 100 ms or more, so stdin goes in as few sends as
+/// possible: 16 KiB per round trip held a stream at about 60 KB/s.
+const STDIN_BATCH: usize = 1024 * 1024;
+
+/// Forwards `stdin` to `send`, one batch at a time and in order, until end
+/// of input; `true` then, `false` when a send failed. While a batch is in
+/// flight, what is read meanwhile is joined into the next one (up to
+/// [`STDIN_BATCH`]). A read that would block (a non-blocking descriptor
+/// handed down by a parent, as rsync's `-e` does) or was interrupted is
+/// tried again, not taken for end of input.
+async fn forward_stdin<R, S, F>(mut stdin: R, mut send: S) -> bool
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    S: FnMut(Vec<u8>) -> F,
+    F: std::future::Future<Output = bool>,
+{
+    use tokio::io::AsyncReadExt;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
+    let reader = AbortOnDrop(tokio::spawn(async move {
+        let mut buf = vec![0u8; STDIN_READ];
+        loop {
+            match stdin.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).await.is_err() {
+                        break;
+                    }
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                Err(_) => break,
+            }
+        }
+    }));
+    while let Some(mut batch) = rx.recv().await {
+        while batch.len() < STDIN_BATCH {
+            match rx.try_recv() {
+                Ok(more) => batch.extend_from_slice(&more),
+                Err(_) => break,
+            }
+        }
+        if !send(batch).await {
+            drop(reader);
+            return false;
+        }
+    }
+    true
+}
+
 /// Runs argv in the guest as a long-lived stdio stream: `stdin` is forwarded
 /// (EOF closes the guest's stdin), stdout and stderr are written as they
 /// arrive, and the call returns the process's exit status (128 + n when a
@@ -170,7 +231,7 @@ pub async fn stream<R>(
     env: &SpacesdClient,
     argv: &[String],
     opts: StreamOpts,
-    mut stdin: R,
+    stdin: R,
     mut signals: SignalRx,
     out: &mut dyn Write,
     err: &mut dyn Write,
@@ -184,20 +245,13 @@ where
     let p = env.spawn(cmd).await?;
     let writer = p.clone();
     let _input = AbortOnDrop(tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        let mut buf = vec![0u8; 16 * 1024];
-        loop {
-            match stdin.read(&mut buf).await {
-                Ok(0) | Err(_) => {
-                    let _ = writer.close_stdin().await;
-                    break;
-                }
-                Ok(n) => {
-                    if writer.write_stdin(buf[..n].to_vec()).await.is_err() {
-                        break;
-                    }
-                }
-            }
+        let sent = forward_stdin(stdin, |batch| {
+            let w = writer.clone();
+            async move { w.write_stdin(batch).await.is_ok() }
+        })
+        .await;
+        if sent {
+            let _ = writer.close_stdin().await;
         }
     }));
     let forward = p.clone();
@@ -462,6 +516,72 @@ mod tests {
         assert!(cfg.timeout.is_none(), "a stream has no time limit");
         assert_eq!((cfg.user.as_str(), cfg.cwd.as_str()), ("agent", "/work"));
         assert_eq!(cfg.command, "cat", "argv is passed through, not joined");
+    }
+
+    #[tokio::test]
+    async fn stdin_goes_in_few_large_sends_while_one_is_in_flight() {
+        let input: Vec<u8> = (0..4 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+        let (mut w, r) = tokio::io::duplex(STDIN_READ);
+        let data = input.clone();
+        let writer = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            w.write_all(&data).await.unwrap();
+        });
+        let got = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+        let g = got.clone();
+        let ok = forward_stdin(r, move |b| {
+            let g = g.clone();
+            async move {
+                // A slow round trip, as through the relay.
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                g.lock().unwrap().push(b);
+                true
+            }
+        })
+        .await;
+        writer.await.unwrap();
+        assert!(ok);
+        let sends = got.lock().unwrap();
+        assert_eq!(sends.concat(), input, "bytes arrive whole and in order");
+        assert!(
+            sends.len() <= 16,
+            "{} sends for 4 MiB: reads are batched while a send is in flight",
+            sends.len()
+        );
+        assert!(sends.iter().all(|b| b.len() <= STDIN_BATCH + STDIN_READ));
+    }
+
+    /// Stdin that says "would block" (a non-blocking descriptor) before
+    /// its data.
+    struct WouldBlockFirst(u8, &'static [u8]);
+
+    impl tokio::io::AsyncRead for WouldBlockFirst {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if self.0 > 0 {
+                self.0 -= 1;
+                return std::task::Poll::Ready(Err(std::io::ErrorKind::WouldBlock.into()));
+            }
+            let data = std::mem::take(&mut self.1);
+            buf.put_slice(data);
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_that_would_block_is_retried_not_end_of_input() {
+        let got = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let g = got.clone();
+        let ok = forward_stdin(WouldBlockFirst(3, b"after EAGAIN"), move |b| {
+            g.lock().unwrap().extend(b);
+            async { true }
+        })
+        .await;
+        assert!(ok);
+        assert_eq!(got.lock().unwrap().as_slice(), b"after EAGAIN");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

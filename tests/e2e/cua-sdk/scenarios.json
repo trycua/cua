@@ -165,6 +165,32 @@
       "checks": "reference disk under QEMU -> readiness probes + forward (py/ts); rust: env smoke with a cloud-init token, checkpoint, fork, boot the fork"
     },
     {
+      "id": "local-qemu-fork",
+      "guide": "(new)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "qemu"
+      ],
+      "checks": "forkable reference disk under QEMU -> dirty RAM -> checkpoint(pin) -> 2 forks hold the world's RAM, are independent -> pinned checkpoint refuses delete -> unpin -> prune"
+    },
+    {
+      "id": "fork-batch",
+      "guide": "(new)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "qemu"
+      ],
+      "checks": "reference disk -> memory checkpoint -> fork_many(3, max_parallel_per_host=2): forks stream before the summary, peak parallelism <= 2, each fork's cua-spacesd answers with its own token; forks, checkpoint and source deleted"
+    },
+    {
       "id": "local-lume",
       "guide": "(new)",
       "langs": [
@@ -240,6 +266,19 @@
         "container"
       ],
       "checks": "a fresh-agent session through the host `cua mcp` server only (official MCP Python SDK, no LLM): hermetic: images_list returns the published catalog with browser_tools, sandbox_create takes browser, teleport_browser_session exists; container: images_list -> sandbox_create {browser: true} on linux -> read, fill (browser_type), check and submit (browser_click) a form served in the sandbox -> tab screenshot -> sandbox_delete"
+    },
+    {
+      "id": "share-a-link",
+      "guide": "(new) Share a link to anything you run",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic"
+      ],
+      "checks": "a real daemon that is a relay host (relay + host spacesd stood in by fixtures/share_relay.py): share a file and a port (private: owner 200, nobody 401, another account 403), check the link, stop by name, public folder link with ttl, stop_all from a second client, bad input errors, dead port check.ok=false"
     },
     {
       "id": "cloud-ended",

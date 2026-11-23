@@ -7,17 +7,13 @@ Claude Code can use both Cua products: Cua Driver for the apps on the computer i
 
 ## Cua Driver
 
-Register Cua Driver as an MCP server, then restart Claude Code:
+The Cua Driver install line already connects Claude Code. To connect it later, run `cua-driver connect --client claude`, then restart Claude Code. It adds the `cua-driver` server and installs the agent skill for native skill activation, and running it again changes nothing.
 
-```bash skip="third-party-cli"
-claude mcp add --transport stdio cua-driver -- cua-driver mcp
-```
-
-Use `cua-driver mcp-config --client claude` instead for the computer-use compatibility profile. Both install the agent skill for native skill activation. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
+`cua-driver mcp-config --client claude` prints the same setup as a command you can run yourself. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
 
 ## Cua Spaces
 
-`cua agents setup --agents claude-code --yes` adds the `cua` skills and MCP server to Claude Code, and the Cua Spaces app does the same on first run. To add it by hand:
+`cua connect setup --agents claude-code --yes` adds the `cua` skills and MCP server to Claude Code, and the Cua Spaces app does the same on first run. To add it by hand:
 
 ```bash skip="third-party-cli"
 claude mcp add cua -- cua daemon mcp
@@ -27,4 +23,4 @@ Then ask Claude Code: "List my Cua Spaces." See [Connect your agent to Cua Space
 
 ## Run Claude Code in a Space
 
-[Coding agents in a Space](/spaces/guides/coding-agents-in-a-space) covers starting Claude Code inside a Space so it works on a computer you can watch.
+[Agents in a Space](/spaces/guides/agents-in-a-space) covers starting Claude Code inside a Space so it works on a computer you can watch.

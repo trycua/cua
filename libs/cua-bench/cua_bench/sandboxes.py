@@ -14,8 +14,8 @@ and releases it on exit (including cancellation, e.g. Ctrl-C):
   on="e2b")``; the SDK's contrib provider runs the same registry image on
   that platform. cua-bench has no provider-specific code: the location word
   goes to the SDK as is.
-* ``--on aws`` (``gcp``, ``modal``): your own cloud account, connected with
-  ``cua cloud connect``; the SDK starts one VM (or Modal sandbox) per
+* ``--on aws`` (``gcp``, ``hetzner``, ``modal``): your own cloud account, connected with
+  ``cua cloud connect``; the SDK starts one VM (or Hetzner server, or Modal sandbox) per
   sandbox, joined to the cua.ai relay, and deletes it with the handle.
 
 The lifecycle uses only public cua-sandbox API (``Image``, ``Sandbox.ephemeral``).

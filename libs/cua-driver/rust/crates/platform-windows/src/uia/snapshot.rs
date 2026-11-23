@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::UiaNode;
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 use windows::core::Interface;
@@ -12,6 +15,25 @@ pub struct RetainedElement {
     pub center: (i32, i32),
     pub rect: Option<(i32, i32, i32, i32)>,
     pub msaa_role: Option<i32>,
+    pub read_while_minimized: bool,
+}
+
+#[cfg(test)]
+impl RetainedElement {
+    pub(crate) fn detached(
+        kind: SnapshotKind,
+        center: (i32, i32),
+        read_while_minimized: bool,
+    ) -> Self {
+        Self {
+            ptr: 0,
+            kind,
+            center,
+            rect: None,
+            msaa_role: None,
+            read_while_minimized,
+        }
+    }
 }
 
 impl RetainedElement {
@@ -31,6 +53,20 @@ impl RetainedElement {
         let result = unsafe { element.SetFocus() };
         std::mem::forget(element);
         result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
+    }
+
+    /// The element's live `IsEnabled`. `None` for an MSAA element or when UIA
+    /// cannot read it.
+    pub fn element_is_enabled(&self) -> Option<bool> {
+        if !self.is_uia() || self.ptr == 0 {
+            return None;
+        }
+        let element = std::mem::ManuallyDrop::new(unsafe {
+            IUIAutomationElement::from_raw(self.ptr as *mut _)
+        });
+        unsafe { element.CurrentIsEnabled() }
+            .ok()
+            .map(|value| value.as_bool())
     }
 
     pub fn element_has_keyboard_focus(&self) -> Option<bool> {
@@ -72,6 +108,7 @@ impl Clone for RetainedElement {
             center: self.center,
             rect: self.rect,
             msaa_role: self.msaa_role,
+            read_while_minimized: self.read_while_minimized,
         }
     }
 }
@@ -100,20 +137,35 @@ pub struct UiaSnapshot {
 }
 
 impl UiaSnapshot {
-    pub fn from_nodes(nodes: &[UiaNode], kind: SnapshotKind) -> Self {
-        Self {
-            elements: nodes
-                .iter()
-                .filter(|node| node.element_index.is_some())
-                .map(|node| RetainedElement {
-                    ptr: node.element_ptr,
-                    kind,
-                    center: (node.center_x, node.center_y),
-                    rect: node.rect,
-                    msaa_role: node.msaa_role,
-                })
-                .collect(),
+    /// Take every walker reference out of `nodes`. Indexed nodes become the
+    /// snapshot's elements; the rest (content-only rows) are released here.
+    /// Each `element_ptr` is zeroed, so the nodes no longer own anything.
+    pub fn from_nodes(nodes: &mut [UiaNode], kind: SnapshotKind) -> Self {
+        let mut elements = Vec::new();
+        for node in nodes.iter_mut() {
+            let ptr = std::mem::take(&mut node.element_ptr);
+            let element = RetainedElement {
+                ptr,
+                kind,
+                center: (node.center_x, node.center_y),
+                rect: node.rect,
+                msaa_role: node.msaa_role,
+                read_while_minimized: false,
+            };
+            if node.element_index.is_some() {
+                elements.push(element);
+            } else {
+                drop(element);
+            }
         }
+        Self { elements }
+    }
+
+    pub fn with_read_while_minimized(mut self, minimized: bool) -> Self {
+        for element in &mut self.elements {
+            element.read_while_minimized = minimized;
+        }
+        self
     }
 }
 

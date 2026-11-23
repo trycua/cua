@@ -29,6 +29,7 @@ import {
   CuaError,
   CuaError_Tags,
   type CuaLike,
+  PoolCreateOptions,
   ReadinessProbe,
   RegistrySecret,
   type ResolvedImage,
@@ -125,8 +126,11 @@ export function connect(address?: string, token?: string): CuaLike {
   return Cua.connect(address, token)
 }
 
-/** An image tier: `slim`, `full` (the default), or on macOS `xcode` / `xcode-<X.Y>`. */
-export type ImageTier = "slim" | "full" | "xcode" | `xcode-${string}`
+/**
+ * An image tier: `slim`, `full` (the default), on macOS `xcode` / `xcode-<X.Y>`,
+ * or on Linux `docker` (slim plus the Docker engine, a VM: `-docker-disk`).
+ */
+export type ImageTier = "slim" | "full" | "docker" | "xcode" | `xcode-${string}`
 
 /** Options for `Image.linux()` / `windows()` / `macos()`. */
 export interface ImageOptions {
@@ -144,7 +148,8 @@ function tierImage(os: string, version?: string | ImageOptions, tier?: ImageTier
  * (`CUA_IMAGE_LINUX` overrides it), `Image.windows()`
  * `ghcr.io/trycua/windows:2022`, `Image.macos()` `ghcr.io/trycua/macos:26`.
  * These are the full tier (dev tooling); `{ tier: "slim" }` is the minimal
- * image CI runs and, on macOS, `{ tier: "xcode" }` adds a pinned Xcode.
+ * image CI runs, on macOS `{ tier: "xcode" }` adds a pinned Xcode and, on Linux,
+ * `{ tier: "docker" }` is a VM with dockerd up at boot (`24.04-docker-disk`).
  * `Image.omarchy()` is `ghcr.io/trycua/omarchy:edge`, an amd64 VM. Images CI
  * has not published yet throw `ImageNotPublished`; pass the reference to
  * `fromRegistry` to use one anyway.
@@ -222,4 +227,42 @@ export const registrySecret = {
   /** A private Amazon ECR image: a login token from the AWS CLI. */
   awsEcr: (region?: string): RegistrySecret =>
     new RegistrySecret.AwsEcr(region ? { region } : {}),
+}
+
+type StringMap = Record<string, string> | Map<string, string>
+type PortMap = Record<string, number> | Map<string, number>
+
+const toMap = <V>(m: Record<string, V> | Map<string, V> | undefined): Map<string, V> =>
+  m instanceof Map ? new Map(m) : new Map(Object.entries(m ?? {}))
+
+/**
+ * Options for `cua.sandboxes().createPool(image, options)`: sandboxes of
+ * one shape the cua daemon keeps ready on this machine, `min` at all times
+ * (one starts again as soon as one is created from the pool), up to `max`
+ * while creates come faster than sandboxes start, and none after
+ * `idleSeconds` without a create. `env` and `services` take plain objects
+ * too. A create with `pool: <name>` takes one of its ready sandboxes.
+ *
+ * ```ts
+ * const c = connect()  // pools are kept by the cua daemon
+ * const pool = await c.sandboxes().createPool("ghcr.io/trycua/linux:24.04-slim",
+ *   poolCreateOptions({ name: "agents", min: 2, max: 8, idleSeconds: 600 }))
+ * const sb = await c.sandboxes().create(SandboxCreateOptions.create({
+ *   on: "local", image: pool.image, pool: pool.name }))
+ * ```
+ */
+export function poolCreateOptions(
+  opts: Partial<Omit<PoolCreateOptions, "env" | "services" | "idleMs">> & {
+    env?: StringMap
+    services?: PortMap
+    idleSeconds?: number
+  } = {},
+): PoolCreateOptions {
+  const { env, services, idleSeconds, ...rest } = opts
+  return PoolCreateOptions.create({
+    ...rest,
+    env: toMap(env),
+    services: toMap(services),
+    ...(idleSeconds !== undefined ? { idleMs: BigInt(Math.round(idleSeconds * 1000)) } : {}),
+  })
 }

@@ -15,7 +15,8 @@ private func published(_ ref: String) -> Bool {
         let images = json["images"] as? [[String: Any]],
         let entry = images.first(where: { $0["ref"] as? String == ref })
     else { return true }
-    return entry["published"] as? Bool ?? true
+    // An entry built on the user's own machine (derived_from) resolves while unpublished.
+    return (entry["published"] as? Bool ?? true) || entry["derived_from"] != nil
 }
 
 private func expectRef(_ ref: String, _ make: () throws -> String) {
@@ -41,4 +42,6 @@ private func expectRef(_ ref: String, _ make: () throws -> String) {
     expectRef("ghcr.io/trycua/macos:26-xcode") { try Image.macos(tier: "xcode") }
     expectRef("ghcr.io/trycua/omarchy:edge") { try Image.omarchy() }
     #expect(throws: CuaError.self) { try Image.linux(tier: "xcode") }
+    expectRef("ghcr.io/trycua/linux:24.04-docker-disk") { try Image.linux(tier: "docker") }
+    #expect(throws: CuaError.self) { try Image.macos(tier: "docker") }
 }

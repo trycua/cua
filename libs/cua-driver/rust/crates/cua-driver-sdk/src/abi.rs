@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stable C ABI below the public typed SDK.
 //!
 //! The exported functions in this module are deliberately smaller and more
@@ -467,22 +470,175 @@ fn metadata_json() -> Result<String, AbiFailure> {
     .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
 }
 
-fn abi_executor() -> Result<&'static tokio::runtime::Runtime, AbiFailure> {
-    static EXECUTOR: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
-    match EXECUTOR.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("cua-driver-abi")
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())
-    }) {
+#[derive(Debug)]
+struct AbiExecutor {
+    runtime: tokio::runtime::Runtime,
+    /// The first Per-Monitor V2 rejection reported by an executor thread.
+    #[cfg(target_os = "windows")]
+    dpi_failure: Arc<OnceLock<String>>,
+}
+
+impl AbiExecutor {
+    fn handle(&self) -> &tokio::runtime::Handle {
+        self.runtime.handle()
+    }
+
+    fn check_ready(&self) -> Result<(), AbiFailure> {
+        #[cfg(target_os = "windows")]
+        if let Some(error) = self.dpi_failure.get() {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::RuntimeUnavailable,
+                error.clone(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The executor that admits new GUI work: on Windows, only while every thread
+/// it has started runs in the physical-pixel DPI context.
+fn abi_executor() -> Result<&'static AbiExecutor, AbiFailure> {
+    let executor = abi_executor_for_cleanup()?;
+    executor.check_ready()?;
+    Ok(executor)
+}
+
+/// On Windows, refuse to admit new GUI work unless the executor holds the
+/// physical-pixel DPI contract. Elsewhere there is no such contract, and the
+/// executor stays lazy: it starts on the first ABI invocation, so a host that
+/// only uses in-process calls never leaves its threads running at exit.
+fn require_physical_pixel_executor() -> Result<(), AbiFailure> {
+    #[cfg(target_os = "windows")]
+    abi_executor()?;
+    Ok(())
+}
+
+// Shutdown must still revoke sessions and finalize recordings after a DPI
+// failure. It neither admits GUI work nor reports physical-pixel results.
+fn abi_executor_for_cleanup() -> Result<&'static AbiExecutor, AbiFailure> {
+    static EXECUTOR: OnceLock<Result<AbiExecutor, String>> = OnceLock::new();
+    match EXECUTOR.get_or_init(build_abi_executor) {
         Ok(executor) => Ok(executor),
         Err(error) => Err(AbiFailure::new(
             CuaDriverStatus::RuntimeUnavailable,
             format!("create Cua Driver ABI executor: {error}"),
         )),
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_abi_executor() -> Result<AbiExecutor, String> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("cua-driver-abi")
+        .enable_all()
+        .build()
+        .map(|runtime| AbiExecutor { runtime })
+        .map_err(|error| error.to_string())
+}
+
+/// The embedded SDK runs inside a host process whose DPI awareness it does
+/// not control. Every executor thread, including blocking-pool threads added
+/// later, switches itself to Per-Monitor V2 so capture and input see physical
+/// pixels; the host's own threads keep their context.
+#[cfg(target_os = "windows")]
+fn build_abi_executor() -> Result<AbiExecutor, String> {
+    let dpi_failure = Arc::new(OnceLock::new());
+    let thread_failure = dpi_failure.clone();
+    let (thread_started, thread_ready) = std::sync::mpsc::channel();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("cua-driver-abi")
+        .enable_all()
+        .on_thread_start(move || {
+            if let Err(error) = platform_windows::dpi::use_per_monitor_v2_for_current_thread() {
+                let _ = thread_failure.set(format!(
+                    "initialize Windows physical-pixel context for Cua Driver ABI threads: {error}"
+                ));
+            }
+            let _ = thread_started.send(());
+        })
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    // Probe both async workers and one blocking worker so an OS without
+    // Per-Monitor V2 fails creation instead of returning virtualized pixels.
+    let probe = (|| {
+        for _ in 0..2 {
+            thread_ready
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|error| format!("start Cua Driver ABI async worker: {error}"))?;
+        }
+        let (blocking_started, blocking_ready) = std::sync::mpsc::channel();
+        runtime.spawn_blocking(move || {
+            let _ = blocking_started.send(());
+        });
+        blocking_ready
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| format!("start Cua Driver ABI blocking worker: {error}"))?;
+        match dpi_failure.get() {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    })();
+    if let Err(error) = probe {
+        // Creation can run inside a host's Tokio task, where dropping a
+        // runtime panics; release this one without blocking instead.
+        runtime.shutdown_background();
+        return Err(error);
+    }
+    Ok(AbiExecutor {
+        runtime,
+        dpi_failure,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InvokeMode {
+    Regular,
+    #[cfg(target_os = "windows")]
+    TrustedAdapter,
+}
+
+async fn invoke_runtime_to_json(
+    runtime: Arc<DriverRuntime>,
+    name: String,
+    arguments: Value,
+    mode: InvokeMode,
+) -> Result<String, AbiFailure> {
+    let shutdown_message = match mode {
+        InvokeMode::Regular => "the Cua Driver SDK has been shut down",
+        #[cfg(target_os = "windows")]
+        InvokeMode::TrustedAdapter => "the owning Cua Driver runtime has been shut down",
+    };
+    let result = match mode {
+        InvokeMode::Regular => runtime.invoke(&name, arguments).await,
+        #[cfg(target_os = "windows")]
+        InvokeMode::TrustedAdapter => runtime.invoke_from_trusted_adapter(&name, arguments).await,
+    }
+    .ok_or_else(|| AbiFailure::new(CuaDriverStatus::Shutdown, shutdown_message))?;
+    serde_json::to_string(&result)
+        .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
+}
+
+// Embedded tool invocations run on the ABI-owned executor rather than the
+// caller's runtime; on Windows that includes trusted adapter calls.
+// OperationGuard preserves cancellation when a Rust caller drops its await.
+fn start_invoke_completion(
+    runtime: Arc<DriverRuntime>,
+    name: String,
+    arguments: Value,
+    mode: InvokeMode,
+    callback: CuaDriverCompletionV1,
+    context: *mut c_void,
+) -> Result<*mut CuaDriverOperation, AbiFailure> {
+    let executor = abi_executor()?.handle().clone();
+    spawn_completion(
+        executor,
+        invoke_runtime_to_json(runtime, name, arguments, mode),
+        callback,
+        context,
+    )
 }
 
 fn spawn_completion<F>(
@@ -615,6 +771,10 @@ pub unsafe extern "C" fn cua_driver_create_v1(
             })?
         };
         let runtime_options = runtime_options_from_abi(options)?;
+        // The embedded runtime promises physical-pixel capture and input on
+        // Windows. Refuse creation if its owned executor cannot establish
+        // that contract instead of returning virtualized results later.
+        require_physical_pixel_executor()?;
         let runtime = DriverRuntime::create(runtime_options).map_err(runtime_create_failure)?;
         *out_handle = Box::into_raw(Box::new(CuaDriverHandle { runtime }));
         Ok(())
@@ -650,7 +810,10 @@ pub unsafe extern "C" fn cua_driver_is_available_v1(
                 "out_available must not be null",
             )
         })?;
-        *out_available = driver.runtime.is_running();
+        // `runtime.is_running()` only describes shutdown state. An embedded
+        // Windows runtime is also unavailable once its owned executor has
+        // lost the physical-pixel DPI contract.
+        *out_available = driver.runtime.is_running() && require_physical_pixel_executor().is_ok();
         Ok(())
     })
 }
@@ -760,20 +923,11 @@ pub unsafe extern "C" fn cua_driver_invoke_v1(
                 "tool arguments must be a JSON object",
             ));
         }
-        let runtime = driver.runtime.clone();
-        let executor = abi_executor()?.handle().clone();
-        *out_operation = spawn_completion(
-            executor,
-            async move {
-                let result = runtime.invoke(&name, arguments).await.ok_or_else(|| {
-                    AbiFailure::new(
-                        CuaDriverStatus::Shutdown,
-                        "the Cua Driver SDK has been shut down",
-                    )
-                })?;
-                serde_json::to_string(&result)
-                    .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
-            },
+        *out_operation = start_invoke_completion(
+            driver.runtime.clone(),
+            name,
+            arguments,
+            InvokeMode::Regular,
             callback,
             context,
         )?;
@@ -812,6 +966,11 @@ pub unsafe extern "C" fn cua_driver_session_create_v1(
                 "public_session must not be empty",
             ));
         }
+        // Creating a trusted session is a new GUI-work admission boundary. Do
+        // not issue fresh authority after the embedded executor has lost the
+        // physical-pixel DPI contract; cleanup of existing sessions remains
+        // allowed.
+        require_physical_pixel_executor()?;
         let capability_manifest = options
             .capability_manifest_path()?
             .map(|path| {
@@ -970,7 +1129,7 @@ pub unsafe extern "C" fn cua_driver_shutdown_v1(
         })?;
         *out_operation = ptr::null_mut();
         let runtime = driver.runtime.clone();
-        let executor = abi_executor()?.handle().clone();
+        let executor = abi_executor_for_cleanup()?.handle().clone();
         *out_operation = spawn_completion(
             executor,
             async move {
@@ -1255,6 +1414,9 @@ impl NativeAbiDriver {
     }
 
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
+        require_physical_pixel_executor().map_err(|error| DriverError::Protocol {
+            reason: error.message,
+        })?;
         let runtime = DriverRuntime::create(options).map_err(map_runtime_create_error)?;
         let runtime_scope_key = runtime.runtime_scope_key();
         let handle = Box::into_raw(Box::new(CuaDriverHandle { runtime })).cast::<ffi::Handle>();
@@ -1320,6 +1482,24 @@ impl NativeAbiDriver {
                 .as_ref()
                 .is_some_and(|handle| handle.runtime.is_known_tool(name))
         }
+    }
+
+    pub(crate) fn set_awaiting_permissions(&self, awaiting: bool) {
+        unsafe {
+            if let Some(handle) = self.raw_handle().cast::<CuaDriverHandle>().as_ref() {
+                handle.runtime.set_awaiting_permissions(awaiting);
+            }
+        }
+    }
+
+    pub(crate) fn permissions_pending_result(&self) -> Option<Value> {
+        let refusal = unsafe {
+            self.raw_handle()
+                .cast::<CuaDriverHandle>()
+                .as_ref()
+                .and_then(|handle| handle.runtime.permissions_pending_refusal())
+        }?;
+        serde_json::to_value(refusal).ok()
     }
 
     pub(crate) fn is_available(&self) -> bool {
@@ -1450,12 +1630,68 @@ impl NativeAbiDriver {
                     .clone()
             }
         };
-        let result = runtime
-            .invoke_from_trusted_adapter(name, arguments)
-            .await
-            .ok_or(DriverError::Shutdown)?;
-        serde_json::to_value(result).map_err(|error| DriverError::Protocol {
-            reason: format!("serialize {name} trusted-adapter result: {error}"),
+        // Elsewhere the caller's runtime is fine, and running there keeps the
+        // ABI executor's blocking-pool threads from outliving the host.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let result = runtime
+                .invoke_from_trusted_adapter(name, arguments)
+                .await
+                .ok_or(DriverError::Shutdown)?;
+            serde_json::to_value(result).map_err(|error| DriverError::Protocol {
+                reason: format!("serialize {name} trusted-adapter result: {error}"),
+            })
+        }
+        // A trusted adapter's caller runs in the host's DPI context, so on
+        // Windows the call moves to the ABI executor's Per-Monitor V2 threads.
+        #[cfg(target_os = "windows")]
+        {
+            self.invoke_on_executor_from_trusted_adapter(runtime, name, arguments)
+                .await
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn invoke_on_executor_from_trusted_adapter(
+        &self,
+        runtime: Arc<DriverRuntime>,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, DriverError> {
+        let (receiver, guard) = {
+            let (sender, receiver) = oneshot::channel();
+            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+            let operation = match start_invoke_completion(
+                runtime,
+                name.to_owned(),
+                arguments,
+                InvokeMode::TrustedAdapter,
+                rust_completion,
+                context,
+            ) {
+                Ok(operation) => operation,
+                Err(error) => {
+                    unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
+                    return Err(map_status(error.status, error.message, name));
+                }
+            };
+            (
+                receiver,
+                OperationGuard {
+                    operation: operation.cast::<ffi::Operation>(),
+                    completed: false,
+                },
+            )
+        };
+        let completed = receiver.await.map_err(|_| DriverError::Protocol {
+            reason: format!("{name} trusted-adapter completion callback was dropped"),
+        })?;
+        guard.complete();
+        if completed.status != CuaDriverStatus::Ok {
+            return Err(map_status(completed.status, completed.error, name));
+        }
+        serde_json::from_str(&completed.result).map_err(|error| DriverError::Protocol {
+            reason: format!("{name} returned invalid trusted-adapter JSON: {error}"),
         })
     }
 
@@ -1630,6 +1866,46 @@ mod tests {
         assert!(cua_driver_abi_is_compatible_v1(1, 1));
         assert!(!cua_driver_abi_is_compatible_v1(1, 2));
         assert!(!cua_driver_abi_is_compatible_v1(2, 0));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_executor_threads_use_per_monitor_v2_including_late_workers() {
+        use platform_windows::dpi::{current_thread_uses_per_monitor_v2, owned_thread};
+
+        let executor = abi_executor().unwrap();
+        // Hold a blocking worker so the next blocking task needs a thread the
+        // pool creates after startup.
+        let (occupied, ready) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let held = executor.runtime.spawn_blocking(move || {
+            occupied.send(()).unwrap();
+            let _ = released.recv_timeout(Duration::from_secs(10));
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (worker, blocking, child) = executor.runtime.block_on(async {
+            let worker = executor
+                .runtime
+                .spawn(async { current_thread_uses_per_monitor_v2() })
+                .await
+                .unwrap();
+            let (blocking, child) = tokio::task::spawn_blocking(|| {
+                let child = std::thread::spawn(owned_thread(current_thread_uses_per_monitor_v2))
+                    .join()
+                    .unwrap();
+                (current_thread_uses_per_monitor_v2(), child)
+            })
+            .await
+            .unwrap();
+            (worker, blocking, child)
+        });
+        let _ = release.send(());
+        executor.runtime.block_on(held).unwrap();
+
+        assert!(worker);
+        assert!(blocking);
+        assert_eq!(child, Ok(true));
+        executor.check_ready().unwrap();
     }
 
     #[test]

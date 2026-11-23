@@ -98,9 +98,7 @@ export function isResize(e: { startFrame?: LogicalRect | null; frame?: LogicalRe
 export function displayFor(displays: readonly DragDisplay[], monitor: LogicalRect): DragDisplay[] {
   const cx = monitor.x + monitor.width / 2;
   const cy = monitor.y + monitor.height / 2;
-  const d = displays.find(
-    ({ frame: f }) => cx >= f.x && cx < f.x + f.width && cy >= f.y && cy < f.y + f.height,
-  );
+  const d = displays.find(({ frame: f }) => cx >= f.x && cx < f.x + f.width && cy >= f.y && cy < f.y + f.height);
   return d ? [d] : [];
 }
 
@@ -116,7 +114,5 @@ export function portalDragDisplays(screens: readonly ScreenFacts[]): DragDisplay
 export function fallbackDragDisplays(monitor: LogicalRect): DragDisplay[] {
   // As the primary display in AppKit coordinates, flipped back to `monitor.y`.
   const frame = { ...monitor, y: -monitor.y };
-  return portalDragDisplays([
-    { frame, visibleFrame: frame, safeAreaTop: 0, auxLeftWidth: null, auxRightWidth: null },
-  ]);
+  return portalDragDisplays([{ frame, visibleFrame: frame, safeAreaTop: 0, auxLeftWidth: null, auxRightWidth: null }]);
 }

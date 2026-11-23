@@ -107,7 +107,7 @@ class ReleaseTest(unittest.TestCase):
             configure,
             ["cmake", "--build", str(build), "--target", "cua_hyprland_foreground_route_test"],
             ["ctest", "--test-dir", str(build), "--output-on-failure", "--no-tests=error",
-             "-R", "^cua_hyprland_desktop_fault_policy_test$"],
+             "-R", "^cua_hyprland_(desktop_fault_policy|cmake_api)_test$"],
         ):
             result = subprocess.run(command, capture_output=True, text=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -183,7 +183,8 @@ class ReleaseTest(unittest.TestCase):
             python.symlink_to(sys.executable)
         return subprocess.run(["bash", "-e", "-c", script], cwd=self.repo,
                               env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
-                                   "GITHUB_REF": "refs/heads/main", "REQUESTED_VERSION": version,
+                                   "GITHUB_REF": "refs/heads/main", "RELEASE_REF": "refs/heads/main",
+                                   "REQUESTED_VERSION": version,
                                    "GITHUB_OUTPUT": str(self.root / "step-output")},
                               capture_output=True, text=True)
 

@@ -37,7 +37,7 @@ pub enum StreamTarget {
 }
 
 /// A window target as listed.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowTarget {
     /// Window handle (`WindowRef.id`).
     pub window_id: String,
@@ -60,8 +60,12 @@ pub struct WindowTarget {
     /// Streamable right now.
     pub available: bool,
     /// Why not, when not.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub limitation: String,
+    /// Where the picture comes from when the window lives in another Space
+    /// ([`crate::stream_registry`]); absent on a Space's own windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::stream_registry::StreamOrigin>,
 }
 
 /// A window narrower or shorter than this (logical points) is a strip, a
@@ -142,9 +146,47 @@ pub struct StreamTicket {
     /// a relay gateway). A browser cannot set them; use the daemon's media
     /// bridge then.
     pub needs_gateway_headers: bool,
+    /// The guest's direct QUIC media listener, for a Space reached by its
+    /// own address whose guest offers one: a client tries it first and
+    /// attaches to [`Self::ws_url`] when it does not answer. Not
+    /// serialized: a webview attaches by the WebSocket.
+    #[serde(skip)]
+    pub quic: Option<QuicTarget>,
     /// The whole `OpenMediaResponse` minus the ticket.
     #[serde(skip)]
     pub raw: pb::OpenMediaResponse,
+}
+
+/// A direct QUIC media listener (MEDIA.md §12.6): the same ticket attaches
+/// there as on the WebSocket.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuicTarget {
+    /// The spacesd host: the address the Space was added by.
+    pub host: String,
+    /// UDP port.
+    pub port: u16,
+    /// Lowercase hex SHA-256 of the listener's certificate (the pin).
+    pub certificate_sha256: String,
+}
+
+/// The host of a Space's direct QUIC media listener: the address it was
+/// added by, when its spacesd calls go straight to that address (in this
+/// process or in the `cua daemon` it goes through) and not through another
+/// machine, the relay or the mesh, which carry TCP only.
+fn quic_media_host(id: &crate::SpaceId, route: Option<&crate::ChannelRoute>) -> Option<String> {
+    let crate::SpaceId::Direct { authority } = id else {
+        return None;
+    };
+    if crate::id::routed_host(authority).is_some() {
+        return None;
+    }
+    let origin = match route? {
+        crate::ChannelRoute::Direct(origin) => origin.as_str(),
+        crate::ChannelRoute::Passthrough(route) => route.strip_prefix("direct ")?,
+        _ => return None,
+    };
+    let url = url::Url::parse(origin).ok()?;
+    Some(url.host_str()?.trim_matches(['[', ']']).to_string())
 }
 
 /// Processor, memory and storage use (`SystemService.Metrics`). A size is
@@ -166,7 +208,8 @@ pub struct Usage {
     pub memory_limited: bool,
     /// Home filesystem bytes in use.
     pub disk_used: u64,
-    /// Home filesystem size, bytes.
+    /// Home filesystem size, bytes; 0 when it has no size of its own
+    /// (gVisor's root overlay reports "unlimited"), never a sentinel.
     pub disk_total: u64,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
@@ -181,9 +224,16 @@ impl From<pb::MetricsResponse> for Usage {
             memory_used: m.memory_used_bytes,
             memory_total: m.memory_total_bytes,
             memory_limited: m.memory_limited,
-            disk_used: m.disk_used_bytes,
-            disk_total: m.disk_total_bytes,
-            disk_limited: m.disk_limited,
+            disk_used: if m.disk_total_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+                && m.disk_used_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+            {
+                0
+            } else {
+                m.disk_used_bytes
+            },
+            disk_total: crate::resources::known_size(m.disk_total_bytes).unwrap_or(0),
+            disk_limited: m.disk_limited
+                && crate::resources::known_size(m.disk_total_bytes).is_some(),
         }
     }
 }
@@ -350,6 +400,7 @@ impl Space {
                     focused: w.focused,
                     available,
                     limitation,
+                    origin: None,
                 }
             })
             .filter(|w| {
@@ -376,6 +427,26 @@ impl Space {
             .ok_or_else(|| Error::NotFound(format!("a visible {app:?} window in {}", self.id())))
     }
 
+    /// [`Self::find_window`], waiting up to `wait` for the app's window to appear. `launch_app`
+    /// answers when the process starts, a moment before its window exists, so an agent that
+    /// launches an app and then asks for its window would otherwise get "not found" every time.
+    /// Any other error is returned at once.
+    pub async fn find_window_within(
+        &self,
+        app: &str,
+        wait: std::time::Duration,
+    ) -> Result<WindowTarget> {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match self.find_window(app).await {
+                Err(Error::NotFound(_)) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
     /// Opens a media session and returns its ticket and URL.
     pub async fn open_stream(
         &self,
@@ -395,6 +466,8 @@ impl Space {
         if options.audio {
             self.require("audio.desktop")?;
         }
+        let quic_host =
+            quic_media_host(self.id(), self.route()).filter(|_| self.supports("quic_media"));
         let raw = self
             .spacesd()?
             .stream()
@@ -412,13 +485,16 @@ impl Space {
                     seconds: d.as_secs().min(600) as i64,
                     nanos: 0,
                 }),
-                prefer_quic: false,
+                prefer_quic: quic_host.is_some(),
                 audio: options.audio.then(|| pb::AudioOptions {
                     enabled: true,
                     ..Default::default()
                 }),
                 disable_video: false,
+                #[cfg(feature = "spaces-presence")]
                 presence_participant_id: self.presence_participant().unwrap_or_default(),
+                #[cfg(not(feature = "spaces-presence"))]
+                presence_participant_id: String::new(),
             })
             .await
             .map_err(cua_spacesd_client::Error::from)?
@@ -455,6 +531,13 @@ impl Space {
             wire_version: raw.wire_version,
             frame_size: size,
             needs_gateway_headers: matches!(self.provider(), crate::Provider::Cloud),
+            quic: quic_host.zip(raw.quic.as_ref()).and_then(|(host, quic)| {
+                Some(QuicTarget {
+                    host,
+                    port: u16::try_from(quic.port).ok().filter(|p| *p != 0)?,
+                    certificate_sha256: quic.certificate_sha256.clone(),
+                })
+            }),
             raw: shown,
         })
     }
@@ -479,10 +562,25 @@ impl Space {
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<StreamSession> {
+        let started = std::time::Instant::now();
         let ticket = self.open_stream(target, options).await?;
+        // `stream.open` timing (debug): the ticket is the OpenMedia call,
+        // which also waits for the guest's first frame.
+        tracing::debug!(
+            target: "cua::stream::timing",
+            hop = "ticket",
+            ms = started.elapsed().as_secs_f64() * 1e3,
+            "stream.open"
+        );
         let headers = self.websocket_headers().await?;
         match StreamSession::attach(&ticket, &headers, frames, audio).await {
             Ok(mut s) => {
+                tracing::debug!(
+                    target: "cua::stream::timing",
+                    hop = "attached",
+                    ms = started.elapsed().as_secs_f64() * 1e3,
+                    "stream.open"
+                );
                 s.rpc = Some((self.clone(), ticket.media_session_id.clone()));
                 Ok(s)
             }
@@ -615,7 +713,7 @@ pub trait StreamClient: Send + Sync + 'static {
         headers: &'a [(String, String)],
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
-    ) -> crate::extension::BoxFuture<'a, Result<Box<dyn StreamConnection>>>;
+    ) -> futures_util::future::BoxFuture<'a, Result<Box<dyn StreamConnection>>>;
 }
 
 /// One attached media socket (see [`StreamClient`]).
@@ -638,7 +736,7 @@ pub trait StreamConnection: Send + Sync {
     /// Sends a raw client text message.
     fn send_text(&self, json: String) -> Result<()>;
     /// Closes the socket, waiting (bounded) for the delivery thread.
-    fn close(&mut self, wait: Duration) -> crate::extension::BoxFuture<'_, ()>;
+    fn close(&mut self, wait: Duration) -> futures_util::future::BoxFuture<'_, ()>;
 }
 
 static STREAM_CLIENT: OnceLock<Arc<dyn StreamClient>> = OnceLock::new();
@@ -844,6 +942,7 @@ mod streamable_tests {
             focused: false,
             available: on_screen,
             limitation: String::new(),
+            origin: None,
         }
     }
 
@@ -881,5 +980,65 @@ mod streamable_tests {
         assert!(busy.is_streamable());
         busy.available = false;
         assert!(!busy.is_streamable());
+    }
+}
+
+#[cfg(test)]
+mod quic_media_host_tests {
+    use super::*;
+    use crate::{ChannelRoute, SpaceId};
+
+    fn direct(authority: &str) -> SpaceId {
+        SpaceId::Direct {
+            authority: authority.into(),
+        }
+    }
+
+    #[test]
+    fn a_space_reached_by_its_address_streams_from_that_host() {
+        let id = direct("100.64.0.7:3211");
+        let route = ChannelRoute::Direct("http://100.64.0.7:3211".into());
+        assert_eq!(
+            quic_media_host(&id, Some(&route)).as_deref(),
+            Some("100.64.0.7")
+        );
+        let through_daemon = ChannelRoute::Passthrough("direct http://100.64.0.7:3211".into());
+        assert_eq!(
+            quic_media_host(&id, Some(&through_daemon)).as_deref(),
+            Some("100.64.0.7")
+        );
+        let v6 = ChannelRoute::Direct("http://[fd7a:115c::7]:3211".into());
+        assert_eq!(
+            quic_media_host(&direct("[fd7a:115c::7]:3211"), Some(&v6)).as_deref(),
+            Some("fd7a:115c::7")
+        );
+        let named = ChannelRoute::Direct("https://box.example.ts.net".into());
+        assert_eq!(
+            quic_media_host(&direct("box.example.ts.net:443"), Some(&named)).as_deref(),
+            Some("box.example.ts.net")
+        );
+    }
+
+    #[test]
+    fn spaces_not_reached_by_their_own_address_keep_the_websocket() {
+        let id = direct("100.64.0.7:3211");
+        for route in [
+            ChannelRoute::Relay("https://relay.cua.ai".into()),
+            ChannelRoute::Local("127.0.0.1:3211".into()),
+            ChannelRoute::Cloud,
+            ChannelRoute::Passthrough("relay https://relay.cua.ai".into()),
+            ChannelRoute::Passthrough("mesh direct 100.64.0.7:41641".into()),
+        ] {
+            assert_eq!(quic_media_host(&id, Some(&route)), None, "{route:?}");
+        }
+        assert_eq!(quic_media_host(&id, None), None);
+        // A Space a host provides is reached through that host's forward.
+        let routed = direct(&format!("m-1{}:3211", crate::id::ROUTED_SUFFIX));
+        let host_route = ChannelRoute::Direct("http://100.64.0.9:3211".into());
+        assert_eq!(quic_media_host(&routed, Some(&host_route)), None);
+        let relay = SpaceId::Relay {
+            machine_id: "m-1".into(),
+        };
+        assert_eq!(quic_media_host(&relay, Some(&host_route)), None);
     }
 }

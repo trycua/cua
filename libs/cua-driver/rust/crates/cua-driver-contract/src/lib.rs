@@ -24,7 +24,9 @@ mod session;
 mod verification;
 mod visual;
 mod windows;
+pub mod witness;
 pub use windows::*;
+pub use witness::*;
 
 pub(crate) fn schema_settings() -> SchemaSettings {
     SchemaSettings::draft2020_12()
@@ -53,12 +55,12 @@ pub use cursor::{
 pub use inputs::{
     ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition, ClipboardReadInput,
     ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput, EndSessionInput,
-    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
-    InputDeliveryMode, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MoveCursorInput,
-    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetSessionInput, HotkeyInput, InputDeliveryMode, InvokeMenuInput, LegacyClickInput,
+    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
+    MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
@@ -93,7 +95,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.8.0";
+pub const CONTRACT_VERSION: &str = "0.9.0";
 
 /// Legacy version negotiated by `initialize.params.protocolVersion` and served
 /// by the loopback HTTP compatibility endpoint. Modern stdio discovery and
@@ -129,6 +131,14 @@ pub const ACTION_RESULT_TOOLS: &[&str] = &[
 
 pub fn is_action_result_tool(name: &str) -> bool {
     ACTION_RESULT_TOOLS.contains(&name)
+}
+
+/// Action-result tools that act on native desktop state.
+///
+/// Browser actions are scheduled per CDP tab inside the browser engine; every
+/// other action-result tool drives the shared native input and window state.
+pub fn is_desktop_action_result_tool(name: &str) -> bool {
+    is_action_result_tool(name) && !name.starts_with("browser_")
 }
 
 #[derive(
@@ -224,7 +234,18 @@ pub struct ContractManifest {
     pub tools: Vec<ToolContract>,
 }
 
+/// The published contract. Built once per process: every schema in it comes
+/// from compiled Rust types, so rebuilding it can only repeat the same work.
 pub fn manifest() -> ContractManifest {
+    cached_manifest().clone()
+}
+
+fn cached_manifest() -> &'static ContractManifest {
+    static MANIFEST: OnceLock<ContractManifest> = OnceLock::new();
+    MANIFEST.get_or_init(build_manifest)
+}
+
+fn build_manifest() -> ContractManifest {
     let mut tools = session::contracts();
     tools.extend(desktop::contracts());
     tools.extend(cursor_tools::contracts());
@@ -244,7 +265,14 @@ pub fn manifest() -> ContractManifest {
 }
 
 pub fn tool_contract(name: &str) -> Option<ToolContract> {
-    manifest().tools.into_iter().find(|tool| tool.name == name)
+    cached_tool_contract(name).cloned()
+}
+
+fn cached_tool_contract(name: &str) -> Option<&'static ToolContract> {
+    cached_manifest()
+        .tools
+        .iter()
+        .find(|tool| tool.name == name)
 }
 
 #[derive(Debug)]
@@ -258,9 +286,10 @@ struct ToolIndexEntry {
 fn tool_index() -> &'static BTreeMap<String, ToolIndexEntry> {
     static INDEX: OnceLock<BTreeMap<String, ToolIndexEntry>> = OnceLock::new();
     INDEX.get_or_init(|| {
-        manifest()
+        cached_manifest()
             .tools
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|tool| {
                 let input_fields = tool
                     .input_schema
@@ -302,7 +331,7 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
 /// MCP tool. Runtime-only tools can define a narrow shared schema here without
 /// committing every generated SDK to their broader platform-specific shape.
 pub fn tool_success_output_schema(name: &str) -> Option<Value> {
-    tool_contract(name).and_then(|contract| contract.success_output_schema)
+    cached_tool_contract(name).and_then(|contract| contract.success_output_schema.clone())
 }
 
 /// The `outputSchema` one tool advertises on `tools/list`, or `None` when it
@@ -315,7 +344,12 @@ pub fn tool_success_output_schema(name: &str) -> Option<Value> {
 /// schema.
 pub fn advertised_tool_output_schema(name: &str) -> Option<Value> {
     let success = if is_action_result_tool(name) {
-        Some(<ActionResult as ToolOutput>::output_schema())
+        static ACTION_RESULT_SCHEMA: OnceLock<Value> = OnceLock::new();
+        Some(
+            ACTION_RESULT_SCHEMA
+                .get_or_init(<ActionResult as ToolOutput>::output_schema)
+                .clone(),
+        )
     } else {
         tool_success_output_schema(name)
     };
@@ -439,7 +473,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.8.0");
+        assert_eq!(manifest.contract_version, "0.9.0");
         assert!(manifest.experimental);
     }
 
@@ -555,7 +589,6 @@ mod tests {
 
         assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("prefer a short public session label"));
         assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("repeat it on every call that accepts it"));
-        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("implicit lifecycle session"));
     }
 
     #[test]
@@ -640,6 +673,25 @@ mod tests {
     }
 
     #[test]
+    fn invoke_menu_discloses_background_save_automation_consent() {
+        let description = tool_contract("invoke_menu")
+            .expect("invoke_menu contract")
+            .description;
+        for phrase in [
+            "On macOS, a disabled Save (⌘S) in a background document window",
+            "known document path",
+            "scripting interface using Apple Events",
+            "without activating the app",
+            "per-app Automation consent",
+            "may show macOS’s first-use consent prompt",
+            "denied permission refuses the save",
+            "never falls back to pixels",
+        ] {
+            assert!(description.contains(phrase), "missing disclosure: {phrase}");
+        }
+    }
+
+    #[test]
     fn invoke_menu_requires_an_exact_nonempty_bounded_path() {
         let contract = tool_contract("invoke_menu").expect("invoke_menu contract");
         assert_eq!(
@@ -656,7 +708,15 @@ mod tests {
         );
         assert_eq!(
             contract.capabilities,
-            vec!["menu.path.invoke", "accessibility.menu.native"]
+            vec![
+                "menu.path.invoke",
+                "accessibility.menu.native",
+                "input.delivery_mode"
+            ]
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["delivery_mode"]["enum"],
+            serde_json::json!(["background", "foreground"])
         );
     }
 
@@ -733,8 +793,6 @@ mod tests {
                 "effective_scope",
                 "desktop_capture_authorized",
                 "desktop_unlocked",
-                "escalation_reason",
-                "escalation_detail",
                 "active",
                 "revived",
             ]

@@ -21,6 +21,7 @@ import type {
   EnrollMethod,
   EnrollState,
   EnrollView,
+  MachinesAccountView,
 } from "./contracts/devices";
 import type { SettingsPage, SettingsRow, SettingsSection } from "./contracts/host";
 import type { NotificationInput, NotificationsView, SystemNote } from "./contracts/notifications";
@@ -46,6 +47,7 @@ import {
   chooseExperiment,
   cleanDeviceName,
   devicesView,
+  machinesAccount,
   enrollInitial,
   enrollReduce,
   enrollView,
@@ -100,10 +102,14 @@ export interface LoginItemData {
 export interface DevicesData {
   input: DevicesInput;
   view: DevicesView | null;
+  /** The Machines page's account part: waiting machines, this machine's trust, recent access. */
+  account: MachinesAccountView | null;
   /** The enroll sheet, while open. */
   enroll: { state: EnrollState; view: EnrollView | null } | null;
   /** The approval sheet, while open. */
   approve: { state: ApproveSheetState; view: ApproveSheetView | null } | null;
+  /** Sign-ins whose "Not now" was chosen this session: they wait quietly. */
+  dismissed: string[];
   /** A row action is running. */
   busy: boolean;
   /** The last row action's failure. */
@@ -365,8 +371,10 @@ export class SettingsFeature {
         done({
           input: this.devices,
           view: devicesView(this.core, this.devices, now),
+          account: machinesAccount(this.core, this.devices, now),
           enroll: this.enroll ? { state: this.enroll, view: enrollView(this.core, this.enroll) } : null,
           approve: this.approve ? { state: this.approve, view: approveView(this.core, this.approve, list) } : null,
+          dismissed: [...this.dismissed],
           busy: this.devicesBusy,
           actionError: this.devicesError,
           now,
@@ -391,7 +399,10 @@ export class SettingsFeature {
 
   private every(key: string, ms: number, f: () => unknown): void {
     if (this.timers.has(key) || this.disposed) return;
-    this.timers.set(key, setInterval(() => void f(), ms));
+    this.timers.set(
+      key,
+      setInterval(() => void f(), ms),
+    );
   }
 
   private stop(key: string): void {
@@ -593,6 +604,26 @@ export class SettingsFeature {
     this.publish("devices");
   }
 
+  /**
+   * "Add machine" on a machine waiting in the list: the machine is approved by its id (the
+   * person is signed in and sees it by name and system), with no code to type. The host still asks
+   * for presence first. A failure is thrown for the caller to show.
+   */
+  async addMachine(deviceId: string): Promise<void> {
+    const prompt = this.currentDevicesView()?.approvals.find((p) => p.deviceId === deviceId);
+    if (!prompt) return;
+    // The by-id request is what the core makes of an approval that needs no code.
+    this.approve = approveOpen(this.core, { ...prompt, expired: true });
+    this.publish("devices");
+    await this.approveDevice();
+    const failed = this.approve ? approveView(this.core, this.approve, this.devicesList())?.error : null;
+    if (failed) {
+      this.approve = null;
+      this.publish("devices");
+      throw new Error(failed);
+    }
+  }
+
   setApprovalCode(code: string): void {
     if (!this.approve) return;
     this.approve = approveReduce(this.core, this.approve, { type: "set-code", code }, this.devicesList());
@@ -769,6 +800,38 @@ export class SettingsFeature {
     if (this.pinned.has("notifications")) return;
     await this.adapter.call("notifications.markRead", { ids: [id] });
     // A poll that started before the ack may answer it unread: read again after it.
+    await this.inflight.get("notifications");
+    await this.refresh("notifications");
+  }
+
+  /** Deletes entries for good (this app's own here, the daemon's through
+   * `notifications.delete`). Gone from the list and the unread count at once. */
+  async deleteNotifications(ids: string[]): Promise<void> {
+    const gone = new Set(ids);
+    const mine = this.local.some((n) => gone.has(n.id));
+    if (mine) {
+      this.local = this.local.filter((n) => !gone.has(n.id));
+      this.saveLocal();
+    }
+    const theirs = this.feed.filter((n) => gone.has(n.id)).map((n) => n.id);
+    if (theirs.length) this.feed = this.feed.filter((n) => !gone.has(n.id));
+    if (mine || theirs.length) this.publish("notifications");
+    if (!theirs.length || this.pinned.has("notifications")) return;
+    await this.adapter.call("notifications.delete", { ids: theirs });
+    // A poll that started before the delete may still list them: read again after it.
+    await this.inflight.get("notifications");
+    await this.refresh("notifications");
+  }
+
+  /** Deletes every entry, this app's own and the daemon's. */
+  async deleteAllNotifications(): Promise<void> {
+    const had = this.local.length > 0 || this.feed.length > 0;
+    this.local = [];
+    this.saveLocal();
+    this.feed = [];
+    if (had) this.publish("notifications");
+    if (this.pinned.has("notifications")) return;
+    await this.adapter.call("notifications.deleteAll", {});
     await this.inflight.get("notifications");
     await this.refresh("notifications");
   }

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 
-# Prints the path of the cua-spacesd the app bundles in Contents/MacOS (its host service):
+# Prints the path of the cua-spacesd the app bundles in Contents/Helpers (its host service):
 # $CUA_SPACESD_BIN when set, else the pinned release (libs/cua-spacesd/VERSION,
 # the version cua-host downloads for CLI-only installs), downloaded once into
 # .build/spacesd/<version>/ and verified against its published sha256.

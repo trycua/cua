@@ -1,0 +1,6047 @@
+{
+ "cases": {
+  "cmd_background": {
+   "collected": {
+    "so": [
+     "done\n"
+    ]
+   },
+   "steps": {
+    "code_before": {
+     "ok": null,
+     "op": "@exit_code"
+    },
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "r": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "done\n"
+     },
+     "op": "@wait"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "done\n"
+     },
+     "op": "@wait"
+    },
+    "s4": {
+     "ok": 0,
+     "op": "@exit_code"
+    },
+    "s5": {
+     "ok": "done\n",
+     "op": "@stdout"
+    }
+   }
+  },
+  "cmd_background_disconnect_continues": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": null,
+     "op": "@disconnect"
+    },
+    "s2": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "late\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_background_kill": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": true,
+     "op": "@kill"
+    },
+    "s2": {
+     "op": "@wait",
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "message": "signal: killed",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s3": {
+     "ok": false,
+     "op": "@kill"
+    },
+    "s4": {
+     "ok": false,
+     "op": "commands.kill"
+    },
+    "s5": {
+     "ok": -1,
+     "op": "@exit_code"
+    },
+    "s6": {
+     "ok": "signal: killed",
+     "op": "@error"
+    }
+   }
+  },
+  "cmd_background_nonzero": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "op": "@wait",
+     "raised": {
+      "error": "exit status 5",
+      "exit_code": 5,
+      "message": "exit status 5",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "x\n",
+      "type": "CommandExitException"
+     }
+    },
+    "s2": {
+     "ok": 5,
+     "op": "@exit_code"
+    },
+    "s3": {
+     "ok": "exit status 5",
+     "op": "@error"
+    }
+   }
+  },
+  "cmd_binary_unicode_output": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "��\u0000ok"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "héllo wörld 日本語 🌍\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "a\u0000b"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "�"
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "x\n�",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_connect_existing": {
+   "collected": {
+    "so": [
+     "joined\n"
+    ]
+   },
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "h2": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.connect"
+    },
+    "s1": {
+     "ok": null,
+     "op": "@disconnect"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "joined\n"
+     },
+     "op": "@wait"
+    },
+    "s4": {
+     "op": "commands.connect",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    },
+    "s5": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.connect"
+    }
+   }
+  },
+  "cmd_connect_from_new_client": {
+   "collected": {
+    "so": [
+     "from-bg\n"
+    ]
+   },
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "h2": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.connect"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "from-bg\n"
+     },
+     "op": "@wait"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "second-client\n"
+     },
+     "op": "commands.run"
+    },
+    "sb2": {
+     "ok": {
+      "$sandbox": true
+     },
+     "op": "Sandbox.connect"
+    }
+   }
+  },
+  "cmd_cwd": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/tmp\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/tmp/c/cwd/sub\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[invalid_argument] cwd '/tmp/c/cwd/does-not-exist' does not exist",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s3": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[invalid_argument] cwd '/home/user/c/cwd' does not exist",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/home/user\n"
+     },
+     "op": "commands.run"
+    },
+    "s5": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/tmp/c/cwd\n"
+     },
+     "op": "commands.run"
+    },
+    "s6": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/proc\n"
+     },
+     "op": "commands.run"
+    },
+    "s7": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[invalid_argument] error starting process '/bin/bash -l -c pwd': fork/exec /bin/sh: permission denied",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s8": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/root\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_env_path_override": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "exit_code": 0,
+      "stdout": "ok\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_envs": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "[1][][multi\nline]\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "héllo 🌍\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "it's \"quoted\" $x `y`\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "3\n"
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_envs_override": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "from-create create\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "from-create run\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "from-create create\n"
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "from-create\n"
+     },
+     "op": "@wait"
+    }
+   }
+  },
+  "cmd_exit_codes": {
+   "steps": {
+    "s0": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 3",
+      "exit_code": 3,
+      "message": "exit status 3",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s1": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 255",
+      "exit_code": 255,
+      "message": "exit status 255",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 127",
+      "exit_code": 127,
+      "message": "exit status 127",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "/bin/bash: line 1: nonexistent-command-xyz: command not found\n",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s4": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 4",
+      "exit_code": 4,
+      "message": "exit status 4",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "err\n",
+      "stdout": "out\n",
+      "type": "CommandExitException"
+     }
+    },
+    "s5": {
+     "op": "commands.run",
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "message": "signal: killed",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s6": {
+     "op": "commands.run",
+     "raised": {
+      "error": "signal: terminated",
+      "exit_code": -1,
+      "message": "signal: terminated",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s7": {
+     "op": "commands.run",
+     "raised": {
+      "error": "signal: segmentation fault",
+      "exit_code": -1,
+      "message": "signal: segmentation fault",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s8": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 126",
+      "exit_code": 126,
+      "message": "exit status 126",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "/bin/bash: line 1: /etc/passwd: Permission denied\n",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s9": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 1",
+      "exit_code": 1,
+      "message": "exit status 1",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_exit_exception_fields": {
+   "collected": {
+    "se": [
+     "stderr-text\n"
+    ],
+    "so": [
+     "stdout-text\n"
+    ]
+   },
+   "steps": {
+    "s0": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 7",
+      "exit_code": 7,
+      "message": "exit status 7",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "stderr-text\n",
+      "stdout": "stdout-text\n",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_kill_other_user_process": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": true,
+     "op": "commands.kill"
+    },
+    "s2": {
+     "op": "@wait",
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "message": "signal: killed",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_kill_pid": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": true,
+     "op": "commands.kill"
+    },
+    "s2": {
+     "ok": false,
+     "op": "commands.kill"
+    },
+    "s3": {
+     "ok": false,
+     "op": "commands.kill"
+    },
+    "s4": {
+     "ok": false,
+     "op": "commands.kill"
+    },
+    "s5": {
+     "op": "commands.kill",
+     "raised": {
+      "message": "[invalid_argument] unmarshal message: unmarshal into *process.SendSignalRequest: proto: (line 1:19): invalid value for uint32 field pid: -5",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s6": {
+     "op": "@wait",
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "message": "signal: killed",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_large_output": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": {
+       "$str": 5000000,
+       "sha256": "c2eba0c1479c2c44"
+      }
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "exit_code": 0,
+      "stdout": {
+       "$str": 1288895,
+       "sha256": "5af7b95208fdcff4"
+      }
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_list": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": [
+      {
+       "args": [
+        "-l",
+        "-c",
+        "sleep 30"
+       ],
+       "cmd": "/bin/bash",
+       "cwd": "/tmp",
+       "envs.LISTENV": "1",
+       "tag": null
+      }
+     ],
+     "op": "commands.list"
+    },
+    "s2": {
+     "ok": true,
+     "op": "commands.kill"
+    },
+    "s3": {
+     "ok": [],
+     "op": "commands.list"
+    }
+   }
+  },
+  "cmd_long_running_stream": {
+   "collected": {
+    "ticks": [
+     "tick1\n",
+     "tick2\n",
+     "tick3\n",
+     "tick4\n",
+     "tick5\n",
+     "tick6\n"
+    ]
+   },
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "tick1\ntick2\ntick3\ntick4\ntick5\ntick6\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_parallel": {
+   "steps": {
+    "s0": {
+     "ok": [
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      },
+      {
+       "error": null,
+       "exit_code": 0,
+       "stderr": "",
+       "stdout": "par\n"
+      }
+     ],
+     "op": "parallel"
+    }
+   }
+  },
+  "cmd_pty_basic": {
+   "collected": {
+    "pty": {
+     "24 80": true,
+     "logout": true,
+     "pty-3": true
+    }
+   },
+   "steps": {
+    "p": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "pty.create"
+    },
+    "s1": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s2": {
+     "ok": null,
+     "op": "pty.send_stdin"
+    },
+    "s3": {
+     "op": "@wait",
+     "raised": {
+      "error": "exit status 3",
+      "exit_code": 3,
+      "message": "exit status 3",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_pty_resize_kill_connect": {
+   "collected": {
+    "pty": {
+     "40 100": true
+    },
+    "pty2": {
+     "second": true
+    }
+   },
+   "steps": {
+    "p": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "pty.create"
+    },
+    "p2": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "pty.connect"
+    },
+    "s1": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s10": {
+     "ok": false,
+     "op": "pty.kill"
+    },
+    "s11": {
+     "op": "pty.resize",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    },
+    "s12": {
+     "op": "pty.send_stdin",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    },
+    "s2": {
+     "ok": null,
+     "op": "pty.resize"
+    },
+    "s3": {
+     "ok": null,
+     "op": "pty.send_stdin"
+    },
+    "s4": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s6": {
+     "ok": null,
+     "op": "pty.send_stdin"
+    },
+    "s7": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s8": {
+     "ok": true,
+     "op": "pty.kill"
+    },
+    "s9": {
+     "op": "@wait",
+     "raised": {
+      "error": "signal: killed",
+      "exit_code": -1,
+      "message": "signal: killed",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    }
+   }
+  },
+  "cmd_pty_user_cwd_envs": {
+   "collected": {
+    "pty": {
+     "[root][/tmp][yes][xterm-256color]": true
+    }
+   },
+   "steps": {
+    "p": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "pty.create"
+    },
+    "s1": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s2": {
+     "ok": null,
+     "op": "pty.send_stdin"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "@wait"
+    }
+   }
+  },
+  "cmd_request_timeout": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "ok\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_run_basic": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "hi\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "no newline"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_shell_environment": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/bin/bash\n/bin/bash\nlogin\nnotty0\nnotty1\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "HOME=/home/user USER=user LOGNAME=user\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_special_cmds": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "A B C D\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "heredoc $HOME\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "42\nbt\nsub\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 1",
+      "exit_code": 1,
+      "message": "exit status 1",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "a\nb\nee\n"
+     },
+     "op": "commands.run"
+    },
+    "s5": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s6": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s7": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_stdin": {
+   "collected": {
+    "so": "hello\nwörld 🌍\n\u0003�Q��F�"
+   },
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": null,
+     "op": "commands.send_stdin"
+    },
+    "s2": {
+     "ok": null,
+     "op": "commands.send_stdin"
+    },
+    "s3": {
+     "ok": null,
+     "op": "commands.send_stdin"
+    },
+    "s4": {
+     "ok": null,
+     "op": "commands.close_stdin"
+    },
+    "s5": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "hello\nwörld 🌍\n\u0003�Q��F�"
+     },
+     "op": "@wait"
+    }
+   }
+  },
+  "cmd_stdin_errors": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s0": {
+     "op": "commands.send_stdin",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    },
+    "s1": {
+     "op": "commands.close_stdin",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    },
+    "s3": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "nostdin\n"
+     },
+     "op": "@wait"
+    },
+    "s5": {
+     "op": "commands.send_stdin",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    }
+   }
+  },
+  "cmd_stdin_large": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": null,
+     "op": "commands.send_stdin"
+    },
+    "s2": {
+     "ok": null,
+     "op": "commands.send_stdin"
+    },
+    "s3": {
+     "ok": null,
+     "op": "commands.close_stdin"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "400000\n"
+     },
+     "op": "@wait"
+    }
+   }
+  },
+  "cmd_stdin_not_enabled": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s2": {
+     "op": "commands.send_stdin",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    },
+    "s3": {
+     "op": "commands.close_stdin",
+     "raised": {
+      "message": "[not_found] process with pid <pid> not found",
+      "mro": [
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "NotFoundException"
+     }
+    },
+    "s4": {
+     "ok": false,
+     "op": "commands.kill"
+    }
+   }
+  },
+  "cmd_stdin_not_enabled_running": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "op": "commands.send_stdin",
+     "raised": {
+      "message": "13: [internal] error writing to stdin: stdin not enabled or closed",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s2": {
+     "ok": null,
+     "op": "commands.close_stdin"
+    },
+    "s3": {
+     "ok": true,
+     "op": "commands.kill"
+    }
+   }
+  },
+  "cmd_stdin_read_line": {
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": null,
+     "op": "commands.send_stdin"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "got:hello\n"
+     },
+     "op": "@wait"
+    }
+   }
+  },
+  "cmd_stream_chunking": {
+   "collected": {
+    "chunks": "ab\nc"
+   },
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "ab\nc"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "exit_code": 0
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_stream_input": {
+   "collected": {
+    "so": "streamed one\nstreamed two ü\n"
+   },
+   "steps": {
+    "h": {
+     "ok": {
+      "$handle": true,
+      "pid": "<pid>"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": null,
+     "op": "@send"
+    },
+    "s3": {
+     "ok": null,
+     "op": "@send"
+    },
+    "s4": {
+     "ok": null,
+     "op": "@close"
+    },
+    "s5": {
+     "ok": null,
+     "op": "commands.close_stdin"
+    },
+    "s6": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "streamed one\nstreamed two ü\n"
+     },
+     "op": "@wait"
+    }
+   }
+  },
+  "cmd_stream_order": {
+   "collected": {
+    "lines": "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79\nline80\nline81\nline82\nline83\nline84\nline85\nline86\nline87\nline88\nline89\nline90\nline91\nline92\nline93\nline94\nline95\nline96\nline97\nline98\nline99\nline100\nline101\nline102\nline103\nline104\nline105\nline106\nline107\nline108\nline109\nline110\nline111\nline112\nline113\nline114\nline115\nline116\nline117\nline118\nline119\nline120\nline121\nline122\nline123\nline124\nline125\nline126\nline127\nline128\nline129\nline130\nline131\nline132\nline133\nline134\nline135\nline136\nline137\nline138\nline139\nline140\nline141\nline142\nline143\nline144\nline145\nline146\nline147\nline148\nline149\nline150\nline151\nline152\nline153\nline154\nline155\nline156\nline157\nline158\nline159\nline160\nline161\nline162\nline163\nline164\nline165\nline166\nline167\nline168\nline169\nline170\nline171\nline172\nline173\nline174\nline175\nline176\nline177\nline178\nline179\nline180\nline181\nline182\nline183\nline184\nline185\nline186\nline187\nline188\nline189\nline190\nline191\nline192\nline193\nline194\nline195\nline196\nline197\nline198\nline199\nline200\n",
+    "order": [
+     "o:o1\n",
+     "e:e1\n",
+     "o:o2\n",
+     "e:e2\n",
+     "o:o3\n",
+     "e:e3\n",
+     "o:o4\n",
+     "e:e4\n"
+    ]
+   },
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "e1\ne2\ne3\ne4\n",
+      "stdout": "o1\no2\no3\no4\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51\nline52\nline53\nline54\nline55\nline56\nline57\nline58\nline59\nline60\nline61\nline62\nline63\nline64\nline65\nline66\nline67\nline68\nline69\nline70\nline71\nline72\nline73\nline74\nline75\nline76\nline77\nline78\nline79\nline80\nline81\nline82\nline83\nline84\nline85\nline86\nline87\nline88\nline89\nline90\nline91\nline92\nline93\nline94\nline95\nline96\nline97\nline98\nline99\nline100\nline101\nline102\nline103\nline104\nline105\nline106\nline107\nline108\nline109\nline110\nline111\nline112\nline113\nline114\nline115\nline116\nline117\nline118\nline119\nline120\nline121\nline122\nline123\nline124\nline125\nline126\nline127\nline128\nline129\nline130\nline131\nline132\nline133\nline134\nline135\nline136\nline137\nline138\nline139\nline140\nline141\nline142\nline143\nline144\nline145\nline146\nline147\nline148\nline149\nline150\nline151\nline152\nline153\nline154\nline155\nline156\nline157\nline158\nline159\nline160\nline161\nline162\nline163\nline164\nline165\nline166\nline167\nline168\nline169\nline170\nline171\nline172\nline173\nline174\nline175\nline176\nline177\nline178\nline179\nline180\nline181\nline182\nline183\nline184\nline185\nline186\nline187\nline188\nline189\nline190\nline191\nline192\nline193\nline194\nline195\nline196\nline197\nline198\nline199\nline200\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_timeout": {
+   "collected": {
+    "so": []
+   },
+   "steps": {
+    "s0": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[deadline_exceeded] the operation timed out: This error is likely due to exceeding 'timeoutMs' — the total time a long running request (like command execution or directory watch) can be active. It can be modified by passing 'timeoutMs' when making the request. Use '0' to disable the timeout.",
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "TimeoutException"
+     }
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "fast\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "ok\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[deadline_exceeded] the operation timed out: This error is likely due to exceeding 'timeoutMs' — the total time a long running request (like command execution or directory watch) can be active. It can be modified by passing 'timeoutMs' when making the request. Use '0' to disable the timeout.",
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "TimeoutException"
+     }
+    }
+   }
+  },
+  "cmd_timeout_process_survives": {
+   "steps": {
+    "s0": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[deadline_exceeded] the operation timed out: This error is likely due to exceeding 'timeoutMs' — the total time a long running request (like command execution or directory watch) can be active. It can be modified by passing 'timeoutMs' when making the request. Use '0' to disable the timeout.",
+      "mro": [
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "TimeoutException"
+     }
+    },
+    "s1": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "survived\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "cmd_users": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "user\n/home/user\n/home/user\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "root\n/root\n/home/user\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[unauthenticated] invalid username: 'nobody-such-user'",
+      "mro": [
+       "AuthenticationException"
+      ],
+      "type": "AuthenticationException"
+     }
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "root\n"
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "root\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "files_binary_roundtrip": {
+   "steps": {
+    "asText": {
+     "ok": {
+      "$str": 58868,
+      "sha256": "9f156083a6c6b7fc"
+     },
+     "op": "files.read"
+    },
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "all.bin",
+      "path": "/tmp/c/fb/all.bin",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "$bytes": 65536,
+      "sha256": "3514213f65c57589"
+     },
+     "op": "files.read"
+    },
+    "s2": {
+     "ok": {
+      "metadata": null,
+      "name": "zero.bin",
+      "path": "/tmp/c/fb/zero.bin",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s3": {
+     "ok": {
+      "$bytes": 100000,
+      "sha256": "9192c25b734fcbad"
+     },
+     "op": "files.read"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "3514213f65c57589\n100000\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "files_entry_shapes": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "group": "user",
+      "mode": 493,
+      "modified_time": "<masked>",
+      "name": "f.txt",
+      "owner": "user",
+      "path": "/tmp/c/fes/f.txt",
+      "permissions": "urwxr-xr-x",
+      "size": 5,
+      "symlink_target": null,
+      "type": "file"
+     },
+     "op": "files.get_info"
+    },
+    "s10": {
+     "ok": [
+      {
+       "mode": 420,
+       "name": "broken",
+       "owner": "user",
+       "permissions": "Lrwxrwxrwx",
+       "symlink_target": "/nonexistent",
+       "type": "symlink"
+      },
+      {
+       "mode": 511,
+       "name": "dir",
+       "owner": "user",
+       "permissions": "dtrwxrwxrwx",
+       "symlink_target": null,
+       "type": "dir"
+      },
+      {
+       "mode": 511,
+       "name": "dlink",
+       "owner": "user",
+       "permissions": "Lrwxrwxrwx",
+       "symlink_target": "/tmp/c/fes/dir",
+       "type": "symlink"
+      },
+      {
+       "mode": 493,
+       "name": "f.txt",
+       "owner": "user",
+       "permissions": "urwxr-xr-x",
+       "symlink_target": null,
+       "type": "file"
+      },
+      {
+       "mode": 493,
+       "name": "hard",
+       "owner": "user",
+       "permissions": "urwxr-xr-x",
+       "symlink_target": null,
+       "type": "file"
+      },
+      {
+       "mode": 493,
+       "name": "link",
+       "owner": "user",
+       "permissions": "Lrwxrwxrwx",
+       "symlink_target": "/tmp/c/fes/f.txt",
+       "type": "symlink"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s11": {
+     "ok": [],
+     "op": "files.list"
+    },
+    "s2": {
+     "ok": {
+      "group": "user",
+      "mode": 493,
+      "name": "link",
+      "owner": "user",
+      "path": "/tmp/c/fes/link",
+      "permissions": "Lrwxrwxrwx",
+      "size": 5,
+      "symlink_target": "/tmp/c/fes/f.txt",
+      "type": "symlink"
+     },
+     "op": "files.get_info"
+    },
+    "s3": {
+     "ok": {
+      "group": "user",
+      "metadata": null,
+      "mode": 420,
+      "modified_time": "<masked>",
+      "name": "broken",
+      "owner": "user",
+      "path": "/tmp/c/fes/broken",
+      "permissions": "Lrwxrwxrwx",
+      "size": 12,
+      "symlink_target": "/nonexistent",
+      "type": "symlink"
+     },
+     "op": "files.get_info"
+    },
+    "s4": {
+     "ok": {
+      "group": "user",
+      "mode": 511,
+      "name": "dlink",
+      "owner": "user",
+      "path": "/tmp/c/fes/dlink",
+      "permissions": "Lrwxrwxrwx",
+      "size": 3,
+      "symlink_target": "/tmp/c/fes/dir",
+      "type": "symlink"
+     },
+     "op": "files.get_info"
+    },
+    "s5": {
+     "ok": {
+      "mode": 511,
+      "name": "dir",
+      "permissions": "dtrwxrwxrwx",
+      "type": "dir"
+     },
+     "op": "files.get_info"
+    },
+    "s6": {
+     "ok": {
+      "name": "fifo",
+      "permissions": "prw-r--r--",
+      "type": null
+     },
+     "op": "files.get_info"
+    },
+    "s7": {
+     "ok": {
+      "mode": 493,
+      "name": "hard",
+      "permissions": "urwxr-xr-x",
+      "size": 5,
+      "type": "file"
+     },
+     "op": "files.get_info"
+    },
+    "s8": {
+     "ok": {
+      "mode": 511,
+      "name": "tmp",
+      "permissions": "dtrwxrwxrwx",
+      "type": "dir"
+     },
+     "op": "files.get_info"
+    },
+    "s9": {
+     "ok": {
+      "mode": 438,
+      "name": "null",
+      "permissions": "Dcrw-rw-rw-",
+      "type": null
+     },
+     "op": "files.get_info"
+    }
+   }
+  },
+  "files_exists": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s2": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s3": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s4": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s5": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s6": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s7": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s8": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s9": {
+     "ok": true,
+     "op": "files.exists"
+    }
+   }
+  },
+  "files_get_info": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "group": "user",
+      "mode": 416,
+      "name": "f.txt",
+      "owner": "user",
+      "path": "/tmp/c/fi/f.txt",
+      "permissions": "-rw-r-----",
+      "size": 5,
+      "symlink_target": null,
+      "type": "file"
+     },
+     "op": "files.get_info"
+    },
+    "s10": {
+     "ok": {
+      "name": ".bashrc",
+      "owner": "root",
+      "permissions": "-rw-r--r--",
+      "type": "file"
+     },
+     "op": "files.get_info"
+    },
+    "s11": {
+     "ok": {
+      "name": "null",
+      "permissions": "Dcrw-rw-rw-",
+      "type": null
+     },
+     "op": "files.get_info"
+    },
+    "s12": {
+     "ok": {
+      "type": "symlink"
+     },
+     "op": "files.get_info"
+    },
+    "s13": {
+     "ok": {
+      "name": "/",
+      "path": "/",
+      "type": "dir"
+     },
+     "op": "files.get_info"
+    },
+    "s14": {
+     "ok": {
+      "name": "user",
+      "owner": "user",
+      "path": "/home/user",
+      "type": "dir"
+     },
+     "op": "files.get_info"
+    },
+    "s2": {
+     "ok": {
+      "group": "user",
+      "mode": 488,
+      "name": "d",
+      "owner": "user",
+      "path": "/tmp/c/fi/d",
+      "permissions": "drwxr-x---",
+      "symlink_target": null,
+      "type": "dir"
+     },
+     "op": "files.get_info"
+    },
+    "s3": {
+     "ok": {
+      "group": "user",
+      "mode": 416,
+      "name": "link",
+      "owner": "user",
+      "path": "/tmp/c/fi/link",
+      "permissions": "Lrwxrwxrwx",
+      "size": 5,
+      "symlink_target": "/tmp/c/fi/f.txt",
+      "type": "symlink"
+     },
+     "op": "files.get_info"
+    },
+    "s4": {
+     "ok": {
+      "name": "broken",
+      "path": "/tmp/c/fi/broken",
+      "symlink_target": "/tmp/c/fi/broken",
+      "type": "symlink"
+     },
+     "op": "files.get_info"
+    },
+    "s5": {
+     "ok": {
+      "name": "dlink",
+      "path": "/tmp/c/fi/dlink",
+      "symlink_target": "/tmp/c/fi/d",
+      "type": "symlink"
+     },
+     "op": "files.get_info"
+    },
+    "s6": {
+     "op": "files.get_info",
+     "raised": {
+      "message": "[not_found] file not found: lstat /tmp/c/fi/nope: no such file or directory",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s7": {
+     "ok": {
+      "group": "user",
+      "owner": "user"
+     },
+     "op": "files.get_info"
+    },
+    "s8": {
+     "ok": {
+      "group": "shadow",
+      "name": "shadow",
+      "owner": "root",
+      "permissions": "-rw-r-----",
+      "type": "file"
+     },
+     "op": "files.get_info"
+    },
+    "s9": {
+     "ok": {
+      "name": "root",
+      "owner": "root",
+      "permissions": "drwx------",
+      "type": "dir"
+     },
+     "op": "files.get_info"
+    }
+   }
+  },
+  "files_large": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "big.bin",
+      "path": "/tmp/c/fl/big.bin",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "64000000\nc524cc88c2369bb4\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "$bytes": 64000000,
+      "sha256": "c524cc88c2369bb4"
+     },
+     "op": "files.read"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "files_list": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": [
+      {
+       "name": ".hidden",
+       "path": "/tmp/c/fl2/.hidden",
+       "symlink_target": null,
+       "type": "file"
+      },
+      {
+       "name": "a",
+       "path": "/tmp/c/fl2/a",
+       "symlink_target": null,
+       "type": "dir"
+      },
+      {
+       "name": "empty",
+       "path": "/tmp/c/fl2/empty",
+       "symlink_target": null,
+       "type": "dir"
+      },
+      {
+       "name": "f1",
+       "path": "/tmp/c/fl2/f1",
+       "symlink_target": null,
+       "type": "file"
+      },
+      {
+       "name": "lnk",
+       "path": "/tmp/c/fl2/lnk",
+       "symlink_target": "/tmp/c/fl2/f1",
+       "type": "symlink"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s10": {
+     "op": "files.list",
+     "raised": {
+      "message": "[invalid_argument] path is not a directory: /tmp/c/fl2/f1",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s11": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s12": {
+     "ok": [
+      {
+       "name": ".b",
+       "owner": "root"
+      },
+      {
+       "name": "a",
+       "owner": "root"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s13": {
+     "ok": [
+      {
+       "name": ".b",
+       "owner": "root"
+      },
+      {
+       "name": "a",
+       "owner": "root"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s14": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s15": {
+     "ok": [
+      {
+       "name": ".b",
+       "owner": "root"
+      },
+      {
+       "name": "a",
+       "owner": "root"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s16": {
+     "ok": [
+      {
+       "name": ".b",
+       "owner": "root"
+      },
+      {
+       "name": "a",
+       "owner": "root"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s17": {
+     "ok": [
+      {
+       "path": "/tmp/c/fl2/.hidden"
+      },
+      {
+       "path": "/tmp/c/fl2/a"
+      },
+      {
+       "path": "/tmp/c/fl2/empty"
+      },
+      {
+       "path": "/tmp/c/fl2/f1"
+      },
+      {
+       "path": "/tmp/c/fl2/lnk"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s2": {
+     "ok": [
+      {
+       "path": "/tmp/c/fl2/.hidden",
+       "type": "file"
+      },
+      {
+       "path": "/tmp/c/fl2/a",
+       "type": "dir"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b",
+       "type": "dir"
+      },
+      {
+       "path": "/tmp/c/fl2/a/f2",
+       "type": "file"
+      },
+      {
+       "path": "/tmp/c/fl2/empty",
+       "type": "dir"
+      },
+      {
+       "path": "/tmp/c/fl2/f1",
+       "type": "file"
+      },
+      {
+       "path": "/tmp/c/fl2/lnk",
+       "type": "symlink"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s3": {
+     "ok": [
+      {
+       "path": "/tmp/c/fl2/.hidden",
+       "type": "file"
+      },
+      {
+       "path": "/tmp/c/fl2/a",
+       "type": "dir"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b",
+       "type": "dir"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b/c",
+       "type": "dir"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b/f3",
+       "type": "file"
+      },
+      {
+       "path": "/tmp/c/fl2/a/f2",
+       "type": "file"
+      },
+      {
+       "path": "/tmp/c/fl2/empty",
+       "type": "dir"
+      },
+      {
+       "path": "/tmp/c/fl2/f1",
+       "type": "file"
+      },
+      {
+       "path": "/tmp/c/fl2/lnk",
+       "type": "symlink"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s4": {
+     "ok": [
+      {
+       "path": "/tmp/c/fl2/.hidden"
+      },
+      {
+       "path": "/tmp/c/fl2/a"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b/c"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b/c/f4"
+      },
+      {
+       "path": "/tmp/c/fl2/a/b/f3"
+      },
+      {
+       "path": "/tmp/c/fl2/a/f2"
+      },
+      {
+       "path": "/tmp/c/fl2/empty"
+      },
+      {
+       "path": "/tmp/c/fl2/f1"
+      },
+      {
+       "path": "/tmp/c/fl2/lnk"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s5": {
+     "op": "files.list",
+     "raised": {
+      "message": "depth should be at least one",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s6": {
+     "op": "files.list",
+     "raised": {
+      "message": "depth should be at least one",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s7": {
+     "ok": [],
+     "op": "files.list"
+    },
+    "s8": {
+     "op": "files.list",
+     "raised": {
+      "message": "[invalid_argument] path is not a directory: /tmp/c/fl2/f1",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s9": {
+     "op": "files.list",
+     "raised": {
+      "message": "[not_found] path not found: lstat /tmp/c/fl2/nope: no such file or directory",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    }
+   }
+  },
+  "files_make_dir": {
+   "steps": {
+    "s0": {
+     "ok": true,
+     "op": "files.make_dir"
+    },
+    "s1": {
+     "ok": false,
+     "op": "files.make_dir"
+    },
+    "s2": {
+     "ok": true,
+     "op": "files.make_dir"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "op": "files.make_dir",
+     "raised": {
+      "message": "[invalid_argument] path already exists but it is not a directory: /tmp/c/fm/file",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s5": {
+     "op": "files.make_dir",
+     "raised": {
+      "message": "13: [internal] error getting file info: stat /tmp/c/fm/file/sub: not a directory",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s6": {
+     "ok": true,
+     "op": "files.make_dir"
+    },
+    "s7": {
+     "ok": true,
+     "op": "files.make_dir"
+    },
+    "s8": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "755 user\n755 user\n755 user\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "files_permissions": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "default.txt",
+      "path": "/tmp/c/fp/default.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "metadata": null,
+      "name": "root.txt",
+      "path": "/tmp/c/fp/root.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s10": {
+     "ok": {
+      "metadata": null,
+      "name": "x",
+      "path": "/tmp/c/fp/ro-dir/x",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s11": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s12": {
+     "ok": {
+      "metadata": null,
+      "name": "y",
+      "path": "/tmp/c/fp/ro-dir/y",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s13": {
+     "op": "files.list",
+     "raised": {
+      "message": "[unauthenticated] invalid username: 'nobody-such-user'",
+      "mro": [
+       "AuthenticationException"
+      ],
+      "type": "AuthenticationException"
+     }
+    },
+    "s14": {
+     "op": "files.read",
+     "raised": {
+      "message": "error looking up user 'nobody-such-user': user: unknown user nobody-such-user",
+      "mro": [
+       "AuthenticationException"
+      ],
+      "type": "AuthenticationException"
+     }
+    },
+    "s15": {
+     "ok": {
+      "metadata": null,
+      "name": "other-user.txt",
+      "path": "/tmp/c/fp/other-user.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s16": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "nobody\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/tmp/c/fp/default.txt 644 user:user\n/tmp/c/fp/root.txt 644 root:root\n/tmp/c/fp 755 user:user\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": "x",
+     "op": "files.read"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s5": {
+     "ok": "x",
+     "op": "files.read"
+    },
+    "s6": {
+     "ok": "x",
+     "op": "files.read"
+    },
+    "s7": {
+     "ok": {
+      "metadata": null,
+      "name": "root.txt",
+      "path": "/tmp/c/fp/root.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s8": {
+     "ok": {
+      "metadata": null,
+      "name": "denied.txt",
+      "path": "/root/denied.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s9": {
+     "ok": {
+      "metadata": null,
+      "name": "denied.conf",
+      "path": "/etc/denied.conf",
+      "type": "file"
+     },
+     "op": "files.write"
+    }
+   }
+  },
+  "files_read_errors": {
+   "steps": {
+    "s0": {
+     "op": "files.read",
+     "raised": {
+      "message": "path '/tmp/c/nope/missing.txt' does not exist",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s1": {
+     "op": "files.read",
+     "raised": {
+      "message": "path '/tmp/c' is a directory",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s2": {
+     "op": "files.read",
+     "raised": {
+      "message": "path '/home/user' is a directory",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s3": {
+     "op": "files.read",
+     "raised": {
+      "message": "path '/tmp/c/frd/is-dir' does not exist",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s4": {
+     "ok": "",
+     "op": "files.read"
+    },
+    "s5": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "ok\n"
+     },
+     "op": "commands.run"
+    },
+    "s6": {
+     "ok": {
+      "name": "fifo-test",
+      "type": null
+     },
+     "op": "files.get_info"
+    }
+   }
+  },
+  "files_relative_paths": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "a.txt",
+      "path": "/home/user/rel/a.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "metadata": null,
+      "name": "b.txt",
+      "path": "/home/user/rel/b.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s10": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "metadata": null,
+      "name": "c.txt",
+      "path": "/home/user/rel/c.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "d.txt",
+      "path": "/home/user/rel/d.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": [
+      {
+       "name": "a.txt",
+       "path": "/home/user/rel/a.txt"
+      },
+      {
+       "name": "b.txt",
+       "path": "/home/user/rel/b.txt"
+      },
+      {
+       "name": "c.txt",
+       "path": "/home/user/rel/c.txt"
+      },
+      {
+       "name": "d.txt",
+       "path": "/home/user/rel/d.txt"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s5": {
+     "ok": [
+      {
+       "path": "/home/user/rel/a.txt"
+      },
+      {
+       "path": "/home/user/rel/b.txt"
+      },
+      {
+       "path": "/home/user/rel/c.txt"
+      },
+      {
+       "path": "/home/user/rel/d.txt"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s6": {
+     "ok": "a",
+     "op": "files.read"
+    },
+    "s7": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s8": {
+     "ok": {
+      "metadata": null,
+      "name": "a.txt",
+      "path": "/root/rel/a.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s9": {
+     "ok": "root-write",
+     "op": "files.read"
+    }
+   }
+  },
+  "files_remove": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s10": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s2": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s3": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s4": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s5": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s6": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s7": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s8": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s9": {
+     "ok": null,
+     "op": "files.remove"
+    }
+   }
+  },
+  "files_rename": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "name": "a2",
+      "path": "/tmp/c/frn/a2",
+      "size": 2,
+      "type": "file"
+     },
+     "op": "files.rename"
+    },
+    "s10": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "user\nuser\n"
+     },
+     "op": "commands.run"
+    },
+    "s11": {
+     "op": "files.rename",
+     "raised": {
+      "message": "13: [internal] error renaming: rename /tmp/c/frn/dir2 /tmp/c/frn/other: file exists",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s12": {
+     "op": "files.rename",
+     "raised": {
+      "message": "[not_found] source file not found: rename /tmp/c/frn/b /tmp/c/frn/b: no such file or directory",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s13": {
+     "op": "files.rename",
+     "raised": {
+      "message": "[not_found] source file not found: rename /tmp/c/frn/b /root/b: no such file or directory",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s2": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s3": {
+     "ok": {
+      "name": "b",
+      "path": "/tmp/c/frn/b"
+     },
+     "op": "files.rename"
+    },
+    "s4": {
+     "ok": "a\n",
+     "op": "files.read"
+    },
+    "s5": {
+     "ok": {
+      "name": "dir2",
+      "path": "/tmp/c/frn/dir2",
+      "type": "dir"
+     },
+     "op": "files.rename"
+    },
+    "s6": {
+     "ok": [
+      {
+       "path": "/tmp/c/frn/b"
+      },
+      {
+       "path": "/tmp/c/frn/dir2"
+      },
+      {
+       "path": "/tmp/c/frn/dir2/sub"
+      },
+      {
+       "path": "/tmp/c/frn/dir2/sub/c"
+      },
+      {
+       "path": "/tmp/c/frn/other"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s7": {
+     "op": "files.rename",
+     "raised": {
+      "message": "[not_found] source file not found: rename /tmp/c/frn/nope /tmp/c/frn/x: no such file or directory",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s8": {
+     "ok": {
+      "path": "/tmp/c/frn/no/such/parent/b"
+     },
+     "op": "files.rename"
+    },
+    "s9": {
+     "op": "files.rename",
+     "raised": {
+      "message": "[not_found] source file not found: rename /tmp/c/frn/b /tmp/c/frn/other: no such file or directory",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    }
+   }
+  },
+  "files_signed_urls": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "dl.txt",
+      "path": "/tmp/c/fu/dl.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s10": {
+     "ok": {
+      "body": [
+       {
+        "name": "up.txt",
+        "path": "/tmp/c/fu/up.txt",
+        "type": "file"
+       }
+      ],
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s11": {
+     "ok": "raw octet",
+     "op": "files.read"
+    },
+    "s12": {
+     "ok": {
+      "body": {
+       "code": 401,
+       "message": "invalid signature"
+      },
+      "status": 401
+     },
+     "op": "http"
+    },
+    "s14": {
+     "ok": {
+      "body": [
+       {
+        "name": "default-user.txt",
+        "path": "/tmp/c/fu/default-user.txt",
+        "type": "file"
+       }
+      ],
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s15": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "user\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "body": "download me",
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s4": {
+     "ok": {
+      "body": "download me",
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s6": {
+     "ok": {
+      "body": {
+       "code": 404,
+       "message": "path '/tmp/c/fu/nope.txt' does not exist"
+      },
+      "status": 404
+     },
+     "op": "http"
+    },
+    "s8": {
+     "ok": {
+      "body": [
+       {
+        "name": "up.txt",
+        "path": "/tmp/c/fu/up.txt",
+        "type": "file"
+       }
+      ],
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s9": {
+     "ok": "uploaded",
+     "op": "files.read"
+    }
+   }
+  },
+  "files_stream_io": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "stream.bin",
+      "path": "/tmp/c/fs/stream.bin",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "$bytes": 3000000,
+      "sha256": "5d3807249c3ec586"
+     },
+     "op": "files.read"
+    },
+    "s2": {
+     "ok": {
+      "$bytes": 3000000,
+      "sha256": "5d3807249c3ec586"
+     },
+     "op": "files.read"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "3000000\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "files_symlinks": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": "target-data\n",
+     "op": "files.read"
+    },
+    "s10": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "still-link\n"
+     },
+     "op": "commands.run"
+    },
+    "s11": {
+     "ok": {
+      "metadata": null,
+      "name": "bad",
+      "path": "/tmp/c/fsl/bad",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s12": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s13": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s2": {
+     "ok": "target-data\n",
+     "op": "files.read"
+    },
+    "s3": {
+     "ok": "target-data\n",
+     "op": "files.read"
+    },
+    "s4": {
+     "op": "files.read",
+     "raised": {
+      "message": "path '/tmp/c/fsl/bad' does not exist",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s5": {
+     "op": "files.read",
+     "raised": {
+      "message": "path '/tmp/c/fsl/dl' is a directory",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s6": {
+     "ok": [
+      {
+       "name": "t.txt",
+       "path": "/tmp/c/fsl/dl/t.txt"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s7": {
+     "ok": [
+      {
+       "name": "chain",
+       "symlink_target": "/tmp/c/fsl/real/t.txt",
+       "type": "symlink"
+      },
+      {
+       "name": "dl",
+       "symlink_target": "/tmp/c/fsl/real",
+       "type": "symlink"
+      },
+      {
+       "name": "fl",
+       "symlink_target": "/tmp/c/fsl/real/t.txt",
+       "type": "symlink"
+      },
+      {
+       "name": "real",
+       "symlink_target": null,
+       "type": "dir"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s8": {
+     "ok": {
+      "metadata": null,
+      "name": "fl",
+      "path": "/tmp/c/fsl/fl",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s9": {
+     "ok": "written-through-link",
+     "op": "files.read"
+    }
+   }
+  },
+  "files_text_roundtrip": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "a.txt",
+      "path": "/tmp/c/ft/a.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": "héllo wörld 🌍\nline2",
+     "op": "files.read"
+    },
+    "s2": {
+     "ok": {
+      "$bytes": 24,
+      "sha256": "c43dba52176f1061"
+     },
+     "op": "files.read"
+    },
+    "s4": {
+     "ok": {
+      "metadata": null,
+      "name": "a.txt",
+      "path": "/tmp/c/ft/a.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s5": {
+     "ok": "overwritten",
+     "op": "files.read"
+    },
+    "s6": {
+     "ok": {
+      "metadata": null,
+      "name": "empty.txt",
+      "path": "/tmp/c/ft/empty.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s7": {
+     "ok": "",
+     "op": "files.read"
+    },
+    "s8": {
+     "ok": {
+      "group": "user",
+      "mode": 420,
+      "name": "empty.txt",
+      "owner": "user",
+      "path": "/tmp/c/ft/empty.txt",
+      "permissions": "-rw-r--r--",
+      "size": 0,
+      "symlink_target": null,
+      "type": "file"
+     },
+     "op": "files.get_info"
+    }
+   }
+  },
+  "files_watch_basic": {
+   "collected": {
+    "events_set": [
+     "new.txt:chmod",
+     "new.txt:create",
+     "new.txt:rename",
+     "new.txt:write",
+     "renamed.txt:chmod",
+     "renamed.txt:create",
+     "renamed.txt:remove",
+     "subdir:chmod",
+     "subdir:create"
+    ]
+   },
+   "steps": {
+    "s0": {
+     "ok": true,
+     "op": "files.make_dir"
+    },
+    "s10": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s11": {
+     "ok": true,
+     "op": "files.make_dir"
+    },
+    "s12": {
+     "ok": {
+      "metadata": null,
+      "name": "inner.txt",
+      "path": "/tmp/c/fwa/subdir/inner.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s13": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s14": {
+     "ok": null,
+     "op": "files.remove"
+    },
+    "s15": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s16": {
+     "ok": null,
+     "op": "@stop"
+    },
+    "s17": {
+     "ok": {
+      "metadata": null,
+      "name": "after-stop.txt",
+      "path": "/tmp/c/fwa/after-stop.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s18": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s2": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "new.txt",
+      "path": "/tmp/c/fwa/new.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s5": {
+     "ok": {
+      "metadata": null,
+      "name": "new.txt",
+      "path": "/tmp/c/fwa/new.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s6": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s8": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s9": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "w": {
+     "ok": {
+      "events": {},
+      "on_exit": null,
+      "stopped": false
+     },
+     "op": "files.watch_dir"
+    }
+   }
+  },
+  "files_watch_errors": {
+   "steps": {
+    "s0": {
+     "op": "files.watch_dir",
+     "raised": {
+      "message": "[not_found] path /tmp/c/fwe-missing not found: stat /tmp/c/fwe-missing: no such file or directory",
+      "mro": [
+       "FileNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "FileNotFoundException"
+     }
+    },
+    "s1": {
+     "ok": {
+      "metadata": null,
+      "name": "fwe-file.txt",
+      "path": "/tmp/c/fwe-file.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s2": {
+     "op": "files.watch_dir",
+     "raised": {
+      "message": "[invalid_argument] path /tmp/c/fwe-file.txt not a directory: %!w(<nil>)",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    }
+   }
+  },
+  "files_watch_many_events": {
+   "collected": {
+    "events_count": 60
+   },
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s5": {
+     "ok": null,
+     "op": "@stop"
+    },
+    "w": {
+     "ok": {
+      "events": {},
+      "on_exit": null,
+      "stopped": false
+     },
+     "op": "files.watch_dir"
+    }
+   }
+  },
+  "files_watch_nonrecursive_ignores_subdirs": {
+   "collected": {
+    "events_set": [
+     "top.txt:chmod",
+     "top.txt:create",
+     "top.txt:write"
+    ]
+   },
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "inner.txt",
+      "path": "/tmp/c/fwn/a/inner.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": {
+      "metadata": null,
+      "name": "top.txt",
+      "path": "/tmp/c/fwn/top.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s5": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s6": {
+     "ok": null,
+     "op": "@stop"
+    },
+    "w": {
+     "ok": {
+      "events": {},
+      "on_exit": null,
+      "stopped": false
+     },
+     "op": "files.watch_dir"
+    }
+   }
+  },
+  "files_watch_recursive": {
+   "collected": {
+    "events_set": [
+     "a/b/deep.txt:chmod",
+     "a/b/deep.txt:create",
+     "a/b/deep.txt:write",
+     "a/mid.txt:chmod",
+     "a/mid.txt:create",
+     "a/mid.txt:write",
+     "a/newdir/late.txt:chmod",
+     "a/newdir/late.txt:create",
+     "a/newdir/late.txt:write",
+     "a/newdir:chmod",
+     "a/newdir:create",
+     "top.txt:chmod",
+     "top.txt:create",
+     "top.txt:write"
+    ]
+   },
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s10": {
+     "ok": null,
+     "op": "@stop"
+    },
+    "s2": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "top.txt",
+      "path": "/tmp/c/fwr/top.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": {
+      "metadata": null,
+      "name": "mid.txt",
+      "path": "/tmp/c/fwr/a/mid.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s5": {
+     "ok": {
+      "metadata": null,
+      "name": "deep.txt",
+      "path": "/tmp/c/fwr/a/b/deep.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s6": {
+     "ok": true,
+     "op": "files.make_dir"
+    },
+    "s7": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s8": {
+     "ok": {
+      "metadata": null,
+      "name": "late.txt",
+      "path": "/tmp/c/fwr/a/newdir/late.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s9": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "w": {
+     "ok": {
+      "events": {},
+      "on_exit": null,
+      "stopped": false
+     },
+     "op": "files.watch_dir"
+    }
+   }
+  },
+  "files_write_files": {
+   "steps": {
+    "s0": {
+     "ok": [
+      {
+       "name": "1.txt",
+       "path": "/tmp/c/fwf/1.txt",
+       "type": "file"
+      },
+      {
+       "name": "2.bin",
+       "path": "/tmp/c/fwf/2.bin",
+       "type": "file"
+      },
+      {
+       "name": "3.txt",
+       "path": "/tmp/c/fwf/sub/3.txt",
+       "type": "file"
+      }
+     ],
+     "op": "files.write_files"
+    },
+    "s1": {
+     "ok": {
+      "$bytes": 300,
+      "sha256": "6ead3d91d83f1859"
+     },
+     "op": "files.read"
+    },
+    "s2": {
+     "ok": [],
+     "op": "files.write_files"
+    },
+    "s3": {
+     "op": "files.write_files",
+     "raised": {
+      "message": "you cannot upload multiple files to the same path '/tmp/c/fwf/dup.txt' in one upload request, only the first specified file was uploaded",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s4": {
+     "ok": "first",
+     "op": "files.read"
+    },
+    "s5": {
+     "ok": [
+      {
+       "metadata": null,
+       "name": "ok.txt",
+       "path": "/tmp/c/fwf/ok.txt",
+       "type": "file"
+      },
+      {
+       "metadata": null,
+       "name": "bad.txt",
+       "path": "/root/bad.txt",
+       "type": "file"
+      }
+     ],
+     "op": "files.write_files"
+    },
+    "s6": {
+     "ok": true,
+     "op": "files.exists"
+    },
+    "s8": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "60\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "files_write_info": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "x.txt",
+      "path": "/tmp/c/fw/x.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "metadata": null,
+      "name": "fw-rel.txt",
+      "path": "/home/user/fw-rel.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s2": {
+     "ok": {
+      "metadata": null,
+      "name": "fw-tilde.txt",
+      "path": "/home/user/fw-tilde.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "y.txt",
+      "path": "/tmp/c/fw/deep/er/y.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": {
+      "metadata": null,
+      "name": "f #1 %20 &?.txt",
+      "path": "/tmp/c/fw/dir with space/f #1 %20 &?.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s5": {
+     "ok": {
+      "metadata": null,
+      "name": "ünï cødé 日本語.txt",
+      "path": "/tmp/c/fw/ünï cødé 日本語.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s6": {
+     "ok": "u",
+     "op": "files.read"
+    },
+    "s7": {
+     "ok": "z",
+     "op": "files.read"
+    },
+    "s8": {
+     "ok": [
+      {
+       "name": "deep",
+       "type": "dir"
+      },
+      {
+       "name": "dir with space",
+       "type": "dir"
+      },
+      {
+       "name": "x.txt",
+       "type": "file"
+      },
+      {
+       "name": "ünï cødé 日本語.txt",
+       "type": "file"
+      }
+     ],
+     "op": "files.list"
+    },
+    "s9": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "files_write_options": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "gz.txt",
+      "path": "/tmp/c/fwo/gz.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": "gzip body",
+     "op": "files.read"
+    },
+    "s2": {
+     "ok": {
+      "metadata": null,
+      "name": "oct.txt",
+      "path": "/tmp/c/fwo/oct.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "mp.txt",
+      "path": "/tmp/c/fwo/mp.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": "octet body",
+     "op": "files.read"
+    },
+    "s5": {
+     "ok": "multipart body",
+     "op": "files.read"
+    },
+    "s6": {
+     "ok": {
+      "metadata": {
+       "k": "v",
+       "other": "x"
+      },
+      "name": "meta.txt",
+      "path": "/tmp/c/fwo/meta.txt"
+     },
+     "op": "files.write"
+    },
+    "s7": {
+     "ok": {
+      "metadata": {
+       "k": "v",
+       "other": "x"
+      }
+     },
+     "op": "files.get_info"
+    },
+    "s8": {
+     "ok": [
+      {
+       "metadata": null,
+       "name": "gz.txt"
+      },
+      {
+       "metadata": {
+        "k": "v",
+        "other": "x"
+       },
+       "name": "meta.txt"
+      },
+      {
+       "metadata": null,
+       "name": "mp.txt"
+      },
+      {
+       "metadata": null,
+       "name": "oct.txt"
+      }
+     ],
+     "op": "files.list"
+    }
+   }
+  },
+  "files_write_replace_dir": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "op": "files.write",
+     "raised": {
+      "message": "path is a directory: /tmp/c/fwd/adir",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    },
+    "s2": {
+     "op": "files.write",
+     "raised": {
+      "message": "500: error ensuring directories: path is a file: /tmp/c/fwd/afile",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "afile",
+      "path": "/tmp/c/fwd/afile",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": "replaced",
+     "op": "files.read"
+    },
+    "s5": {
+     "op": "files.write",
+     "raised": {
+      "message": "500: error writing file: write /proc/version: input/output error",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s6": {
+     "op": "files.write",
+     "raised": {
+      "message": "500: error getting file info: stat /tmp/c/fwd/<id>: file name too long",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s7": {
+     "op": "files.write",
+     "raised": {
+      "message": "path is a directory: /home/user",
+      "mro": [
+       "InvalidArgumentException",
+       "SandboxException"
+      ],
+      "type": "InvalidArgumentException"
+     }
+    }
+   }
+  },
+  "sbx_connect_extends_timeout": {
+   "steps": {
+    "s1": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s2": {
+     "ok": true,
+     "op": "is_running"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "still-alive\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "sbx_connect_new_client": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "state.txt",
+      "path": "/tmp/c/rc/state.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s10": {
+     "ok": false,
+     "op": "kill"
+    },
+    "s2": {
+     "ok": "from-first-client",
+     "op": "files.read"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "second-client\nuser\n"
+     },
+     "op": "commands.run"
+    },
+    "s5": {
+     "ok": {
+      "end_at": "<masked>",
+      "state": "running"
+     },
+     "op": "get_info"
+    },
+    "s6": {
+     "op": "Sandbox.connect",
+     "raised": {
+      "message": "Paused sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s7": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s8": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[unavailable] The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    },
+    "s9": {
+     "ok": false,
+     "op": "is_running"
+    }
+   }
+  },
+  "sbx_create_errors": {
+   "steps": {
+    "s0": {
+     "op": "Sandbox.create",
+     "raised": {
+      "message": "404: template 'no-such-template-xyz' not found",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s1": {
+     "op": "Sandbox.create",
+     "raised": {
+      "message": "Unauthorized, please check your credentials. - Invalid API key, please visit https://docs.e2b.dev/api-key for more information.\nCannot get the team for the given API key",
+      "mro": [
+       "AuthenticationException"
+      ],
+      "type": "AuthenticationException"
+     }
+    },
+    "s2": {
+     "op": "Sandbox.create",
+     "raised": {
+      "message": "Unauthorized, please check your credentials. - API key is malformed: expected the \"e2b_\" prefix, visit https://docs.e2b.dev/api-key for more information",
+      "mro": [
+       "AuthenticationException"
+      ],
+      "type": "AuthenticationException"
+     }
+    },
+    "s3": {
+     "op": "Sandbox.create",
+     "raised": {
+      "message": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandboxV2: Error at \"/timeout\": number must be at least 1",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s4": {
+     "op": "Sandbox.create",
+     "raised": {
+      "message": "400: validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/NewSandboxV2: Error at \"/metadata/k\": value must be a string",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s6": {
+     "ok": true,
+     "op": "kill"
+    }
+   }
+  },
+  "sbx_create_info": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "allow_internet_access": null,
+      "end_at": "<masked>",
+      "lifecycle": {
+       "auto_resume": false,
+       "on_timeout": "kill"
+      },
+      "metadata": {
+       "k": "v",
+       "suite": "<run>"
+      },
+      "name": "base",
+      "network": null,
+      "state": "running",
+      "volume_mounts": []
+     },
+     "op": "get_info"
+    },
+    "s1": {
+     "ok": true,
+     "op": "is_running"
+    },
+    "s3": {
+     "ok": {
+      "metadata": {
+       "k": "v",
+       "suite": "<run>"
+      },
+      "state": "running"
+     },
+     "op": "Sandbox.get_info"
+    },
+    "s4": {
+     "op": "Sandbox.get_info",
+     "raised": {
+      "message": "Sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s5": {
+     "op": "Sandbox.get_info",
+     "raised": {
+      "message": "400: Invalid sandbox ID",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    }
+   }
+  },
+  "sbx_create_secure": {
+   "steps": {
+    "s1": {
+     "ok": {
+      "metadata": null,
+      "name": "pub.txt",
+      "path": "/tmp/c/sec/pub.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s2": {
+     "ok": {
+      "body": {
+       "code": 401,
+       "message": "missing signature query parameter"
+      },
+      "status": 401
+     },
+     "op": "http"
+    },
+    "s3": {
+     "ok": {
+      "body": "",
+      "status": 204
+     },
+     "op": "http"
+    }
+   }
+  },
+  "sbx_create_secure_true": {
+   "steps": {
+    "s1": {
+     "ok": {
+      "metadata": null,
+      "name": "priv.txt",
+      "path": "/tmp/c/sec/priv.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s2": {
+     "ok": {
+      "body": {
+       "code": 401,
+       "message": "missing signature query parameter"
+      },
+      "status": 401
+     },
+     "op": "http"
+    },
+    "s3": {
+     "ok": {
+      "body": "",
+      "status": 204
+     },
+     "op": "http"
+    }
+   }
+  },
+  "sbx_fork": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "base.txt",
+      "path": "/tmp/c/fk/base.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s11": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s3": {
+     "ok": "base",
+     "op": "files.read"
+    },
+    "s4": {
+     "ok": {
+      "metadata": null,
+      "name": "only-first.txt",
+      "path": "/tmp/c/fk/only-first.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s5": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s6": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s7": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "fork-marker\n"
+     },
+     "op": "commands.run"
+    },
+    "s8": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s9": {
+     "ok": true,
+     "op": "kill"
+    }
+   }
+  },
+  "sbx_get_host": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "index.html",
+      "path": "/tmp/c/gh/www/index.html",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s2": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s4": {
+     "ok": {
+      "body": "hello-from-8080",
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s5": {
+     "ok": {
+      "body": "hello-from-8080",
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s6": {
+     "ok": {
+      "status": 404
+     },
+     "op": "http"
+    },
+    "s8": {
+     "ok": {
+      "body": {
+       "code": 502,
+       "message": "The sandbox is running but port is not open",
+       "port": 9999,
+       "sandbox_id": "<masked>"
+      },
+      "status": 502
+     },
+     "op": "http"
+    },
+    "s9": {
+     "ok": true,
+     "op": "@kill"
+    }
+   }
+  },
+  "sbx_git": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: is subject to change. To configure the initial branch name to use in all\nhint: of your new repositories, which will suppress this warning, call:\nhint: \nhint: \tgit config --global init.defaultBranch <name>\nhint: \nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint: \nhint: \tgit branch -m <name>\n",
+      "stdout": "Initialized empty Git repository in /tmp/c/git/repo/.git/\n"
+     },
+     "op": "git.init"
+    },
+    "s10": {
+     "op": "git.status",
+     "raised": {
+      "error": "exit status 128",
+      "exit_code": 128,
+      "message": "exit status 128",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "fatal: cannot change to '/tmp/c/git/nope': No such file or directory\n",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "git.configure_user"
+    },
+    "s3": {
+     "ok": {
+      "metadata": null,
+      "name": "a.txt",
+      "path": "/tmp/c/git/repo/a.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s4": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "git.add"
+    },
+    "s5": {
+     "ok": {
+      "current_branch": "master",
+      "file_status": [
+       {
+        "index_status": "A",
+        "name": "a.txt",
+        "staged": true,
+        "status": "added",
+        "working_tree_status": " "
+       }
+      ],
+      "has_staged": true,
+      "has_untracked": false,
+      "is_clean": false
+     },
+     "op": "git.status"
+    },
+    "s6": {
+     "ok": {
+      "exit_code": 0
+     },
+     "op": "git.commit"
+    },
+    "s7": {
+     "ok": {
+      "branches": [
+       "master"
+      ],
+      "current_branch": "master"
+     },
+     "op": "git.branches"
+    },
+    "s8": {
+     "ok": {
+      "exit_code": 0
+     },
+     "op": "git.create_branch"
+    },
+    "s9": {
+     "ok": {
+      "current_branch": "feature",
+      "is_clean": true
+     },
+     "op": "git.status"
+    }
+   }
+  },
+  "sbx_kill_idempotent": {
+   "steps": {
+    "s0": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s1": {
+     "ok": false,
+     "op": "kill"
+    },
+    "s10": {
+     "op": "set_timeout",
+     "raised": {
+      "message": "Sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s11": {
+     "ok": [],
+     "op": "get_metrics"
+    },
+    "s12": {
+     "op": "create_snapshot",
+     "raised": {
+      "message": "Sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s13": {
+     "op": "connect",
+     "raised": {
+      "message": "Paused sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s2": {
+     "ok": false,
+     "op": "is_running"
+    },
+    "s3": {
+     "ok": false,
+     "op": "Sandbox.kill"
+    },
+    "s4": {
+     "ok": false,
+     "op": "Sandbox.kill"
+    },
+    "s5": {
+     "ok": false,
+     "op": "Sandbox.kill"
+    },
+    "s6": {
+     "op": "get_info",
+     "raised": {
+      "message": "Sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s7": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[unavailable] The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    },
+    "s8": {
+     "op": "files.read",
+     "raised": {
+      "message": "The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    },
+    "s9": {
+     "op": "pause",
+     "raised": {
+      "message": "Sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    }
+   }
+  },
+  "sbx_lifecycle_auto_pause": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "f.txt",
+      "path": "/tmp/c/ap/f.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "lifecycle": {
+       "auto_resume": true,
+       "on_timeout": "pause"
+      },
+      "state": "paused"
+     },
+     "op": "get_info"
+    },
+    "s2": {
+     "ok": [
+      {
+       "state": "paused"
+      }
+     ],
+     "op": "Sandbox.list"
+    },
+    "s3": {
+     "ok": "persist",
+     "op": "files.read"
+    },
+    "s4": {
+     "ok": {
+      "state": "running"
+     },
+     "op": "get_info"
+    },
+    "s5": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "auto-resumed\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "sbx_lifecycle_pause_no_resume": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "lifecycle": {
+       "auto_resume": false,
+       "on_timeout": "pause"
+      },
+      "state": "paused"
+     },
+     "op": "get_info"
+    },
+    "s1": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[unavailable] The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "resumed-by-connect\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "sbx_list_order": {
+   "steps": {
+    "s10": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s11": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s3": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s5": {
+     "ok": [
+      {
+       "metadata.n": "3"
+      },
+      {
+       "metadata.n": "2"
+      }
+     ],
+     "op": "@next_items"
+    },
+    "s7": {
+     "ok": [
+      {
+       "metadata.n": "1"
+      },
+      {
+       "metadata.n": "2"
+      }
+     ],
+     "op": "@next_items"
+    },
+    "s8": {
+     "ok": [],
+     "op": "Sandbox.list"
+    },
+    "s9": {
+     "ok": true,
+     "op": "kill"
+    }
+   }
+  },
+  "sbx_list_pagination": {
+   "steps": {
+    "p1": {
+     "ok": [
+      {
+       "metadata": {
+        "n": "3",
+        "suite": "<run>"
+       }
+      }
+     ],
+     "op": "@next_items"
+    },
+    "s10": {
+     "ok": true,
+     "op": "@has_next"
+    },
+    "s11": {
+     "ok": [
+      {
+       "metadata": {
+        "n": "2",
+        "suite": "<run>"
+       }
+      }
+     ],
+     "op": "@next_items"
+    },
+    "s12": {
+     "ok": [
+      {
+       "metadata": {
+        "n": "1",
+        "suite": "<run>"
+       }
+      }
+     ],
+     "op": "@next_items"
+    },
+    "s13": {
+     "ok": false,
+     "op": "@has_next"
+    },
+    "s14": {
+     "op": "@next_items",
+     "raised": {
+      "message": "No more items to fetch",
+      "mro": [],
+      "type": "Error"
+     }
+    },
+    "s15": {
+     "ok": [],
+     "op": "Sandbox.list"
+    },
+    "s16": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s17": {
+     "ok": [
+      {
+       "metadata.n": "2"
+      },
+      {
+       "metadata.n": "3"
+      }
+     ],
+     "op": "Sandbox.list"
+    },
+    "s18": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s19": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s3": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s4": {
+     "ok": [
+      {
+       "metadata": {
+        "n": "1",
+        "suite": "<run>"
+       },
+       "state": "running"
+      },
+      {
+       "metadata": {
+        "n": "2",
+        "suite": "<run>"
+       },
+       "state": "running"
+      },
+      {
+       "metadata": {
+        "n": "3",
+        "suite": "<run>"
+       },
+       "state": "running"
+      }
+     ],
+     "op": "Sandbox.list"
+    },
+    "s5": {
+     "ok": [
+      {
+       "metadata": {
+        "n": "2",
+        "suite": "<run>"
+       }
+      }
+     ],
+     "op": "Sandbox.list"
+    },
+    "s6": {
+     "ok": [],
+     "op": "Sandbox.list"
+    },
+    "s8": {
+     "ok": true,
+     "op": "@has_next"
+    }
+   }
+  },
+  "sbx_metrics": {
+   "steps": {
+    "s0": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s1": {
+     "ok": {
+      "cpu_count": 2
+     },
+     "op": "get_metrics"
+    },
+    "s3": {
+     "ok": [],
+     "op": "Sandbox.get_metrics"
+    }
+   }
+  },
+  "sbx_network_allow_deny": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "allowed:301\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "denied:000\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "dns-blocked\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": {
+      "allow_internet_access": null,
+      "network": {
+       "allow_out": [
+        "1.1.1.1/32"
+       ],
+       "allow_public_traffic": true,
+       "deny_out": [
+        "0.0.0.0/0"
+       ],
+       "egress_proxy": null,
+       "https_ports": null,
+       "mask_request_host": null,
+       "rules": null
+      }
+     },
+     "op": "get_info"
+    }
+   }
+  },
+  "sbx_network_internet_off": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "cloudflare:000\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "still-works\n"
+     },
+     "op": "commands.run"
+    },
+    "s2": {
+     "ok": {
+      "allow_internet_access": false,
+      "network": null
+     },
+     "op": "get_info"
+    }
+   }
+  },
+  "sbx_network_update": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "before:302\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": null,
+     "op": "update_network"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "after:302\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "other:301\n"
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": {
+      "network": {
+       "allow_out": null,
+       "allow_public_traffic": null,
+       "deny_out": null,
+       "egress_proxy": null,
+       "https_ports": null,
+       "mask_request_host": null,
+       "rules": null
+      }
+     },
+     "op": "get_info"
+    },
+    "s5": {
+     "ok": null,
+     "op": "update_network"
+    },
+    "s6": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "cleared:302\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "sbx_pause_modes": {
+   "steps": {
+    "s1": {
+     "ok": {
+      "metadata": null,
+      "name": "disk.txt",
+      "path": "/home/user/c-pm/disk.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s10": {
+     "ok": "on-disk",
+     "op": "files.read"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": true,
+     "op": "pause"
+    },
+    "s5": {
+     "ok": "on-disk",
+     "op": "files.read"
+    },
+    "s6": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "cat: /dev/shm/c-mem2.txt: No such file or directory\n",
+      "stdout": "sleep-gone\n"
+     },
+     "op": "commands.run"
+    },
+    "s7": {
+     "ok": true,
+     "op": "pause"
+    },
+    "s9": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "cat: /dev/shm/c-mem2.txt: No such file or directory\n",
+      "stdout": "sleep-gone\n"
+     },
+     "op": "commands.run"
+    }
+   }
+  },
+  "sbx_pause_resume": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "kept.txt",
+      "path": "/tmp/c/pr/kept.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s10": {
+     "op": "files.read",
+     "raised": {
+      "message": "The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    },
+    "s11": {
+     "ok": false,
+     "op": "pause"
+    },
+    "s12": {
+     "ok": false,
+     "op": "Sandbox.pause"
+    },
+    "s14": {
+     "ok": {
+      "state": "running"
+     },
+     "op": "get_info"
+    },
+    "s15": {
+     "ok": "kept",
+     "op": "files.read"
+    },
+    "s16": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "mem\nsleep-alive\n"
+     },
+     "op": "commands.run"
+    },
+    "s18": {
+     "ok": true,
+     "op": "pause"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s20": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "second-resume\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": true,
+     "op": "pause"
+    },
+    "s4": {
+     "ok": {
+      "metadata": {
+       "suite": "<run>"
+      },
+      "state": "paused"
+     },
+     "op": "get_info"
+    },
+    "s5": {
+     "ok": false,
+     "op": "is_running"
+    },
+    "s6": {
+     "ok": [],
+     "op": "Sandbox.list"
+    },
+    "s7": {
+     "ok": [
+      {
+       "state": "paused"
+      }
+     ],
+     "op": "Sandbox.list"
+    },
+    "s8": {
+     "ok": [
+      {
+       "state": "paused"
+      }
+     ],
+     "op": "Sandbox.list"
+    },
+    "s9": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[unavailable] The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    }
+   }
+  },
+  "sbx_public_traffic": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "index.html",
+      "path": "/tmp/c/pt/www/index.html",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s2": {
+     "ok": null,
+     "op": "sleep"
+    },
+    "s4": {
+     "ok": {
+      "body": {
+       "code": 403,
+       "message": "Sandbox is secured with traffic access token. Token header 'e2b-traffic-access-token' is missing",
+       "sandbox_id": "<masked>"
+      },
+      "status": 403
+     },
+     "op": "http"
+    },
+    "s5": {
+     "ok": {
+      "body": "private-page",
+      "status": 200
+     },
+     "op": "http"
+    },
+    "s6": {
+     "ok": {
+      "body": {
+       "code": 403,
+       "message": "Sandbox is secured with traffic access token. Provided token in header 'e2b-traffic-access-token' is invalid",
+       "sandbox_id": "<masked>"
+      },
+      "status": 403
+     },
+     "op": "http"
+    },
+    "s7": {
+     "ok": {
+      "network": {
+       "allow_out": null,
+       "allow_public_traffic": false,
+       "deny_out": null,
+       "egress_proxy": null,
+       "https_ports": null,
+       "mask_request_host": null,
+       "rules": null
+      }
+     },
+     "op": "get_info"
+    },
+    "s8": {
+     "ok": true,
+     "op": "@kill"
+    }
+   }
+  },
+  "sbx_set_timeout": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "end_at": "<masked>"
+     },
+     "op": "get_info"
+    },
+    "s1": {
+     "ok": null,
+     "op": "set_timeout"
+    },
+    "s2": {
+     "ok": {
+      "end_at": "<masked>"
+     },
+     "op": "get_info"
+    },
+    "s3": {
+     "ok": null,
+     "op": "set_timeout"
+    },
+    "s4": {
+     "ok": {
+      "end_at": "<masked>"
+     },
+     "op": "get_info"
+    },
+    "s5": {
+     "ok": null,
+     "op": "set_timeout"
+    },
+    "s6": {
+     "ok": false,
+     "op": "is_running"
+    }
+   }
+  },
+  "sbx_snapshot_modes": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "f.txt",
+      "path": "/home/user/c-sm/f.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": "disk",
+     "op": "files.read"
+    },
+    "s5": {
+     "op": "commands.run",
+     "raised": {
+      "error": "exit status 1",
+      "exit_code": 1,
+      "message": "exit status 1",
+      "mro": [
+       "CommandExitException",
+       "SandboxException"
+      ],
+      "stderr": "cat: /dev/shm/c-sm-mem.txt: No such file or directory\n",
+      "stdout": "",
+      "type": "CommandExitException"
+     }
+    },
+    "s6": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s7": {
+     "ok": true,
+     "op": "Sandbox.delete_snapshot"
+    }
+   }
+  },
+  "sbx_snapshot_named": {
+   "steps": {
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "from-named\n"
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s5": {
+     "ok": true,
+     "op": "Sandbox.delete_snapshot"
+    },
+    "snap": {
+     "ok": {
+      "names": [
+       "<ns>/c-named-<run>"
+      ]
+     },
+     "op": "create_snapshot"
+    }
+   }
+  },
+  "sbx_snapshots": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "metadata": null,
+      "name": "world.txt",
+      "path": "/tmp/c/sn/world.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "s1": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+     },
+     "op": "commands.run"
+    },
+    "s10": {
+     "ok": false,
+     "op": "files.exists"
+    },
+    "s11": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s12": {
+     "ok": true,
+     "op": "Sandbox.delete_snapshot"
+    },
+    "s13": {
+     "ok": false,
+     "op": "Sandbox.delete_snapshot"
+    },
+    "s14": {
+     "ok": false,
+     "op": "Sandbox.delete_snapshot"
+    },
+    "s15": {
+     "op": "Sandbox.create",
+     "raised": {
+      "message": "404: template '<id>' not found",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s5": {
+     "ok": [],
+     "op": "@next_items"
+    },
+    "s7": {
+     "ok": "baked",
+     "op": "files.read"
+    },
+    "s8": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "mem\n"
+     },
+     "op": "commands.run"
+    },
+    "s9": {
+     "ok": {
+      "metadata": null,
+      "name": "child-only.txt",
+      "path": "/tmp/c/sn/child-only.txt",
+      "type": "file"
+     },
+     "op": "files.write"
+    },
+    "snap": {
+     "ok": {
+      "names": []
+     },
+     "op": "create_snapshot"
+    }
+   }
+  },
+  "sbx_timeout_expiry": {
+   "steps": {
+    "s0": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "alive\n"
+     },
+     "op": "commands.run"
+    },
+    "s1": {
+     "ok": false,
+     "op": "is_running"
+    },
+    "s2": {
+     "op": "commands.run",
+     "raised": {
+      "message": "[unavailable] The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    },
+    "s3": {
+     "op": "files.read",
+     "raised": {
+      "message": "The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeoutMs' when starting the sandbox or calling '.setTimeout' on the sandbox with the desired timeout.",
+      "mro": [
+       "SandboxNotRunningException",
+       "TimeoutException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotRunningException"
+     }
+    },
+    "s4": {
+     "op": "get_info",
+     "raised": {
+      "message": "Sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s5": {
+     "op": "Sandbox.connect",
+     "raised": {
+      "message": "Paused sandbox <id> not found",
+      "mro": [
+       "SandboxNotFoundException",
+       "NotFoundException",
+       "SandboxException"
+      ],
+      "type": "SandboxNotFoundException"
+     }
+    },
+    "s6": {
+     "ok": [],
+     "op": "Sandbox.list"
+    }
+   }
+  },
+  "secrets_crud": {
+   "steps": {
+    "a": {
+     "ok": {
+      "metadata": {
+       "k": "v"
+      },
+      "name": "cprobe-<run>-a",
+      "version": 1
+     },
+     "op": "Secret.create"
+    },
+    "b": {
+     "ok": {
+      "metadata": {},
+      "name": "cprobe-<run>-b",
+      "version": 1
+     },
+     "op": "Secret.create"
+    },
+    "s1": {
+     "op": "Secret.create",
+     "raised": {
+      "message": "409: Secret cannot be modified in its current state",
+      "mro": [
+       "SecretException"
+      ],
+      "type": "SecretException"
+     }
+    },
+    "s10": {
+     "ok": {
+      "metadata": {
+       "z": "1"
+      },
+      "name": "cprobe-<run>-a",
+      "version": 3
+     },
+     "op": "Secret.get_info"
+    },
+    "s12": {
+     "ok": [
+      {
+       "name": "cprobe-<run>-b"
+      }
+     ],
+     "op": "@next_items"
+    },
+    "s13": {
+     "ok": true,
+     "op": "Secret.destroy"
+    },
+    "s14": {
+     "ok": false,
+     "op": "Secret.destroy"
+    },
+    "s15": {
+     "ok": true,
+     "op": "Secret.destroy"
+    },
+    "s16": {
+     "ok": "${e2b.secrets.some-secret}",
+     "op": "Secret.fill"
+    },
+    "s2": {
+     "op": "Secret.create",
+     "raised": {
+      "message": "400: Invalid secrets request",
+      "mro": [
+       "SecretException"
+      ],
+      "type": "SecretException"
+     }
+    },
+    "s4": {
+     "ok": {
+      "metadata": {
+       "k": "v"
+      },
+      "name": "cprobe-<run>-a",
+      "version": 2
+     },
+     "op": "Secret.update"
+    },
+    "s5": {
+     "ok": {
+      "metadata": {
+       "z": "1"
+      },
+      "name": "cprobe-<run>-a",
+      "version": 3
+     },
+     "op": "Secret.update"
+    },
+    "s6": {
+     "op": "Secret.update",
+     "raised": {
+      "message": "Secret cprobe-none-<run> not found",
+      "mro": [
+       "SecretNotFoundException",
+       "SecretException"
+      ],
+      "type": "SecretNotFoundException"
+     }
+    },
+    "s7": {
+     "op": "Secret.get_info",
+     "raised": {
+      "message": "Secret cprobe-none-<run> not found",
+      "mro": [
+       "SecretNotFoundException",
+       "SecretException"
+      ],
+      "type": "SecretNotFoundException"
+     }
+    },
+    "s8": {
+     "ok": false,
+     "op": "Secret.exists"
+    },
+    "s9": {
+     "ok": true,
+     "op": "Secret.exists"
+    }
+   }
+  },
+  "tpl_build_bad_image": {
+   "steps": {
+    "s0": {
+     "op": "Template.build",
+     "raised": {
+      "message": "image 'cprobe-nonexistent-image:zz' not found: the image or tag does not exist in the registry",
+      "mro": [
+       "BuildException"
+      ],
+      "type": "BuildException"
+     }
+    }
+   }
+  },
+  "tpl_build_failure": {
+   "collected": {
+    "build_logs": {
+     "before-fail": true
+    }
+   },
+   "steps": {
+    "info": {
+     "op": "Template.build",
+     "raised": {
+      "message": "failed to run command: exit status 7",
+      "mro": [
+       "BuildException"
+      ],
+      "type": "BuildException"
+     }
+    },
+    "s1": {
+     "ok": true,
+     "op": "Template.exists"
+    },
+    "s2": {
+     "ok": {
+      "body": {
+       "public": false,
+       "template_id": "<masked>"
+      },
+      "status": 200
+     },
+     "op": "api"
+    }
+   }
+  },
+  "tpl_build_use": {
+   "collected": {
+    "build_logs": {
+     "Build finished": true,
+     "built-marker": true
+    }
+   },
+   "steps": {
+    "info": {
+     "ok": {
+      "name": "cprobe-t-<run>",
+      "tags": [
+       "v1"
+      ]
+     },
+     "op": "Template.build"
+    },
+    "s1": {
+     "ok": true,
+     "op": "Template.exists"
+    },
+    "s10": {
+     "ok": [
+      {
+       "tag": "v1"
+      }
+     ],
+     "op": "Template.get_tags"
+    },
+    "s12": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "hello from ctx\na\nbuilt\n[yes][/tmp][user]\n"
+     },
+     "op": "commands.run"
+    },
+    "s13": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "[][/tmp][user]\n"
+     },
+     "op": "commands.run"
+    },
+    "s14": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "start-cmd-running\n"
+     },
+     "op": "commands.run"
+    },
+    "s15": {
+     "ok": {
+      "name": "cprobe-t-<run>",
+      "state": "running"
+     },
+     "op": "get_info"
+    },
+    "s16": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s17": {
+     "ok": {
+      "body": "",
+      "status": 204
+     },
+     "op": "api"
+    },
+    "s18": {
+     "ok": false,
+     "op": "Template.exists"
+    },
+    "s19": {
+     "op": "Sandbox.create",
+     "raised": {
+      "message": "404: template 'cprobe-t-<run>' not found",
+      "mro": [
+       "SandboxException"
+      ],
+      "type": "SandboxException"
+     }
+    },
+    "s2": {
+     "ok": true,
+     "op": "Template.exists"
+    },
+    "s3": {
+     "ok": false,
+     "op": "Template.exists"
+    },
+    "s4": {
+     "ok": true,
+     "op": "Template.alias_exists"
+    },
+    "s5": {
+     "ok": false,
+     "op": "Template.alias_exists"
+    },
+    "s6": {
+     "ok": [
+      {
+       "tag": "v1"
+      }
+     ],
+     "op": "Template.get_tags"
+    },
+    "s7": {
+     "ok": {
+      "tags": [
+       "stable"
+      ]
+     },
+     "op": "Template.assign_tags"
+    },
+    "s8": {
+     "ok": [
+      {
+       "tag": "stable"
+      },
+      {
+       "tag": "v1"
+      }
+     ],
+     "op": "Template.get_tags"
+    },
+    "s9": {
+     "ok": null,
+     "op": "Template.remove_tags"
+    }
+   }
+  },
+  "tpl_names": {
+   "steps": {
+    "info": {
+     "ok": {
+      "name": "cprobe-n-<run>",
+      "tags": [
+       "a",
+       "b"
+      ]
+     },
+     "op": "Template.build_in_background"
+    },
+    "s0": {
+     "op": "Template.build_in_background",
+     "raised": {
+      "message": "400: Invalid name: invalid template ID: BAD NAME!",
+      "mro": [
+       "BuildException"
+      ],
+      "type": "BuildException"
+     }
+    },
+    "s2": {
+     "ok": {
+      "status": "ready"
+     },
+     "op": "Template.get_build_status"
+    },
+    "s3": {
+     "ok": [
+      {
+       "tag": "a"
+      },
+      {
+       "tag": "b"
+      }
+     ],
+     "op": "Template.get_tags"
+    },
+    "s4": {
+     "ok": {
+      "body": "",
+      "status": 204
+     },
+     "op": "api"
+    }
+   }
+  },
+  "tpl_user_workdir": {
+   "steps": {
+    "info": {
+     "ok": {
+      "name": "cprobe-u-<run>"
+     },
+     "op": "Template.build"
+    },
+    "s2": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "[root][/opt][/root]\nroot\n"
+     },
+     "op": "commands.run"
+    },
+    "s3": {
+     "ok": {
+      "error": null,
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "[user][/opt]\n"
+     },
+     "op": "commands.run"
+    },
+    "s4": {
+     "ok": {
+      "path": "/root/default-user-file.txt"
+     },
+     "op": "files.write"
+    },
+    "s5": {
+     "ok": true,
+     "op": "kill"
+    },
+    "s6": {
+     "ok": {
+      "body": "",
+      "status": 204
+     },
+     "op": "api"
+    }
+   }
+  }
+ },
+ "sdk": {
+  "lang": "ts",
+  "version": "2.58.0"
+ }
+}

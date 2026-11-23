@@ -37,7 +37,8 @@ public extension SpacesdCommand {
 /// (`CUA_IMAGE_LINUX` overrides it), `Image.windows()`
 /// `ghcr.io/trycua/windows:2022`, `Image.macos()` `ghcr.io/trycua/macos:26`.
 /// These are the full tier (dev tooling); `tier: "slim"` is the minimal image
-/// CI runs and, on macOS, `tier: "xcode"` adds a pinned Xcode.
+/// CI runs, on macOS `tier: "xcode"` adds a pinned Xcode and, on Linux,
+/// `tier: "docker"` is a VM with dockerd up at boot (`24.04-docker-disk`).
 /// `Image.omarchy()` is `ghcr.io/trycua/omarchy:edge`, an amd64 VM. Images CI
 /// has not published yet throw `CuaError.ImageNotPublished`; pass the
 /// reference to `fromRegistry` to use one anyway.

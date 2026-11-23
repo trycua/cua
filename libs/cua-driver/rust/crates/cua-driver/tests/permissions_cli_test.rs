@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver permissions` reports usage errors with the documented exit code.
 
 use std::process::{Command, Stdio};
@@ -19,5 +22,8 @@ fn permissions_unknown_subcommand_is_a_usage_error() {
         stderr.contains("unknown permissions subcommand 'bogus'"),
         "stderr={stderr}"
     );
-    assert!(stderr.contains("Valid: status, grant."), "stderr={stderr}");
+    assert!(
+        stderr.contains("Valid: status, grant, vnc."),
+        "stderr={stderr}"
+    );
 }

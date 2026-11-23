@@ -93,6 +93,7 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Direct3D",
@@ -110,6 +111,8 @@ windows = { version = "0.58", features = [
 async-trait = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
 tokio-tungstenite.workspace = true
+# Paused (virtual) time for timing tests.
+tokio = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Independent decoder for the conformance tests' pixel oracle.

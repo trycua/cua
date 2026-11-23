@@ -113,6 +113,7 @@ impl LocalRuntime for FakeRuntime {
                 os: "linux".into(),
                 emulated: false,
                 spacesd,
+                injected: false,
             });
         Ok((inst, info))
     }
@@ -197,6 +198,12 @@ impl FakeRuntime {
 async fn http_responder(status: u16) -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = l.local_addr().unwrap().port();
+    serve_http(l, status);
+    port
+}
+
+/// Answers every request on `l` with `status`.
+fn serve_http(l: TcpListener, status: u16) {
     tokio::spawn(async move {
         while let Ok((mut s, _)) = l.accept().await {
             tokio::spawn(async move {
@@ -215,7 +222,6 @@ async fn http_responder(status: u16) -> u16 {
             });
         }
     });
-    port
 }
 
 async fn echo_server() -> u16 {
@@ -243,6 +249,7 @@ fn closed_port() -> u16 {
 fn quick() -> ConnectOptionsOverride {
     ConnectOptionsOverride {
         probe_timeout: Some(Duration::from_secs(3)),
+        ..Default::default()
     }
 }
 
@@ -321,17 +328,23 @@ async fn local_lifecycle_state_and_readiness() {
     // No spacesd: a clean, typed error.
     let err = sb.spacesd_with(quick()).await.unwrap_err();
     assert!(matches!(err, Error::SpacesdNotAvailable { .. }), "{err:?}");
-    // keep_alive is for providers that expire sandboxes.
-    assert!(matches!(
-        sb.keep_alive(Duration::from_secs(60)).await.unwrap_err(),
-        Error::Unsupported { .. }
-    ));
+    // keep_alive gives a local sandbox a lifetime (the daemon deletes it
+    // once that has passed).
+    sb.keep_alive(Duration::from_secs(60)).await.unwrap();
 
     // Lifecycle by name.
     sbx.suspend("dev-box").await.unwrap();
     assert_eq!(sbx.get("dev-box").await.unwrap().status, Status::Suspended);
     sbx.resume("dev-box").await.unwrap();
+    // A runtime that publishes on new host ports when it boots again (a
+    // microVM does): the state follows, so connections reach the new ones.
+    let moved = http_responder(204).await;
+    rt.map(80, moved);
     sbx.restart("dev-box").await.unwrap();
+    match sbx.state().load("dev-box").unwrap() {
+        SandboxState::Local(l) => assert_eq!(l.exposed_ports.unwrap()["80"], moved),
+        other => panic!("{other:?}"),
+    }
     assert_eq!(sb.status().await.unwrap(), Status::Running);
     let listed = sbx.list().await.unwrap();
     assert_eq!(listed.len(), 1);
@@ -344,6 +357,45 @@ async fn local_lifecycle_state_and_readiness() {
         calls.contains("suspend dev-box")
             && calls.contains("stop dev-box")
             && calls.contains("delete dev-box")
+    );
+}
+
+/// A restarted sandbox is waited for as a created one is: `restart` returns
+/// once the ready probes recorded at create pass (a VM's resume returns
+/// while its guest is still booting), on every runtime alike.
+#[tokio::test]
+async fn restart_waits_for_the_ready_probes() {
+    let dir = tempfile::tempdir().unwrap();
+    let rt = Arc::new(FakeRuntime::default());
+    let web = http_responder(204).await;
+    rt.map(80, web);
+    rt.map(3211, closed_port());
+    let sbx = Sandboxes::builder()
+        .local(rt.clone())
+        .state_dir(dir.path())
+        .build();
+    sbx.create(
+        CreateOptions::new(ProviderKind::Local, "img")
+            .name("slow-boot")
+            .service("web", 80)
+            .wait_for(Probe::Tcp(80)),
+    )
+    .await
+    .unwrap();
+    // It boots again on a port that starts to answer only after a while.
+    let late = closed_port();
+    rt.map(80, late);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        let l = TcpListener::bind(("127.0.0.1", late)).await.unwrap();
+        serve_http(l, 204);
+    });
+    let t = std::time::Instant::now();
+    sbx.restart("slow-boot").await.unwrap();
+    assert!(
+        t.elapsed() >= Duration::from_millis(800),
+        "restart returned after {:?}, before the guest answered",
+        t.elapsed()
     );
 }
 

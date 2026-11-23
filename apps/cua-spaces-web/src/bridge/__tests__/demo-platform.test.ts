@@ -73,7 +73,6 @@ describe("the demo host on Windows and Linux", () => {
       const env = wizardEnv(core, {
         options: await a.call("spaces.createOptions", {}),
         defaultLocation: "local",
-        cloudAvailable: true,
         clouds: null,
         machines: (await a.call("machines.list", {})).map((m) => ({ ...m, current: Boolean(m.current) })),
       });

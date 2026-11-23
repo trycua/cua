@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -61,6 +62,7 @@ DESCRIPTOR = {
 }
 
 
+@unittest.skipUnless(sys.platform == "darwin", "macOS bundle descriptors")
 class AdapterTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -89,6 +91,12 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(ports, [4999])
         self.assertIn("Electron", kill_names)
         self.assertIn("Google Chrome", kill_names)
+
+    def test_kill_policy_covers_libreoffice_launch(self) -> None:
+        descriptor = {"apps": [{"argv": ["libreoffice", "--calc"]}]}
+        with mock.patch.object(cdb_adapter, "_descriptor", return_value=descriptor):
+            names, _ = cdb_adapter.kill_policy(self.spec)
+        self.assertEqual(names, ["soffice", "soffice.bin"])
 
     def test_brief_and_substitution(self) -> None:
         task = cdb_adapter.CdbTask(self.spec, Path(self.tmp.name))
@@ -247,6 +255,70 @@ class AdapterTest(unittest.TestCase):
         cdb_adapter.clear_leftovers(self.spec)  # must be a no-op, never a pkill on a real desktop
 
 
+@unittest.skipUnless(sys.platform == "linux", "Linux launch descriptors")
+class LinuxAdapterTest(unittest.TestCase):
+    def test_descriptor_launch_preserves_session_and_honors_unset_env(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = root / "tasks/shared/syn"
+            (bundle / "platform").mkdir(parents=True)
+            descriptor = {
+                "workspace_root": str(root / "workspace"),
+                "semantics": {
+                    "reset": {
+                        "setup": [
+                            sys.executable,
+                            "-c",
+                            "import os; assert os.environ['DISPLAY'] == ':unit-display'; assert os.environ['DBUS_SESSION_BUS_ADDRESS'] == 'unix:path=/unit-bus'",
+                        ],
+                        "verify": [sys.executable, "-c", "pass"],
+                    }
+                },
+                "apps": [
+                    {
+                        "id": "desk",
+                        "kind": "electron",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            "import json, os; print(json.dumps(dict(os.environ)))",
+                        ],
+                        "env": {"ELECTRON_RUN_AS_NODE": "1"},
+                        "unset_env": ["ELECTRON_RUN_AS_NODE"],
+                    }
+                ],
+            }
+            (bundle / "platform/launch.linux.json").write_text(json.dumps(descriptor))
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CDB_TASKPACK": str(root),
+                    "CDB_BENCH_DISPOSABLE": "0",
+                    "DISPLAY": ":unit-display",
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/unit-bus",
+                },
+            ):
+                task = cdb_adapter.CdbTask({"pack_task": "shared/syn"}, root)
+                task.reset()
+                try:
+                    task.start_apps()
+                    task.procs[0].wait(timeout=5)
+                    observed = json.loads((root / "app-desk.log").read_text())
+                    self.assertEqual(observed["DISPLAY"], ":unit-display")
+                    self.assertEqual(observed["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/unit-bus")
+                    self.assertNotIn("ELECTRON_RUN_AS_NODE", observed)
+                finally:
+                    task.stop_apps()
+        self.assertEqual(
+            cdb_adapter.with_force_accessibility(
+                ["chromium", "https://example.invalid"], "browser"
+            ),
+            ["chromium", ca.FORCE_ACCESSIBILITY_FLAG, "https://example.invalid"],
+        )
+
+
 class ArgvAndScanTest(unittest.TestCase):
     def test_coding_tools_only_when_asked(self) -> None:
         base = dict(
@@ -284,6 +356,7 @@ class ArgvAndScanTest(unittest.TestCase):
 
 
 class WebWiringTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "vendor browser arm requires macOS")
     def test_browser_selection_row_manifest_and_dry_run_prompt(self) -> None:
         import contextlib
         import hashlib
@@ -370,6 +443,7 @@ class WebWiringTest(unittest.TestCase):
         ]
         self.assertEqual(rb.evaluator_peeks(events, []), ["Read:oracle", "Read:/__state"])
 
+    @unittest.skipUnless(sys.platform == "darwin", "WEB task pack ships macOS descriptors only")
     def test_setup_brief_and_profile_reset(self) -> None:
         import subprocess
 

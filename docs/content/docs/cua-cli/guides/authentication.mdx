@@ -35,7 +35,7 @@ refresh automatically and are never printed.
 looks like a new app to the Keychain every time you rebuild it, so it uses the
 file and never asks for Keychain access.
 
-Older versions kept the session, the device key and the other secrets under the
+Older versions kept the session, this machine's key and the other secrets under the
 service `run.cua.ai` (`staging.run.cua.ai` for staging). The first `cua` that
 reads them after you update moves each item to `ai.cua.session`, checks the new
 item and then deletes the old one, so you stay signed in. A `cua` signed by Cua
@@ -89,8 +89,8 @@ events go to the staging PostHog project, never to production's.
 `CUA_POSTHOG_KEY` overrides the project key, and `CUA_TELEMETRY_ENDPOINT`
 overrides the ingest URL.
 
-Beta builds of `cua` and the Cua Spaces app use staging when `CUA_ENV` is unset.
-`CUA_ENV=prod` still selects production in a beta build.
+Released builds of `cua` and the Cua Spaces app, beta versions included, use
+production when `CUA_ENV` is unset. Set `CUA_ENV=staging` to use staging.
 
 To open the macOS app against staging, quit the production app first, then
 launch it with the variable set:

@@ -93,6 +93,8 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 | `cua-teleport` | Teleport SEND: export providers, keychain read, approval gate, upload over `TeleportService` (`cua teleport push`). See its [README](crates/cua-teleport/README.md). Receive lives in cua-spacesd. |
 | `cua-teleport-bundle` | Effect-free bundle format and per-app layout data shared by sender and receiver. |
 | `cua-host` | Unattended access (`cua host`): installs cua-spacesd as a per-OS service that joins a cua-relay as your account or serves on a direct ip:port, plus the relay machine-directory client. |
+| `cua-cluster` | A machine's part of batch runs on all your machines: the job runner behind `HostJobsService` (a fresh Space per job, a durable ledger keyed by job id and account, attempt fencing), placement scoring and node links (direct, relay, mesh). |
+| `cua-spaces-cluster` | The pool coordinator (FSL-1.1-MIT): durable job queue, scheduler, leases and reconcile, durable Spaces, the pool log on the relay a machine taking over rebuilds from, and the pool agent every signed-in daemon runs (`cua sb run --on auto`). See [Use all your machines](https://cua.ai/docs/spaces/guides/add-a-computer#use-all-your-computers). |
 | `cua-auth` | Sign in to Cua (browser PKCE with a loopback redirect, device-code fallback), refresh, and the credential store shared by the CLI, SDK, daemon and Spaces app. |
 | `cua-agent-setup` | Agent onboarding: detect AI coding agents, install the bundled skills (`skills/`, synced by `scripts/sync-skills.sh`) and configure the cua MCP server (`cua agents`). See its [README](crates/cua-agent-setup/README.md). |
 | `cua-media-protocol`, `cua-media-transport`, `cua-media-codec` | Media plane shared with cua-spacesd: wire v2 types, framing (RVD2 video, RAU2 audio, QUIC), encoder probing/selection and Opus. |
@@ -100,7 +102,7 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 | `cua-daemon` | The SDK runtime and its host: `cua.daemon.v1` on the socket and loopback, env passthrough (`/v1/sandboxes/<name>/env/...`, `/v1/spaces/<key>/env/...`), the ticketed webview media bridge, the Spaces MCP server at `/mcp` and `cua daemon mcp`. Feature `test-fixtures` adds loopback fixtures; the `cua-test-fixtures` binary lives in `libs/cua-spacesd/tests/spaces-e2e` (build it with `scripts/build-test-fixtures.sh`). |
 | `cua-sdk` | The **only** `#[uniffi::export]` crate (UniFFI `=0.31.0`): `Cua.embedded` / `Cua.connect`, sandboxes, env (typed plus a proto3-JSON escape hatch over every `cua.env.v1` RPC), media sessions with `FrameSink`/`AudioSink`, local runtimes and images, Spaces, auth and agent setup; a wasm32 browser subset. |
 | `cua-bindgen` | The pinned UniFFI CLI used by `scripts/generate-uniffi-bindings.mjs`. |
-| `cua-cli` | The `cua` binary (shipped in the `cua` wheel, `@trycua/cua`, the install scripts and the Spaces app): `auth`, `agents`, `sandbox`, `config`, `do`, `mcp`, `skills`, `trajectory`, `image`, `env`, `daemon`, `runtime`, `host`, `spaces`, `teleport`. Reference: [docs.cua.ai/reference/cua-cli](https://cua.ai/docs/cua-cli/reference/cli). |
+| `cua-cli` | The `cua` binary (shipped in the `cua-cli` wheel, a dependency of the `cua` wheel, `@trycua/cua`, the install scripts and the Spaces app): `auth`, `agents`, `sandbox`, `config`, `do`, `mcp`, `skills`, `trajectory`, `image`, `env`, `daemon`, `runtime`, `host`, `spaces`, `teleport`. Reference: [docs.cua.ai/reference/cua-cli](https://cua.ai/docs/cua-cli/reference/cli). |
 
 Language packages generated from `cua-sdk` (drift-checked by
 `scripts/generate-uniffi-bindings.mjs --check`):
@@ -125,7 +127,7 @@ them and never written by hand.
 | Package | Files | Services |
 |---|---|---|
 | `cua.env.v1` | `common`, `system`, `process`, `filesystem`, `computer`, `windows`, `accessibility`, `driver`, `stream`, `presence`, `teleport`, `tunnel`, `volume` | `SystemService`, `ProcessService`, `FilesystemService`, `ComputerService`, `WindowsService`, `AccessibilityService`, `DriverService`, `StreamService`, `PresenceService`, `TeleportService`, `TunnelService`, `VolumeService` |
-| `cua.daemon.v1` | `sandboxes`, `spaces`, `runtime`, `daemon` | `SandboxService`, `SpaceService`, `RuntimeService`, `DaemonService` |
+| `cua.daemon.v1` | `sandboxes`, `checkpoints`, `pools`, `spaces`, `runtime`, `daemon` | `SandboxService`, `PoolService`, `SpaceService`, `RuntimeService`, `DaemonService` |
 
 Rules. `common.proto` has the full text of each.
 

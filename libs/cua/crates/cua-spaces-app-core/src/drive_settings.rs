@@ -145,7 +145,7 @@ impl Default for StorageInput {
 }
 
 /// `volume_storage_set`'s argument (snake_case: the tool's shape).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DriveStorageUpdate {
     pub backend: String,
@@ -157,8 +157,23 @@ pub struct DriveStorageUpdate {
     pub dry_run: bool,
 }
 
+impl std::fmt::Debug for DriveStorageUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriveStorageUpdate")
+            .field("backend", &self.backend)
+            .field("s3", &self.s3)
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
+}
+
 /// The S3 form (and the backend choice) as edited.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StorageForm {
     pub backend: String,
@@ -169,6 +184,21 @@ pub struct StorageForm {
     pub path_style: bool,
     pub access_key_id: String,
     pub secret_access_key: String,
+}
+
+impl std::fmt::Debug for StorageForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageForm")
+            .field("backend", &self.backend)
+            .field("endpoint", &self.endpoint)
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("root", &self.root)
+            .field("path_style", &self.path_style)
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Default for StorageForm {
@@ -397,10 +427,6 @@ pub enum StorageAction {
 
 const DEFAULT_REGION: &str = "us-east-1";
 
-/// What "Your S3 bucket" offers first: a prompt the user gives their coding
-/// agent, which sets the bucket up and connects it with the CLI. The page
-/// watches `volume_storage` and connects once the bucket shows up.
-pub const S3_AGENT_PROMPT: &str = "Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key.";
 const GIB: u64 = 1024 * 1024 * 1024;
 /// The cache limits offered (the daemon's minimum is 256 MiB).
 pub const CACHE_LIMITS: [u64; 4] = [GIB, 5 * GIB, 10 * GIB, 50 * GIB];
@@ -674,7 +700,7 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
             let saved = if has_keys && saved_s3 { "Saved" } else { "" };
             if !state.manual {
                 let mut p = row("s3-prompt", Prompt, "Ask your agent to set it up:");
-                p.value = Some(S3_AGENT_PROMPT.into());
+                p.value = Some(crate::agent_prompts::volume_s3_prompt());
                 p.button = Some("Copy".into());
                 rows.push(p);
                 let mut m = row("s3-manual", Link, "Enter details manually");
@@ -980,7 +1006,10 @@ mod tests {
         let v = storage_section(&input, &s);
         let prompt = v.rows.iter().find(|r| r.id == "s3-prompt").unwrap();
         assert_eq!(prompt.kind, SettingsRowKind::Prompt);
-        assert_eq!(prompt.value.as_deref(), Some(S3_AGENT_PROMPT));
+        assert_eq!(
+            prompt.value.as_deref(),
+            Some(crate::agent_prompts::volume_s3_prompt().as_str())
+        );
         assert!(v.rows.iter().all(|r| r.id != "s3-secret"));
         s = storage_reduce(&s, &storage_press(&input, "s3-manual").unwrap());
         let v = storage_section(&input, &s);

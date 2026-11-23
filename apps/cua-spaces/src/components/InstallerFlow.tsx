@@ -31,7 +31,7 @@ import type { DriveMountInput } from "../model/persistent";
 import type { SettingsRow } from "../model/window";
 import type { SpaceOs } from "../model/types";
 import { answerOrNull, createDriveBridge, type DriveBridge } from "../native/drive";
-import type { SignInStart } from "../native/fleet";
+import type { SignInStart } from "../native/spacesBridge";
 import type { HostBridge, HostStatus, OnboardingMode } from "../native/host";
 import type { AgentDetectReport, AgentSetupReport, InstallerBridge } from "../native/installer";
 import { onboardingFinishedSignals, onboardingSignals } from "../model/telemetry";
@@ -232,9 +232,7 @@ export function InstallerFlow({
       .catch((err: unknown) => {
         const error = message(err);
         send(
-          kind === "test"
-            ? { type: "drive-storage", action: { type: "failed", error } }
-            : answer(failedCheck(error)),
+          kind === "test" ? { type: "drive-storage", action: { type: "failed", error } } : answer(failedCheck(error)),
         );
       })
       .finally(() => {
@@ -445,12 +443,7 @@ export function InstallerFlow({
           lede={view.lede}
           below={view.prompts.length > 0 ? <PromptList prompts={view.prompts} /> : undefined}
           primary={
-            <button
-              type="button"
-              className="primary-button"
-              data-owns-enter
-              onClick={finish}
-            >
+            <button type="button" className="primary-button" data-owns-enter onClick={finish}>
               {view.primaryLabel}
             </button>
           }
@@ -465,7 +458,11 @@ export function InstallerFlow({
                 </div>
                 {/* Cua Volume opens its page once its experiment is on (Settings, Experiments). */}
                 {t.action && (t.id !== "volume" || state.experiments?.cuaVolume) ? (
-                  <button type="button" className="secondary-button" onClick={() => send({ type: "todo-chosen", id: t.id })}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => send({ type: "todo-chosen", id: t.id })}
+                  >
                     {t.action}
                   </button>
                 ) : null}
@@ -849,7 +846,8 @@ function SignInStep({
       )}
       {onOpenExternal && (
         <p className="onboarding-teams" data-testid="onboarding-teams">
-          {copy.teams}{" \u00b7 "}
+          {copy.teams}
+          {" \u00b7 "}
           <button type="button" className="dw-link" data-owns-enter onClick={() => onOpenExternal(copy.teamsUrl)}>
             {copy.teamsLink}
           </button>

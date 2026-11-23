@@ -321,6 +321,67 @@ fn post_pointer_moved(point: CGPoint) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The current pointer location, in global display points.
+pub fn pointer_location() -> anyhow::Result<CGPoint> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    Ok(CGEvent::new(source)
+        .map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?
+        .location())
+}
+
+/// Post one relative pointer motion through the global HID tap: a
+/// mouse-moved event, or a dragged event while a button is down, at the
+/// current location plus the delta, with the delta fields set. An app that
+/// detached the cursor from the mouse (a game's camera, a page under Pointer
+/// Lock) ignores the location and reads the delta fields.
+pub fn post_relative_motion(dx: i32, dy: i32) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let here = CGEvent::new(source.clone())
+        .map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?
+        .location();
+    let held = [
+        CGMouseButton::Left,
+        CGMouseButton::Right,
+        CGMouseButton::Center,
+    ]
+    .into_iter()
+    .find(|&button| unsafe {
+        CGEventSourceButtonState(CGEventSourceStateID::HIDSystemState, button)
+    });
+    let (event_type, button) = relative_motion_event(held);
+    let point = CGPoint::new(here.x + f64::from(dx), here.y + f64::from(dy));
+    let event = CGEvent::new_mouse_event(source, event_type, point, button)
+        .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(relative motion) failed"))?;
+    event.set_integer_value_field(
+        core_graphics::event::EventField::MOUSE_EVENT_DELTA_X,
+        i64::from(dx),
+    );
+    event.set_integer_value_field(
+        core_graphics::event::EventField::MOUSE_EVENT_DELTA_Y,
+        i64::from(dy),
+    );
+    dispatch_mouse_event(PostRoute::Hid, 0, &event);
+    Ok(())
+}
+
+/// The event a relative motion posts while `held` is down: AppKit and games
+/// read motion with a button held as a drag of that button.
+fn relative_motion_event(held: Option<CGMouseButton>) -> (CGEventType, CGMouseButton) {
+    match held {
+        None => (CGEventType::MouseMoved, CGMouseButton::Left),
+        Some(CGMouseButton::Left) => (CGEventType::LeftMouseDragged, CGMouseButton::Left),
+        Some(CGMouseButton::Right) => (CGEventType::RightMouseDragged, CGMouseButton::Right),
+        Some(CGMouseButton::Center) => (CGEventType::OtherMouseDragged, CGMouseButton::Center),
+    }
+}
+
+extern "C" {
+    /// `bool CGEventSourceButtonState(CGEventSourceStateID, CGMouseButton)`.
+    fn CGEventSourceButtonState(state: CGEventSourceStateID, button: CGMouseButton) -> bool;
+}
+
 /// Scroll the foreground desktop surface at a logical screen point through the
 /// global HID queue. Mirrors computer-server's pynput wheel behavior while
 /// preserving cua-driver's explicit direction/amount contract.
@@ -2071,6 +2132,25 @@ mod post_sink {
 mod tests {
     use super::post_sink::{Capture, Posted};
     use super::*;
+
+    #[test]
+    fn relative_motion_posts_one_hid_event_with_a_held_button_as_its_drag() {
+        let capture = Capture::start(true);
+        post_relative_motion(240, -30).unwrap();
+        let posted = capture.posted();
+        assert_eq!(posted.len(), 1);
+        assert_eq!(posted[0].route, PostRoute::Hid);
+        assert_eq!(capture.warps(), 0, "relative motion never warps the cursor");
+
+        for (held, expected) in [
+            (None, "MouseMoved"),
+            (Some(CGMouseButton::Left), "LeftMouseDragged"),
+            (Some(CGMouseButton::Right), "RightMouseDragged"),
+            (Some(CGMouseButton::Center), "OtherMouseDragged"),
+        ] {
+            assert_eq!(format!("{:?}", relative_motion_event(held).0), expected);
+        }
+    }
 
     #[test]
     fn background_middle_click_preserves_exact_window_routing() {

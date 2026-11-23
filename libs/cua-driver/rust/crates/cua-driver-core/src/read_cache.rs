@@ -404,6 +404,29 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_never_replaces_an_entry_other_than_its_own() {
+        let (cache, t0) = fresh_cache();
+        store(&cache, Some(1), t0, (0, 0), None);
+        assert_eq!(cache.lookup("k", t0 + TTL, 0), stale(1, Some(t0)));
+        let replaced = t0 + TTL * STALE_CAP_FACTOR;
+        assert_eq!(cache.lookup("k", replaced, 0), Lookup::Miss);
+        store(&cache, Some(2), replaced, (0, 0), None);
+        let refreshing = replaced + TTL;
+        assert_eq!(cache.lookup("k", refreshing, 0), stale(2, Some(replaced)));
+
+        store(&cache, Some(3), refreshing, (0, 0), Some(t0));
+        assert_eq!(cache.lookup("k", refreshing, 0), stale(2, None));
+    }
+
+    #[test]
+    fn a_read_from_before_an_action_keeps_a_reply_from_after_it() {
+        let (cache, t0) = fresh_cache();
+        store(&cache, Some(2), t0, (1, 1), None);
+        assert_eq!(cache.lookup("k", t0, 0), Lookup::Miss);
+        assert_eq!(cache.lookup("k", t0, 1), Lookup::Fresh(2));
+    }
+
+    #[test]
     fn keys_are_independent_and_bounded() {
         let (cache, t0) = fresh_cache();
         for i in 0..=MAX_ENTRIES as u32 {

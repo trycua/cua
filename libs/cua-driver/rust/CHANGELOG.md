@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.3...cua-driver-rs-v0.59.4) (2026-11-23)
+
+
+### Bug Fixes
+
+* **cua-driver:** isolate semantic AX lookups by renderer target ([#8153](https://github.com/trycua/cua/issues/8153)) ([f78bd08](https://github.com/trycua/cua/commit/f78bd08cde7b8c52857c3802233b3d023549dfed))
+
 ## [0.59.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.2...cua-driver-rs-v0.59.3) (2026-11-22)
 
 

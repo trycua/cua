@@ -44,6 +44,29 @@ use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
 #[derive(Debug)]
+struct SheetBlockedTarget;
+impl std::fmt::Display for SheetBlockedTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("An attached sheet blocks this element, or its ancestry could not be read. Call get_window_state and target the sheet.")
+    }
+}
+impl std::error::Error for SheetBlockedTarget {}
+
+fn ensure_sheet_target(element: &crate::ax::snapshot::RetainedElement) -> anyhow::Result<()> {
+    // SAFETY: a RetainedElement holds a +1 reference on a live element.
+    unsafe { ensure_sheet_clear(element.as_ptr() as AXUIElementRef) }
+}
+
+/// # Safety
+/// `element` must be a live AXUIElementRef.
+unsafe fn ensure_sheet_clear(element: AXUIElementRef) -> anyhow::Result<()> {
+    if crate::ax::exact_target::element_blocked_by_sheet(element) != Some(false) {
+        anyhow::bail!(SheetBlockedTarget);
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
 struct ObservedIdentityChanged;
 impl std::fmt::Display for ObservedIdentityChanged {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -57,6 +80,13 @@ fn ensure_observed_identity(element: &crate::ax::snapshot::RetainedElement) -> a
         anyhow::bail!(ObservedIdentityChanged);
     }
     Ok(())
+}
+
+fn sheet_refusal() -> ToolResult {
+    let message = SheetBlockedTarget.to_string();
+    ToolResult::error(&message).with_structured(serde_json::json!({
+        "status": "refused", "refusal": { "code": "stale_element_token", "message": message }
+    }))
 }
 
 fn identity_refusal() -> ToolResult {
@@ -253,6 +283,17 @@ fn is_toggle_press(ax_action: &str, role: &str, advertised: &[String]) -> bool {
     ax_action == "AXPress"
         && matches!(role, "AXRadioButton" | "AXCheckBox")
         && advertised.iter().any(|action| action == "AXPress")
+}
+
+/// Whether the background pixel hit-test acts on the element under the point
+/// itself instead of falling through to the routed pixel click. An element
+/// that does not advertise AXPress can still accept it as a no-op: an Excel
+/// toolbar group, a Finder list cell or a LibreOffice Calc cell returns
+/// success and nothing changes, which used to come back as a pressed click
+/// (#7086, #4864). The routed pixel click reaches what is drawn there, or
+/// refuses on a toolkit that cannot take it.
+fn hit_test_acts_on(focus_only: bool, advertised: &[String]) -> bool {
+    focus_only || advertised.iter().any(|action| action == "AXPress")
 }
 
 /// AX errors that AppKit apps return from a press they performed (#3835).
@@ -845,6 +886,7 @@ impl ClickTool {
 
             // Fast path: check the cached element against what the agent saw.
             match crate::fast_path_guard::guard_element(
+                &self.state.guard_store,
                 "click",
                 pid,
                 wid,
@@ -856,6 +898,15 @@ impl ClickTool {
             {
                 crate::fast_path_guard::Outcome::Refuse(refusal) => return refusal,
                 crate::fast_path_guard::Outcome::Proceed { summary, .. } => *fast_path = summary,
+            }
+
+            let sheet_guard = element_guard.clone();
+            let admitted =
+                tokio::task::spawn_blocking(move || ensure_sheet_target(&sheet_guard).is_ok())
+                    .await
+                    .unwrap_or(false);
+            if !admitted {
+                return sheet_refusal();
             }
 
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
@@ -967,6 +1018,7 @@ impl ClickTool {
                     // Re-read after any activation: the early read skips a
                     // foreground call into a background app.
                     let ensure_enabled = || {
+                        ensure_sheet_target(&middle_guard)?;
                         if foreground {
                             crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
                                 middle_guard.as_ptr(),
@@ -1015,6 +1067,7 @@ impl ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
                     Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => identity_refusal(),
                     Ok(Err(e)) => crate::security_prompt::tool_result(&e)
                         .or_else(|| super::element_disabled_error(pid, wid, &e, foreground))
@@ -1131,6 +1184,7 @@ impl ClickTool {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
+                                ensure_sheet_target(&element_guard)?;
                                 ensure_observed_identity(&element_guard)?;
                                 outcome = Some(perform_ax_click(
                                     (element_ptr, idx),
@@ -1168,6 +1222,7 @@ impl ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
+                            ensure_sheet_target(&element_guard)?;
                             ensure_observed_identity(&element_guard)?;
                             perform_ax_click(
                                 (element_ptr, idx),
@@ -1247,6 +1302,7 @@ impl ClickTool {
                         ax_click_structured(path, selection_verified, suspicion, &changes);
                     ToolResult::text(msg).with_structured(structured)
                 }
+                Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
                 Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => {
                     identity_refusal()
                 }
@@ -1429,6 +1485,8 @@ impl ClickTool {
             // point, before the cursor moves (so hover cannot change the crop).
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match crate::fast_path_guard::guard_pixel(
+                    self.state.guard_store.clone(),
+                    args.opt_str("_session_id"),
                     "click",
                     pid,
                     wid,
@@ -1527,23 +1585,10 @@ impl ClickTool {
                         CFRelease(element as _);
                         return Ok(None);
                     }
-                    // An element that does not advertise AXPress can still
-                    // accept it as a no-op. On a toolkit that drops routed
-                    // mouse events (LibreOffice's Calc cells) or only takes
-                    // them while active (GTK 3) that no-op used to come back
-                    // as a pressed click; fall through to the pixel route.
-                    if !focus_only
-                        && !crate::ax::bindings::copy_action_names(element)
-                            .iter()
-                            .any(|action| action == "AXPress")
-                        && matches!(
-                            crate::input::pointer_toolkit::detect(pid),
-                            Some(
-                                crate::input::pointer_toolkit::PointerReadingToolkit::Vcl
-                                    | crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz
-                            )
-                        )
-                    {
+                    if !hit_test_acts_on(
+                        focus_only,
+                        &crate::ax::bindings::copy_action_names(element),
+                    ) {
                         CFRelease(element as _);
                         return Ok(None);
                     }
@@ -2300,6 +2345,8 @@ fn perform_ax_click(
         let deadline = std::time::Instant::now() + MENU_OPEN_TIMEOUT;
         unsafe { !menu_beside(element, deadline) }
     };
+    // Making the window key, or the menu wait, can let the app open a sheet.
+    unsafe { ensure_sheet_clear(element) }?;
     let pressed_at = std::time::Instant::now();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
@@ -2835,6 +2882,23 @@ mod tests {
             !is_toggle_press("AXPress", "AXRadioButton", &[]),
             "AXPress not advertised"
         );
+    }
+
+    /// #7086: a background pixel click on an element that does not advertise
+    /// AXPress (an Excel toolbar group, a Finder list cell) reported "pressed
+    /// the background element via AX" while nothing changed. Whatever the
+    /// toolkit, only an advertised press or a focus is taken by the hit-test.
+    #[test]
+    fn hit_test_acts_only_on_an_advertised_press_or_a_focus() {
+        let press = vec!["AXPress".to_owned()];
+        let no_press = vec!["AXShowMenu".to_owned()];
+        assert!(hit_test_acts_on(false, &press));
+        assert!(hit_test_acts_on(true, &no_press));
+        assert!(
+            !hit_test_acts_on(false, &no_press),
+            "a press the element does not advertise"
+        );
+        assert!(!hit_test_acts_on(false, &[]));
     }
 
     /// Only errors an app returns after acting qualify; errors that mean the

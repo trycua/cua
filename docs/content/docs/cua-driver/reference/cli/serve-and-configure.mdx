@@ -33,6 +33,10 @@ description: "Serve MCP and call tools from the shell; run the daemon; grant per
 | [`cua-driver permissions`](#cua-driver-permissions) | Inspect or raise macOS TCC permission grants (macOS only). |
 | [`cua-driver permissions status`](#cua-driver-permissions-status) | Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. |
 | [`cua-driver permissions grant`](#cua-driver-permissions-grant) | Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot. |
+| [`cua-driver permissions vnc`](#cua-driver-permissions-vnc) | Approve the permission prompts through the Mac's Screen Sharing (VNC) server, for a Mac nobody is sitting at. |
+| [`cua-driver permissions vnc shot`](#cua-driver-permissions-vnc-shot) | Save a PNG of the whole screen, readable only by you. |
+| [`cua-driver permissions vnc click`](#cua-driver-permissions-vnc-click) | Click at a pixel of the screenshot and log what the click approves. |
+| [`cua-driver permissions vnc type-env`](#cua-driver-permissions-vnc-type-env) | Type the value of an environment variable, then press Return. |
 | [`cua-driver kwin-capture`](#cua-driver-kwin-capture) | Turn exact KWin window capture and activation on or off (Linux). |
 | [`cua-driver kwin-capture status`](#cua-driver-kwin-capture-status) | Show the setting and the desktop entry. |
 | [`cua-driver kwin-capture on`](#cua-driver-kwin-capture-on) | Turn it on; on KWin 6.7 and older also write the desktop entry KWin checks. |
@@ -87,7 +91,6 @@ cua-driver mcp [OPTIONS]
 | <span id="cua-driver-mcp--cursor-reduced-motion"></span>`--cursor-reduced-motion` | string | `auto` | Follow the OS setting, force still frames, or allow animation: auto, on, or off. |
 | <span id="cua-driver-mcp--grant"></span>`--grant` | string |  | Pre-authorize a residual standard-mode boundary for a newly launched runtime. Repeatable; supported value: existing-profile. |
 | <span id="cua-driver-mcp--direct"></span>`--direct` | boolean | `false` | Own the runtime in this MCP process; mutually exclusive with --socket. |
-| <span id="cua-driver-mcp--claude-code-computer-use-compat"></span>`--claude-code-computer-use-compat` | boolean | `false` | Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots. |
 | <span id="cua-driver-mcp--embedded"></span>`--embedded` | boolean | `false` | Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app. |
 
 **Examples**
@@ -214,6 +217,7 @@ cua-driver call [OPTIONS] <tool-name> [<json-args>]
 | --- | --- | --- | --- |
 | <span id="cua-driver-call--screenshot-out-file"></span>`--screenshot-out-file` | path |  | Write the first image content block from the response to this path. |
 | <span id="cua-driver-call--socket"></span>`--socket` | string |  | Override the daemon socket or named-pipe path. |
+| <span id="cua-driver-call--text"></span>`--text` | boolean | `false` | Print the result's text content instead of its structured JSON, for tools whose output is text (for example get_guide). |
 
 **Examples**
 
@@ -226,6 +230,9 @@ cua-driver call click '{"pid":844,"x":100,"y":200}'
 
 # Save the screenshot from a tool response
 cua-driver call get_window_state '{"pid":844,"window_id":10725}' --screenshot-out-file state.png
+
+# Print a tool's text output (guides, summaries) instead of its structured JSON
+cua-driver call --text get_guide '{"topic":"overview"}'
 
 # Read only what changed since an earlier snapshot_id
 cua-driver call get_window_state '{"pid":844,"window_id":10725,"since":"s0000002a"}'
@@ -294,17 +301,14 @@ cua-driver serve [OPTIONS]
 | <span id="cua-driver-serve--permission-mode"></span>`--permission-mode` | string | `standard` | Immutable agent authorization mode: standard, bounded, or unrestricted. |
 | <span id="cua-driver-serve--grant"></span>`--grant` | string |  | Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile. |
 | <span id="cua-driver-serve--capability-manifest"></span>`--capability-manifest` | path |  | Optional narrow-only tool/resource ceiling; required in bounded mode. |
-| <span id="cua-driver-serve--session-policy"></span>`--session-policy` | path |  | Deprecated alias for capability-manifest. |
 | <span id="cua-driver-serve--host-bundle-id"></span>`--host-bundle-id` | string |  | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 | <span id="cua-driver-serve--cursor-theme"></span>`--cursor-theme` | string | `cua.default` | Installed cursor theme id for the agent cursor overlay. |
 | <span id="cua-driver-serve--cursor-reduced-motion"></span>`--cursor-reduced-motion` | string | `auto` | Agent cursor motion: auto follows the OS setting, on forces still frames, off allows animation. |
 | <span id="cua-driver-serve--glide-ms"></span>`--glide-ms` | number |  | Override the agent cursor glide duration, in milliseconds. |
 | <span id="cua-driver-serve--dwell-ms"></span>`--dwell-ms` | number |  | Override how long the agent cursor dwells after a click, in milliseconds. |
 | <span id="cua-driver-serve--idle-hide-ms"></span>`--idle-hide-ms` | number |  | Override how long an idle agent cursor stays visible, in milliseconds. |
-| <span id="cua-driver-serve--claude-code-computer-use-compat"></span>`--claude-code-computer-use-compat` | boolean | `false` | Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect. |
 | <span id="cua-driver-serve--dangerously-bypass-approvals"></span>`--dangerously-bypass-approvals` | boolean | `false` | Select unrestricted mode and acknowledge its risk. |
 | <span id="cua-driver-serve--approve-capability-manifest"></span>`--approve-capability-manifest` | boolean | `false` | Trusted-launcher confirmation that the exact capability manifest was reviewed. |
-| <span id="cua-driver-serve--approve-session-policy"></span>`--approve-session-policy` | boolean | `false` | Deprecated alias for approve-capability-manifest. |
 | <span id="cua-driver-serve--no-permissions-gate"></span>`--no-permissions-gate` | boolean | `false` | Skip the macOS first-launch permissions gate. |
 | <span id="cua-driver-serve--no-automation-prompts"></span>`--no-automation-prompts` | boolean | `false` | Refuse scripting actions without granted macOS Automation consent. |
 | <span id="cua-driver-serve--embedded"></span>`--embedded` | boolean | `false` | Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1. |
@@ -511,6 +515,7 @@ cua-driver autostart kick
 `cua-driver permissions` exists on macOS only; Windows and Linux have no TCC equivalent.
 
 - `permissions status` is read-only and never prompts. It does not run the ScreenCaptureKit probe (macOS Tahoe can show a separate dialog for it), so it reports `screen_recording_capturable: null` and `direct_capture_status: "not_checked"`, plus the last successful `permissions grant` verification when one is recorded for the running driver identity.
+- `permissions status` reports the running daemon's own answer, which is what its tool calls get. `source.attribution` says whose grants those are: `driver-daemon` when macOS holds the daemon responsible for itself (started through LaunchServices), `caller` when another app is responsible because the daemon was started inside its process tree (then `source.responsible_bundle_id` / `source.responsible_executable` name that app), and `host` for an embedded driver.
 - `permissions grant` launches the installed `CuaDriver.app` through LaunchServices so the prompts attribute to the app, then requires a successful live capture probe. It never sends a prompt-capable request over the daemon socket.
 - Embedded hosts, in-process `CuaDriver.create()` runtimes and `cua-driver mcp --direct` own their own prompts: there, `check_permissions` stays read-only even with `{"prompt": true}`.
 - After a grant changes, quit and relaunch the responsible app (`CuaDriver.app`, or the host of a direct runtime).
@@ -566,6 +571,94 @@ cua-driver permissions grant
 ```bash test="cli-shape" id="ref-cua-driver-permissions-grant"
 # Request the grants for CuaDriver.app
 cua-driver permissions grant
+```
+
+### `cua-driver permissions vnc`
+
+Approve the permission prompts through the Mac's Screen Sharing (VNC) server, for a Mac nobody is sitting at.
+
+Screen Sharing input does not depend on Cua Driver's own permissions, so this works before they are granted, from this Mac or another computer. Run `permissions grant` on the Mac to raise the prompts, approve each one from screenshots, then check with `permissions status`; once both are on, Cua Driver works natively. Credentials come only from the environment: CUA_VNC_USER and CUA_VNC_PASSWORD for a macOS account (Apple Remote Desktop authentication), or CUA_VNC_PASSWORD alone for a VNC password. Clicks and typing are logged to $CUA_VNC_LOG, default ~/.cache/cua-driver/vnc-approvals.log. Only with the owner's authorization; see the macOS permissions reference.
+
+```text output
+cua-driver permissions vnc <COMMAND>
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-driver-permissions-vnc"
+# Save the screen of $CUA_VNC_SERVER
+cua-driver permissions vnc shot screen.png
+```
+
+#### `cua-driver permissions vnc shot`
+
+Save a PNG of the whole screen, readable only by you.
+
+```text output
+cua-driver permissions vnc shot [OPTIONS] <out>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<out>` | path | required | PNG path to write. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-driver-permissions-vnc-shot--server"></span>`--server` | string |  | The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-driver-permissions-vnc-shot"
+# Save the remote Mac's screen
+cua-driver permissions vnc shot screen.png --server mac.local
+```
+
+#### `cua-driver permissions vnc click`
+
+Click at a pixel of the screenshot and log what the click approves.
+
+```text output
+cua-driver permissions vnc click [OPTIONS] <x> <y>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<x>` | number | required | Pixel column in the screenshot. |
+| `<y>` | number | required | Pixel row in the screenshot. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-driver-permissions-vnc-click--server"></span>`--server` | string |  | The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900. |
+| <span id="cua-driver-permissions-vnc-click--label"></span>`--label` | string | required | What the click approves, such as 'CuaDriver: Accessibility'. Required. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-driver-permissions-vnc-click"
+# Turn on a switch and log it
+cua-driver permissions vnc click 640 412 --label "CuaDriver: Accessibility"
+```
+
+#### `cua-driver permissions vnc type-env`
+
+Type the value of an environment variable, then press Return. The value is never printed or logged.
+
+```text output
+cua-driver permissions vnc type-env [OPTIONS] <name>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<name>` | string | required | Environment variable that holds the text. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-driver-permissions-vnc-type-env--server"></span>`--server` | string |  | The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-driver-permissions-vnc-type-env"
+# Type a password the owner gave you
+cua-driver permissions vnc type-env VM_PASSWORD
 ```
 
 ## `cua-driver kwin-capture`

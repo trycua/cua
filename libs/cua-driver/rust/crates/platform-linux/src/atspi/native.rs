@@ -15,7 +15,7 @@
 //! `perform_action`, `set_value`, and `get_element_bounds` index into that same
 //! ordered set.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -72,6 +72,16 @@ fn deadline_passed() -> bool {
 /// walking rather than blocking forever.
 async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
     let budget = remaining_budget().min(CALL_TIMEOUT);
+    if budget.is_zero() {
+        return None;
+    }
+    tokio::time::timeout(budget, fut).await.ok()
+}
+
+/// [`call`] capped at half the remaining budget, for a step that another walk
+/// may own: waiting on it must leave this walk time to walk.
+async fn within_half_budget<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
+    let budget = remaining_budget().min(CALL_TIMEOUT) / 2;
     if budget.is_zero() {
         return None;
     }
@@ -1509,6 +1519,9 @@ async fn collect_visited_bounded_opts<'a>(
     max_depth: Option<usize>,
     walk_closed_menus: bool,
 ) -> Result<Option<Collected<'a>>> {
+    if still_unresponsive(pid) {
+        return Ok(Some(unresponsive_collected()));
+    }
     let ResolvedApp {
         app,
         children: probed,
@@ -1524,9 +1537,6 @@ async fn collect_visited_bounded_opts<'a>(
             return Ok(None);
         }
     };
-    if first_application_walk(pid) {
-        let _ = call(app.get_attributes()).await;
-    }
     let zconn = conn.connection();
     // Mapped popups of this pid, read once and only when a menubar menu's
     // open state cannot be told from AT-SPI states alone (gail, focus elsewhere).
@@ -1564,15 +1574,24 @@ async fn collect_visited_bounded_opts<'a>(
         // modal-grabbed app. Report it as unresponsive rather than as an
         // application without windows — the caller can retry later.
         dlog!("application for pid {pid} did not answer GetChildren");
-        return Ok(Some(Collected {
-            visited: Vec::new(),
-            scoped_frame: None,
-            truncation: Some(Truncation {
-                reason: "app_unresponsive",
-                visited: 0,
-                pending: 0,
-            }),
-        }));
+        let bus = app.inner().destination().to_string();
+        let path = app.inner().path().to_string();
+        mark_unresponsive_until(pid, async move {
+            if let Ok(conn) = shared_connection().await {
+                let _ = tokio::time::timeout(
+                    OP_TIMEOUT,
+                    conn.connection().call_method(
+                        Some(bus.as_str()),
+                        path.as_str(),
+                        Some("org.a11y.atspi.Accessible"),
+                        "GetState",
+                        &(),
+                    ),
+                )
+                .await;
+            }
+        });
+        return Ok(Some(unresponsive_collected()));
     }
 
     // Resolve which seed is the caller's window before walking, from the same
@@ -1584,6 +1603,45 @@ async fn collect_visited_bounded_opts<'a>(
     } else {
         resolve_window_frame(conn, pid, xid, &seeds).await
     };
+    // Wake the application once, then settle each window once. A concurrent
+    // walk of the same pid or window waits for these, within half its own
+    // budget, instead of walking a tree that is still empty.
+    let app_ref = RawObjectRef {
+        name: app.inner().destination().to_string(),
+        path: app.inner().path().to_string(),
+    };
+    let mut woken = wake_once(pid, || {
+        let (zconn, app_ref) = (zconn.clone(), app_ref.clone());
+        async move {
+            let _ = tokio::time::timeout(
+                CALL_TIMEOUT,
+                zconn.call_method(
+                    Some(app_ref.name.as_str()),
+                    app_ref.path.as_str(),
+                    Some("org.a11y.atspi.Accessible"),
+                    "GetAttributes",
+                    &(),
+                ),
+            )
+            .await;
+        }
+    });
+    // A walk that gave up waiting on the wake skips the settle: it would
+    // poll a tree that is not on yet.
+    if within_half_budget(woken.wait_for(|done| *done))
+        .await
+        .is_some()
+    {
+        let root = match scoped_frame {
+            Some(ordinal) => seeds[ordinal].clone(),
+            None => app_ref,
+        };
+        // A settle the budget cut short is not cached, so a later walk retries it.
+        let _ = within_half_budget(
+            once_per(pid, &root).get_or_try_init(|| settle_woken_chromium_tree(conn, &app, &root)),
+        )
+        .await;
+    }
 
     // Walk the caller's window FIRST when it was resolved: under a short
     // budget an application-wide pre-order (main window, then dialogs) could
@@ -2561,12 +2619,170 @@ fn is_indexable_capabilities(
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
 
-fn first_application_walk(pid: u32) -> bool {
+/// Longest wait for a woken Chromium tree to publish its page. A tab without
+/// content (about:blank) never does, and costs this once per process.
+const CHROMIUM_TREE_SETTLE: Duration = Duration::from_millis(500);
+const CHROMIUM_TREE_POLL: Duration = Duration::from_millis(25);
+
+/// Wait, bounded, for a Chromium tree that this walk just turned on to
+/// publish the page under `root` (the caller's window, else the application).
+///
+/// Chromium, and so every Chromium browser and Electron app, keeps its tree
+/// off on Linux until a client reads an object's attributes or relations, as
+/// Orca does, so no `--force-renderer-accessibility` flag is needed. It then
+/// builds the tree asynchronously: for a few tens of milliseconds the web
+/// document exists with no children, and a walk started then returns only
+/// the window chrome. Every probe shares the settle deadline, so a slow
+/// accessibility service costs at most that, never the walk's budget.
+///
+/// `Err` when the wait proved nothing because it got less than its full
+/// window or no answer; the caller retries it on its next walk. A page that
+/// stays empty for the full window (about:blank) is final.
+async fn settle_woken_chromium_tree(
+    conn: &AccessibilityConnection,
+    app: &AccessibleProxy<'_>,
+    root: &RawObjectRef,
+) -> std::result::Result<(), ()> {
+    let window = CHROMIUM_TREE_SETTLE.min(remaining_budget() / 2);
+    let until = tokio::time::Instant::now() + window;
+    OP_DEADLINE
+        .scope(until, async {
+            match toolkit_of(app).await {
+                Some(toolkit) if toolkit.trim().eq_ignore_ascii_case("chromium") => {}
+                Some(_) => return Ok(()),
+                None => return Err(()),
+            }
+            loop {
+                match web_document_populated(conn, root).await {
+                    Some(true) => return Ok(()),
+                    Some(false) => {}
+                    None => return Err(()),
+                }
+                if tokio::time::Instant::now() + CHROMIUM_TREE_POLL >= until {
+                    dlog!("woken Chromium tree published no web content in time; walking it as is");
+                    return if window < CHROMIUM_TREE_SETTLE {
+                        Err(())
+                    } else {
+                        Ok(())
+                    };
+                }
+                tokio::time::sleep(CHROMIUM_TREE_POLL).await;
+            }
+        })
+        .await
+}
+
+/// Whether any web document under `root` has children, found with one
+/// `Collection.GetMatches` instead of a walk. `None` when `root` cannot
+/// answer in time.
+async fn web_document_populated(
+    conn: &AccessibilityConnection,
+    root: &RawObjectRef,
+) -> Option<bool> {
+    let collection = atspi::proxy::collection::CollectionProxy::builder(conn.connection())
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .destination(root.name.clone())
+        .ok()?
+        .path(root.path.clone())
+        .ok()?
+        .build()
+        .await
+        .ok()?;
+    let rule = atspi::ObjectMatchRule::builder()
+        .roles(&[atspi::Role::DocumentWeb], atspi::MatchType::Any)
+        .build();
+    let documents = call(collection.get_matches(rule, atspi::SortOrder::Canonical, 0, true))
+        .await?
+        .ok()?;
+    for document in documents.iter().filter_map(RawObjectRef::from_atspi) {
+        if call(raw_child_count(conn.connection(), &document))
+            .await?
+            .ok()?
+            > 0
+        {
+            return Some(true);
+        }
+    }
+    Some(false)
+}
+
+fn unresponsive_pids() -> &'static Mutex<HashSet<u32>> {
     static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
     PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn unresponsive_collected<'a>() -> Collected<'a> {
+    Collected {
+        visited: Vec::new(),
+        scoped_frame: None,
+        truncation: Some(Truncation {
+            reason: "app_unresponsive",
+            visited: 0,
+            pending: 0,
+        }),
+    }
+}
+
+/// Mark `pid` unresponsive until `probe` ends. A probe that ends without a
+/// reply also clears the mark, so a walk after an app resumes reads it again
+/// instead of reporting a stale `app_unresponsive`.
+fn mark_unresponsive_until(
+    pid: u32,
+    probe: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    if !unresponsive_pids().lock().unwrap().insert(pid) {
+        return;
+    }
+    runtime().spawn(async move {
+        probe.await;
+        unresponsive_pids().lock().unwrap().remove(&pid);
+    });
+}
+
+fn still_unresponsive(pid: u32) -> bool {
+    unresponsive_pids().lock().unwrap().contains(&pid)
+}
+
+/// Send `pid`'s accessibility wake once per process, on its own task, and
+/// return a flag that turns true once it is answered or timed out. A walk
+/// whose budget runs out first leaves the wake in flight for the next walk
+/// instead of sending it again.
+fn wake_once<F>(pid: u32, wake: impl FnOnce() -> F) -> tokio::sync::watch::Receiver<bool>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    static WAKES: OnceLock<Mutex<HashMap<u32, tokio::sync::watch::Receiver<bool>>>> =
+        OnceLock::new();
+    WAKES
+        .get_or_init(Default::default)
         .lock()
         .unwrap()
-        .insert(pid)
+        .entry(pid)
+        .or_insert_with(|| {
+            let (done, woken) = tokio::sync::watch::channel(false);
+            let wake = wake();
+            tokio::spawn(async move {
+                wake.await;
+                let _ = done.send(true);
+            });
+            woken
+        })
+        .clone()
+}
+
+/// The settle of one window or application root of a process, run once.
+type OnceKey = (u32, String, String);
+
+fn once_per(pid: u32, root: &RawObjectRef) -> std::sync::Arc<tokio::sync::OnceCell<()>> {
+    static ONCE: OnceLock<Mutex<HashMap<OnceKey, std::sync::Arc<tokio::sync::OnceCell<()>>>>> =
+        OnceLock::new();
+    let key = (pid, root.name.clone(), root.path.clone());
+    ONCE.get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .clone()
 }
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
@@ -9161,12 +9377,97 @@ mod coord_tests {
 mod budget_tests {
     use super::*;
 
-    #[test]
-    fn application_attributes_wake_once_per_pid() {
-        assert!(first_application_walk(u32::MAX));
-        assert!(!first_application_walk(u32::MAX));
-        assert!(first_application_walk(u32::MAX - 1));
-        assert!(!first_application_walk(u32::MAX - 1));
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_that_gives_up_on_the_wake_leaves_it_in_flight() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static SENT: AtomicUsize = AtomicUsize::new(0);
+        let slow_wake = || async {
+            SENT.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        };
+        let walk = move |budget: Duration| {
+            OP_DEADLINE.scope(tokio::time::Instant::now() + budget, async move {
+                let mut woken = wake_once(u32::MAX, slow_wake);
+                let in_time = within_half_budget(woken.wait_for(|done| *done))
+                    .await
+                    .is_some();
+                in_time
+            })
+        };
+        assert!(
+            !walk(Duration::from_millis(200)).await,
+            "the first walk outlasted its half budget"
+        );
+        assert!(
+            walk(Duration::from_secs(2)).await,
+            "the next walk did not see the in-flight wake finish"
+        );
+        assert_eq!(SENT.load(Ordering::SeqCst), 1, "the wake was sent again");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_waiting_on_another_walks_settle_keeps_half_its_budget() {
+        let root = RawObjectRef {
+            name: ":1.9".to_owned(),
+            path: "/frame/1".to_owned(),
+        };
+        let pid = u32::MAX - 4;
+        let owner = once_per(pid, &root);
+        let settling = owner.get_or_try_init(|| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok::<(), ()>(())
+        });
+        let joiner = once_per(pid, &root);
+        let waiter = OP_DEADLINE.scope(
+            tokio::time::Instant::now() + Duration::from_millis(400),
+            async {
+                let joined =
+                    within_half_budget(joiner.get_or_try_init(|| async { Ok::<(), ()>(()) })).await;
+                (joined.is_none(), remaining_budget())
+            },
+        );
+        tokio::select! {
+            biased;
+            _ = settling => panic!("the owner's settle finished before the waiter gave up"),
+            (gave_up, left) = waiter => {
+                assert!(gave_up, "the waiter ran its own settle instead of joining the owner's");
+                assert_eq!(left, Duration::from_millis(200));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn each_window_of_a_pid_settles_once() {
+        let window = |path: &str| RawObjectRef {
+            name: ":1.7".to_owned(),
+            path: path.to_owned(),
+        };
+        let pid = u32::MAX - 2;
+        once_per(pid, &window("/frame/1"))
+            .get_or_init(|| async {})
+            .await;
+        assert!(once_per(pid, &window("/frame/1")).initialized());
+        assert!(
+            !once_per(pid, &window("/frame/2")).initialized(),
+            "a second window of a woken pid must still get its own settle"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_settle_cut_short_is_retried_by_the_next_walk() {
+        let root = RawObjectRef {
+            name: ":1.8".to_owned(),
+            path: "/frame/1".to_owned(),
+        };
+        let pid = u32::MAX - 3;
+        let _ = once_per(pid, &root)
+            .get_or_try_init(|| async { Err::<(), ()>(()) })
+            .await;
+        assert!(!once_per(pid, &root).initialized());
+        let _ = once_per(pid, &root)
+            .get_or_try_init(|| async { Ok::<(), ()>(()) })
+            .await;
+        assert!(once_per(pid, &root).initialized());
     }
 
     #[test]
@@ -9995,5 +10296,29 @@ mod editable_insert_length_tests {
         // GTK reads bytes (8) and Qt UTF-16 units (5): either guess breaks one.
         assert_eq!(editable_insert_length(None, "ñ🙂ab"), None);
         assert_eq!(editable_insert_length(None, "abc"), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod unresponsive_tests {
+    use super::{mark_unresponsive_until, still_unresponsive};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_pid_stays_unresponsive_only_while_its_probe_is_pending() {
+        let pid = u32::MAX;
+        let (end_probe, probe_ended) = tokio::sync::oneshot::channel::<()>();
+        mark_unresponsive_until(pid, async move {
+            let _ = probe_ended.await;
+        });
+        mark_unresponsive_until(pid, std::future::ready(()));
+        assert!(still_unresponsive(pid));
+
+        end_probe.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while still_unresponsive(pid) {
+            assert!(Instant::now() < deadline, "the mark outlived its probe");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

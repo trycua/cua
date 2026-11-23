@@ -2269,6 +2269,10 @@ impl ContainerRuntime {
     fn forwards_ports_by_number(&self) -> bool {
         matches!(self.endpoint.kind, EngineKind::Colima { .. })
             || (cfg!(target_os = "macos") && crate::managed::is_endpoint(&self.endpoint.uri))
+            // The Hyper-V runtime's own forwarder ([`crate::managed::hyperv`]).
+            || (cfg!(windows)
+                && crate::managed::hyperv::provisioned()
+                && crate::managed::is_endpoint(&self.endpoint.uri))
     }
 
     /// Writes a container's Spaces token to [`TOKEN_FILE`] in its rootfs on

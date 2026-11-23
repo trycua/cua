@@ -362,7 +362,8 @@ pub fn interaction_context(facts: &InteractionFacts) -> Value {
 }
 
 /// What an observed status covers: the application's own windows (and
-/// windows another process parented to them), never other processes' prompts.
+/// windows another process parented to them or, on X11, put in their window
+/// group), never other processes' prompts.
 const OBSERVED_SCOPE: &str = "application_windows";
 
 /// Record [`interaction_context`] on a window snapshot.

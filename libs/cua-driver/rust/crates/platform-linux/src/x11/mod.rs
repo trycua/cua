@@ -578,7 +578,63 @@ pub fn interaction_facts(
             }
         }
     }
+    add_other_process_group_modals(
+        &mut related,
+        pid,
+        target,
+        &windows,
+        focused,
+        target_group,
+        |id| read_window_group(&conn, u32::try_from(id).ok()?).ok(),
+    )?;
     Some(related)
+}
+
+/// Add to `related` each modal window of another process that is transient
+/// for no window but shares the target's `WM_HINTS` window group: a
+/// group-modal dialog can run in another process, and
+/// `related_by_owner_chain` weighs another process's window only through an
+/// owner chain. Only a group read as the target's counts, since a modal of
+/// an unrelated application names its own group or none. `None` when a group
+/// read fails, or when a modal in the target's group has no attributable pid.
+fn add_other_process_group_modals(
+    related: &mut Vec<cua_driver_core::window_inspection::RelatedWindowFacts>,
+    pid: u32,
+    target: u64,
+    windows: &[cua_driver_core::window_inspection::ListedWindow],
+    focused: Option<u64>,
+    target_group: Option<u32>,
+    group_of: impl Fn(u64) -> Option<Option<u32>>,
+) -> Option<()> {
+    let Some(target_group) = target_group else {
+        return Some(());
+    };
+    let candidates: Vec<_> = windows
+        .iter()
+        .filter(|window| {
+            window.viewable
+                && window.modal
+                && window.owner.is_none()
+                && window.window_id != target
+                && window.pid != Some(pid)
+                && !related
+                    .iter()
+                    .any(|known| known.window_id == window.window_id)
+        })
+        .collect();
+    for window in candidates {
+        if group_of(window.window_id)? != Some(target_group) {
+            continue;
+        }
+        related.push(cua_driver_core::window_inspection::RelatedWindowFacts {
+            pid: i64::from(window.pid?),
+            window_id: window.window_id,
+            owner: cua_driver_core::window_inspection::WindowOwnership::Unowned,
+            modal: true,
+            focused: focused == Some(window.window_id),
+        });
+    }
+    Some(())
 }
 
 /// Whether a group-modal window and the target share a `WM_HINTS` window
@@ -1085,6 +1141,46 @@ mod tests {
         assert_eq!(same_window_group(None, Some(7)), None);
         assert_eq!(same_window_group(Some(7), None), None);
         assert_eq!(same_window_group(None, None), None);
+    }
+
+    #[test]
+    fn another_processs_group_modal_blocks_a_target_in_its_group() {
+        use cua_driver_core::window_inspection::{
+            interaction_context, related_by_owner_chain, ListedWindow,
+        };
+        let listed = |window_id: u64, pid: u32, modal: bool| ListedWindow {
+            window_id,
+            pid: Some(pid),
+            owner: None,
+            modal,
+            viewable: true,
+        };
+        // Target 1 of pid 10 in group 7; 2 is a group-modal of pid 20 in that
+        // group, 3 an unrelated application's modal in group 8.
+        let windows = [
+            listed(1, 10, false),
+            listed(2, 20, true),
+            listed(3, 30, true),
+        ];
+        let group = |id: u64| Some(Some(if id == 3 { 8 } else { 7 }));
+        let mut related = related_by_owner_chain(1, 10, &windows, Some(2), |_| None).unwrap();
+        assert!(related.is_empty());
+        add_other_process_group_modals(&mut related, 10, 1, &windows, Some(2), Some(7), group)
+            .unwrap();
+        let context = interaction_context(&Some(related));
+        assert_eq!(context["status"], "blocked");
+        assert_eq!(context["related_surfaces"][0]["relation"], "blocks_target");
+        assert_eq!(context["next_call"]["arguments"]["pid"], 20);
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 2);
+        assert_eq!(context["related_surfaces"].as_array().unwrap().len(), 1);
+        // A target with no group shares none; a failed group read hides one.
+        let mut related = Vec::new();
+        add_other_process_group_modals(&mut related, 10, 1, &windows, None, None, group).unwrap();
+        assert!(related.is_empty());
+        assert_eq!(
+            add_other_process_group_modals(&mut related, 10, 1, &windows, None, Some(7), |_| None),
+            None
+        );
     }
 
     #[test]

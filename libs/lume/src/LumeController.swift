@@ -1353,6 +1353,7 @@ final class LumeController {
         clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled,
         forwards: [UInt16] = [],
+        hostDevices: HostDeviceOptions = .all,
         telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
@@ -1365,6 +1366,7 @@ final class LumeController {
         ) {
             throw VMError.vncDisabledConflict(option)
         }
+        try hostDevices.validate(clipboardSync: clipboard)
         Logger.info(
             "Running VM",
             metadata: [
@@ -1382,6 +1384,8 @@ final class LumeController {
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
                 "additional_disks": "\(additionalDiskPaths?.count ?? 0)",
                 "network_override": networkMode?.description ?? "vm-config",
+                "audio_device": "\(hostDevices.audio)",
+                "clipboard_device": "\(hostDevices.clipboard)",
             ])
 
         do {
@@ -1516,7 +1520,8 @@ final class LumeController {
                 networkMode: networkMode,
                 clipboard: clipboard,
                 vncPolicy: vncPolicy,
-                forwards: forwards)
+                forwards: forwards,
+                hostDevices: hostDevices)
             // `run` returns once the guest has stopped, including when it shut
             // itself down, so the VM no longer runs in this process.
             SharedVM.shared.removeVM(name: normalizedName, ifSame: vm)

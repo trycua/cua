@@ -112,6 +112,22 @@ struct Run: AsyncParsableCommand {
     )
     var clipboard: Bool = false
 
+    @Flag(
+        name: .customLong("no-audio-device"),
+        help: "Leave the virtio sound device (host audio input and output) out of the VM, so the guest has no audio device."
+    )
+    var noAudioDevice: Bool = false
+
+    @Flag(
+        name: .customLong("no-clipboard-device"),
+        help: "Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with --clipboard."
+    )
+    var noClipboardDevice: Bool = false
+
+    var hostDevices: HostDeviceOptions {
+        HostDeviceOptions(audio: !noAudioDevice, clipboard: !noClipboardDevice)
+    }
+
     private var parsedNetworkMode: NetworkMode? {
         get throws {
             guard let network else {
@@ -176,6 +192,9 @@ struct Run: AsyncParsableCommand {
     }
 
     func validate() throws {
+        if clipboard && noClipboardDevice {
+            throw ValidationError("'--clipboard' cannot be combined with '--no-clipboard-device'.")
+        }
         if let option = VNCPolicy.conflictingOption(
             policy: vnc,
             displayMode: DisplayMode.resolve(requested: display, noDisplay: noDisplay),
@@ -225,7 +244,8 @@ struct Run: AsyncParsableCommand {
             additionalDiskPaths: parsedAdditionalDisks.isEmpty ? nil : parsedAdditionalDisks,
             networkMode: parsedNetworkMode,
             clipboard: clipboard,
-            vncPolicy: vnc
+            vncPolicy: vnc,
+            hostDevices: hostDevices
         )
     }
 }

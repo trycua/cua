@@ -19,6 +19,8 @@ struct VMVirtualizationServiceContext {
     let networkMode: NetworkMode
     /// Adds a virtio socket device (for host port forwards over vsock).
     var socketDevice: Bool = false
+    /// Host audio and clipboard devices to attach; all by default.
+    var hostDevices: HostDeviceOptions = .all
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -491,26 +493,8 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
             vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
         }
         
-        // Audio configuration
-        let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-        let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-        let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-        
-        inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-        outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-        
-        soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-        vzConfig.audioDevices = [soundDeviceConfiguration]
-        
-        // Clipboard sharing via Spice agent
-        let spiceAgentConsoleDevice = VZVirtioConsoleDeviceConfiguration()
-        let spiceAgentPort = VZVirtioConsolePortConfiguration()
-        spiceAgentPort.name = VZSpiceAgentPortAttachment.spiceAgentPortName
-        let spiceAgentPortAttachment = VZSpiceAgentPortAttachment()
-        spiceAgentPortAttachment.sharesClipboard = true
-        spiceAgentPort.attachment = spiceAgentPortAttachment
-        spiceAgentConsoleDevice.ports[0] = spiceAgentPort
-        vzConfig.consoleDevices.append(spiceAgentConsoleDevice)
+        // Host audio and clipboard devices (each can be left out).
+        config.hostDevices.apply(to: vzConfig)
 
         // Optional serial console for debugging. When LUME_SERIAL_CONSOLE points
         // at a writable path, attach a virtio serial port whose output is written
@@ -716,26 +700,8 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
             vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
         }
 
-        // Audio configuration
-        let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-        let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-        let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-        
-        inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-        outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-        
-        soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-        vzConfig.audioDevices = [soundDeviceConfiguration]
-
-        // Clipboard sharing via Spice agent
-        let spiceAgentConsoleDevice = VZVirtioConsoleDeviceConfiguration()
-        let spiceAgentPort = VZVirtioConsolePortConfiguration()
-        spiceAgentPort.name = VZSpiceAgentPortAttachment.spiceAgentPortName
-        let spiceAgentPortAttachment = VZSpiceAgentPortAttachment()
-        spiceAgentPortAttachment.sharesClipboard = true
-        spiceAgentPort.attachment = spiceAgentPortAttachment
-        spiceAgentConsoleDevice.ports[0] = spiceAgentPort
-        vzConfig.consoleDevices.append(spiceAgentConsoleDevice)
+        // Host audio and clipboard devices (each can be left out).
+        config.hostDevices.apply(to: vzConfig)
 
         // Directory sharing
         var directorySharingDevices = createDirectorySharingDevices(

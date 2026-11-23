@@ -27,6 +27,11 @@ struct RunVMRequest: Codable {
     /// gets a virtio socket device; the guest needs Cua's vsock agent).
     /// `get` reports the host ports under `forwards` once the agent answers.
     var forwards: [UInt16]? = nil
+    /// Leave the virtio sound device (host audio) out of the VM.
+    var noAudioDevice: Bool? = nil
+    /// Leave the clipboard-sharing device out of the VM and turn off
+    /// clipboard sync; cannot be combined with `clipboard: true`.
+    var noClipboardDevice: Bool? = nil
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -70,6 +75,16 @@ struct RunVMRequest: Codable {
                 "Invalid vnc policy '\(vnc)'. Expected 'enabled' or 'disabled'.")
         }
         return policy
+    }
+
+    /// The host devices this run attaches; rejects clipboard sync with the
+    /// clipboard device turned off.
+    func validatedHostDevices() throws -> HostDeviceOptions {
+        let options = HostDeviceOptions(
+            audio: !(noAudioDevice ?? false),
+            clipboard: !(noClipboardDevice ?? false))
+        try options.validate(clipboardSync: clipboard ?? false)
+        return options
     }
 
     func validatedVNCPolicy(noDisplayDefault: Bool) throws -> VNCPolicy {

@@ -212,9 +212,13 @@ class VM {
     static func shouldStartClipboardWatcher(
         displayMode: DisplayMode,
         osType: String,
-        explicitlyRequested: Bool
+        explicitlyRequested: Bool,
+        clipboardAllowed: Bool = true
     ) -> Bool {
-        explicitlyRequested
+        // A run with the clipboard device turned off shares no clipboard at
+        // all, so the automatic native-display sync stays off too.
+        guard clipboardAllowed else { return false }
+        return explicitlyRequested
             || (displayMode == .native && osType.caseInsensitiveCompare("macOS") == .orderedSame)
     }
 
@@ -223,10 +227,12 @@ class VM {
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = []
+        vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = [],
+        hostDevices: HostDeviceOptions = .all
     ) async throws {
         // Defense in depth: the CLI and the controller reject these combinations
         // first, but no caller may reach a VNC-dependent path with VNC disabled.
+        try hostDevices.validate(clipboardSync: clipboard)
         if let option = VNCPolicy.conflictingOption(
             policy: vncPolicy,
             displayMode: displayMode,
@@ -357,6 +363,10 @@ class VM {
                 hasSavedState: !recoveryMode && vmDirContext.dir.hasSavedState(),
                 savedStateHasVsock: vmDirContext.dir.savedStateHasVsock())
             config.socketDevice = activeSocketDevice
+            // The VM is built with exactly these host devices. A saved state
+            // taken with a different set fails to restore into it, and the
+            // VM then boots fresh with this set (`restoreOrBoot`).
+            config.hostDevices = hostDevices
             vmDirContext.dir.clearVsockSession()
             Logger.info(
                 "Successfully created virtualization service context",
@@ -464,7 +474,8 @@ class VM {
             if Self.shouldStartClipboardWatcher(
                 displayMode: displayMode,
                 osType: getOSType(),
-                explicitlyRequested: clipboard
+                explicitlyRequested: clipboard,
+                clipboardAllowed: hostDevices.clipboard
             ) {
                 await startClipboardWatcherIfNeeded()
             }

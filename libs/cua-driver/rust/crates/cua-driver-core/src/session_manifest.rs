@@ -1057,6 +1057,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 "set_value",
                 "run_steps",
                 "run_script",
+                "mouse_move_relative",
                 "mouse_button_down",
                 "mouse_button_up",
                 "mouse_drag",

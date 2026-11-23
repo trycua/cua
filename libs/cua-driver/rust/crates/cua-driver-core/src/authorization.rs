@@ -275,6 +275,7 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "drag",
     "scroll",
     "move_cursor",
+    "mouse_move_relative",
     "mouse_button_down",
     "mouse_button_up",
     "mouse_drag",
@@ -926,6 +927,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "drag"
         | "scroll"
         | "move_cursor"
+        | "mouse_move_relative"
         | "mouse_button_down"
         | "mouse_button_up"
         | "mouse_drag"
@@ -1905,6 +1907,7 @@ mod tests {
         assert_eq!(ids("invoke_menu"), vec!["os_security_prompt"]);
         for tool in [
             "move_cursor",
+            "mouse_move_relative",
             "bring_to_front",
             "set_window_frame",
             "get_window_state",

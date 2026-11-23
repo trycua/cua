@@ -139,7 +139,9 @@ fn is_scoped_action(tool_name: &str) -> bool {
 fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
     if matches!(
         tool_name,
-        "get_desktop_state" | "get_screen_size" | "get_cursor_position"
+        // Relative motion goes to whichever app has the pointer; it has no
+        // window target.
+        "get_desktop_state" | "get_screen_size" | "get_cursor_position" | "mouse_move_relative"
     ) {
         return ToolScope::Desktop;
     }
@@ -333,6 +335,23 @@ mod tests {
             .code,
             "window_scope_disabled"
         );
+    }
+
+    #[test]
+    fn relative_pointer_motion_needs_desktop_scope() {
+        let window = fresh("strict-window-relative");
+        let desktop = fresh("strict-desktop-relative");
+        bind_session(&window, Some(CaptureScopePolicy::Window)).unwrap();
+        bind_session(&desktop, Some(CaptureScopePolicy::Desktop)).unwrap();
+        let args = |session: &str| json!({"session": session, "dx": 10, "dy": 0});
+
+        assert_eq!(
+            enforce_tool("mouse_move_relative", &args(&window))
+                .unwrap_err()
+                .code,
+            "desktop_scope_disabled"
+        );
+        assert!(enforce_tool("mouse_move_relative", &args(&desktop)).is_ok());
     }
 
     #[test]

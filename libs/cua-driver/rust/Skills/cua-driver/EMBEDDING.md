@@ -291,8 +291,9 @@ list each time. A host that accepts slightly old answers sets
 `CUA_DRIVER_LIST_WINDOWS_CACHE_MS` in the same environment as the variables
 above. A reply younger than that many milliseconds is served again for the
 same arguments. A reply up to 20 times that age is also served, and the first
-such call starts one background recompute, so the next call gets the new list.
-An older reply is recomputed before the call returns. Any action (a tool call
+such call starts one background recompute. Calls after that recompute succeeds
+get the new list; calls before it finishes get the same old reply. A reply 20
+times the value old or older is recomputed before the call returns. Any action (a tool call
 that is not read-only) retires every cached reply when it starts and when its
 call ends, including a call its client cancels, so the next `list_windows`
 after it reads the live window list. A change that lands after that is not

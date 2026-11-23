@@ -43,7 +43,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "window_id"],
             "properties": {
-                "session": cua_driver_core::tool_schema::session_schema(),
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive substring filter; `a|b` matches rows containing either. Returns matching rows plus ancestors, or says `0 of N elements match` when none does; element_index values are not renumbered. Try this before a full read." },

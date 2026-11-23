@@ -423,6 +423,7 @@ impl TcpShares {
             per_ip: Mutex::default(),
             dns_ids: Mutex::default(),
             http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(3))
                 .timeout(Duration::from_secs(15))
                 .build()
                 .unwrap_or_default(),

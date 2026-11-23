@@ -1299,6 +1299,7 @@ impl Meter {
             // The first report comes FIRST_REPORT_AFTER a start, then hourly.
             let mut next_report = Instant::now() + FIRST_REPORT_AFTER;
             let http = match reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(3))
                 .timeout(Duration::from_secs(10))
                 .build()
             {

@@ -83,6 +83,20 @@ pub(crate) fn source(injected: bool, extra_info: usize) -> InputSource {
     }
 }
 
+/// Where `SetCursorPos` puts the cursor for `point`: clamped into the clip
+/// rectangle `(left, top, right, bottom)`, whose right and bottom edges are
+/// exclusive.
+pub(crate) fn clip_point(point: (i32, i32), clip: (i32, i32, i32, i32)) -> (i32, i32) {
+    let (left, top, right, bottom) = clip;
+    if right <= left || bottom <= top {
+        return point;
+    }
+    (
+        point.0.clamp(left, right - 1),
+        point.1.clamp(top, bottom - 1),
+    )
+}
+
 /// How long a noted cursor placement waits for its hook event.
 const PLACEMENT_TTL: Duration = Duration::from_secs(1);
 const MAX_PLACEMENTS: usize = 32;
@@ -179,7 +193,8 @@ mod hook {
         LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        SystemParametersInfoW, MOUSEWHEEL_ROUTING_MOUSE_POS, SPI_GETMOUSEWHEELROUTING,
+        GetClassNameW, SystemParametersInfoW, MOUSEWHEEL_ROUTING_HYBRID,
+        MOUSEWHEEL_ROUTING_MOUSE_POS, SPI_GETMOUSEWHEELROUTING,
         SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
     };
 
@@ -261,9 +276,7 @@ mod hook {
         ((pid != 0).then_some(pid), Some(hwnd.0 as u64))
     }
 
-    /// Whether the wheel goes to the window under the pointer, the Windows
-    /// default, rather than to the focused window.
-    fn wheel_follows_pointer() -> bool {
+    fn wheel_routing() -> u32 {
         let mut routing = MOUSEWHEEL_ROUTING_MOUSE_POS;
         let _ = unsafe {
             SystemParametersInfoW(
@@ -273,26 +286,42 @@ mod hook {
                 SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
             )
         };
-        routing == MOUSEWHEEL_ROUTING_MOUSE_POS
+        routing
+    }
+
+    /// A top-level window of a Windows Store app, which hybrid wheel routing
+    /// sends the wheel to when it is under the pointer.
+    fn is_store_app_window(hwnd: HWND) -> bool {
+        let mut class = [0u16; 64];
+        let length = unsafe { GetClassNameW(hwnd, &mut class) }.max(0) as usize;
+        let class = String::from_utf16_lossy(&class[..length]);
+        matches!(
+            class.as_str(),
+            "ApplicationFrameWindow" | "Windows.UI.Core.CoreWindow"
+        )
     }
 
     /// The top-level window mouse input of `kind` at `point` goes to: the one
-    /// holding mouse capture on the foreground thread, as during a drag; for
-    /// the wheel, the foreground window when the wheel follows focus; else the
-    /// one under the pointer.
+    /// holding mouse capture on the foreground thread, as during a drag; else
+    /// the one under the pointer, except for a wheel that Windows routes to
+    /// the focused window.
     fn mouse_target(kind: InputKind, point: POINT) -> HWND {
         let mut info = GUITHREADINFO {
             cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
             ..Default::default()
         };
-        let window = match unsafe { GetGUIThreadInfo(0, &mut info) } {
-            Ok(()) if !info.hwndCapture.0.is_null() => info.hwndCapture,
-            _ if kind == InputKind::Wheel && !wheel_follows_pointer() => unsafe {
-                GetForegroundWindow()
-            },
-            _ => unsafe { WindowFromPoint(point) },
-        };
-        unsafe { GetAncestor(window, GA_ROOT) }
+        if unsafe { GetGUIThreadInfo(0, &mut info) }.is_ok() && !info.hwndCapture.0.is_null() {
+            return unsafe { GetAncestor(info.hwndCapture, GA_ROOT) };
+        }
+        let under = unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) };
+        if kind != InputKind::Wheel {
+            return under;
+        }
+        match wheel_routing() {
+            MOUSEWHEEL_ROUTING_MOUSE_POS => under,
+            MOUSEWHEEL_ROUTING_HYBRID if is_store_app_window(under) => under,
+            _ => unsafe { GetForegroundWindow() },
+        }
     }
 
     fn record(input: ObservedInput) {
@@ -385,6 +414,15 @@ mod tests {
         assert_eq!(source(false, DRIVER_INPUT_TAG), InputSource::Hardware);
         assert_eq!(source(true, DRIVER_INPUT_TAG), InputSource::Driver);
         assert_eq!(source(true, 0), InputSource::Injected);
+    }
+
+    #[test]
+    fn a_placement_is_clamped_into_the_clip_rectangle() {
+        let clip = (0, 0, 1920, 1080);
+        assert_eq!(clip_point((40, 40), clip), (40, 40));
+        assert_eq!(clip_point((-5, 2000), clip), (0, 1079));
+        assert_eq!(clip_point((1920, 1080), clip), (1919, 1079));
+        assert_eq!(clip_point((7, 7), (0, 0, 0, 0)), (7, 7));
     }
 
     #[test]

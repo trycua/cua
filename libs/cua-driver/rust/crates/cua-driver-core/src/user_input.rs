@@ -12,7 +12,7 @@
 //! reports: what a client does about an intervention is its own policy.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -140,13 +140,12 @@ pub struct UserInputLog {
     epoch: u64,
     capacity: usize,
     state: Mutex<LogState>,
-    /// Inputs recorded while a read held `state`, taken in by the next
-    /// record or read.
-    pending: Mutex<Vec<(ObservedInput, u64)>>,
+    /// Recorded inputs not yet taken into `state`. Sending never blocks.
+    inputs: mpsc::Sender<(ObservedInput, u64)>,
 }
 
-#[derive(Default)]
 struct LogState {
+    inputs: mpsc::Receiver<(ObservedInput, u64)>,
     events: VecDeque<UserInputEvent>,
     last_seq: u64,
     evicted_through: u64,
@@ -195,51 +194,55 @@ impl LogState {
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 impl UserInputLog {
     pub fn new(capacity: usize) -> Self {
         Self::with_epoch(capacity, now_ms())
     }
 
     pub fn with_epoch(capacity: usize, epoch: u64) -> Self {
+        let (inputs, received) = mpsc::channel();
         Self {
             epoch,
             capacity: capacity.max(1),
-            state: Mutex::new(LogState::default()),
-            pending: Mutex::new(Vec::new()),
+            state: Mutex::new(LogState {
+                inputs: received,
+                events: VecDeque::new(),
+                last_seq: 0,
+                evicted_through: 0,
+                read_through: 0,
+            }),
+            inputs,
         }
     }
 
-    fn take_pending(&self, state: &mut LogState) {
-        let pending = std::mem::take(&mut *lock(&self.pending));
-        for (input, time_ms) in pending {
+    fn take_inputs(&self, state: &mut LogState) {
+        while let Ok((input, time_ms)) = state.inputs.try_recv() {
             state.apply(input, time_ms, self.capacity);
         }
     }
 
-    /// Record an input observed at `time_ms`. This never waits on a reader:
-    /// while a read holds the log, the input waits in a queue the read or the
-    /// next record takes in, so a platform hook can call it directly.
+    /// Record an input observed at `time_ms`. This never waits: the input
+    /// goes into a channel, and is taken into the log now if no read holds
+    /// it, else by that read's successor or the next record. A platform hook
+    /// can call it directly.
     pub fn record(&self, input: ObservedInput, time_ms: u64) {
-        lock(&self.pending).push((input, time_ms));
+        let _ = self.inputs.send((input, time_ms));
         let mut state = match self.state.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => return,
         };
-        self.take_pending(&mut state);
+        self.take_inputs(&mut state);
     }
 
     /// The events after `since`, or none and the newest position when
     /// `since` is absent.
     pub fn read(&self, since: Option<Cursor>) -> Result<Read, ReadError> {
-        let mut state = lock(&self.state);
-        self.take_pending(&mut state);
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.take_inputs(&mut state);
         let cursor = Cursor {
             epoch: self.epoch,
             seq: state.last_seq,
@@ -497,7 +500,7 @@ mod tests {
     fn a_record_while_a_read_holds_the_log_is_seen_by_the_next_read() {
         let log = UserInputLog::with_epoch(16, 1);
         let cursor = start(&log);
-        let held = lock(&log.state);
+        let held = log.state.lock().unwrap();
         log.record(key(InputSource::Hardware), 10);
         drop(held);
         let read = log.read(Some(cursor)).unwrap();

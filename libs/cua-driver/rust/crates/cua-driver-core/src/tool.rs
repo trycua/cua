@@ -2690,10 +2690,7 @@ impl ToolRegistry {
             crate::security_prompt::PromptInput::for_mode(context.mode()).stamp(&mut args);
         }
         crate::tool_activity::note_tool_activity();
-        let actuates = !tool.def().read_only;
-        if actuates {
-            crate::read_cache::note_actuation();
-        }
+        let actuation = (!tool.def().read_only).then(crate::read_cache::Actuation::begin);
         let invoke = tool.invoke(args.clone());
         let mut result =
             crate::recording::scope_dispatch_click_capture(pending_turn.as_ref(), async {
@@ -2704,9 +2701,7 @@ impl ToolRegistry {
                 }
             })
             .await;
-        if actuates {
-            crate::read_cache::note_actuation();
-        }
+        drop(actuation);
         match resolved_name {
             "get_desktop_state" if result.is_error != Some(true) => {
                 crate::desktop_capture_scale::record_desktop_state(

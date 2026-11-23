@@ -15,9 +15,9 @@
 //!
 //! Unset, empty, `0`, or unparsable values leave the tool uncached, so a daemon
 //! launched without the variable behaves exactly as before. No tool argument
-//! can change the bound. Any dispatch of a tool that is not read-only calls
-//! [`note_actuation`], and no reply computed before that is served again, so a
-//! read after an action always reflects the action. Only the public tool is
+//! can change the bound. Dispatch holds an [`Actuation`] around any tool that
+//! is not read-only, and no reply computed before it ends is served again, so
+//! a read after an action always reflects the action. Only the public tool is
 //! wrapped; post-action observation and `verify_state` keep reading live.
 
 use crate::protocol::{Content, ToolResult};
@@ -44,11 +44,28 @@ const MAX_ENTRIES: usize = 64;
 
 static ACTUATION_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Retire every cached reply. Dispatch calls this before and after any tool
-/// that is not read-only, so no reply computed before an action, or while it
-/// ran, is served after it.
-pub fn note_actuation() {
-    ACTUATION_GENERATION.fetch_add(1, Ordering::SeqCst);
+/// Retires every cached reply when it starts and again when it is dropped,
+/// so no reply computed before an action, or while it ran, is served after
+/// it, even when the action's caller is cancelled.
+#[must_use]
+pub struct Actuation(&'static AtomicU64);
+
+impl Actuation {
+    /// Dispatch holds one around every tool call that is not read-only.
+    pub fn begin() -> Self {
+        Self::on(&ACTUATION_GENERATION)
+    }
+
+    fn on(generation: &'static AtomicU64) -> Self {
+        generation.fetch_add(1, Ordering::SeqCst);
+        Self(generation)
+    }
+}
+
+impl Drop for Actuation {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 /// Parse the freshness bound. `None` means caching is off.
@@ -108,6 +125,8 @@ impl Reply {
 }
 
 struct Entry<V> {
+    /// Unique within the cache, so a refresh can name the entry it serves.
+    id: u64,
     value: V,
     /// When the computation that produced `value` started.
     started: Instant,
@@ -118,11 +137,11 @@ struct Entry<V> {
 #[derive(Debug, PartialEq)]
 enum Lookup<V> {
     Fresh(V),
-    /// Serve `value`. `refresh` names the entry, by its start, when this
-    /// caller owns that entry's one background recompute.
+    /// Serve `value`. `refresh` names the entry when this caller owns its
+    /// one background recompute.
     Stale {
         value: V,
-        refresh: Option<Instant>,
+        refresh: Option<u64>,
     },
     Miss,
 }
@@ -134,7 +153,7 @@ struct Computed<V> {
     started: Instant,
     generation: u64,
     /// The entry this computation refreshes, from [`Lookup::Stale`].
-    refreshes: Option<Instant>,
+    refreshes: Option<u64>,
 }
 
 /// Replies keyed by argument set. Callers pass the clock and generation, so
@@ -142,6 +161,7 @@ struct Computed<V> {
 struct ReplyCache<V> {
     ttl: Duration,
     entries: Mutex<HashMap<String, Entry<V>>>,
+    next_id: AtomicU64,
 }
 
 impl<V: Clone> ReplyCache<V> {
@@ -149,6 +169,7 @@ impl<V: Clone> ReplyCache<V> {
         Self {
             ttl,
             entries: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(0),
         }
     }
 
@@ -175,7 +196,7 @@ impl<V: Clone> ReplyCache<V> {
             return Lookup::Fresh(entry.value.clone());
         }
         if age < self.ttl * STALE_CAP_FACTOR {
-            let refresh = (!entry.refreshing).then_some(entry.started);
+            let refresh = (!entry.refreshing).then_some(entry.id);
             entry.refreshing = true;
             return Lookup::Stale {
                 value: entry.value.clone(),
@@ -193,11 +214,9 @@ impl<V: Clone> ReplyCache<V> {
     fn store(&self, key: String, computed: Computed<V>, current_generation: u64) {
         let mut entries = self.lock();
         let current = entries.get_mut(&key);
-        let owns_entry = computed.refreshes.is_none_or(|entry| {
-            current
-                .as_ref()
-                .is_some_and(|current| current.started == entry)
-        });
+        let owns_entry = computed
+            .refreshes
+            .is_none_or(|entry| current.as_ref().is_some_and(|current| current.id == entry));
         let newer_kept = current
             .as_ref()
             .is_some_and(|entry| entry.started > computed.started);
@@ -224,6 +243,7 @@ impl<V: Clone> ReplyCache<V> {
         entries.insert(
             key,
             Entry {
+                id: self.next_id.fetch_add(1, Ordering::Relaxed),
                 value,
                 started,
                 generation,
@@ -257,7 +277,7 @@ impl CachedReadTool {
         key: String,
         args: Value,
         generation: u64,
-        refreshes: Option<Instant>,
+        refreshes: Option<u64>,
     ) -> ToolResult {
         let started = Instant::now();
         let result = self.inner.invoke(args).await;
@@ -315,7 +335,7 @@ mod tests {
         value: Option<u32>,
         started: Instant,
         (generation, current): (u64, u64),
-        refreshes: Option<Instant>,
+        refreshes: Option<u64>,
     ) {
         let computed = Computed {
             value,
@@ -326,7 +346,7 @@ mod tests {
         cache.store("k".into(), computed, current);
     }
 
-    fn stale(value: u32, refresh: Option<Instant>) -> Lookup<u32> {
+    fn stale(value: u32, refresh: Option<u64>) -> Lookup<u32> {
         Lookup::Stale { value, refresh }
     }
 
@@ -347,6 +367,15 @@ mod tests {
     }
 
     #[test]
+    fn an_actuation_retires_replies_when_it_starts_and_when_it_is_dropped() {
+        static GENERATION: AtomicU64 = AtomicU64::new(0);
+        let actuation = Actuation::on(&GENERATION);
+        assert_eq!(GENERATION.load(Ordering::SeqCst), 1);
+        drop(actuation);
+        assert_eq!(GENERATION.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn a_reply_is_fresh_then_stale_with_one_refresh_then_recomputed() {
         let (cache, t0) = fresh_cache();
         assert_eq!(cache.lookup("k", t0, 0), Lookup::Miss);
@@ -356,7 +385,7 @@ mod tests {
         assert_eq!(cache.lookup("k", fresh, 0), Lookup::Fresh(1));
 
         let at = t0 + TTL;
-        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(t0)));
+        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(0)));
         assert_eq!(cache.lookup("k", at, 0), stale(1, None));
 
         let capped = t0 + TTL * STALE_CAP_FACTOR;
@@ -368,12 +397,12 @@ mod tests {
         let (cache, t0) = fresh_cache();
         store(&cache, Some(1), t0, (0, 0), None);
         let at = t0 + TTL * 2;
-        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(t0)));
+        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(0)));
 
-        store(&cache, None, at, (0, 0), Some(t0));
-        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(t0)));
+        store(&cache, None, at, (0, 0), Some(0));
+        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(0)));
 
-        store(&cache, Some(2), at, (0, 0), Some(t0));
+        store(&cache, Some(2), at, (0, 0), Some(0));
         assert_eq!(cache.lookup("k", at, 0), Lookup::Fresh(2));
     }
 
@@ -390,16 +419,13 @@ mod tests {
         let (cache, t0) = fresh_cache();
         store(&cache, Some(1), t0, (0, 0), None);
         let first_refresh = t0 + TTL * 2;
-        assert_eq!(cache.lookup("k", first_refresh, 0), stale(1, Some(t0)));
+        assert_eq!(cache.lookup("k", first_refresh, 0), stale(1, Some(0)));
         let replaced = t0 + TTL * STALE_CAP_FACTOR;
         assert_eq!(cache.lookup("k", replaced, 0), Lookup::Miss);
         store(&cache, Some(2), replaced, (0, 0), None);
-        assert_eq!(
-            cache.lookup("k", replaced + TTL, 0),
-            stale(2, Some(replaced))
-        );
+        assert_eq!(cache.lookup("k", replaced + TTL, 0), stale(2, Some(1)));
 
-        store(&cache, None, first_refresh, (0, 0), Some(t0));
+        store(&cache, None, first_refresh, (0, 0), Some(0));
         assert_eq!(cache.lookup("k", replaced + TTL * 2, 0), stale(2, None));
     }
 
@@ -408,21 +434,21 @@ mod tests {
         let (cache, t0) = fresh_cache();
         store(&cache, Some(2), t0, (1, 1), None);
         store(&cache, Some(1), t0 + TTL, (0, 1), None);
-        assert_eq!(cache.lookup("k", t0 + TTL, 1), stale(2, Some(t0)));
+        assert_eq!(cache.lookup("k", t0 + TTL, 1), stale(2, Some(0)));
     }
 
     #[test]
     fn a_refresh_never_replaces_an_entry_other_than_its_own() {
         let (cache, t0) = fresh_cache();
         store(&cache, Some(1), t0, (0, 0), None);
-        assert_eq!(cache.lookup("k", t0 + TTL, 0), stale(1, Some(t0)));
+        assert_eq!(cache.lookup("k", t0 + TTL, 0), stale(1, Some(0)));
         let replaced = t0 + TTL * STALE_CAP_FACTOR;
         assert_eq!(cache.lookup("k", replaced, 0), Lookup::Miss);
         store(&cache, Some(2), replaced, (0, 0), None);
         let refreshing = replaced + TTL;
-        assert_eq!(cache.lookup("k", refreshing, 0), stale(2, Some(replaced)));
+        assert_eq!(cache.lookup("k", refreshing, 0), stale(2, Some(1)));
 
-        store(&cache, Some(3), refreshing, (0, 0), Some(t0));
+        store(&cache, Some(3), refreshing, (0, 0), Some(0));
         assert_eq!(cache.lookup("k", refreshing, 0), stale(2, None));
     }
 

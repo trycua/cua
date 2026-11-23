@@ -5,8 +5,8 @@
 //!
 //! Low-level mouse and keyboard hooks run on a thread of their own, started
 //! by the first read. Each hook decodes the input, attributes it to the
-//! window it went to, and records it in the core log, then passes it on
-//! unchanged.
+//! window it went to, hands it to a recorder thread that appends it to the
+//! core log, and passes the input on unchanged.
 //!
 //! The source comes from the hook's injected flag: input without it came
 //! from a device. The driver tags every `SendInput` event with
@@ -99,6 +99,12 @@ impl Placements {
         self.0.push_back((x, y, now));
     }
 
+    pub(crate) fn withdraw(&mut self, x: i32, y: i32) {
+        if let Some(index) = self.0.iter().rposition(|&(px, py, _)| (px, py) == (x, y)) {
+            self.0.remove(index);
+        }
+    }
+
     /// Whether a move to `(x, y)` is a placement the driver noted, which it
     /// then consumes.
     pub(crate) fn take(&mut self, x: i32, y: i32, now: Instant) -> bool {
@@ -132,6 +138,11 @@ pub(crate) fn expect_cursor_placement(x: i32, y: i32) {
     placements().expect(x, y, Instant::now());
 }
 
+/// Drop a placement noted for a `SetCursorPos` that failed.
+pub(crate) fn withdraw_cursor_placement(x: i32, y: i32) {
+    placements().withdraw(x, y);
+}
+
 /// The `get_user_input_events` monitor on Windows.
 pub struct WindowsUserInputMonitor;
 
@@ -156,19 +167,21 @@ impl cua_driver_core::user_input::UserInputMonitor for WindowsUserInputMonitor {
 mod hook {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc, Mutex, OnceLock};
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use cua_driver_core::user_input::{now_ms, InputKind, ObservedInput, UserInputLog};
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetAncestor, GetForegroundWindow, GetMessageW,
-        GetWindowThreadProcessId, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-        WindowFromPoint, GA_ROOT, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG,
-        MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL,
+        CallNextHookEx, DispatchMessageW, GetAncestor, GetForegroundWindow, GetGUIThreadInfo,
+        GetMessageW, GetWindowThreadProcessId, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, WindowFromPoint, GA_ROOT, GUITHREADINFO, HC_ACTION, KBDLLHOOKSTRUCT,
+        LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL,
     };
 
-    static LOG: OnceLock<Arc<UserInputLog>> = OnceLock::new();
+    /// The hooks hand each input to a recorder thread, so a callback never
+    /// waits on a reader holding the log.
+    static INPUTS: OnceLock<mpsc::Sender<(ObservedInput, u64)>> = OnceLock::new();
     static RUNNING: AtomicBool = AtomicBool::new(false);
     static STARTING: Mutex<()> = Mutex::new(());
 
@@ -183,15 +196,29 @@ mod hook {
         if running() {
             return Ok(());
         }
-        let _ = LOG.set(log.clone());
+        if INPUTS.get().is_none() {
+            let (send, receive) = mpsc::channel::<(ObservedInput, u64)>();
+            let log = log.clone();
+            std::thread::Builder::new()
+                .name("cua-user-input-log".into())
+                .spawn(move || {
+                    for (input, time_ms) in receive {
+                        log.record(input, time_ms);
+                    }
+                })
+                .map_err(|error| format!("could not start the recorder thread: {error}"))?;
+            let _ = INPUTS.set(send);
+        }
         let (ready, started) = mpsc::channel();
         std::thread::Builder::new()
             .name("cua-user-input-hooks".into())
             .spawn(move || run(ready))
             .map_err(|error| format!("could not start the hook thread: {error}"))?;
+        // The thread reports once both hooks are installed or one failed; a
+        // thread that ends without reporting drops `ready`.
         started
-            .recv_timeout(Duration::from_secs(5))
-            .map_err(|_| "the hook thread did not report back".to_owned())??;
+            .recv()
+            .map_err(|_| "the hook thread ended before installing the hooks".to_owned())??;
         RUNNING.store(true, Ordering::Release);
         Ok(())
     }
@@ -222,9 +249,10 @@ mod hook {
             };
         let _ = ready.send(Ok(()));
         // Low-level hooks are called through this thread's message loop.
+        // GetMessageW returns 0 on WM_QUIT and -1 on failure.
         let mut msg = MSG::default();
         unsafe {
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
@@ -243,9 +271,24 @@ mod hook {
         ((pid != 0).then_some(pid), Some(hwnd.0 as u64))
     }
 
+    /// The top-level window mouse input at `point` goes to: the one holding
+    /// mouse capture on the foreground thread, as during a drag, or else the
+    /// one under the pointer.
+    fn mouse_target(point: POINT) -> HWND {
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let window = match unsafe { GetGUIThreadInfo(0, &mut info) } {
+            Ok(()) if !info.hwndCapture.0.is_null() => info.hwndCapture,
+            _ => unsafe { WindowFromPoint(point) },
+        };
+        unsafe { GetAncestor(window, GA_ROOT) }
+    }
+
     fn record(input: ObservedInput) {
-        if let Some(log) = LOG.get() {
-            log.record(input, now_ms());
+        if let Some(inputs) = INPUTS.get() {
+            let _ = inputs.send((input, now_ms()));
         }
     }
 
@@ -261,8 +304,7 @@ mod hook {
                 {
                     source = super::InputSource::Driver;
                 }
-                let target = unsafe { GetAncestor(WindowFromPoint(info.pt), GA_ROOT) };
-                let (pid, window_id) = owner(target);
+                let (pid, window_id) = owner(mouse_target(info.pt));
                 record(ObservedInput {
                     kind,
                     source,
@@ -347,5 +389,9 @@ mod tests {
 
         placements.expect(10, 20, start);
         assert!(!placements.take(10, 20, start + PLACEMENT_TTL + Duration::from_millis(1)));
+
+        placements.expect(10, 20, start);
+        placements.withdraw(10, 20);
+        assert!(!placements.take(10, 20, start));
     }
 }

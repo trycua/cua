@@ -49,6 +49,15 @@ fn has(events: &[Value], kind: &str, source: &str) -> bool {
         .any(|event| event["kind"] == kind && event["source"] == source)
 }
 
+/// At least one `kind` event, and every one from `source`.
+fn only(events: &[Value], kind: &str, source: &str) -> bool {
+    let mut of_kind = events
+        .iter()
+        .filter(|event| event["kind"] == kind)
+        .peekable();
+    of_kind.peek().is_some() && of_kind.all(|event| event["source"] == source)
+}
+
 /// Move the real cursor by a few pixels with `SendInput` from this process,
 /// which is not the driver.
 fn nudge_cursor_from_another_process() {
@@ -101,13 +110,15 @@ fn the_drivers_input_and_another_processes_input_are_told_apart() {
         "the driver's wheel was reported as injected: {events:?}"
     );
 
-    // SetCursorPos carries no tag; a move it makes is still the driver's.
+    // SetCursorPos carries no tag; the move it makes is still the driver's.
     let moved = driver.call("move_cursor", json!({"scope": "desktop", "x": 40, "y": 40}));
     assert!(!moved.is_error(), "move_cursor failed: {}", moved.text());
-    let (events, cursor) = read_until(&mut driver, &cursor, |_| false);
+    let (events, cursor) = read_until(&mut driver, &cursor, |events| {
+        has(events, "mouse_move", "driver")
+    });
     assert!(
-        !has(&events, "mouse_move", "injected"),
-        "the driver's cursor placement was reported as injected: {events:?}"
+        only(&events, "mouse_move", "driver"),
+        "the driver's cursor placement was not reported as the driver's alone: {events:?}"
     );
 
     nudge_cursor_from_another_process();
@@ -115,11 +126,7 @@ fn the_drivers_input_and_another_processes_input_are_told_apart() {
         has(events, "mouse_move", "injected")
     });
     assert!(
-        has(&events, "mouse_move", "injected"),
-        "this process's SendInput move was not reported as injected: {events:?}"
-    );
-    assert!(
-        !has(&events, "mouse_move", "driver"),
-        "another process's move was reported as the driver's: {events:?}"
+        only(&events, "mouse_move", "injected"),
+        "this process's SendInput move was not reported as injected alone: {events:?}"
     );
 }

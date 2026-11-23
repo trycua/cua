@@ -75,8 +75,9 @@ pub struct ObservedInput {
     pub x: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub y: Option<i32>,
-    /// Process that owns the window the input went to: the top-level window
-    /// under the pointer for mouse input, the foreground window for keys.
+    /// Process that owns the window the input went to: for mouse input the
+    /// top-level window holding mouse capture, or else the one under the
+    /// pointer; for keys the foreground window.
     /// This is the target, not the process that produced the input.
     pub pid: Option<u32>,
     pub window_id: Option<u64>,
@@ -92,7 +93,8 @@ pub struct UserInputEvent {
     /// Unix milliseconds of the last input this event covers.
     pub time_ms: u64,
     /// Inputs folded into this event: consecutive mouse moves from the same
-    /// source to the same window become one event at the latest position.
+    /// source to the same window, with no read between them, become one event
+    /// at the latest position.
     pub count: u32,
 }
 
@@ -145,6 +147,8 @@ struct LogState {
     events: VecDeque<UserInputEvent>,
     last_seq: u64,
     evicted_through: u64,
+    /// The newest sequence number a read has returned a cursor for.
+    read_through: u64,
 }
 
 impl UserInputLog {
@@ -167,15 +171,18 @@ impl UserInputLog {
     }
 
     /// Record an input observed at `time_ms`. A mouse move that continues the
-    /// newest event's run updates that event and gives it the next sequence
-    /// number, so a reader past its old number still sees the new position.
+    /// newest event's run updates that event, as long as no read has returned
+    /// a cursor at or past it; otherwise it starts a new event, so no reader
+    /// gets a count or start time from before its cursor.
     pub fn record(&self, input: ObservedInput, time_ms: u64) {
         let mut state = self.state();
         state.last_seq += 1;
         let seq = state.last_seq;
+        let read_through = state.read_through;
         if input.kind == InputKind::MouseMove {
             if let Some(tail) = state.events.back_mut() {
-                let same_run = tail.input.kind == InputKind::MouseMove
+                let same_run = tail.seq > read_through
+                    && tail.input.kind == InputKind::MouseMove
                     && tail.input.source == input.source
                     && tail.input.pid == input.pid
                     && tail.input.window_id == input.window_id;
@@ -206,12 +213,13 @@ impl UserInputLog {
     /// The events after `since`, or none and the newest position when
     /// `since` is absent.
     pub fn read(&self, since: Option<Cursor>) -> Result<Read, ReadError> {
-        let state = self.state();
+        let mut state = self.state();
         let cursor = Cursor {
             epoch: self.epoch,
             seq: state.last_seq,
         };
         let Some(since) = since else {
+            state.read_through = state.last_seq;
             return Ok(Read {
                 cursor,
                 events: Vec::new(),
@@ -221,6 +229,7 @@ impl UserInputLog {
         if since.epoch != self.epoch || since.seq > state.last_seq {
             return Err(ReadError::UnknownCursor);
         }
+        state.read_through = state.last_seq;
         Ok(Read {
             cursor,
             events: state
@@ -297,11 +306,12 @@ impl Tool for UserInputEventsTool {
                 (`hardware` for a physical device, `driver` for this driver's own input, \
                 `injected` for other injected input, including the driver's pen and touch \
                 background input, which Windows cannot tag), screen `x`/`y` for mouse input, \
-                and the `pid` and `window_id` of the window the input went to: the window \
-                under the pointer for mouse input, the foreground window for keys. They name \
-                the target, not the sender. Keys are reported without their identity. \
-                Consecutive mouse moves from one source to one window fold into one event \
-                with a `count`. `history_lost: true` means some events after your cursor were \
+                and the `pid` and `window_id` of the window the input went to: for mouse \
+                input the window holding mouse capture, or else the one under the pointer; \
+                for keys the foreground window. They name the target, not the sender. Keys \
+                are reported without their identity. Consecutive mouse moves from one source \
+                to one window fold into one event with a `count` until a read returns that \
+                event. `history_lost: true` means some events after your cursor were \
                 dropped. Input the driver posts straight to a window's message queue does not \
                 pass through the system input queue and does not appear."
                 .into(),
@@ -431,20 +441,29 @@ mod tests {
     }
 
     #[test]
-    fn a_move_run_folds_into_one_event_that_a_reader_past_it_still_sees() {
+    fn a_move_run_folds_until_a_read_returns_it() {
         let log = UserInputLog::with_epoch(16, 1);
         let cursor = start(&log);
         log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 1), 10);
-        let middle = log.read(Some(cursor)).unwrap().cursor;
         log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 2), 11);
+        let middle = log.read(Some(cursor)).unwrap().cursor;
         log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 3), 12);
+        log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 4), 13);
 
-        let all = log.read(Some(cursor)).unwrap().events;
-        assert_eq!(all.len(), 1);
-        assert_eq!((all[0].input.x, all[0].count), (Some(3), 3));
-        assert_eq!((all[0].first_time_ms, all[0].time_ms), (10, 12));
-        let later = log.read(Some(middle)).unwrap().events;
-        assert_eq!(later, all);
+        let fold = |events: Vec<UserInputEvent>| -> Vec<_> {
+            events
+                .iter()
+                .map(|e| (e.input.x, e.count, e.first_time_ms, e.time_ms))
+                .collect()
+        };
+        assert_eq!(
+            fold(log.read(Some(cursor)).unwrap().events),
+            [(Some(2), 2, 10, 11), (Some(4), 2, 12, 13)]
+        );
+        assert_eq!(
+            fold(log.read(Some(middle)).unwrap().events),
+            [(Some(4), 2, 12, 13)]
+        );
     }
 
     #[test]

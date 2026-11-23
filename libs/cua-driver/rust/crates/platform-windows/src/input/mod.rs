@@ -34,7 +34,7 @@ pub use mouse::{
     send_click_synthesized_desktop_mods, send_click_synthesized_mods, send_wheel_synthesized,
 };
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, POINT};
 use windows::Win32::Security::{
     GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
     TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
@@ -42,13 +42,24 @@ use windows::Win32::Security::{
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, SetCursorPos};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, GetWindowThreadProcessId, SetCursorPos,
+};
 
 /// Place the real cursor with `SetCursorPos`, noting the point so the input
-/// monitor counts the move as the driver's.
+/// monitor counts the move as the driver's. A placement where the cursor
+/// already is moves nothing, and one that failed is withdrawn.
 pub(crate) unsafe fn set_cursor_pos(x: i32, y: i32) -> windows::core::Result<()> {
-    crate::user_input_monitor::expect_cursor_placement(x, y);
-    unsafe { SetCursorPos(x, y) }
+    let mut current = POINT::default();
+    let moves = unsafe { GetCursorPos(&mut current) }.is_err() || (current.x, current.y) != (x, y);
+    if moves {
+        crate::user_input_monitor::expect_cursor_placement(x, y);
+    }
+    let placed = unsafe { SetCursorPos(x, y) };
+    if moves && placed.is_err() {
+        crate::user_input_monitor::withdraw_cursor_placement(x, y);
+    }
+    placed
 }
 
 /// Windows mandatory integrity-level RIDs. Higher = more privileged. See

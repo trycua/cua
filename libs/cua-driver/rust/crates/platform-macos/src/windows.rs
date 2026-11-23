@@ -289,6 +289,26 @@ fn surface_over_in(
         })
 }
 
+/// Bounds of on-screen window `target` when no other visible window in front
+/// of it overlaps them; `None` when one does or the window is not on screen.
+/// Windows of `own_pid` (the driver's overlays) do not count.
+pub(crate) fn uncovered_bounds(target: u32) -> Option<WindowBounds> {
+    uncovered_in(&on_screen_descriptions(), target, std::process::id() as i32)
+}
+
+/// [`uncovered_bounds`] over a front-to-back on-screen window list.
+fn uncovered_in(windows: &[WindowDescription], target: u32, own_pid: i32) -> Option<WindowBounds> {
+    let at = windows
+        .iter()
+        .position(|window| window.window_id == target)?;
+    let bounds = windows[at].bounds.clone();
+    windows[..at]
+        .iter()
+        .filter(|window| window.pid != own_pid && window.is_on_screen && window.alpha > 0.0)
+        .all(|window| overlap_area(&window.bounds, &bounds) <= 0.0)
+        .then_some(bounds)
+}
+
 pub(crate) fn prefer_layer0(windows: &mut Vec<WindowInfo>) {
     if windows.iter().any(|w| w.layer == 0) {
         windows.retain(|w| w.layer == 0);
@@ -1127,6 +1147,33 @@ mod tests {
             None,
             "a target that is not on screen has nothing over it"
         );
+    }
+
+    #[test]
+    fn a_window_in_front_that_overlaps_covers_the_target() {
+        let target = surface(10, 42, "Target", 0, 0., 0.);
+        let apart = surface(20, 99, "Elsewhere", 0, 500., 500.);
+        let over = surface(21, 99, "In front", 0, 100., 50.);
+        let overlay = surface(30, 7, "", 25, 50., 20.);
+        let transparent = WindowDescription {
+            alpha: 0.0,
+            ..surface(22, 99, "", 0, 50., 20.)
+        };
+        assert_eq!(
+            uncovered_in(
+                &[apart.clone(), overlay, transparent, target.clone()],
+                10,
+                7
+            ),
+            Some(target.bounds.clone())
+        );
+        assert_eq!(uncovered_in(&[over.clone(), target.clone()], 10, 7), None);
+        assert_eq!(
+            uncovered_in(&[target.clone(), over], 10, 7),
+            Some(target.bounds.clone()),
+            "a window behind the target does not cover it"
+        );
+        assert_eq!(uncovered_in(&[apart], 10, 7), None, "not on screen");
     }
 
     #[test]

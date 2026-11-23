@@ -80,6 +80,7 @@ pub mod cursor_hook;
 pub mod cursor_sampler;
 pub mod cursor_shape;
 pub mod daemon;
+pub mod damage_settle;
 pub mod delivery;
 pub mod deprecation;
 pub mod desktop_capture_scale;

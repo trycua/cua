@@ -26,7 +26,7 @@ COPY omarchy/files/mkinitcpio-cua.conf /etc/cua-image/mkinitcpio-cua.conf
 COPY omarchy/files/pacman-build-xfer.conf /tmp/pacman-build-xfer.conf
 RUN --mount=type=cache,id=omarchy-pacman-pkg,target=/var/cache/pacman/pkg,sharing=locked \
     set -eu; \
-    sed -i '/^\[options\]/a Include = /tmp/pacman-build-xfer.conf' /etc/pacman.conf; \
+    sed -i -e '/^DownloadUser = alpm$/d' -e '/^\[options\]/a Include = /tmp/pacman-build-xfer.conf' /etc/pacman.conf; \
     test -s /etc/cua-image/pacman-mirrorlist.build || { echo "ERROR: /etc/cua-image/pacman-mirrorlist.build is missing: rebuild the omarchy rootfs image from this branch (the VM layer must install from the same Arch snapshot as the rootfs)." >&2; exit 1; }; \
     cp /etc/pacman.d/mirrorlist /tmp/mirrorlist.final; \
     cp /etc/cua-image/pacman-mirrorlist.build /etc/pacman.d/mirrorlist; \
@@ -47,7 +47,7 @@ RUN --mount=type=cache,id=omarchy-pacman-pkg,target=/var/cache/pacman/pkg,sharin
     rm -f /tmp/rootfs-packages; \
     pacman -Q hyprland cua-hyprland-plugin >/dev/null || { echo "ERROR: hyprland and cua-hyprland-plugin are not both installed after the VM layer; the plugin pins an exact hyprland version." >&2; exit 1; }; \
     cp /tmp/mirrorlist.final /etc/pacman.d/mirrorlist; rm -f /tmp/mirrorlist.final; \
-    sed -i '\#^Include = /tmp/pacman-build-xfer.conf#d' /etc/pacman.conf; rm -f /tmp/pacman-build-xfer.conf
+    sed -i -e '\#^Include = /tmp/pacman-build-xfer.conf#d' -e '/^ParallelDownloads = 5$/a DownloadUser = alpm' /etc/pacman.conf; rm -f /tmp/pacman-build-xfer.conf
 
 COPY common/vm/files/fstab /etc/fstab
 COPY common/vm/files/99-cua-cloud.cfg /etc/cloud/cloud.cfg.d/99-cua-cloud.cfg

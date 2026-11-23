@@ -69,7 +69,7 @@ COPY omarchy/files/pacman-edge.conf /etc/pacman.conf
 COPY omarchy/files/pacman-build-xfer.conf /tmp/pacman-build-xfer.conf
 COPY omarchy/files/arch-snapshot.sh /tmp/arch-snapshot.sh
 RUN --mount=type=cache,id=omarchy-pacman-pkg,target=/var/cache/pacman/pkg,sharing=locked \
-    sed -i '/^\[options\]/a Include = /tmp/pacman-build-xfer.conf' /etc/pacman.conf \
+    sed -i -e '/^DownloadUser = alpm$/d' -e '/^\[options\]/a Include = /tmp/pacman-build-xfer.conf' /etc/pacman.conf \
  && echo 'Server = https://mirror.omarchy.org/$repo/os/$arch' >/etc/pacman.d/mirrorlist.omarchy \
  && if [ "$ARCH_SNAPSHOT_DATE" = auto ]; then \
       ARCH_SNAPSHOT_DATE=$(sh /tmp/arch-snapshot.sh) || exit 1; \
@@ -112,7 +112,7 @@ RUN --mount=type=cache,id=omarchy-pacman-pkg,target=/var/cache/pacman/pkg,sharin
     pacman -Q omarchy-dev omarchy-settings-dev cua-driver-bin cua-hyprland-plugin hyprland; \
     test -x /usr/bin/cua-driver; test -f /usr/lib/cua/hyprland/cua-hyprland-plugin.so; \
     rm -f /tmp/packages.desktop; \
-    sed -i '\#^Include = /tmp/pacman-build-xfer.conf#d' /etc/pacman.conf; rm -f /tmp/pacman-build-xfer.conf; \
+    sed -i -e '\#^Include = /tmp/pacman-build-xfer.conf#d' -e '/^ParallelDownloads = 5$/a DownloadUser = alpm' /etc/pacman.conf; rm -f /tmp/pacman-build-xfer.conf; \
     install -d /etc/cua-image; \
     cp /etc/pacman.d/mirrorlist /etc/cua-image/pacman-mirrorlist.build; \
     mv /etc/pacman.d/mirrorlist.omarchy /etc/pacman.d/mirrorlist

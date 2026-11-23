@@ -81,8 +81,10 @@ fn nudge_cursor_from_another_process() {
 #[test]
 #[ignore]
 fn the_drivers_input_and_another_processes_input_are_told_apart() {
-    let mut driver = McpDriver::spawn_named("windows-user-input-events")
-        .expect("required source-built driver did not start");
+    // The oracle is the tool's own events, so no behavior recording: one
+    // would also add the recorder's own capture work to the input window.
+    let mut driver =
+        McpDriver::spawn_unrecorded().expect("required source-built driver did not start");
 
     let start = driver.call("get_user_input_events", json!({}));
     assert!(!start.is_error(), "start failed: {}", start.text());

@@ -1448,6 +1448,12 @@ pub fn build_registry_with_provider(
         state: state.clone(),
     }));
     r.register(Box::new(GetCursorPositionTool));
+    r.register(Box::new(
+        cua_driver_core::user_input::UserInputEventsTool::new(
+            std::sync::Arc::new(crate::user_input_monitor::WindowsUserInputMonitor),
+            cua_driver_core::user_input::process_log(),
+        ),
+    ));
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
     }));

@@ -133,6 +133,8 @@ pub mod msaa;
 #[cfg(target_os = "windows")]
 pub mod input;
 
+pub mod user_input_monitor;
+
 #[cfg(target_os = "windows")]
 pub mod capture;
 mod capture_admission;

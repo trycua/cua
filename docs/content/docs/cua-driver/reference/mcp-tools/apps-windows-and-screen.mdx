@@ -28,6 +28,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`get_desktop_state`](#get_desktop_state) | Capture the full display. | macOS, Linux, Windows |
 | [`get_screen_size`](#get_screen_size) | Return the logical size of the main display in points plus its backing scale factor. | macOS, Linux, Windows |
 | [`get_cursor_position`](#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
+| [`get_user_input_events`](#get_user_input_events) | Report the mouse and keyboard input the system saw, so you can tell when someone else acted while you did. | Windows |
 | [`zoom`](#zoom) | Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. | macOS, Linux, Windows |
 | [`agent_display`](#agent_display) | Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). | macOS |
 | [`start_session`](#start_session) | Optionally create or return a lifecycle session before acting. | macOS, Linux, Windows |
@@ -690,6 +691,17 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="get_cursor_position--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+
+### `get_user_input_events`
+
+Report the mouse and keyboard input the system saw, so you can tell when someone else acted while you did. Call it without `since` to start watching: it returns a `cursor` and no events. Pass that cursor as `since` on the next call to get every input since, and a new cursor. Each event has `kind` (mouse_move, mouse_down, mouse_up, wheel, key_down, key_up), `source` (`hardware` for a physical device, `driver` for this driver's own input, `injected` for other injected input, including the driver's pen and touch background input, which Windows cannot tag), screen `x`/`y` for mouse input, and the `pid` and `window_id` of the window the input went to: the window under the pointer for mouse input, the foreground window for keys. They name the target, not the sender. Keys are reported without their identity. Consecutive mouse moves from one source to one window fold into one event with a `count`. `history_lost: true` means some events after your cursor were dropped. Input the driver posts straight to a window's message queue does not pass through the system input queue and does not appear.
+
+Effect: read-only. Platforms: Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="get_user_input_events--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="get_user_input_events--since"></span>`since` | `string` |  | The `cursor` from your previous call. Omit it to start watching and get the current cursor. |
 
 ### `zoom`
 

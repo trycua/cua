@@ -198,8 +198,8 @@ distinct resolved action IDs.
 ## Complete public tool-name union
 
 The source-built macOS registry contains 49 tools. Windows adds
-`debug_window_info`. Linux adds four low-level pointer tools. The union is 54
-public tool names.
+`debug_window_info` and `get_user_input_events`. Linux adds four low-level
+pointer tools. The union is 55 public tool names.
 
 |   # | Tool                       | Category                    | Platform                              | Primary icon intent                                                   |
 | --: | -------------------------- | --------------------------- | ------------------------------------- | --------------------------------------------------------------------- |
@@ -257,6 +257,7 @@ public tool names.
 |  54 | `mouse_drag`               | Low-level pointer           | Linux only                            | Move held pointer                                                     |
 |  55 | `mouse_button_up`          | Low-level pointer           | Linux only                            | Release button                                                        |
 |  56 | `parallel_mouse_drag`      | Multi-pointer               | Linux only                            | Concurrent drags                                                      |
+|  57 | `get_user_input_events`    | Inspection                  | Windows only                          | User input watch                                                      |
 
 ## Linux low-level pointer action keys
 

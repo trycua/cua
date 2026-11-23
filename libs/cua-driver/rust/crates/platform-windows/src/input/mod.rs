@@ -42,7 +42,14 @@ use windows::Win32::Security::{
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, SetCursorPos};
+
+/// Place the real cursor with `SetCursorPos`, noting the point so the input
+/// monitor counts the move as the driver's.
+pub(crate) unsafe fn set_cursor_pos(x: i32, y: i32) -> windows::core::Result<()> {
+    crate::user_input_monitor::expect_cursor_placement(x, y);
+    unsafe { SetCursorPos(x, y) }
+}
 
 /// Windows mandatory integrity-level RIDs. Higher = more privileged. See
 /// https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control

@@ -302,6 +302,12 @@ Windows-relevant notes:
   rect / z-order diagnostics for triaging the click chain). It is
   deliberately not part of the cross-platform surface: there is no macOS
   or Linux counterpart.
+- **`get_user_input_events` is a Windows-only tool.** It reports the mouse
+  and keyboard input the system saw, each event with its `source`
+  (`hardware`, `driver` or `injected`) and the window it went to. Call it
+  once without `since` to get a cursor, then pass the cursor back after
+  acting: a `hardware` event since then means the user touched the machine,
+  so re-read the window before trusting an earlier observation.
 - **`launch_app` identifiers are platform-specific.** Windows takes
   `aumid` / `launch_path` / `path` / `start_minimized` (plus `bundle_id`
   overloaded for AUMIDs); macOS takes `bundle_id` / `urls`. `name` is the

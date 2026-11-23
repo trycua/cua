@@ -23,9 +23,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, GetAncestor, GetClassLongPtrW, GetCursorPos, GetForegroundWindow,
-    GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetCursorPos, SetWindowPos, WindowFromPoint,
-    CS_DBLCLKS, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GCL_STYLE,
-    GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+    GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetWindowPos, WindowFromPoint, CS_DBLCLKS,
+    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GCL_STYLE, GWL_EXSTYLE,
+    HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
     WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
@@ -624,7 +624,7 @@ fn send_click_synthesized_mods_impl(
                 mouseData: 0,
                 dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -637,7 +637,7 @@ fn send_click_synthesized_mods_impl(
                 mouseData: 0,
                 dwFlags: down_flag,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -650,7 +650,7 @@ fn send_click_synthesized_mods_impl(
                 mouseData: 0,
                 dwFlags: up_flag,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -711,7 +711,7 @@ fn send_click_synthesized_mods_impl(
         // Move the cursor so the OS hover state matches before the click; the
         // MOUSEEVENTF_MOVE input ensures Chromium's input filter sees a
         // coordinated move event.
-        let _ = SetCursorPos(sx, sy);
+        let _ = crate::input::set_cursor_pos(sx, sy);
 
         // Hold modifier keys (ctrl/shift/alt/win) across the click — the macOS
         // `modifier` surface. Pressed via the system input queue so apps that
@@ -788,7 +788,7 @@ fn send_click_synthesized_mods_impl(
                 );
             }
             if prev_cursor_valid {
-                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+                let _ = crate::input::set_cursor_pos(prev_cursor.x, prev_cursor.y);
             }
         } else if mode == ClickMode::Window && prev_cursor_valid {
             // Restore our injected movement, but leave a later user/app move alone.
@@ -796,7 +796,7 @@ fn send_click_synthesized_mods_impl(
             if GetCursorPos(&mut current_cursor).is_ok()
                 && cursor_still_at_injected_click(current_cursor.x, current_cursor.y, sx, sy)
             {
-                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+                let _ = crate::input::set_cursor_pos(prev_cursor.x, prev_cursor.y);
             }
         }
         drop(noactivate);
@@ -971,7 +971,7 @@ fn send_drag_synthesized_impl(
                 mouseData: 0,
                 dwFlags: flags | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -1021,7 +1021,7 @@ fn send_drag_synthesized_impl(
                 }
             }
             if move_cursor {
-                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+                let _ = crate::input::set_cursor_pos(prev_cursor.x, prev_cursor.y);
             }
         };
 
@@ -1101,7 +1101,7 @@ fn send_drag_synthesized_impl(
 
         // 1. Move + press at the start of the drag.
         let (nfx, nfy) = norm(sx_from, sy_from);
-        let _ = SetCursorPos(sx_from, sy_from);
+        let _ = crate::input::set_cursor_pos(sx_from, sy_from);
         let prelude = [
             make_input(nfx, nfy, MOUSEEVENTF_MOVE),
             make_input(nfx, nfy, down_flag),
@@ -1129,7 +1129,7 @@ fn send_drag_synthesized_impl(
             let x = sx_from + ((sx_to - sx_from) as f64 * t).round() as i32;
             let y = sy_from + ((sy_to - sy_from) as f64 * t).round() as i32;
             let (nx, ny) = norm(x, y);
-            let _ = SetCursorPos(x, y);
+            let _ = crate::input::set_cursor_pos(x, y);
             cursor_at = (x, y);
             let mv = [make_input(nx, ny, MOUSEEVENTF_MOVE)];
             if SendInput(&mv, std::mem::size_of::<INPUT>() as i32) != 1 {
@@ -1225,7 +1225,7 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
                 mouseData: mouse_data,
                 dwFlags: flag,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -1235,18 +1235,18 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
         let _ = GetCursorPos(&mut prev_cursor);
 
         // Wheel routes to the window under the cursor — place it on the target.
-        let _ = SetCursorPos(sx, sy);
+        let _ = crate::input::set_cursor_pos(sx, sy);
 
         let events = [wheel_input];
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {
-            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            let _ = crate::input::set_cursor_pos(prev_cursor.x, prev_cursor.y);
             bail!("SendInput inserted {sent}/{} wheel events", events.len());
         }
 
         // Brief settle, then restore the cursor.
         sleep(Duration::from_millis(20));
-        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+        let _ = crate::input::set_cursor_pos(prev_cursor.x, prev_cursor.y);
     }
 
     Ok(())
@@ -1264,7 +1264,7 @@ pub fn foreground_window() -> Result<u64> {
 
 /// Move the real OS pointer to a desktop coordinate.
 pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
-    unsafe { SetCursorPos(x, y) }
+    unsafe { crate::input::set_cursor_pos(x, y) }
         .map_err(|error| anyhow::anyhow!("SetCursorPos({x}, {y}) failed: {error}"))
 }
 

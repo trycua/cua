@@ -79,7 +79,8 @@
       "parallel_mouse_drag"
     ],
     "win32": [
-      "debug_window_info"
+      "debug_window_info",
+      "get_user_input_events"
     ]
   }
 }

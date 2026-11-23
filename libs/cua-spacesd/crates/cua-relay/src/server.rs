@@ -1066,6 +1066,27 @@ impl Relay {
         self.draining.load(Ordering::SeqCst)
     }
 
+    /// Waits (off the async workers, at most 20 s) until every state
+    /// writer has put the last changes on disk: at shutdown.
+    pub async fn flush_state(&self) {
+        let storage = self.storage.clone();
+        #[cfg(feature = "hosted")]
+        let plans = self.plans.clone();
+        let tcp = self.tcp.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let limit = Duration::from_secs(20);
+            storage.flush_writers(limit);
+            #[cfg(feature = "hosted")]
+            if let Some(p) = plans {
+                p.flush_blocking(limit);
+            }
+            if let Some(t) = tcp {
+                t.flush_blocking(limit);
+            }
+        })
+        .await;
+    }
+
     /// Connection draining, run once the stop signal has arrived. In order:
     ///
     /// 1. New machine tunnels and mesh connections are refused (503 with
@@ -1176,6 +1197,7 @@ impl Relay {
             // across a restart.
             handle.meter.persist(true);
             handle.mesh.flush_last_seen();
+            handle.flush_state().await;
         })
         .await
     }
@@ -1204,6 +1226,7 @@ impl Relay {
                 // across a restart.
                 handle.meter.persist(true);
                 handle.mesh.flush_last_seen();
+                handle.flush_state().await;
             }
         };
         tokio::pin!(stop);

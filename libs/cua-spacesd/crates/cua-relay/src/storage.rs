@@ -21,6 +21,12 @@
 //!   in the state directory: the readiness check of the volume itself.
 //! - **Temp files.** [`sweep_temps`] removes the `.<name>.<uuid>.tmp` files
 //!   an interrupted [`crate::assertion::write_private`] leaves behind.
+//! - **Writers.** The stores write through [`crate::persist::StateFile`]s,
+//!   each with its own writer thread, which report here how long each write
+//!   took and how far behind the disk they are
+//!   (`cua_relay_state_write_duration_seconds`,
+//!   `cua_relay_state_writer_behind_seconds`, `behind_secs` per store on
+//!   `/readyz`); [`Storage::flush_writers`] waits for them at shutdown.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -297,6 +303,36 @@ pub struct Storage {
     pool_refused: Mutex<BTreeMap<&'static str, u64>>,
     probe: Mutex<Option<(Instant, Result<Duration, String>)>>,
     probes_failed: AtomicU64,
+    /// What the state writers ([`crate::persist::StateFile`]) report.
+    writers: Mutex<BTreeMap<&'static str, WriterStats>>,
+    /// Every state writer, for [`Storage::flush_writers`] at shutdown.
+    registered: Registered,
+}
+
+/// The registered state writers.
+#[derive(Default)]
+struct Registered(Mutex<Vec<std::sync::Weak<dyn crate::persist::Flush>>>);
+
+impl std::fmt::Debug for Registered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self.0.lock().map(|v| v.len()).unwrap_or(0);
+        write!(f, "Registered({n} writers)")
+    }
+}
+
+/// Upper bounds (seconds) of the write duration histogram buckets.
+const WRITE_BUCKETS: [f64; 10] = [0.005, 0.025, 0.1, 0.25, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0];
+
+/// One store's writer counters.
+#[derive(Debug, Default, Clone)]
+struct WriterStats {
+    /// Writes per [`WRITE_BUCKETS`] bucket (the last: over the largest).
+    buckets: [u64; WRITE_BUCKETS.len() + 1],
+    seconds_sum: f64,
+    coalesced: u64,
+    overflows: u64,
+    /// Per writer: since when its oldest unwritten change waits.
+    pending: BTreeMap<u64, Instant>,
 }
 
 impl Default for Storage {
@@ -318,7 +354,95 @@ impl Storage {
             pool_refused: Mutex::default(),
             probe: Mutex::new(None),
             probes_failed: AtomicU64::new(0),
+            writers: Mutex::default(),
+            registered: Registered::default(),
         }
+    }
+
+    /// Notes a state writer for [`Self::flush_writers`].
+    pub(crate) fn register_writer(&self, writer: std::sync::Weak<dyn crate::persist::Flush>) {
+        let mut all = self.registered.0.lock().expect("storage writers");
+        all.retain(|w| w.strong_count() > 0);
+        all.push(writer);
+    }
+
+    /// Waits (blocking, at most `timeout` in all) until every state writer
+    /// has written what it was given: at shutdown, after the last changes.
+    /// Returns whether all caught up.
+    pub fn flush_writers(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let all: Vec<_> = self
+            .registered
+            .0
+            .lock()
+            .expect("storage writers")
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect();
+        let mut ok = true;
+        for w in all {
+            ok &= w.flush_until(deadline);
+        }
+        if !ok {
+            tracing::warn!(
+                alert = "state_writer_behind",
+                "state writers still busy at shutdown; their last changes may be lost"
+            );
+        }
+        ok
+    }
+
+    /// A state writer took `took` for one write of `store`.
+    pub fn write_took(&self, store: &'static str, took: Duration) {
+        let secs = took.as_secs_f64();
+        let mut w = self.writers.lock().expect("storage writers");
+        let s = w.entry(store).or_default();
+        let i = WRITE_BUCKETS
+            .iter()
+            .position(|b| secs <= *b)
+            .unwrap_or(WRITE_BUCKETS.len());
+        s.buckets[i] += 1;
+        s.seconds_sum += secs;
+    }
+
+    /// A queued snapshot of `store` was replaced by a newer one before it
+    /// was written.
+    pub fn write_coalesced(&self, store: &'static str) {
+        let mut w = self.writers.lock().expect("storage writers");
+        w.entry(store).or_default().coalesced += 1;
+    }
+
+    /// `store`'s writer fell too far behind: its queued journal lines were
+    /// dropped for a full rewrite.
+    pub fn journal_overflow(&self, store: &'static str) {
+        let mut w = self.writers.lock().expect("storage writers");
+        w.entry(store).or_default().overflows += 1;
+    }
+
+    /// Writer `id` of `store` has had a change waiting since `since`
+    /// (`None`: it caught up).
+    pub fn writer_pending(&self, store: &'static str, id: u64, since: Option<Instant>) {
+        let mut w = self.writers.lock().expect("storage writers");
+        let s = w.entry(store).or_default();
+        match since {
+            Some(t) => {
+                s.pending.insert(id, t);
+            }
+            None => {
+                s.pending.remove(&id);
+            }
+        }
+    }
+
+    /// How long the oldest change of `store` not yet on disk has waited
+    /// (zero when every writer of it caught up).
+    pub fn writer_behind(&self, store: &str) -> Duration {
+        self.writers
+            .lock()
+            .expect("storage writers")
+            .get(store)
+            .and_then(|s| s.pending.values().min().map(Instant::elapsed))
+            .unwrap_or_default()
     }
 
     /// The state directory, if state is persisted.
@@ -550,6 +674,9 @@ impl Storage {
                             "last_ok_at": (s.last_ok_at > 0).then_some(s.last_ok_at),
                             "last_error": s.last_error,
                             "last_error_at": (s.last_error_at > 0).then_some(s.last_error_at),
+                            // How long its oldest change not yet on disk
+                            // has waited (the writer is behind the disk).
+                            "behind_secs": (self.writer_behind(name).as_secs_f64() * 1000.0).round() / 1000.0,
                         }),
                     )
                 })
@@ -645,11 +772,81 @@ impl Storage {
                 u8::from(!status(name).failing(now))
             );
         }
+        let writers = self.writers.lock().expect("storage writers").clone();
+        let writer = |name: &str| writers.get(name).cloned().unwrap_or_default();
+        head(
+            &mut out,
+            "cua_relay_state_writer_behind_seconds",
+            "gauge",
+            "How long the oldest change not yet written has waited, by store (0: caught up).",
+        );
+        for name in store::ALL {
+            let behind = writer(name)
+                .pending
+                .values()
+                .min()
+                .map_or(0.0, |t| t.elapsed().as_secs_f64());
+            let _ = writeln!(
+                out,
+                "cua_relay_state_writer_behind_seconds{{store=\"{name}\"}} {behind:.3}"
+            );
+        }
+        head(
+            &mut out,
+            "cua_relay_state_write_duration_seconds",
+            "histogram",
+            "Time one state write (write, fsync, rename) took, by store.",
+        );
+        for name in store::ALL {
+            let w = writer(name);
+            let mut acc = 0;
+            for (i, le) in WRITE_BUCKETS.iter().enumerate() {
+                acc += w.buckets[i];
+                let _ = writeln!(
+                    out,
+                    "cua_relay_state_write_duration_seconds_bucket{{store=\"{name}\",le=\"{le}\"}} {acc}"
+                );
+            }
+            acc += w.buckets[WRITE_BUCKETS.len()];
+            let _ = writeln!(
+                out,
+                "cua_relay_state_write_duration_seconds_bucket{{store=\"{name}\",le=\"+Inf\"}} {acc}\n\
+                 cua_relay_state_write_duration_seconds_sum{{store=\"{name}\"}} {:.6}\n\
+                 cua_relay_state_write_duration_seconds_count{{store=\"{name}\"}} {acc}",
+                w.seconds_sum
+            );
+        }
+        head(
+            &mut out,
+            "cua_relay_state_writes_coalesced_total",
+            "counter",
+            "Queued state snapshots replaced by a newer one before being written, by store.",
+        );
+        for name in store::ALL {
+            let _ = writeln!(
+                out,
+                "cua_relay_state_writes_coalesced_total{{store=\"{name}\"}} {}",
+                writer(name).coalesced
+            );
+        }
+        head(
+            &mut out,
+            "cua_relay_state_journal_overflows_total",
+            "counter",
+            "Times a writer fell so far behind that its queued journal lines were dropped for a full rewrite, by store.",
+        );
+        for name in store::ALL {
+            let _ = writeln!(
+                out,
+                "cua_relay_state_journal_overflows_total{{store=\"{name}\"}} {}",
+                writer(name).overflows
+            );
+        }
         one(
             &mut out,
             "cua_relay_audit_events_dropped_total",
             "counter",
-            "Audit events not recorded because their write failed.",
+            "Audit events not recorded because they could not be encoded (a failed write keeps them for a rewrite).",
             self.audit_dropped_total(),
         );
         one(

@@ -338,7 +338,9 @@ mod hook {
                 if kind == InputKind::MouseMove
                     && source == super::InputSource::Injected
                     && info.dwExtraInfo == 0
-                    && super::placements().take(info.pt.x, info.pt.y, Instant::now())
+                    && super::PLACEMENTS.try_lock().is_ok_and(|mut placements| {
+                        placements.take(info.pt.x, info.pt.y, Instant::now())
+                    })
                 {
                     source = super::InputSource::Driver;
                 }

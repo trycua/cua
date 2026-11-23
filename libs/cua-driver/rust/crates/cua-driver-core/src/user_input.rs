@@ -136,6 +136,10 @@ pub enum ReadError {
     UnknownCursor,
 }
 
+/// Queued inputs one record takes into the log, so a record's work stays
+/// bounded after a read held the log.
+pub const RECORD_DRAIN_LIMIT: usize = 64;
+
 pub struct UserInputLog {
     epoch: u64,
     capacity: usize,
@@ -215,16 +219,20 @@ impl UserInputLog {
         }
     }
 
-    fn take_inputs(&self, state: &mut LogState) {
-        while let Ok((input, time_ms)) = state.inputs.try_recv() {
+    /// Take up to `limit` recorded inputs into the log.
+    fn take_inputs(&self, state: &mut LogState, limit: usize) {
+        for _ in 0..limit {
+            let Ok((input, time_ms)) = state.inputs.try_recv() else {
+                break;
+            };
             state.apply(input, time_ms, self.capacity);
         }
     }
 
     /// Record an input observed at `time_ms`. This never waits: the input
-    /// goes into a channel, and is taken into the log now if no read holds
-    /// it, else by that read's successor or the next record. A platform hook
-    /// can call it directly.
+    /// goes into a channel, and when no read holds the log, up to
+    /// [`RECORD_DRAIN_LIMIT`] queued inputs are taken in; a read takes in the
+    /// rest. A platform hook can call it directly.
     pub fn record(&self, input: ObservedInput, time_ms: u64) {
         let _ = self.inputs.send((input, time_ms));
         let mut state = match self.state.try_lock() {
@@ -232,7 +240,7 @@ impl UserInputLog {
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => return,
         };
-        self.take_inputs(&mut state);
+        self.take_inputs(&mut state, RECORD_DRAIN_LIMIT);
     }
 
     /// The events after `since`, or none and the newest position when
@@ -242,7 +250,7 @@ impl UserInputLog {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.take_inputs(&mut state);
+        self.take_inputs(&mut state, usize::MAX);
         let cursor = Cursor {
             epoch: self.epoch,
             seq: state.last_seq,
@@ -506,6 +514,20 @@ mod tests {
         let read = log.read(Some(cursor)).unwrap();
         assert_eq!(read.events.len(), 1);
         assert_eq!(read.cursor.seq, 1);
+    }
+
+    #[test]
+    fn a_record_takes_in_a_bounded_backlog_and_a_read_takes_the_rest() {
+        let log = UserInputLog::with_epoch(1024, 1);
+        let cursor = start(&log);
+        let held = log.state.lock().unwrap();
+        for _ in 0..100 {
+            log.record(key(InputSource::Hardware), 10);
+        }
+        drop(held);
+        log.record(key(InputSource::Hardware), 11);
+        assert_eq!(log.state.lock().unwrap().events.len(), RECORD_DRAIN_LIMIT);
+        assert_eq!(log.read(Some(cursor)).unwrap().events.len(), 101);
     }
 
     #[test]

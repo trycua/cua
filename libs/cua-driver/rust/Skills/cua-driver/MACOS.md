@@ -624,15 +624,22 @@ not ask the app to come forward: `set_value` on the address field or
 `agent_display({action:"create", width, height})` adds a virtual display
 and returns its `display_id`, `x`, `y`, `width` and `height`. Move a
 window there with `set_window_frame` inside that rectangle, so the app,
-and any window it brings forward, stays off the user's screen. The
-calling session owns the display: `agent_display({action:"remove",
+and any window it brings forward, stays off the user's screen. By
+default the calling session owns the display: `agent_display({action:"remove",
 display_id})`, `end_session`, the idle timeout or the daemon exiting
-removes it, and macOS moves its windows back to the main screen.
-`{action:"list"}` returns the displays this daemon created. Screenshots of
-a virtual display are 1:1 pixels, not Retina. The tool uses private
-CoreGraphics classes and returns an error, rather than a display, on a
-macOS build that lacks them. It is macOS only: Linux and Windows do not
-register `agent_display`.
+removes it, and macOS moves its windows back to the main screen. Pass
+`lifetime:"daemon"` to `create` when parked windows must outlive the
+session; such a display stays until `remove` or the daemon exits.
+`{action:"list"}` returns the displays this daemon created, each with its
+`lifetime`. Screenshots of a virtual display are 1:1 pixels, not Retina.
+The tool uses private CoreGraphics classes and returns an error, rather
+than a display, on a macOS build that lacks them. It is macOS only: Linux
+and Windows do not register `agent_display`.
+
+With Stage Manager on, a window in the recent-app strip keeps its full
+accessibility tree, but its screenshot and window-pixel coordinates are
+the strip thumbnail. Move it onto an agent display to get a full-size
+capture and working pixel input without activating it.
 
 ### Hover in the background
 

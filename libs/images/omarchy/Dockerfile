@@ -45,6 +45,18 @@ ARG OMARCHY_KEYRING_SHA256=9f45936fb1e0a13c6a7b5b15bcd27673465f8c51a8f68b8e1a6d4
 # mirror.omarchy.org. The Omarchy edge repo has no snapshots and is not
 # pinned. The finished guest keeps Omarchy's own edge mirrorlist either way.
 ARG ARCH_SNAPSHOT_DATE=auto
+# Package downloads. archive.archlinux.org is the only host that keeps old
+# package versions (there is no public mirror of it we can rely on), and it is
+# sometimes slow enough that pacman's built-in downloader gives up ("Operation
+# too slow. Less than 1 bytes/sec transferred the last 10 seconds", a limit it
+# hard-codes). Two measures, neither of which changes what is installed:
+#   1. pacman downloads through curl (files/pacman-build-xfer.conf): resumable,
+#      with a real stall timeout instead of 10 s.
+#   2. /var/cache/pacman/pkg is a BuildKit cache mount (id omarchy-pacman-pkg),
+#      seeded in CI from a GitHub Actions cache keyed by week
+#      (scripts/images/omarchy-pkgcache.sh), so each package version is fetched
+#      from the archive once, not once per run. pacman still checks every
+#      cached file against the dated snapshot database and its signature.
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC
 
 RUN [ "$TARGETARCH" = amd64 ] || { echo "Omarchy is x86_64 only (got $TARGETARCH)" >&2; exit 1; }
@@ -54,8 +66,11 @@ RUN [ "$TARGETARCH" = amd64 ] || { echo "Omarchy is x86_64 only (got $TARGETARCH
 # plus DisableSandbox/no CheckSpace for building under docker and qemu-user.
 # The build-time mirrorlist is the ARCH_SNAPSHOT_DATE archive when set.
 COPY omarchy/files/pacman-edge.conf /etc/pacman.conf
+COPY omarchy/files/pacman-build-xfer.conf /tmp/pacman-build-xfer.conf
 COPY omarchy/files/arch-snapshot.sh /tmp/arch-snapshot.sh
-RUN echo 'Server = https://mirror.omarchy.org/$repo/os/$arch' >/etc/pacman.d/mirrorlist.omarchy \
+RUN --mount=type=cache,id=omarchy-pacman-pkg,target=/var/cache/pacman/pkg,sharing=locked \
+    sed -i '/^\[options\]/a Include = /tmp/pacman-build-xfer.conf' /etc/pacman.conf \
+ && echo 'Server = https://mirror.omarchy.org/$repo/os/$arch' >/etc/pacman.d/mirrorlist.omarchy \
  && if [ "$ARCH_SNAPSHOT_DATE" = auto ]; then \
       ARCH_SNAPSHOT_DATE=$(sh /tmp/arch-snapshot.sh) || exit 1; \
       echo "Arch archive day for cua-hyprland-plugin: $ARCH_SNAPSHOT_DATE"; fi \
@@ -82,7 +97,8 @@ RUN echo 'Server = https://mirror.omarchy.org/$repo/os/$arch' >/etc/pacman.d/mir
 # installs) with its cua-driver packages, and the desktop set. qemu-user builds
 # (amd64 on an arm64 host) occasionally fail a download or a hook; retry.
 COPY omarchy/files/packages.desktop /tmp/packages.desktop
-RUN set -eu; \
+RUN --mount=type=cache,id=omarchy-pacman-pkg,target=/var/cache/pacman/pkg,sharing=locked \
+    set -eu; \
     pacman -Syu --noconfirm; \
     pkgs="omarchy-dev omarchy-settings-dev cua-driver-bin cua-hyprland-plugin $(grep -v '^#' /tmp/packages.desktop | xargs)"; \
     for attempt in 1 2 3; do pacman -S --noconfirm --needed $pkgs && break; \
@@ -95,7 +111,8 @@ RUN set -eu; \
       echo "ERROR: cua-hyprland-plugin pins hyprland=$want but hyprland $have is installed; the plugin must be rebuilt for the Hyprland build Omarchy ships." >&2; exit 1; fi; \
     pacman -Q omarchy-dev omarchy-settings-dev cua-driver-bin cua-hyprland-plugin hyprland; \
     test -x /usr/bin/cua-driver; test -f /usr/lib/cua/hyprland/cua-hyprland-plugin.so; \
-    yes | pacman -Scc >/dev/null; rm -f /tmp/packages.desktop; \
+    rm -f /tmp/packages.desktop; \
+    sed -i '\#^Include = /tmp/pacman-build-xfer.conf#d' /etc/pacman.conf; rm -f /tmp/pacman-build-xfer.conf; \
     install -d /etc/cua-image; \
     cp /etc/pacman.d/mirrorlist /etc/cua-image/pacman-mirrorlist.build; \
     mv /etc/pacman.d/mirrorlist.omarchy /etc/pacman.d/mirrorlist

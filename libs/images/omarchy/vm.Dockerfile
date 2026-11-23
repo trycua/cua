@@ -23,7 +23,10 @@ USER root
 # dependency 'hyprland=0.56.2-4'", failing every build from 2026-10-31). Retries
 # refresh the snapshot database with -Sy and never upgrade the system.
 COPY omarchy/files/mkinitcpio-cua.conf /etc/cua-image/mkinitcpio-cua.conf
-RUN set -eu; \
+COPY omarchy/files/pacman-build-xfer.conf /tmp/pacman-build-xfer.conf
+RUN --mount=type=cache,id=omarchy-pacman-pkg,target=/var/cache/pacman/pkg,sharing=locked \
+    set -eu; \
+    sed -i '/^\[options\]/a Include = /tmp/pacman-build-xfer.conf' /etc/pacman.conf; \
     test -s /etc/cua-image/pacman-mirrorlist.build || { echo "ERROR: /etc/cua-image/pacman-mirrorlist.build is missing: rebuild the omarchy rootfs image from this branch (the VM layer must install from the same Arch snapshot as the rootfs)." >&2; exit 1; }; \
     cp /etc/pacman.d/mirrorlist /tmp/mirrorlist.final; \
     cp /etc/cua-image/pacman-mirrorlist.build /etc/pacman.d/mirrorlist; \
@@ -44,7 +47,7 @@ RUN set -eu; \
     rm -f /tmp/rootfs-packages; \
     pacman -Q hyprland cua-hyprland-plugin >/dev/null || { echo "ERROR: hyprland and cua-hyprland-plugin are not both installed after the VM layer; the plugin pins an exact hyprland version." >&2; exit 1; }; \
     cp /tmp/mirrorlist.final /etc/pacman.d/mirrorlist; rm -f /tmp/mirrorlist.final; \
-    yes | pacman -Scc >/dev/null
+    sed -i '\#^Include = /tmp/pacman-build-xfer.conf#d' /etc/pacman.conf; rm -f /tmp/pacman-build-xfer.conf
 
 COPY common/vm/files/fstab /etc/fstab
 COPY common/vm/files/99-cua-cloud.cfg /etc/cloud/cloud.cfg.d/99-cua-cloud.cfg

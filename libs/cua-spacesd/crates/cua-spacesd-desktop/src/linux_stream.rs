@@ -210,6 +210,19 @@ fn capture_error(error: impl std::fmt::Display) -> ProviderError {
 impl Grabber {
     fn new(source: StreamSource) -> Result<Self, ProviderError> {
         let (conn, root) = linux_x11::connect()?;
+        if matches!(source, StreamSource::Display { .. }) && linux_x11::root_unreadable(&conn, root)
+        {
+            return Err(ProviderError::new(
+                ProviderErrorCode::Unsupported,
+                format!(
+                    "the X server (DISPLAY={:?}) is the rootless Xwayland of a Wayland \
+                     session: its root window holds no desktop pixels, so the desktop \
+                     would stream black. Stream an X11 window instead, or point \
+                     cua-spacesd at an X11 session",
+                    std::env::var("DISPLAY").ok()
+                ),
+            ));
+        }
         let shm_supported = conn
             .shm_query_version()
             .ok()
@@ -743,4 +756,24 @@ pub(crate) fn grab_once(source: StreamSource) -> Result<(Vec<u8>, u32, u32), Pro
     let mut grabber = Grabber::new(source)?;
     let bgra = grabber.grab()?;
     Ok((bgra, grabber.width, grabber.height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run under `scripts/ci/linux/with-rootless-xwayland.sh`.
+    #[test]
+    #[ignore = "requires a rootless Xwayland DISPLAY"]
+    fn rootless_xwayland_desktop_is_refused_not_streamed_black() {
+        let source = StreamSource::Display {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 64,
+        };
+        let error = grab_once(source).expect_err("a rootless Xwayland root grabs black");
+        assert_eq!(error.code, ProviderErrorCode::Unsupported, "{error}");
+        assert!(error.message.contains("rootless Xwayland"), "{error}");
+    }
 }

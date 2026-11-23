@@ -18,18 +18,33 @@ import {
   type VisualObservation,
 } from './core.js';
 import { driverEnvironment } from './driver_env.js';
+import {
+  planGuardedCompletion,
+  resolveGuardedCompletion,
+  type GuardedCompletionPlan,
+  type GuardedCompletionTelemetry,
+} from './guarded_completion.js';
+import {
+  BACKENDS,
+  browserDecisionRequest,
+  isBrowserProvider,
+  type Backend,
+  type BrowserProvider,
+} from './browser_provider.js';
 import { chooseLiveForTask, chooseMockForTask } from './jev_adapter.js';
+import { chooseS1Service, s1ServiceUrl } from './s1_service.js';
 import { FixtureFormTask, fixtureSources, type Task, type TaskSources } from './tasks.js';
 
 type VisualMode = 'auto' | 'always' | 'off';
 
 type Arguments = {
-  provider: 'mock' | 'live';
+  provider: BrowserProvider;
   visualObservation: VisualMode;
   fixtureUrl: string;
   token?: string;
   maxSteps: number;
   dryRun: boolean;
+  guardedCompletion: boolean;
   log?: string;
 };
 
@@ -40,6 +55,7 @@ function parseArgs(argv: string[]): Arguments {
     fixtureUrl: 'http://127.0.0.1:8765/',
     maxSteps: 4,
     dryRun: false,
+    guardedCompletion: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -48,6 +64,7 @@ function parseArgs(argv: string[]): Arguments {
     else if (value === '--token') result.token = argv[++index];
     else if (value === '--max-steps') result.maxSteps = Number(argv[++index]);
     else if (value === '--dry-run') result.dryRun = true;
+    else if (value === '--guarded-completion') result.guardedCompletion = true;
     else if (value === '--log') result.log = argv[++index];
     else if (value === '--visual-observation') {
       const mode = argv[++index];
@@ -55,11 +72,13 @@ function parseArgs(argv: string[]): Arguments {
         throw new Error('--visual-observation must be auto, always, or off');
       }
       result.visualObservation = mode;
-    }
-    else throw new Error(`unknown argument: ${value}`);
+    } else throw new Error(`unknown argument: ${value}`);
   }
   if (!Number.isInteger(result.maxSteps) || result.maxSteps < 1) {
     throw new Error('--max-steps must be a positive integer');
+  }
+  if (!isBrowserProvider(result.provider)) {
+    throw new Error(`--provider must be one of ${Object.keys(BACKENDS).join(', ')}`);
   }
   result.fixtureUrl = validateFixtureUrl(result.fixtureUrl);
   return result;
@@ -105,41 +124,37 @@ export class Driver {
     private readonly session: string
   ) {}
 
+  get sessionLabel(): string {
+    return this.session;
+  }
+
   async call(name: string, args: Record<string, unknown>): Promise<Record<string, any>> {
     const result = await this.client.callTool({
       name,
       arguments: { ...args, session: this.session },
     });
-    if (result.isError) {
-      const structured = result.structuredContent as Record<string, unknown> | undefined;
-      const refusalCode = (structured?.refusal as Record<string, unknown> | undefined)?.code;
-      const code =
-        typeof structured?.code === 'string' && structured.code
-          ? structured.code
-          : typeof refusalCode === 'string' && refusalCode
-            ? refusalCode
-            : undefined;
-      const escalation = structured?.escalation as Record<string, unknown> | undefined;
-      const recommended =
-        typeof escalation?.recommended === 'string' && escalation.recommended
-          ? escalation.recommended
-          : undefined;
-      throw new DriverToolError(
-        `${name} failed: ${JSON.stringify(result.content)}`,
-        code,
-        recommended
-      );
-    }
     const data = result.structuredContent as Record<string, any> | undefined;
-    if (!data) throw new Error(`${name} returned no structured result`);
-    if (data.status === 'refused' || data.refusal) {
-      const code = data.refusal?.code;
-      // DriverToolError is an Error, so existing handlers still match.
-      throw new DriverToolError(
-        `${name} refused: ${JSON.stringify(data.refusal ?? data)}`,
-        typeof code === 'string' && code ? code : undefined
+    // All refusal envelopes must preserve the same recovery metadata.
+    const failed = Boolean(result.isError) || data?.effect === 'refused';
+    if (failed || data?.status === 'refused' || data?.refusal) {
+      const canonicalCode = (data?.error as Record<string, unknown> | undefined)?.code;
+      const refusalCode = (data?.refusal as Record<string, unknown> | undefined)?.code;
+      const code = [canonicalCode, data?.code, refusalCode].find(
+        (value): value is string => typeof value === 'string' && value.length > 0
       );
+      const escalation = data?.escalation as Record<string, unknown> | undefined;
+      // A present canonical target wins; never turn an invalid/session target
+      // into a legacy foreground hint.
+      const target = escalation && Object.prototype.hasOwnProperty.call(escalation, 'target')
+        ? escalation.target
+        : escalation?.recommended;
+      const recommended = typeof target === 'string' && target ? target : undefined;
+      const message = failed
+        ? `${name} failed: ${JSON.stringify(result.content)}`
+        : `${name} refused: ${JSON.stringify(data?.refusal ?? data)}`;
+      throw new DriverToolError(message, code, recommended);
     }
+    if (!data) throw new Error(`${name} returned no structured result`);
     return data;
   }
 }
@@ -154,7 +169,8 @@ export function supportsCaptureBoundClick(
 /**
  * Return Driver's code when it refused a background visual click. Only a
  * structured refusal counts: a background_* error code or an explicit
- * escalation.recommended === 'foreground'. Anything else stays a failure.
+ * foreground target (escalation.target or legacy recommended). Anything else
+ * stays a failure.
  */
 export function backgroundRefusalCode(candidate: Candidate, error: unknown): string | undefined {
   if (candidate.tool !== 'click' || candidate.arguments.delivery_mode !== 'background') {
@@ -243,7 +259,10 @@ export async function observeVisual(
       return { status: visualStatus('error', error.code) };
     }
     // parseVisualRegions reports other contract violations as plain errors.
-    if (error instanceof Error && /^(visual (result|region)|unsupported visual)/.test(error.message)) {
+    if (
+      error instanceof Error &&
+      /^(visual (result|region)|unsupported visual)/.test(error.message)
+    ) {
       return { status: visualStatus('error', 'invalid_visual_result') };
     }
     return { status: visualStatus('error', 'driver_error') };
@@ -402,6 +421,7 @@ async function run(args: Arguments): Promise<Outcome> {
   // events (timings, probabilities) go only to the JSONL log.
   const history: HistoryEntry[] = [];
   let visualDelivery: VisualDelivery = 'background';
+  let pendingCompletion: GuardedCompletionPlan | undefined;
   if (args.log) await writeFile(args.log, '', 'utf8');
   await task.reset();
 
@@ -432,7 +452,7 @@ async function run(args: Arguments): Promise<Outcome> {
     for (let step = 1; step <= task.maxSteps; step += 1) {
       const current = task.classify(await task.readOracle(), step - 1);
       if (current === 'verified' || current === 'refuted') {
-        await writeEvent(args.log, { event: 'outcome', outcome: current, token });
+        await writeEvent(args.log, { event: 'outcome', outcome: current });
         return current;
       }
 
@@ -470,14 +490,83 @@ async function run(args: Arguments): Promise<Outcome> {
         return 'abstained';
       }
       const visual = sources.visual?.observation;
-      const providerStarted = performance.now();
-      const answer =
-        args.provider === 'mock'
-          ? chooseMockForTask(task, sources, candidates, history)
-          : await chooseLiveForTask(task, sources, candidates, history);
-      const providerDecisionMs = performance.now() - providerStarted;
-      if (!answer.choice) return 'abstained';
-      const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
+      let guardedCandidate: Candidate | undefined;
+      let guardedTelemetry: GuardedCompletionTelemetry | undefined;
+      if (args.guardedCompletion && pendingCompletion) {
+        const resolution = resolveGuardedCompletion(
+          pendingCompletion,
+          task,
+          sources,
+          candidates,
+          driver.sessionLabel
+        );
+        guardedCandidate = resolution.candidate;
+        guardedTelemetry = resolution.telemetry;
+        // A failed proof never keeps authority alive. The ordinary chooser
+        // handles this fresh step instead.
+        pendingCompletion = undefined;
+      }
+      const guardedFields = guardedTelemetry ? { guarded_completion: guardedTelemetry } : {};
+
+      let candidate: Candidate;
+      let confidence: number | null;
+      let probabilities: Record<string, number> | null;
+      let decisionRoute: 'provider' | 'guarded-completion';
+      let backend: Backend | null = null;
+      let providerDecisionMs = 0;
+      if (guardedCandidate) {
+        candidate = guardedCandidate;
+        confidence = null;
+        probabilities = null;
+        decisionRoute = 'guarded-completion';
+      } else {
+        backend = BACKENDS[args.provider];
+        const providerStarted = performance.now();
+        try {
+          const answer =
+            args.provider === 'mock'
+              ? chooseMockForTask(task, sources, candidates, history)
+              : args.provider === 's1'
+                ? await chooseS1Service(browserDecisionRequest(task, sources, candidates, history))
+                : await chooseLiveForTask(task, sources, candidates, history);
+          providerDecisionMs = performance.now() - providerStarted;
+          if (!answer.choice) {
+            await writeEvent(args.log, {
+              event: 'outcome',
+              outcome: 'abstained',
+              decision_route: 'provider',
+              backend,
+              step,
+              visual: visualRecord,
+              ...guardedFields,
+            });
+            return 'abstained';
+          }
+          candidate = validateChoice(answer.choice, candidates, visual?.captureId);
+          confidence = answer.confidence;
+          probabilities = answer.probabilities;
+          decisionRoute = 'provider';
+        } catch (error: unknown) {
+          // No action was dispatched; fail closed with a logged outcome that
+          // names only the error class.
+          await writeEvent(args.log, {
+            event: 'outcome',
+            outcome: 'unknown',
+            step,
+            phase: 'provider',
+            decision_route: 'provider',
+            backend,
+            error: error instanceof Error ? error.name : 'UnknownError',
+            visual: visualRecord,
+            ...guardedFields,
+          });
+          return 'unknown';
+        }
+      }
+      const nextCompletion =
+        args.guardedCompletion && decisionRoute === 'provider'
+          ? planGuardedCompletion(task, sources, candidate, driver.sessionLabel)
+          : undefined;
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
       const timing = decisionTimingFields({
         decisionMs,
@@ -492,14 +581,17 @@ async function run(args: Arguments): Promise<Outcome> {
           event: 'step',
           step,
           candidate: candidate.id,
-          confidence: answer.confidence,
-          probabilities: answer.probabilities,
+          confidence,
+          probabilities,
           ...timing,
           action_ms: 0,
           total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
           dry_run: args.dryRun,
           tool: null,
+          decision_route: decisionRoute,
+          backend,
           visual: visualRecord,
+          ...guardedFields,
         };
         history.push(task.historyEntry(step, candidate.id));
         await writeEvent(args.log, event);
@@ -510,10 +602,13 @@ async function run(args: Arguments): Promise<Outcome> {
         await writeEvent(args.log, {
           event: 'outcome',
           outcome: 'abstained',
+          decision_route: decisionRoute,
+          backend,
           step,
-          confidence: answer.confidence,
-          probabilities: answer.probabilities,
+          confidence,
+          probabilities,
           visual: visualRecord,
+          ...guardedFields,
         });
         return 'abstained';
       }
@@ -534,9 +629,11 @@ async function run(args: Arguments): Promise<Outcome> {
               event: 'step',
               step,
               candidate: candidate.id,
-              confidence: answer.confidence,
-              probabilities: answer.probabilities,
+              confidence,
+              probabilities,
               ...timing,
+              decision_route: decisionRoute,
+              backend,
               action_ms: Math.round((performance.now() - actionStarted) * 100) / 100,
               total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
               dry_run: args.dryRun,
@@ -545,6 +642,7 @@ async function run(args: Arguments): Promise<Outcome> {
               action_error: refusal,
               escalation: { from: 'background', to: 'foreground', reason: refusal },
               visual: visualRecord,
+              ...guardedFields,
             };
             history.push(task.historyEntry(step, candidate.id, refusal));
             await writeEvent(args.log, event);
@@ -555,27 +653,34 @@ async function run(args: Arguments): Promise<Outcome> {
             outcome: 'unknown',
             step,
             phase: 'action',
+            decision_route: decisionRoute,
+            backend,
             error: error instanceof Error ? error.name : 'UnknownError',
             tool: candidate.tool,
             visual: visualRecord,
+            ...guardedFields,
           });
           return 'unknown';
         }
         actionMs = Math.round((performance.now() - actionStarted) * 100) / 100;
+        pendingCompletion = nextCompletion;
       }
       const event = {
         event: 'step',
         step,
         candidate: candidate.id,
-        confidence: answer.confidence,
-        probabilities: answer.probabilities,
+        confidence,
+        probabilities,
         ...timing,
         action_ms: actionMs,
         total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
         dry_run: args.dryRun,
         tool: candidate.tool,
         delivery_mode: candidate.arguments.delivery_mode ?? null,
+        decision_route: decisionRoute,
+        backend,
         visual: visualRecord,
+        ...guardedFields,
       };
       history.push(task.historyEntry(step, candidate.id));
       await writeEvent(args.log, event);
@@ -584,7 +689,7 @@ async function run(args: Arguments): Promise<Outcome> {
         for (let attempt = 0; attempt < 20; attempt += 1) {
           const outcome = task.classify(await task.readOracle(), step);
           if (outcome === 'verified' || outcome === 'refuted') {
-            await writeEvent(args.log, { event: 'outcome', outcome, token });
+            await writeEvent(args.log, { event: 'outcome', outcome });
             return outcome;
           }
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -593,7 +698,7 @@ async function run(args: Arguments): Promise<Outcome> {
     }
 
     const outcome = task.classify(await task.readOracle(), task.maxSteps);
-    await writeEvent(args.log, { event: 'outcome', outcome, token });
+    await writeEvent(args.log, { event: 'outcome', outcome });
     return outcome;
   } finally {
     await client.close();
@@ -602,6 +707,8 @@ async function run(args: Arguments): Promise<Outcome> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2));
+  // Fail before touching the browser when the S1 service is not configured.
+  if (args.provider === 's1') s1ServiceUrl();
   run(args)
     .then((outcome) => {
       process.exitCode = outcome === 'verified' || args.dryRun ? 0 : 1;

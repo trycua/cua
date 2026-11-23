@@ -307,6 +307,16 @@ pub struct BrowserVisualAction {
     pub kind: BrowserVisualActionKind,
 }
 
+/// A live watch from [`BrowserPlatform::watch_browser_foreground`] or
+/// [`BrowserPlatform::guard_background_attach`]. Dropping it stops the watch.
+pub trait BrowserForegroundWatch: Send {
+    /// Stop the watch and say whether the browser came to the front while it
+    /// ran, even if it lost the front again (the background guard put the
+    /// user's app back, or the user switched away). Nothing the watch does
+    /// after this returns can change the answer.
+    fn finish(self: Box<Self>) -> bool;
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PrepareSideEffects {
     pub launched_browser: bool,
@@ -350,6 +360,17 @@ pub trait BrowserPlatform: Send + Sync {
             super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
             "no supported installed Chromium executable is available for isolated launch",
         ))
+    }
+
+    /// Where the machine's administrator forces extensions on `executable`
+    /// through managed browser policy, if anywhere: the admin-only policy
+    /// file, preference domain or registry key that does it (see
+    /// [`super::managed_policy::policy_forces_extensions`]). Only policy a
+    /// standard user cannot write counts. When it returns `Some`, the
+    /// isolated launch leaves extensions and background networking on so the
+    /// browser installs them. The default reports none.
+    fn managed_extension_policy(&self, _executable: &str) -> Option<String> {
+        None
     }
 
     /// Spawn the driver-owned isolated browser that core fully configured in
@@ -416,7 +437,20 @@ pub trait BrowserPlatform: Send + Sync {
         &self,
         _browser_pid: i64,
         _window_id: u64,
-    ) -> Option<Box<dyn std::any::Any + Send>> {
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
+        None
+    }
+
+    /// Watch whether `browser_pid` comes to the front during an
+    /// existing-profile attachment, so the result reports it even when the
+    /// browser loses the front before the call returns. A browser already in
+    /// front when the watch starts has not come forward unless it is
+    /// activated again. `None` (the default) leaves the guard's own report
+    /// and the end-of-call [`Self::frontmost_app_pid`] check.
+    fn watch_browser_foreground(
+        &self,
+        _browser_pid: i64,
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
         None
     }
 
@@ -568,6 +602,20 @@ pub trait BrowserPlatform: Send + Sync {
         error
     }
 
+    /// Close the browser-owned connection prompt that a DevTools connection
+    /// the driver has abandoned left on screen. The browser keeps that prompt
+    /// after the connection closes, and answering it then attaches nothing, so
+    /// leaving it would only invite a person to approve a dead request. Must
+    /// use the same exact prompt matching as consent handling and only ever
+    /// choose the prompt's cancel action. Returns whether a prompt was closed.
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(false)
+    }
+
     /// Handle one pending browser-owned connection prompt. Implementations
     /// must use exact native semantics and may perform at most one declared
     /// consent action for this request. Generic dialog automation is forbidden.
@@ -647,6 +695,10 @@ mod tests {
                     "only consulted when an attach background limitation is declared",
                 ),
                 (
+                    "watch_browser_foreground",
+                    "not implemented: a foreground attachment leaves the browser in front",
+                ),
+                (
                     "frontmost_app_pid",
                     "not implemented: a foreground attachment leaves the browser in front",
                 ),
@@ -695,6 +747,10 @@ mod tests {
                 (
                     "guard_background_attach",
                     "only consulted when an attach background limitation is declared",
+                ),
+                (
+                    "watch_browser_foreground",
+                    "not implemented: a foreground attachment leaves the browser in front",
                 ),
                 (
                     "frontmost_app_pid",

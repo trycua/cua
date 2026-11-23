@@ -226,6 +226,9 @@ pub fn subclass(kind: &str, message: &str) -> Subclass {
         "firecracker did not start",
         "did not start the vm in time",
         "runtime did not start",
+        // The engine's socket accepts but the API never answered (a
+        // starting Colima or Docker Desktop): passes on a second try.
+        "did not answer ping",
     ]) {
         return Subclass::RuntimeStart;
     }
@@ -478,6 +481,26 @@ mod tests {
             assert_eq!(decide(kind, sub), Retry::Never);
         }
         assert_eq!(subclass("local_network", "whatever"), Subclass::None);
+    }
+
+    /// A container engine whose socket accepts but never answers ping is a
+    /// runtime that did not start this time: it has a step and runs once more.
+    #[test]
+    fn an_engine_that_does_not_answer_ping_is_retried_once() {
+        let msg = "local runtime: [local] container engine: container engine at unix:///x/docker.sock did not answer ping: connection reset by peer";
+        let (kind, sub, retry) = classify(msg, "preparing", "Runtime");
+        assert_eq!(kind, "engine_error");
+        assert_eq!(sub, Subclass::RuntimeStart);
+        assert_eq!(retry, Retry::Once);
+        // Any other engine API error is still not known to pass.
+        let (kind, sub, retry) = classify(
+            "local runtime: [local] container engine: create: conflict",
+            "creating",
+            "Runtime",
+        );
+        assert_eq!(kind, "engine_error");
+        assert_eq!(sub, Subclass::None);
+        assert_eq!(retry, Retry::Never);
     }
 
     #[test]

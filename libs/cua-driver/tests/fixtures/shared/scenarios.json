@@ -432,6 +432,16 @@
     }
    },
    {
+    "id": "save_sheet",
+    "kind": "native_sheet",
+    "description": "Opt-in (CUA_APPKIT_SAVE_SHEET=1): an NSButton that opens an NSSavePanel as a sheet on the main window. The panel's name field and Save button appear in the main window's accessibility tree; tests set the name and press Save through the main window, and send foreground Return and Escape aimed at the main window and at the sheet's own window id (#3351, #4392). save_sheet= label records open, cancelled, or saved name=.",
+    "controls": {
+     "open_button_aid": "btn-save-sheet",
+     "state_label_aid": "lbl-save-sheet",
+     "default_name": "harness-untitled"
+    }
+   },
+   {
     "id": "exit",
     "kind": "exit_button",
     "controls": {
@@ -513,12 +523,31 @@
     }
    },
    {
+    "id": "form_labels",
+    "kind": "title_ui_element_label",
+    "description": "SwiftUI grouped Form Toggle whose checkbox has no AXTitle or AXDescription and is named only by AXTitleUIElement. Tests that get_window_state labels it and run_steps finds it by name. launch_at_login= label.",
+    "controls": {
+     "toggle_label": "Launch at login",
+     "state_label_aid": "lbl-form-toggle-state"
+    }
+   },
+   {
     "id": "context_menu",
     "kind": "context_menu",
     "description": "SwiftUI Button with .contextMenu (Cut/Copy/Paste). Right-click opens the context menu; selecting an item sets menu_action=. menu_action= label.",
     "controls": {
      "button_aid": "btn-context",
      "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
+    "id": "menu_button",
+    "kind": "menu_button",
+    "description": "SwiftUI Menu, exposed as AXMenuButton. Pressing it opens a menu (New Item, New Note) that SwiftUI publishes into the window's AX tree after the press returns; choosing an item sets menu_create=. menu_create= label.",
+    "controls": {
+     "button_aid": "menu-create",
+     "item_aid": "menu-create-item",
+     "state_label_aid": "lbl-menu-create"
     }
    },
    {

@@ -17,7 +17,8 @@
 //!   (so the caller can fire arrival signals).
 //! - [`RenderStateCore::apply_command_base`] — the OverlayCommand match arms
 //!   that all three platforms implement identically (MoveTo / ClickPulse /
-//!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove).
+//!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove /
+//!   Unpin).
 //!   Returns `false` for variants the core doesn't handle so platforms can
 //!   layer their own behaviour on top (e.g. macOS ShowFocusRect).
 //! - [`render_frame`] — the tiny-skia paint of the selected cursor theme.
@@ -360,6 +361,14 @@ impl RenderStateCore {
     /// and not fully idle-faded.
     pub fn is_revealed(&self) -> bool {
         self.visible && self.placed && self.idle_alpha >= 0.004
+    }
+
+    /// Whether an action should glide this cursor and wait for its arrival:
+    /// enabled at launch, not turned off at runtime, and placed. A cursor
+    /// turned off with `SetEnabled(false)` never animates, so an action never
+    /// waits for a glide nobody can see (#4276).
+    pub fn animates(&self) -> bool {
+        self.cfg.enabled && self.visible && self.placed
     }
 
     /// Whether a revealed cursor keeps changing pixels while it rests.
@@ -1056,6 +1065,11 @@ impl RenderStateCore {
                 self.pinned_wid = Some(wid);
                 true
             }
+            OverlayCommand::Unpin => {
+                self.pinned_wid = None;
+                self.pinned_target_off_workspace = false;
+                true
+            }
             OverlayCommand::BeginAction {
                 action,
                 delivery,
@@ -1533,6 +1547,19 @@ mod glide_duration_tests {
     use super::*;
     use crate::{CursorConfig, MotionStyle, MotionTiming};
 
+    /// A click pins the cursor to its target window; a later move with no
+    /// target must drop that pin, or the overlay stays ordered under every
+    /// window covering the old target and the moved cursor is hidden (#2993).
+    #[test]
+    fn unpin_drops_the_window_an_earlier_action_pinned() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(OverlayCommand::PinAbove(42), true, true);
+        core.pinned_target_off_workspace = true;
+        core.apply_command_base(OverlayCommand::Unpin, true, true);
+        assert_eq!(core.pinned_wid, None);
+        assert!(!core.pinned_target_off_workspace);
+    }
+
     #[test]
     fn unplaced_coordinates_do_not_reveal_or_schedule_idle_fade() {
         for pos in [(0.0, 0.0), (-200.0, -200.0), (-1.0e9, -1.0e9)] {
@@ -1541,6 +1568,20 @@ mod glide_duration_tests {
             assert!(!core.is_revealed());
             assert!(core.idle_fade_wait().is_none());
         }
+    }
+
+    #[test]
+    fn a_cursor_turned_off_at_runtime_does_not_animate() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert!(!core.animates(), "an unplaced cursor has nothing to glide");
+        core.apply_command_base(OverlayCommand::ClickPulse { x: 40.0, y: 40.0 }, true, true);
+        assert!(core.animates());
+        core.apply_command_base(OverlayCommand::SetEnabled(false), true, true);
+        assert!(!core.animates(), "turned off after it was shown");
+        core.apply_command_base(OverlayCommand::SetEnabled(true), true, true);
+        assert!(core.animates());
+        core.cfg.enabled = false;
+        assert!(!core.animates(), "disabled at launch");
     }
 
     #[test]

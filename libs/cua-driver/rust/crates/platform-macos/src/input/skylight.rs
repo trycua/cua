@@ -141,6 +141,16 @@ pub struct WindowKeyScope {
     /// The app's on-screen windows before priming, front to back.
     order_before: Vec<u32>,
     primed: KeyPrime,
+    /// Held for apps that route keys only while AppKit-active (GTK 3); it
+    /// drops after key is handed back.
+    activation: Option<crate::input::appkit_activation::ActivationLease>,
+}
+
+impl WindowKeyScope {
+    /// Keep `lease` for as long as this scope holds the window key.
+    pub fn hold_activation(&mut self, lease: crate::input::appkit_activation::ActivationLease) {
+        self.activation = Some(lease);
+    }
 }
 
 /// The window key goes back to. Normally the previous key window. LibreOffice
@@ -357,6 +367,7 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
         previous,
         order_before,
         primed,
+        activation: None,
     })
 }
 
@@ -718,6 +729,51 @@ pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) 
 /// Return the Skylight main connection ID for the current process.
 pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
+}
+
+/// WindowServer's parent window of `window_id`, when it has one.
+///
+/// A child window (`-[NSWindow addChildWindow:]`) is recorded with its parent
+/// in WindowServer. Finder's inline rename field is such a window: a separate
+/// small window whose AX element names only the application as its parent, so
+/// WindowServer is the only place that links it back to its Finder window.
+/// `None` means no parent (a top-level window) or the query is unavailable.
+pub fn window_parent_id(window_id: u32) -> Option<u32> {
+    type QueryWindows = unsafe extern "C" fn(u32, *const c_void, u32) -> *const c_void;
+    type CopyWindows = unsafe extern "C" fn(*const c_void) -> *const c_void;
+    type Advance = unsafe extern "C" fn(*const c_void) -> bool;
+    type GetU32 = unsafe extern "C" fn(*const c_void) -> u32;
+    use core_foundation::{array::CFArray, base::TCFType, number::CFNumber};
+
+    let cid = main_connection_id()?;
+    let query_windows: QueryWindows = unsafe { as_fn(find_sym(b"SLSWindowQueryWindows\0")?) };
+    let copy_windows: CopyWindows =
+        unsafe { as_fn(find_sym(b"SLSWindowQueryResultCopyWindows\0")?) };
+    let advance: Advance = unsafe { as_fn(find_sym(b"SLSWindowIteratorAdvance\0")?) };
+    let parent_of: GetU32 = unsafe { as_fn(find_sym(b"SLSWindowIteratorGetParentID\0")?) };
+    let window_of: GetU32 = unsafe { as_fn(find_sym(b"SLSWindowIteratorGetWindowID\0")?) };
+
+    let ids = CFArray::from_CFTypes(&[CFNumber::from(window_id as i64)]);
+    unsafe {
+        let query = query_windows(cid, ids.as_concrete_TypeRef() as *const c_void, 0);
+        if query.is_null() {
+            return None;
+        }
+        let iterator = copy_windows(query);
+        core_foundation::base::CFRelease(query as _);
+        if iterator.is_null() {
+            return None;
+        }
+        let mut parent = None;
+        while advance(iterator) {
+            if window_of(iterator) == window_id {
+                parent = Some(parent_of(iterator)).filter(|id| *id != 0);
+                break;
+            }
+        }
+        core_foundation::base::CFRelease(iterator as _);
+        parent
+    }
 }
 
 fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
@@ -1466,6 +1522,67 @@ fn focus_failure_hint_from(
     }
 }
 
+/// Whether another window of `pid` than `target_wid` holds the keyboard focus.
+/// AppKit hands pid-routed keys to its key window, so keys meant for
+/// `target_wid` would type into that sibling instead (#3574). An app that
+/// reports no focused window keeps best-effort delivery.
+pub fn sibling_window_focused(pid: libc::pid_t, target_wid: u32) -> bool {
+    sibling_holds_focus(
+        crate::ax::bindings::focused_window_id_of_pid(pid),
+        target_wid,
+    )
+}
+
+/// Take the focus from a sibling for `target_wid` by the exact-window
+/// sequence [`with_foreground_hid_activation`] uses: make it key, raise it,
+/// and ask once more for a slow app. Returns whether the focus was observed.
+pub fn focus_exact_window(pid: libc::pid_t, target_wid: u32) -> bool {
+    for _ in 0..2 {
+        make_exact_window_key(pid, target_wid);
+        crate::ax::bindings::raise_exact_window_of_pid(pid, target_wid);
+        if await_window_focused(pid, target_wid) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The error for keys withheld because [`sibling_window_focused`]: before
+/// the first key, or once delivery had already `started`.
+pub fn sibling_focus_refusal(pid: libc::pid_t, target_wid: u32, started: bool) -> anyhow::Error {
+    let outcome = if started {
+        "the focus moved during foreground keyboard delivery, so typing stopped; check what \
+         arrived before retrying"
+    } else {
+        "exact target window did not become focused for foreground keyboard delivery, so \
+         nothing was typed"
+    };
+    anyhow::anyhow!("{outcome}{}", focus_failure_hint(pid, target_wid))
+}
+
+fn sibling_holds_focus(
+    focused: Option<crate::ax::exact_target::AxWindowId>,
+    target_wid: u32,
+) -> bool {
+    focused.is_some_and(|window| !window.is(target_wid))
+}
+
+/// Deliver a HID event to a window that is already the focused front window,
+/// then re-order the agent cursor overlay above it.
+///
+/// No activation happens here, so no application-activation event follows. But
+/// a real HID click makes WindowServer raise the clicked window, over the
+/// normal-level overlay, and nothing else would put the overlay back: the agent
+/// cursor stays hidden until the next cursor command (hosted macOS E2E videos
+/// show it vanish at the click). The re-order is requested once the event has
+/// been processed, after the same settle the activation path waits.
+fn deliver_then_repin_overlay(action: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
+    let result = action();
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    crate::cursor::overlay::request_repin();
+    result
+}
+
 /// Activate an exact target window for a global HID keyboard action.
 ///
 /// This helper must not run `action` when the private foreground SPI is
@@ -1492,14 +1609,20 @@ pub fn with_foreground_hid_activation(
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
 
-    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    // Finder reports no focused window while its inline rename field has the
+    // focus; a key sent then goes to that field, which is part of the target.
+    let focused_window_id =
+        crate::ax::bindings::focused_window_id_of_pid(target_pid).or_else(|| {
+            crate::ax::bindings::inline_editor_open(target_pid, target_wid)
+                .then(|| crate::ax::exact_target::AxWindowId::window(target_wid))
+        });
     if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
     {
         // Re-activating an already key exact window can clear Chromium's
         // renderer focus even though WindowServer keeps the app frontmost.
         // The AX window proof lets us deliver directly without weakening the
         // exact-window guard or disturbing the current key target.
-        return action();
+        return deliver_then_repin_overlay(action);
     }
 
     let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
@@ -1520,6 +1643,8 @@ pub fn with_foreground_hid_activation(
         if prev_ok {
             unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
         }
+        // The raise above may still have covered the agent cursor's overlay.
+        crate::cursor::overlay::request_repin();
         anyhow::bail!(
             "exact target window did not become focused for foreground HID delivery{}",
             focus_failure_hint(target_pid, target_wid)
@@ -1532,6 +1657,8 @@ pub fn with_foreground_hid_activation(
     if prev_ok {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
+    // The raise put the target window over the agent cursor's overlay.
+    crate::cursor::overlay::request_repin();
 
     result
 }
@@ -1553,7 +1680,7 @@ mod tests {
     use super::{
         focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
         preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
-        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
+        sibling_holds_focus, windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
     };
     use crate::ax::exact_target::AxWindowId;
 
@@ -1582,6 +1709,19 @@ mod tests {
         assert!(hint.contains("window_id 2497"), "{hint}");
         assert_eq!(focus_failure_hint_from(Some(true), None), "");
         assert_eq!(focus_failure_hint_from(None, None), "");
+    }
+
+    #[test]
+    fn keys_are_refused_only_while_a_sibling_window_holds_focus() {
+        assert!(sibling_holds_focus(Some(AxWindowId::window(237)), 235));
+        assert!(!sibling_holds_focus(Some(AxWindowId::window(235)), 235));
+        // A sheet attached to the target answers to the target's id.
+        let sheet = AxWindowId {
+            own: 240,
+            root: 235,
+        };
+        assert!(!sibling_holds_focus(Some(sheet), 235));
+        assert!(!sibling_holds_focus(None, 235));
     }
 
     #[test]
@@ -1863,5 +2003,25 @@ mod key_prime_tests {
             let r = prime_exact_window_key(7, || focused, || true, || true);
             assert!(r.unwrap_err().contains("no keys were sent"));
         }
+    }
+}
+
+#[cfg(test)]
+mod repin_tests {
+    use super::*;
+
+    #[test]
+    fn delivering_to_an_already_front_window_re_pins_the_overlay_after_the_event() {
+        let _serial = crate::cursor::overlay::REPIN_TEST_LOCK.lock().unwrap();
+        crate::cursor::overlay::take_repin_request();
+        let mut delivered = false;
+        let result = deliver_then_repin_overlay(|| {
+            delivered = true;
+            // Not requested before the event has been delivered.
+            assert!(!crate::cursor::overlay::take_repin_request());
+            Ok(())
+        });
+        assert!(result.is_ok() && delivered);
+        assert!(crate::cursor::overlay::take_repin_request());
     }
 }

@@ -21,16 +21,17 @@
 use anyhow::{bail, Result};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC,
     VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, GetClassNameW, GetGUIThreadInfo, GetParent, GetWindowThreadProcessId,
-    IsChild, PostMessageW, GUITHREADINFO, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    EnumChildWindows, GetClassNameW, GetGUIThreadInfo, GetParent, GetWindowTextW,
+    GetWindowThreadProcessId, IsChild, PostMessageW, GUITHREADINFO, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
@@ -113,6 +114,27 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     Some(name)
 }
 
+/// Names a window as `<title> (<process>)` so a refusal says which foreign
+/// window, such as a system modal, holds the foreground.
+fn window_label(hwnd: HWND) -> String {
+    if hwnd.0.is_null() {
+        return "no foreground window".to_string();
+    }
+    let mut title = [0u16; 256];
+    let n = unsafe { GetWindowTextW(hwnd, &mut title) };
+    let title = String::from_utf16_lossy(&title[..n.max(0) as usize]);
+    let exe = owning_exe_basename(hwnd).unwrap_or_else(|| "unknown process".to_string());
+    format!("{title} ({exe})")
+}
+
+fn foreign_foreground_error(actual: HWND, detail: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "foreign window holds the foreground: {label}; {detail} Nothing was retried; the \
+         foreground owner must be closed or dismissed before the rest can be sent.",
+        label = window_label(actual),
+    )
+}
+
 /// `true` iff the given HWND should bypass the PostMessage keyboard
 /// path and route through UIA patterns (or another non-PostMessage
 /// mechanism). See module docs + CUA-543 for the routing rationale.
@@ -168,7 +190,7 @@ fn focused_descendant(parent: HWND) -> Option<HWND> {
     let mut target_threads = vec![parent_thread];
     unsafe {
         let _ = EnumChildWindows(
-            parent,
+            Some(parent),
             Some(collect_thread),
             LPARAM(&mut target_threads as *mut Vec<u32> as isize),
         );
@@ -238,7 +260,7 @@ pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
     let h = focused_descendant(h_parent).unwrap_or(h_parent);
     let code = ch as u32 as usize;
     unsafe {
-        PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
+        PostMessageW(Some(h), WM_CHAR, WPARAM(code), LPARAM(1))?;
     }
     Ok(())
 }
@@ -268,7 +290,7 @@ unsafe fn post_vk_keystroke(h: HWND, vk: VIRTUAL_KEY) -> Result<()> {
     let lp_down = 1u32 | (scan << 16);
     let lp_up = lp_down | (1u32 << 30) | (1u32 << 31);
     PostMessageW(
-        h,
+        Some(h),
         WM_KEYDOWN,
         WPARAM(vk.0 as usize),
         LPARAM(lp_down as isize),
@@ -281,7 +303,12 @@ unsafe fn post_vk_keystroke(h: HWND, vk: VIRTUAL_KEY) -> Result<()> {
     // next character — visible in the "ABC\nDEF\nGHI" repro as "ABC / DEF /
     // (gap) / HI".
     sleep(Duration::from_millis(KEY_DELAY_MS));
-    PostMessageW(h, WM_KEYUP, WPARAM(vk.0 as usize), LPARAM(lp_up as isize))?;
+    PostMessageW(
+        Some(h),
+        WM_KEYUP,
+        WPARAM(vk.0 as usize),
+        LPARAM(lp_up as isize),
+    )?;
     Ok(())
 }
 
@@ -356,7 +383,7 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
                 // WM_CHAR is truncated by the target and shows up as garbage.
                 TextUnit::Packet(code) => {
                     unsafe {
-                        PostMessageW(h, WM_CHAR, WPARAM(*code as usize), LPARAM(1))?;
+                        PostMessageW(Some(h), WM_CHAR, WPARAM(*code as usize), LPARAM(1))?;
                     }
                     since_barrier += 1;
                     if !batched {
@@ -460,7 +487,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         for mvk in &mod_vks {
             let ms = MapVirtualKeyW(mvk.0 as u32, MAPVK_VK_TO_VSC);
             PostMessageW(
-                target,
+                Some(target),
                 down_msg,
                 WPARAM(mvk.0 as usize),
                 repeat_lp(ms, false, false),
@@ -468,7 +495,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         }
         // Press key.
         PostMessageW(
-            target,
+            Some(target),
             down_msg,
             WPARAM(vk.0 as usize),
             repeat_lp(scan, is_extended(vk), false),
@@ -476,7 +503,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         sleep(Duration::from_millis(KEY_DELAY_MS));
         // Release key.
         PostMessageW(
-            target,
+            Some(target),
             up_msg,
             WPARAM(vk.0 as usize),
             repeat_lp(scan, is_extended(vk), true),
@@ -485,7 +512,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         for mvk in mod_vks.iter().rev() {
             let ms = MapVirtualKeyW(mvk.0 as u32, MAPVK_VK_TO_VSC);
             PostMessageW(
-                target,
+                Some(target),
                 up_msg,
                 WPARAM(mvk.0 as usize),
                 repeat_lp(ms, false, true),
@@ -650,13 +677,14 @@ pub fn send_text_synthesized_paced_after_focus(
                 let actual = GetForegroundWindow();
                 if !foreground_matches_target_or_owned_window(ft, actual.0 as usize as u64) {
                     *turn = TypingTurn::Lost;
-                    bail!(
-                        "foreground_lost: foreground moved to HWND {h:?} after {k} of {n} \
-                         text units were read; the remaining {remaining} were not sent. \
-                         Nothing was retried; inspect the target before sending the rest.",
-                        h = actual.0,
-                        remaining = n - k,
-                    );
+                    return Err(foreign_foreground_error(
+                        actual,
+                        &format!(
+                            "{k} of {n} text units were read and the remaining {remaining} were \
+                             not sent.",
+                            remaining = n - k,
+                        ),
+                    ));
                 }
                 let events = batch_events(batch);
                 let read = att.send_and_await_read(&events, Duration::from_secs(2));
@@ -678,12 +706,31 @@ pub fn send_text_synthesized_paced_after_focus(
                          daemon is).",
                         total = events.len()
                     ),
-                    UnitRead::Stalled => bail!(
-                        "text_delivery_stalled: the target did not read text units {first}..{last} \
-                         of {n} within 2000 ms; {k} earlier units were read. Those units were \
-                         inserted and may still appear in the target. Nothing was retried; \
-                         inspect the target before sending the rest.",
-                    ),
+                    UnitRead::Stalled => {
+                        // A stall with a foreign window in front is that window
+                        // swallowing the input, not a slow target: name it.
+                        let actual = GetForegroundWindow();
+                        if !foreground_matches_target_or_owned_window(ft, actual.0 as usize as u64)
+                        {
+                            return Err(foreign_foreground_error(
+                                actual,
+                                &format!(
+                                    "the target did not read text units {first}..{last} of {n} \
+                                     within 2000 ms; {k} earlier units were read. Those units \
+                                     were inserted and may still appear in another window."
+                                ),
+                            ));
+                        }
+                        bail!(
+                            "text_delivery_stalled: the target did not read text units \
+                             {first}..{last} of {n} within 2000 ms; {k} earlier units were read. \
+                             Those units were inserted and may still appear in the target. \
+                             Nothing was retried; inspect the target before sending the rest. \
+                             Foreground window now: {fg}. {detail}",
+                            fg = window_label(actual),
+                            detail = att.stall_detail(actual),
+                        )
+                    }
                 }
                 if delay_ms > 0 && last < n {
                     sleep(Duration::from_millis(delay_ms));
@@ -726,6 +773,65 @@ fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
     }
 }
 
+/// The active and focus HWNDs of `hwnd`'s GUI thread, as that thread's own
+/// input queue records them. Read without attaching.
+fn gui_thread_active_and_focus(hwnd: HWND) -> Option<(HWND, HWND)> {
+    let thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
+    if thread == 0 {
+        return None;
+    }
+    let mut info = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetGUIThreadInfo(thread, &mut info) }.ok()?;
+    Some((info.hwndActive, info.hwndFocus))
+}
+
+/// Whether `foreground`'s thread has processed its own activation.
+///
+/// `GetForegroundWindow` changes the moment `SetForegroundWindow` succeeds,
+/// but the target thread only becomes active when it reads the activation
+/// event Windows queued for it; until then its queue has no active or focus
+/// window. Attaching to the queue in that interval hands the pending
+/// activation, and every key routed by it, to the attached driver thread,
+/// which never reads input: the target stays inactive and reads nothing
+/// until the attachment is dropped (cua#8543). The queue's own active window
+/// is the observable proof that activation was processed.
+fn thread_activation_processed(foreground: HWND) -> bool {
+    gui_thread_active_and_focus(foreground).is_some_and(|(active, _)| active == foreground)
+}
+
+fn wait_for_thread_activation(foreground: HWND, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if thread_activation_processed(foreground) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(10));
+    }
+}
+
+fn activation_not_processed_error(
+    target: HWND,
+    foreground: HWND,
+    operation: &str,
+) -> anyhow::Error {
+    let (active, focus) = gui_thread_active_and_focus(foreground).unwrap_or_default();
+    anyhow::anyhow!(
+        "foreground_unavailable: HWND {:?} is foreground for {operation} but its thread did \
+         not process the activation within 500 ms (its queue's active HWND {:?}, focus HWND \
+         {:?}); no input was sent. Target HWND {:?}.",
+        foreground.0,
+        active.0,
+        focus.0,
+        target.0
+    )
+}
+
 /// Run one system-queue input transaction while `target`, or a live visible
 /// same-process window whose owner chain reaches `target`, is foreground.
 /// Foreground and optional child focus are checked against
@@ -754,6 +860,15 @@ fn with_confirmed_foreground<T>(
             target.0,
             actual.0
         );
+    }
+    // Focus and input both need the target's queue to be active, not just
+    // the foreground pointer. Confirm it without attaching.
+    if !wait_for_thread_activation(target, Duration::from_millis(500)) {
+        let error = activation_not_processed_error(target, target, operation);
+        if !previous.0.is_null() && previous != target {
+            let _ = unsafe { SetForegroundWindow(previous) };
+        }
+        return Err(error);
     }
 
     let Some(foreground_target) = crate::win32::capture_foreground_target(target.0 as usize as u64)
@@ -794,6 +909,12 @@ fn with_confirmed_foreground<T>(
                 target.0,
                 actual.0
             );
+        }
+        // The focus step may have moved the foreground to an owned window;
+        // that window's thread must also have processed its activation before
+        // the queue is shared (see `thread_activation_processed`).
+        if !wait_for_thread_activation(actual, Duration::from_millis(500)) {
+            return Err(activation_not_processed_error(target, actual, operation));
         }
         // Attach before inserting anything: attaching resets the shared key
         // state, which must not race with modifiers the body is about to send.
@@ -848,9 +969,24 @@ enum UnitRead {
 
 /// The caller's thread attached to the foreground thread's input queue for
 /// the duration of one foreground input transaction; detaches on drop.
+///
+/// Attaching makes this thread part of the target's input processing: the
+/// two threads share one input queue and its activation and focus state, so
+/// the target can need this thread to answer a cross-thread sent message
+/// before its own input moves on. A thread that holds the attachment and
+/// waits without servicing sent messages can therefore freeze the target it
+/// waits on, and the target reads nothing until the attachment is dropped.
+/// Every wait below goes through [`Self::idle`], which services sent messages
+/// (never posted or input messages, which belong to the target).
+///
+/// Attach only once the target thread has processed its activation
+/// ([`thread_activation_processed`]): a pending activation in the shared
+/// queue leaves it without a focus window, so keys and the activation itself
+/// wait on this thread, which never reads input.
 struct InputQueueAttachment {
     own_thread: u32,
     target_thread: u32,
+    serviced: std::cell::Cell<u32>,
 }
 
 impl InputQueueAttachment {
@@ -866,7 +1002,68 @@ impl InputQueueAttachment {
             .then_some(Self {
                 own_thread,
                 target_thread,
+                serviced: std::cell::Cell::new(0),
             })
+    }
+
+    /// Dispatch any messages other threads have sent to this thread, without
+    /// removing posted or input messages. `PM_QS_SENDMESSAGE` restricts the
+    /// peek to sent messages, so keyboard input in the shared queue stays for
+    /// the target thread.
+    fn service_sent_messages(&self) {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetQueueStatus, PeekMessageW, MSG, PM_NOREMOVE, PM_QS_SENDMESSAGE, QS_SENDMESSAGE,
+        };
+        let pending = unsafe { GetQueueStatus(QS_SENDMESSAGE) } >> 16 & QS_SENDMESSAGE.0;
+        if pending != 0 {
+            self.serviced.set(self.serviced.get().saturating_add(1));
+            let mut msg = MSG::default();
+            let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE) };
+        }
+    }
+
+    /// One bounded wait step while attached: answer sent messages first.
+    fn idle(&self, step: Duration) {
+        self.service_sent_messages();
+        if step.is_zero() {
+            std::thread::yield_now();
+        } else {
+            sleep(step);
+        }
+    }
+
+    /// Diagnostic for a stall: how many times this thread had to answer a
+    /// message sent to it while attached, and whether the target thread
+    /// answers a WM_NULL within 200 ms.
+    fn stall_detail(&self, target: HWND) -> String {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_NULL,
+        };
+        let responsive = unsafe {
+            SendMessageTimeoutW(
+                target,
+                WM_NULL,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                200,
+                None,
+            )
+        }
+        .0 != 0;
+        let (active, focus) = gui_thread_active_and_focus(target).unwrap_or_default();
+        format!(
+            "Driver thread answered {} sent-message batch(es) while attached; target thread {} \
+             WM_NULL within 200 ms; its queue's active HWND {:?}, focus HWND {:?}.",
+            self.serviced.get(),
+            if responsive {
+                "answered"
+            } else {
+                "did not answer"
+            },
+            active.0,
+            focus.0
+        )
     }
 
     /// Block until the foreground thread has retrieved all input inserted so
@@ -896,7 +1093,7 @@ impl InputQueueAttachment {
                 );
                 return false;
             }
-            sleep(Duration::from_millis(5));
+            self.idle(Duration::from_millis(5));
         }
     }
 
@@ -917,7 +1114,7 @@ impl InputQueueAttachment {
             if Instant::now() >= deadline {
                 return UnitRead::Stalled;
             }
-            std::thread::yield_now();
+            self.idle(Duration::ZERO);
         }
     }
 }
@@ -1160,7 +1357,7 @@ fn resolve_press(target: HWND, key: &str, modifiers: &[&str]) -> Result<Press> {
             return Ok(match vk {
                 Some(vk) => Press::Key {
                     vk: VIRTUAL_KEY(vk),
-                    scan: unsafe { MapVirtualKeyExW(vk as u32, MAPVK_VK_TO_VSC, hkl) },
+                    scan: unsafe { MapVirtualKeyExW(vk as u32, MAPVK_VK_TO_VSC, Some(hkl)) },
                 },
                 None => Press::Text(ch),
             });
@@ -1452,7 +1649,7 @@ mod type_text_bench {
                     200,
                     None,
                     None,
-                    instance,
+                    Some(instance.into()),
                     None,
                 )
                 .expect("create EDIT control");
@@ -1543,5 +1740,148 @@ mod type_text_bench {
         let text = "alpha beta gamma delta epsilon\tzeta eta theta iota kappa lambda";
         post_type_text_with_delay(edit.hwnd.0 as u64, text, 0).expect("post");
         assert_eq!(edit.text(), text);
+    }
+}
+
+/// A driver thread attached to the target's input queue must answer messages
+/// the target sends it while it waits for the target to read input. Before
+/// this, the wait spun without servicing sent messages, so a target that sent
+/// one froze until the driver detached, read nothing within 2000 ms and the
+/// driver reported `text_delivery_stalled` (WPF harness, run 45020095461: the
+/// text appeared right after the stall, with the caret frozen during it).
+#[cfg(test)]
+mod attached_wait_services_sent_messages {
+    use super::*;
+    use std::sync::mpsc;
+    use windows::core::w;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, DispatchMessageW, PeekMessageW, SendMessageTimeoutW, MSG,
+        PM_REMOVE, SMTO_NORMAL, WINDOW_EX_STYLE, WM_NULL, WS_POPUP,
+    };
+
+    fn popup() -> HWND {
+        unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .expect("create popup")
+        }
+    }
+
+    #[test]
+    fn attached_wait_answers_a_message_the_target_sends() {
+        // The waiting thread owns a window the target can send to.
+        let own = popup();
+        let own_addr = own.0 as isize;
+        let (target_tx, target_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let target = std::thread::spawn(move || unsafe {
+            let hwnd = popup();
+            target_tx.send(hwnd.0 as isize).expect("send target hwnd");
+            go_rx.recv().expect("start signal");
+            let started = Instant::now();
+            let answered = SendMessageTimeoutW(
+                HWND(own_addr as *mut _),
+                WM_NULL,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_NORMAL,
+                3000,
+                None,
+            )
+            .0 != 0;
+            done_tx
+                .send((answered, started.elapsed()))
+                .expect("send result");
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                DispatchMessageW(&msg);
+            }
+            let _ = DestroyWindow(hwnd);
+        });
+        let target_hwnd = HWND(target_rx.recv().expect("target hwnd") as *mut _);
+        let attachment = InputQueueAttachment::attach(target_hwnd).expect("attach input queues");
+        go_tx.send(()).expect("start target");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let result = loop {
+            if let Ok(result) = done_rx.try_recv() {
+                break Some(result);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            attachment.idle(Duration::from_millis(5));
+        };
+        drop(attachment);
+        let (answered, elapsed) = result.unwrap_or_else(|| {
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("target finished")
+        });
+        target.join().expect("target thread");
+        unsafe {
+            let _ = DestroyWindow(own);
+        }
+        assert!(answered, "the target's sent message was never answered");
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "the attached wait answered the target's sent message only after {elapsed:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod thread_activation_tests {
+    use super::*;
+    use windows::core::w;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_POPUP,
+    };
+
+    #[test]
+    fn a_window_its_thread_has_not_activated_is_not_ready_for_attachment() {
+        // GetForegroundWindow can already name a window whose thread has not
+        // read its activation; only the thread's own active HWND proves it.
+        // A fresh, never-activated window is that state.
+        let hwnd = unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .expect("create popup")
+        };
+        let ready = thread_activation_processed(hwnd);
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+        assert!(!ready);
+        assert!(!thread_activation_processed(HWND(std::ptr::null_mut())));
     }
 }

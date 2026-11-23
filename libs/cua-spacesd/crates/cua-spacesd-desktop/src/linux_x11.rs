@@ -153,6 +153,19 @@ pub(crate) fn has_xtest(conn: &RustConnection) -> bool {
         .is_some_and(|reply| reply.present)
 }
 
+/// Whether the X server refuses to read the root window. A rootless Xwayland
+/// (the X server of a GNOME, KDE, sway or Hyprland Wayland session) keeps no
+/// root framebuffer: a core `GetImage` of the root fails with BadMatch, while
+/// an XShm grab of it succeeds and returns black.
+pub(crate) fn root_unreadable(conn: &RustConnection, root: Window) -> bool {
+    matches!(
+        conn.get_image(ImageFormat::Z_PIXMAP, root, 0, 0, 1, 1, !0)
+            .map(|cookie| cookie.reply()),
+        Ok(Err(x11rb::errors::ReplyError::X11Error(error)))
+            if error.error_kind == x11rb::protocol::ErrorKind::Match
+    )
+}
+
 pub(crate) fn window_pid(conn: &RustConnection, window: Window) -> Option<u32> {
     atoms32(conn, window, "_NET_WM_PID", AtomEnum::CARDINAL)
         .first()

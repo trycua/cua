@@ -304,7 +304,7 @@ fn eviction_remove_and_clear_release_payload_but_not_acquired_guard() {
     unsafe { touch_vtable(guard.as_ptr()) };
     let removed_ptr = make_fake(hits);
     let removed = cache.publish(PID as i32, HWND, snapshot_with(vec![removed_ptr]));
-    cache.remove(PID as i32, HWND);
+    cache.remove(PID as i32, HWND, None);
     assert!(acquire(&cache, removed, 0).is_none());
     assert_eq!(
         unsafe {
@@ -461,5 +461,54 @@ fn unpublished_payload_releases_its_walker_retain() {
         unsafe { (*(ptr as *const FakeObj)).refcount.load(Ordering::SeqCst) },
         0
     );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+fn walker_node(element_index: Option<usize>, element_ptr: usize) -> crate::uia::UiaNode {
+    crate::uia::UiaNode {
+        element_index,
+        control_type: "Text".to_owned(),
+        name: Some("row".to_owned()),
+        value: None,
+        automation_id: None,
+        help_text: None,
+        actions: Vec::new(),
+        enabled: Some(true),
+        selected: None,
+        is_password: None,
+        element_ptr,
+        center_x: 0,
+        center_y: 0,
+        rect: None,
+        msaa_role: None,
+        depth: 0,
+        parent_element_index: None,
+        in_web_content: false,
+    }
+}
+
+fn refcount(ptr: usize) -> isize {
+    unsafe { (*(ptr as *const FakeObj)).refcount.load(Ordering::SeqCst) }
+}
+
+/// #6867: content-only rows carry a walker reference too. The snapshot
+/// hand-off must release those, and keep exactly one reference per indexed
+/// element until the snapshot drops.
+#[test]
+fn snapshot_handoff_releases_content_only_walker_references() {
+    let hits = Box::leak(Box::new(AtomicUsize::new(0)));
+    let indexed = make_fake(hits);
+    let content = make_fake(hits);
+    let mut nodes = vec![walker_node(Some(0), indexed), walker_node(None, content)];
+
+    let snapshot = UiaSnapshot::from_nodes(&mut nodes, SnapshotKind::Uia);
+
+    assert!(nodes.iter().all(|node| node.element_ptr == 0));
+    assert_eq!(refcount(content), 0);
+    assert_eq!(refcount(indexed), 1);
+    assert_eq!(snapshot.elements.len(), 1);
+    assert_eq!(snapshot.elements[0].as_ptr(), indexed);
+    drop(snapshot);
+    assert_eq!(refcount(indexed), 0);
     assert_eq!(hits.load(Ordering::SeqCst), 0);
 }

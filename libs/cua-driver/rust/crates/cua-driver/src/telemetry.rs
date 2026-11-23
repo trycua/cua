@@ -590,6 +590,7 @@ impl AgentSessionState {
             "get_browser_state"
                 | "browser_prepare"
                 | "browser_navigate"
+                | "browser_motion_policy"
                 | "browser_click"
                 | "browser_type"
                 | "browser_dialog"
@@ -1996,6 +1997,7 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
         "permissions" => match operation {
             "status" => "status",
             "grant" => "grant",
+            "vnc" => "vnc",
             _ => "other",
         },
         "config" => match operation {
@@ -2062,6 +2064,7 @@ fn fixed_cli_client_kind(command: &str, client_kind: &str) -> &'static str {
         "qwen_code" => "qwen_code",
         "factory_droid" => "factory_droid",
         "zcode" => "zcode",
+        "deepseek_harness" => "deepseek_harness",
         _ => "other",
     }
 }
@@ -2123,6 +2126,13 @@ fn build_payload(
 }
 
 fn spawn_payload(event_name: &'static str, payload: Value) {
+    // Unit tests run in one process, so a capture from any test (e.g. an MCP
+    // session started by an HTTP transport test) would hold PENDING_SENDS
+    // above zero while the flush test asserts it starts at zero. Payload shape
+    // is covered by the build_* tests; delivery is not.
+    if cfg!(test) {
+        return;
+    }
     PENDING_SENDS.fetch_add(1, Ordering::SeqCst);
     let task = move || {
         let _pending = PendingSendGuard;
@@ -3547,6 +3557,7 @@ mod tests {
         };
 
         for (tool_name, operation) in [
+            ("browser_motion_policy", ToolOperation::NotApplicable),
             ("browser_dialog", ToolOperation::BrowserDialogAccept),
             (
                 "browser_set_input_files",
@@ -3779,6 +3790,10 @@ mod tests {
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "claude_code"),
             "claude_code"
+        );
+        assert_eq!(
+            fixed_cli_client_kind("mcp_config", "deepseek_harness"),
+            "deepseek_harness"
         );
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "/private/client"),

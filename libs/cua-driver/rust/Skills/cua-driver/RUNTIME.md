@@ -35,7 +35,7 @@ The old computer-use compatibility flag does not add a screenshot tool. Use `get
 
 For multi-call work, prefer a short public label and pass the same label on every call that accepts it. Passing it once is not sticky: omission uses the transport's implicit session. Named CLI state is shared only within the daemon's CLI namespace, not with arbitrary MCP connections or a new daemon generation.
 
-`start_session` is optional: actions can establish the run. Use it to configure the initial cursor theme or revive a name after `end_session`. The default idle TTL is five minutes; do not assume a long human permission wait preserves handles.
+`start_session` is optional: actions can establish the run. Use it to configure the initial cursor theme or revive a name after `end_session`. The default idle TTL is five minutes. After an idle end, the next action or window read with the same label (or none) starts the session again, but its old snapshots and element tokens stay retired, so re-read the window state after a long wait. Only `end_session` makes a label refuse until `start_session`.
 
 ```bash
 cua-driver start_session '{"session":"run-1"}'
@@ -83,8 +83,9 @@ cua-driver mcp \
 Capability manifest v3 omits file-level `mode` and `ask.tools`. Its
 `allow.tools` list is nonempty. Lifetime fields are optional in `standard` and
 `unrestricted`; `bounded` requires both `expires_after` and `idle_timeout`.
-The older `--session-policy` names remain compatibility aliases and must not be
-used in new configurations.
+The older `--session-policy` and `--approve-session-policy` flags have been
+removed; `cua-driver` refuses them and names `--capability-manifest` or
+`--approve-capability-manifest` instead.
 
 Starting, ending, naming, reconnecting, or omitting a session never changes
 permission authority. A public session label is lifecycle metadata, never a

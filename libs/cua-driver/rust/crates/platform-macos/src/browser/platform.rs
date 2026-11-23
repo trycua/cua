@@ -12,8 +12,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserForegroundWatch, BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind,
+    ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -302,31 +303,57 @@ fn guarded_attach_allowed(window_on_current_space: Option<bool>) -> bool {
 /// background-key turns run, so it never undoes the driver's input.
 struct SelfActivationGuard {
     stop: Arc<std::sync::atomic::AtomicBool>,
+    watch: Option<std::thread::JoinHandle<()>>,
+    /// Set when the watch saw the browser come forward on its own and put
+    /// the user's window back.
+    came_forward: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SelfActivationGuard {
     fn start(pid: i32) -> Self {
         GUARDED_ATTACHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag = stop.clone();
+        let came_forward = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (flag, seen) = (stop.clone(), came_forward.clone());
         let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
-        std::thread::spawn(move || {
+        let watch = std::thread::spawn(move || {
             if let Some(front) = user_front {
-                watch_self_activation(pid, front, &flag);
+                watch_self_activation(pid, front, &flag, &seen);
             }
         });
-        Self { stop }
+        Self {
+            stop,
+            watch: Some(watch),
+            came_forward,
+        }
+    }
+}
+
+impl BrowserForegroundWatch for SelfActivationGuard {
+    fn finish(self: Box<Self>) -> bool {
+        let came_forward = self.came_forward.clone();
+        // Drop joins the watch, so a revert it was making is counted.
+        drop(self);
+        came_forward.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
 impl Drop for SelfActivationGuard {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(watch) = self.watch.take() {
+            let _ = watch.join();
+        }
         GUARDED_ATTACHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
-fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+fn watch_self_activation(
+    pid: i32,
+    front: i32,
+    stop: &std::sync::atomic::AtomicBool,
+    came_forward: &std::sync::atomic::AtomicBool,
+) {
     use crate::focus_arbiter::{Decision, UndoWatch};
     use std::sync::atomic::Ordering;
     use std::time::Instant;
@@ -358,8 +385,11 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
             let front_now = crate::input::skylight::front_process_pid();
             if front_now == Some(pid) {
                 // Not when the user switched to Chrome themselves.
-                if undo.decide() == Decision::Undo && !rekey() {
-                    crate::key_focus_guard::revert_now(pid, front, &undo);
+                if undo.decide() == Decision::Undo {
+                    came_forward.store(true, Ordering::SeqCst);
+                    if !rekey() {
+                        crate::key_focus_guard::revert_now(pid, front, &undo);
+                    }
                 }
                 last_rekey = Instant::now();
             } else if front_now == Some(front) {
@@ -369,6 +399,7 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
                 } {
                     // Chrome orders its window front a few ms after it
                     // activates itself.
+                    came_forward.store(true, Ordering::SeqCst);
                     rekey();
                     if crate::key_focus_guard::target_window_above_front(pid, front) {
                         crate::key_focus_guard::restore_order_now(pid, front);
@@ -386,6 +417,12 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
     }
 }
 
+impl BrowserForegroundWatch for crate::focus_steal::ActivationRecord {
+    fn finish(self: Box<Self>) -> bool {
+        self.seen()
+    }
+}
+
 /// Bring `previous_pid` back to the front when `browser_pid` is in front.
 /// Leaves things alone when some other app took the front in the meantime.
 fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bool {
@@ -399,7 +436,7 @@ fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bo
     crate::apps::reactivate_app(previous)
 }
 
-fn is_chromium(name: &str, bundle_id: &str) -> bool {
+pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
@@ -531,6 +568,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))
@@ -789,6 +827,27 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     )))
 }
 
+/// macOS 27 and later answer EPERM when an app without Full Disk Access or a
+/// per-app grant reads a protected browser profile folder, root and
+/// LaunchAgents included.
+const PROFILE_PROTECTION_HINT: &str = "on macOS 27 and later, reading this browser's profile folder needs Full Disk Access or a per-app grant; in System Settings → Privacy & Security → Full Disk Access, click + and choose /Applications/CuaDriver.app, turn its switch on, and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
+
+fn devtools_active_port_read_refusal(error: &std::io::Error) -> BrowserRefusal {
+    let message = format!("could not read the browser's DevToolsActivePort file: {error}");
+    if error.raw_os_error() != Some(libc::EPERM) {
+        return BrowserRefusal::new(BrowserRefusalCode::BrowserRouteUnavailable, message);
+    }
+    BrowserRefusal::new(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        format!("{message}; {PROFILE_PROTECTION_HINT}"),
+    )
+    .with_detail(serde_json::json!({
+        "resource": "browser_profile",
+        "os_error": libc::EPERM,
+        "hint": PROFILE_PROTECTION_HINT,
+    }))
+}
+
 async fn active_port_endpoint(
     pid: i64,
     product: BrowserProduct,
@@ -812,12 +871,7 @@ async fn active_port_endpoint_with_relative_fallback(
     let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not read the browser's DevToolsActivePort file: {error}"),
-            ))
-        }
+        Err(error) => return Err(devtools_active_port_read_refusal(&error)),
     };
     let Some((port, path)) = parse_devtools_active_port(&text) else {
         return Err(BrowserRefusal::new(
@@ -870,6 +924,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         ))
     }
 
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        super::managed_policy::managed_extension_policy(executable)
+    }
+
     fn security_prompt_open(&self) -> bool {
         crate::security_prompt::security_prompt_on_screen()
     }
@@ -903,11 +961,19 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         browser_pid: i64,
         window_id: u64,
-    ) -> Option<Box<dyn std::any::Any + Send>> {
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
         let pid = i32::try_from(browser_pid).ok()?;
         let window_id = u32::try_from(window_id).ok()?;
         guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
-            .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn std::any::Any + Send>)
+            .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn BrowserForegroundWatch>)
+    }
+
+    fn watch_browser_foreground(
+        &self,
+        browser_pid: i64,
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
+        let pid = i32::try_from(browser_pid).ok()?;
+        Some(Box::new(crate::focus_steal::ActivationRecord::start(pid)))
     }
 
     fn frontmost_app_pid(&self) -> Option<i64> {
@@ -989,16 +1055,21 @@ impl BrowserPlatform for MacOsBrowserPlatform {
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
-        let (app, fallback_name, fallback_bundle_id) = tokio::task::spawn_blocking(move || {
-            let app = crate::apps::list_running_apps()
-                .into_iter()
-                .find(|app| i64::from(app.pid) == pid);
-            let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
-            let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
-            (app, fallback_name, fallback_bundle_id)
-        })
-        .await
-        .unwrap_or((None, None, None));
+        let (app, fallback_name, fallback_bundle_id, electron_app) =
+            tokio::task::spawn_blocking(move || {
+                let app = crate::apps::list_running_apps()
+                    .into_iter()
+                    .find(|app| i64::from(app.pid) == pid);
+                let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
+                let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
+                // Electron apps ship under their own name and bundle id
+                // (Obsidian is md.obsidian), so the bundled Electron Framework
+                // is what identifies them.
+                let electron_app = super::ElectronJs::is_electron(pid as i32);
+                (app, fallback_name, fallback_bundle_id, electron_app)
+            })
+            .await
+            .unwrap_or((None, None, None, false));
         let name = app
             .as_ref()
             .map(|app| app.name.as_str())
@@ -1009,10 +1080,14 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             .and_then(|app| app.bundle_id.as_deref())
             .or(fallback_bundle_id.as_deref())
             .unwrap_or("");
-        let chromium = is_chromium(name, bundle_id);
+        let chromium = electron_app || is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
         let gecko = is_firefox(&format!("{name} {bundle_id}"));
-        let product_kind = browser_product(name, bundle_id);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(name, bundle_id)
+        };
         let helper = name.to_ascii_lowercase().contains("helper")
             || bundle_id.to_ascii_lowercase().contains(".helper")
             || process_arguments(pid).ok().is_some_and(|args| {
@@ -1463,6 +1538,24 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         })
     }
 
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let (Ok(pid), Ok(window_id)) = (i32::try_from(pid), u32::try_from(window_id)) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || super::consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
+    }
+
     async fn handle_existing_profile_consent(
         &self,
         request: BrowserConsentRequest,
@@ -1510,6 +1603,15 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn brave_default_user_data_dir_is_its_brave_software_profile_root() {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+        assert_eq!(
+            default_user_data_dir(browser_product("Brave Browser", "com.brave.Browser")),
+            Some(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+        );
+    }
 
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {
@@ -1795,7 +1897,7 @@ mod tests {
                 height: 780.0,
             },
             layer: 0,
-            z_index: 0,
+            z_index: Some(0),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),
@@ -1882,6 +1984,35 @@ mod tests {
         assert!(!restore_front_app_if_browser_front(42, 42));
         assert!(!restore_front_app_if_browser_front(i64::MAX, 42));
         assert!(!restore_front_app_if_browser_front(42, i64::MIN));
+    }
+
+    #[test]
+    fn devtools_active_port_read_refusal_names_the_macos_profile_protection() {
+        let protected =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EPERM));
+        assert_eq!(protected.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(protected
+            .message
+            .starts_with("could not read the browser's DevToolsActivePort file: "));
+        assert!(
+            protected.message.contains("Full Disk Access"),
+            "{}",
+            protected.message
+        );
+        let detail = protected.detail.expect("an EPERM denial carries detail");
+        assert_eq!(detail["resource"], "browser_profile");
+        assert_eq!(detail["os_error"], libc::EPERM);
+        assert_eq!(detail["hint"], PROFILE_PROTECTION_HINT);
+        assert!(
+            PROFILE_PROTECTION_HINT.contains("click + and choose /Applications/CuaDriver.app"),
+            "{PROFILE_PROTECTION_HINT}"
+        );
+
+        let mode_bits =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EACCES));
+        assert_eq!(mode_bits.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(!mode_bits.message.contains("Full Disk Access"));
+        assert!(mode_bits.detail.is_none());
     }
 
     #[test]

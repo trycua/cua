@@ -4779,11 +4779,47 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         } else if cfg!(target_os = "macos")
             && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
         {
-            Some(window_chrome_changed_pixel_center(
-                &window_before,
-                &window_after,
-                bounds,
-            ))
+            // Edge draws the collapsed indicator asynchronously after the
+            // page's request resolves, so the first capture can predate it
+            // (a hosted run saw no changed chrome pixels 250 ms after the
+            // request). Recapture until the chrome changes, or the window
+            // changes materially, up to a bounded deadline.
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut indicator =
+                window_chrome_changed_pixel_center(&window_before, &window_after, bounds);
+            while indicator.is_none()
+                && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
+                && Instant::now() < deadline
+            {
+                thread::sleep(Duration::from_millis(250));
+                let recaptured = fixture.driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": after_window_session,
+                        "screenshot_out_file": window_after_path,
+                    }),
+                );
+                assert!(
+                    !recaptured.is_error(),
+                    "recapture while waiting for quiet permission indicator: {}",
+                    recaptured.raw
+                );
+                window_after = load_capture(&window_after_path);
+                assert_eq!(
+                    window_before.dimensions(),
+                    window_after.dimensions(),
+                    "browser window changed size while waiting for the permission indicator"
+                );
+                indicator =
+                    window_chrome_changed_pixel_center(&window_before, &window_after, bounds);
+            }
+            if changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels {
+                Some(indicator)
+            } else {
+                None
+            }
         } else {
             None
         };

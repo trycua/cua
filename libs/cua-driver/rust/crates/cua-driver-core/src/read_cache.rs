@@ -118,13 +118,23 @@ struct Entry<V> {
 #[derive(Debug, PartialEq)]
 enum Lookup<V> {
     Fresh(V),
-    /// Serve `value`; when `refresh` is true this caller owns the one
-    /// background recompute for the key.
+    /// Serve `value`. `refresh` names the entry, by its start, when this
+    /// caller owns that entry's one background recompute.
     Stale {
         value: V,
-        refresh: bool,
+        refresh: Option<Instant>,
     },
     Miss,
+}
+
+/// What a [`ReplyCache::store`] records.
+struct Computed<V> {
+    /// `None` for an error, which is never cached.
+    value: Option<V>,
+    started: Instant,
+    generation: u64,
+    /// The entry this computation refreshes, from [`Lookup::Stale`].
+    refreshes: Option<Instant>,
 }
 
 /// Replies keyed by argument set. Callers pass the clock and generation, so
@@ -162,7 +172,7 @@ impl<V: Clone> ReplyCache<V> {
             return Lookup::Fresh(entry.value.clone());
         }
         if age < self.ttl * STALE_CAP_FACTOR {
-            let refresh = !entry.refreshing;
+            let refresh = (!entry.refreshing).then_some(entry.started);
             entry.refreshing = true;
             return Lookup::Stale {
                 value: entry.value.clone(),
@@ -173,20 +183,28 @@ impl<V: Clone> ReplyCache<V> {
         Lookup::Miss
     }
 
-    /// Record a computation that started at `started` under `generation`.
-    /// `None` (an error) only ends the key's refresh, and a computation never
-    /// replaces a newer one. [`Self::lookup`] drops a retired generation.
-    fn store(&self, key: String, value: Option<V>, started: Instant, generation: u64) {
+    /// Record `computed`, given the generation current now. A refresh ends
+    /// only the refresh of the entry it was started for. An error, a
+    /// computation from a retired generation, and one older than the kept
+    /// entry are not stored.
+    fn store(&self, key: String, computed: Computed<V>, current_generation: u64) {
         let mut entries = self.lock();
-        let current = entries.get(&key);
-        let newer_kept = current.is_some_and(|entry| entry.started > started);
-        let Some(value) = value.filter(|_| !newer_kept) else {
-            if let Some(entry) = entries.get_mut(&key) {
-                entry.refreshing = false;
-            }
+        let current = entries.get_mut(&key);
+        let newer_kept = current
+            .as_ref()
+            .is_some_and(|entry| entry.started > computed.started);
+        let is_new_key = current.is_none();
+        if let Some(entry) = current.filter(|entry| computed.refreshes == Some(entry.started)) {
+            entry.refreshing = false;
+        }
+        let Some(value) = computed
+            .value
+            .filter(|_| !newer_kept && computed.generation == current_generation)
+        else {
             return;
         };
-        if current.is_none() && entries.len() >= MAX_ENTRIES {
+        let (started, generation) = (computed.started, computed.generation);
+        if is_new_key && entries.len() >= MAX_ENTRIES {
             let oldest = entries
                 .iter()
                 .min_by_key(|(_, entry)| entry.started)
@@ -210,6 +228,7 @@ impl<V: Clone> ReplyCache<V> {
 /// A read-only tool whose successful replies are served from a
 /// [`ReplyCache`] keyed by the complete argument object, including the
 /// session fields dispatch adds, so sessions never share an entry.
+#[derive(Clone)]
 pub struct CachedReadTool {
     inner: Arc<dyn Tool>,
     cache: Arc<ReplyCache<Reply>>,
@@ -226,15 +245,22 @@ impl CachedReadTool {
     }
 
     async fn compute(
-        inner: &Arc<dyn Tool>,
-        cache: &ReplyCache<Reply>,
-        generation: u64,
+        &self,
         key: String,
         args: Value,
+        generation: u64,
+        refreshes: Option<Instant>,
     ) -> ToolResult {
         let started = Instant::now();
-        let result = inner.invoke(args).await;
-        cache.store(key, Reply::of(&result), started, generation);
+        let result = self.inner.invoke(args).await;
+        let computed = Computed {
+            value: Reply::of(&result),
+            started,
+            generation,
+            refreshes,
+        };
+        self.cache
+            .store(key, computed, self.generation.load(Ordering::SeqCst));
         result
     }
 }
@@ -251,16 +277,15 @@ impl Tool for CachedReadTool {
         match self.cache.lookup(&key, Instant::now(), generation) {
             Lookup::Fresh(reply) => reply.into_result(),
             Lookup::Stale { value, refresh } => {
-                if refresh {
-                    let inner = Arc::clone(&self.inner);
-                    let cache = Arc::clone(&self.cache);
+                if let Some(entry) = refresh {
+                    let tool = self.clone();
                     tokio::spawn(async move {
-                        Self::compute(&inner, &cache, generation, key, args).await;
+                        tool.compute(key, args, generation, Some(entry)).await;
                     });
                 }
                 value.into_result()
             }
-            Lookup::Miss => Self::compute(&self.inner, &self.cache, generation, key, args).await,
+            Lookup::Miss => self.compute(key, args, generation, None).await,
         }
     }
 }
@@ -271,8 +296,30 @@ mod tests {
 
     const TTL: Duration = Duration::from_millis(100);
 
-    fn fresh_cache() -> (ReplyCache<u32>, Instant, u64) {
-        (ReplyCache::new(TTL), Instant::now(), 0)
+    fn fresh_cache() -> (ReplyCache<u32>, Instant) {
+        (ReplyCache::new(TTL), Instant::now())
+    }
+
+    /// Store a computation that started at `started` under `generation`
+    /// while the current generation is `current`.
+    fn store(
+        cache: &ReplyCache<u32>,
+        value: Option<u32>,
+        started: Instant,
+        (generation, current): (u64, u64),
+        refreshes: Option<Instant>,
+    ) {
+        let computed = Computed {
+            value,
+            started,
+            generation,
+            refreshes,
+        };
+        cache.store("k".into(), computed, current);
+    }
+
+    fn stale(value: u32, refresh: Option<Instant>) -> Lookup<u32> {
+        Lookup::Stale { value, refresh }
     }
 
     #[test]
@@ -293,116 +340,84 @@ mod tests {
 
     #[test]
     fn a_reply_is_fresh_then_stale_with_one_refresh_then_recomputed() {
-        let (cache, t0, generation) = fresh_cache();
-        assert_eq!(cache.lookup("k", t0, generation), Lookup::Miss);
-        cache.store("k".into(), Some(1), t0, generation);
+        let (cache, t0) = fresh_cache();
+        assert_eq!(cache.lookup("k", t0, 0), Lookup::Miss);
+        store(&cache, Some(1), t0, (0, 0), None);
 
         let fresh = t0 + TTL - Duration::from_millis(1);
-        assert_eq!(cache.lookup("k", fresh, generation), Lookup::Fresh(1));
+        assert_eq!(cache.lookup("k", fresh, 0), Lookup::Fresh(1));
 
-        let stale = t0 + TTL;
-        assert_eq!(
-            cache.lookup("k", stale, generation),
-            Lookup::Stale {
-                value: 1,
-                refresh: true
-            }
-        );
-        assert_eq!(
-            cache.lookup("k", stale, generation),
-            Lookup::Stale {
-                value: 1,
-                refresh: false
-            }
-        );
+        let at = t0 + TTL;
+        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(t0)));
+        assert_eq!(cache.lookup("k", at, 0), stale(1, None));
 
         let capped = t0 + TTL * STALE_CAP_FACTOR;
-        assert_eq!(cache.lookup("k", capped, generation), Lookup::Miss);
+        assert_eq!(cache.lookup("k", capped, 0), Lookup::Miss);
     }
 
     #[test]
     fn a_finished_refresh_serves_fresh_and_a_failed_one_can_retry() {
-        let (cache, t0, generation) = fresh_cache();
-        cache.store("k".into(), Some(1), t0, generation);
-        let stale = t0 + TTL * 2;
-        assert!(matches!(
-            cache.lookup("k", stale, generation),
-            Lookup::Stale { refresh: true, .. }
-        ));
+        let (cache, t0) = fresh_cache();
+        store(&cache, Some(1), t0, (0, 0), None);
+        let at = t0 + TTL * 2;
+        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(t0)));
 
-        cache.store("k".into(), None, stale, generation);
-        assert_eq!(
-            cache.lookup("k", stale, generation),
-            Lookup::Stale {
-                value: 1,
-                refresh: true
-            }
-        );
+        store(&cache, None, at, (0, 0), Some(t0));
+        assert_eq!(cache.lookup("k", at, 0), stale(1, Some(t0)));
 
-        cache.store("k".into(), Some(2), stale, generation);
-        assert_eq!(cache.lookup("k", stale, generation), Lookup::Fresh(2));
+        store(&cache, Some(2), at, (0, 0), Some(t0));
+        assert_eq!(cache.lookup("k", at, 0), Lookup::Fresh(2));
     }
 
     #[test]
     fn an_older_computation_never_replaces_a_newer_reply() {
-        let (cache, t0, generation) = fresh_cache();
-        cache.store("k".into(), Some(2), t0 + TTL, generation);
-        cache.store("k".into(), Some(1), t0, generation);
-        assert_eq!(cache.lookup("k", t0 + TTL, generation), Lookup::Fresh(2));
+        let (cache, t0) = fresh_cache();
+        store(&cache, Some(2), t0 + TTL, (0, 0), None);
+        store(&cache, Some(1), t0, (0, 0), None);
+        assert_eq!(cache.lookup("k", t0 + TTL, 0), Lookup::Fresh(2));
     }
 
     #[test]
     fn a_late_refresh_never_releases_a_newer_entrys_refresh() {
-        let (cache, t0, generation) = fresh_cache();
-        cache.store("k".into(), Some(1), t0, generation);
+        let (cache, t0) = fresh_cache();
+        store(&cache, Some(1), t0, (0, 0), None);
         let first_refresh = t0 + TTL * 2;
-        assert!(matches!(
-            cache.lookup("k", first_refresh, generation),
-            Lookup::Stale { refresh: true, .. }
-        ));
+        assert_eq!(cache.lookup("k", first_refresh, 0), stale(1, Some(t0)));
         let replaced = t0 + TTL * STALE_CAP_FACTOR;
-        assert_eq!(cache.lookup("k", replaced, generation), Lookup::Miss);
-        cache.store("k".into(), Some(2), replaced, generation);
-        assert!(matches!(
-            cache.lookup("k", replaced + TTL, generation),
-            Lookup::Stale { refresh: true, .. }
-        ));
+        assert_eq!(cache.lookup("k", replaced, 0), Lookup::Miss);
+        store(&cache, Some(2), replaced, (0, 0), None);
+        assert_eq!(
+            cache.lookup("k", replaced + TTL, 0),
+            stale(2, Some(replaced))
+        );
 
-        cache.store("k".into(), None, first_refresh, generation);
-        assert!(matches!(
-            cache.lookup("k", replaced + TTL * 2, generation),
-            Lookup::Stale { refresh: false, .. }
-        ));
+        store(&cache, None, first_refresh, (0, 0), Some(t0));
+        assert_eq!(cache.lookup("k", replaced + TTL * 2, 0), stale(2, None));
     }
 
     #[test]
     fn a_refresh_from_before_an_action_never_replaces_a_reply_from_after_it() {
-        let (cache, t0, generation) = fresh_cache();
-        cache.store("k".into(), Some(2), t0, generation + 1);
-        cache.store("k".into(), Some(1), t0 + TTL, generation);
-        assert_eq!(
-            cache.lookup("k", t0 + TTL, generation + 1),
-            Lookup::Stale {
-                value: 2,
-                refresh: true
-            }
-        );
+        let (cache, t0) = fresh_cache();
+        store(&cache, Some(2), t0, (1, 1), None);
+        store(&cache, Some(1), t0 + TTL, (0, 1), None);
+        assert_eq!(cache.lookup("k", t0 + TTL, 1), stale(2, Some(t0)));
     }
 
     #[test]
     fn keys_are_independent_and_bounded() {
-        let (cache, t0, generation) = fresh_cache();
+        let (cache, t0) = fresh_cache();
         for i in 0..=MAX_ENTRIES as u32 {
-            cache.store(
-                i.to_string(),
-                Some(i),
-                t0 + Duration::from_micros(i.into()),
-                generation,
-            );
+            let computed = Computed {
+                value: Some(i),
+                started: t0 + Duration::from_micros(i.into()),
+                generation: 0,
+                refreshes: None,
+            };
+            cache.store(i.to_string(), computed, 0);
         }
         assert_eq!(cache.lock().len(), MAX_ENTRIES);
-        assert_eq!(cache.lookup("0", t0, generation), Lookup::Miss);
-        assert_eq!(cache.lookup("1", t0, generation), Lookup::Fresh(1));
+        assert_eq!(cache.lookup("0", t0, 0), Lookup::Miss);
+        assert_eq!(cache.lookup("1", t0, 0), Lookup::Fresh(1));
     }
 
     struct Counting {

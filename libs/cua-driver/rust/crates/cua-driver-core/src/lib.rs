@@ -106,6 +106,7 @@ pub mod pointer_shape;
 pub mod policy;
 pub mod post_action_wait;
 pub mod protocol;
+pub mod read_cache;
 pub mod recording;
 pub mod recording_loader;
 pub mod recording_render;

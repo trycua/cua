@@ -2690,6 +2690,10 @@ impl ToolRegistry {
             crate::security_prompt::PromptInput::for_mode(context.mode()).stamp(&mut args);
         }
         crate::tool_activity::note_tool_activity();
+        let actuates = !tool.def().read_only;
+        if actuates {
+            crate::read_cache::note_actuation();
+        }
         let invoke = tool.invoke(args.clone());
         let mut result =
             crate::recording::scope_dispatch_click_capture(pending_turn.as_ref(), async {
@@ -2700,6 +2704,9 @@ impl ToolRegistry {
                 }
             })
             .await;
+        if actuates {
+            crate::read_cache::note_actuation();
+        }
         match resolved_name {
             "get_desktop_state" if result.is_error != Some(true) => {
                 crate::desktop_capture_scale::record_desktop_state(
@@ -5168,6 +5175,78 @@ resources:
             0,
             "routine standard recording is promptless"
         );
+    }
+
+    #[tokio::test]
+    async fn an_action_between_cached_window_reads_makes_the_next_read_live() {
+        struct WindowListProbe {
+            hits: Arc<AtomicUsize>,
+            def: super::ToolDef,
+        }
+
+        #[async_trait::async_trait]
+        impl super::Tool for WindowListProbe {
+            fn def(&self) -> &super::ToolDef {
+                &self.def
+            }
+
+            async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+                self.hits.fetch_add(1, Ordering::SeqCst);
+                crate::protocol::ToolResult::text("Found 0 window(s).")
+                    .with_structured(serde_json::json!({"windows": [], "current_space_id": null}))
+            }
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(None);
+        registry.register(Box::new(crate::read_cache::CachedReadTool::new(
+            Arc::new(WindowListProbe {
+                hits: hits.clone(),
+                def: super::ToolDef {
+                    name: "list_windows".into(),
+                    description: "test observation".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }),
+            crate::read_cache::MAX_READ_CACHE_TTL,
+        )));
+        registry.register(Box::new(ObservationProbe {
+            hits: Arc::new(AtomicUsize::new(0)),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let context = standard_context();
+        let read = || {
+            registry.invoke_with_context(
+                "list_windows",
+                serde_json::json!({"session": "control"}),
+                context.clone(),
+            )
+        };
+
+        assert_ne!(read().await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let click = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"session": "control", "x": 10, "y": 20}),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(click.is_error, Some(true));
+        assert_ne!(read().await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

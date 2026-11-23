@@ -14,6 +14,7 @@ use cua_driver_core::input_pacing::{
     CLICK_GAP_ENV, MOUSE_PRIMER_ENV, MULTI_CLICK_GAP_ENV, WEBKIT_SETTLE_ENV,
 };
 use cua_driver_core::key_pacing::KEY_GAP_ENV;
+use cua_driver_core::read_cache::LIST_WINDOWS_CACHE_ENV;
 use cua_driver_core::step_pacing::BATCH_PACING_ENV;
 use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
@@ -1065,6 +1066,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
         || upper == MULTI_CLICK_GAP_ENV
         || upper == WEBKIT_SETTLE_ENV
         || upper == BATCH_PACING_ENV
+        || upper == LIST_WINDOWS_CACHE_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -2059,6 +2061,7 @@ mod tests {
             "CUA_DRIVER_CLICK_GAP_MS",
             "CUA_DRIVER_MULTI_CLICK_GAP_MS",
             "CUA_DRIVER_WEBKIT_SETTLE_MS",
+            "CUA_DRIVER_LIST_WINDOWS_CACHE_MS",
         ] {
             assert!(allowed_environment_name(name), "{name}");
         }

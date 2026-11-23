@@ -1594,6 +1594,53 @@
    "read_only": false
   },
   {
+   "description": "Move the user's real OS pointer by a relative (dx, dy) delta, sent as native relative motion events rather than an absolute warp. Use it for an app that locks or captures the pointer, such as a first-person game's camera or a web page under Pointer Lock, where move_cursor and click coordinates have no effect. The focused app receives the motion; there is no window target. It presses and releases nothing, so a button or key already held stays held across repeated calls. A backend with no relative route refuses with code \"unsupported_operation\" and sends nothing. On macOS the motion is a HID mouse-moved event carrying the delta (a dragged event while a button is down). When the pointer is over a window of an app that is not in front it refuses unless delivery_mode is \"foreground\".",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delivery_mode": {
+      "description": "Default \"background\": refuses, before sending anything, when the pointer is over a window of an app that is not in front, since the motion would go to that app with the user's pointer. \"foreground\": send it anyway; only when nobody is using this screen or the user agreed.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "duration_ms": {
+      "description": "Spread the motion over this many milliseconds as a stream of smaller deltas that sum exactly to dx/dy. Default 0: one event.",
+      "maximum": 10000,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "dx": {
+      "description": "Horizontal motion in device units (mouse counts). Positive moves right.",
+      "maximum": 32767,
+      "minimum": -32767,
+      "type": "integer"
+     },
+     "dy": {
+      "description": "Vertical motion in device units (mouse counts). Positive moves down.",
+      "maximum": 32767,
+      "minimum": -32767,
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "dx",
+     "dy"
+    ],
+    "type": "object"
+   },
+   "name": "mouse_move_relative",
+   "read_only": false
+  },
+  {
    "description": "Show or hide the agent cursor owned by a session.",
    "destructive": false,
    "idempotent": true,

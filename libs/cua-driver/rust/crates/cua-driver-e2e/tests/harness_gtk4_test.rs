@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Focused GTK4 process-level AT-SPI selection coverage on Linux/X11.
+//! Focused GTK4 coverage on Linux/X11.
 //!
 //! The GTK3 fixture starts first and proves a foreign registry application is
 //! already accessible before the GTK4 target registers. The public driver must
 //! still resolve the later target PID and return its actionable GTK4 subtree.
+//!
+//! The GTK4 fixture draws a client-side header bar, so its screenshot includes
+//! the title bar. A pixel click grounded on that screenshot must land where
+//! the screenshot shows the target (#3237).
 
 #![cfg(target_os = "linux")]
 
@@ -13,9 +17,11 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
-    execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
-    OracleKind, Targeting,
+    execute_case, native_background_case, native_foreground_case, native_readonly_case,
+    recording_evidence, Delivery, DriverRoute, Evidence, Observation, OracleKind, Targeting,
 };
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
 fn launch_fixture(
@@ -149,4 +155,145 @@ fn gtk4_tree_resolves_after_foreign_gtk3_application() {
         );
         Observation::delivered(vec![OracleKind::AxState], Evidence::default())
     });
+}
+
+fn screenshot_rgba(response: &ToolResponse) -> image::RgbaImage {
+    use base64::Engine as _;
+    let png = response.raw["result"]["content"]
+        .as_array()
+        .and_then(|content| {
+            content
+                .iter()
+                .find(|entry| entry["type"].as_str() == Some("image"))
+        })
+        .and_then(|entry| entry["data"].as_str())
+        .unwrap_or_else(|| panic!("response carries no screenshot: {}", response.raw));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png)
+        .expect("screenshot is base64");
+    image::load_from_memory(&bytes)
+        .expect("screenshot decodes")
+        .to_rgba8()
+}
+
+/// The magenta pixel target's bounds `(left, top, right, bottom)` in
+/// screenshot pixels, found from the image alone.
+fn magenta_bounds(image: &image::RgbaImage) -> Option<(u32, u32, u32, u32)> {
+    let mut bounds: Option<(u32, u32, u32, u32)> = None;
+    for (x, y, pixel) in image.enumerate_pixels() {
+        let [r, g, b, _] = pixel.0;
+        if r > 200 && g < 60 && b > 200 {
+            bounds = Some(match bounds {
+                None => (x, y, x, y),
+                Some((left, top, right, bottom)) => {
+                    (left.min(x), top.min(y), right.max(x), bottom.max(y))
+                }
+            });
+        }
+    }
+    bounds
+}
+
+fn pixel_target_center(driver: &mut McpDriver, pid: u32, window_id: u64) -> (f64, f64) {
+    settled_snapshot(driver, pid, window_id, "GTK4_PIXEL_CLICKS=0");
+    let state = driver.call(
+        "get_window_state",
+        serde_json::json!({ "pid": pid as i64, "window_id": window_id }),
+    );
+    assert!(!state.is_error(), "GTK4 capture failed: {}", state.text());
+    let image = screenshot_rgba(&state);
+    let (left, top, right, bottom) = magenta_bounds(&image).unwrap_or_else(|| {
+        panic!(
+            "pixel target is not in the {}x{} screenshot",
+            image.width(),
+            image.height()
+        )
+    });
+    (f64::from(left + right) / 2.0, f64::from(top + bottom) / 2.0)
+}
+
+fn wait_for_pixel_click(driver: &mut McpDriver, pid: u32, window_id: u64) -> String {
+    settled_snapshot(driver, pid, window_id, "GTK4_PIXEL_CLICKS=1").tree_text()
+}
+
+fn click_screenshot_pixel(delivery: Delivery) {
+    let case = match delivery {
+        Delivery::Background => native_background_case(
+            "gtk4",
+            "left_click_header_bar_window",
+            Targeting::Px,
+            DriverRoute::LinuxAtSpiAction,
+        ),
+        _ => native_foreground_case(
+            "gtk4",
+            "left_click_header_bar_window",
+            Targeting::Px,
+            DriverRoute::LinuxXTest,
+        ),
+    };
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, window_id) = launch_fixture(
+            &mut driver,
+            "harness-gtk4",
+            "CuaTestHarness.Gtk4",
+            "CuaTestHarness GTK4",
+        );
+        let (x, y) = pixel_target_center(&mut driver, pid, window_id);
+        let mode = if delivery == Delivery::Background {
+            "background"
+        } else {
+            "foreground"
+        };
+        let click = |driver: &mut McpDriver| {
+            let clicked = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": window_id,
+                    "x": x, "y": y, "delivery_mode": mode
+                }),
+            );
+            assert!(
+                !clicked.is_error(),
+                "pixel click failed: {}",
+                clicked.text()
+            );
+        };
+        let passed = if delivery == Delivery::Background {
+            let ((), passed) = run_with_background_oracles(
+                &mut driver,
+                TargetWindow {
+                    pid,
+                    native_id: window_id,
+                },
+                click,
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            passed
+        } else {
+            driver.start_behavior_recording();
+            click(&mut driver);
+            Vec::new()
+        };
+        let tree = wait_for_pixel_click(&mut driver, pid, window_id);
+        assert!(
+            tree.contains("GTK4_PIXEL_CLICKS=1"),
+            "click at screenshot pixel ({x}, {y}) missed the target: {tree}"
+        );
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
+fn gtk4_screenshot_pixel_click_lands_in_header_bar_window_background() {
+    click_screenshot_pixel(Delivery::Background);
+}
+
+#[test]
+#[ignore]
+fn gtk4_screenshot_pixel_click_lands_in_header_bar_window_foreground() {
+    click_screenshot_pixel(Delivery::Foreground);
 }

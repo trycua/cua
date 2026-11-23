@@ -10,18 +10,20 @@
 //! therefore keeps the revision, and a `diff` moves it.
 //!
 //! An action may carry [`UI_TREE_REVISION_ARG`], the revision its target was
-//! computed from. Dispatch refuses it with `stale_revision` before delivery
-//! when a later read of that window saw the tree change, or when this driver
-//! has no revision for the window. The check covers changes a read has
-//! observed: the ledger does not watch the window between reads.
+//! computed from. Dispatch reads it with [`parse`] and, once the action holds
+//! its input lanes, checks it with [`check`]: the action is refused with
+//! `stale_revision` before delivery when a later read of that window saw the
+//! tree change, or when this driver has no revision for the window. The check
+//! covers changes a read has observed: the ledger does not watch the window
+//! between reads.
 //!
-//! Revisions come from one process-wide counter that starts at the process
-//! start time in milliseconds, so a revision from an earlier driver process
-//! does not match one this process hands out.
+//! A new revision is the larger of the previous one plus one and the wall
+//! clock in microseconds. Revisions only grow, and one handed out by an
+//! earlier driver process stays below those of a later process unless the
+//! system clock was set back between them.
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::{json, Value};
@@ -64,6 +66,7 @@ struct WindowEntry {
 struct Ledger {
     windows: HashMap<(i64, u64), WindowEntry>,
     reads: u64,
+    last_revision: u64,
 }
 
 fn ledger() -> &'static Mutex<Ledger> {
@@ -71,16 +74,13 @@ fn ledger() -> &'static Mutex<Ledger> {
     LEDGER.get_or_init(|| Mutex::new(Ledger::default()))
 }
 
-fn next_revision() -> u64 {
-    static NEXT: OnceLock<AtomicU64> = OnceLock::new();
-    NEXT.get_or_init(|| {
-        let start_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(1);
-        AtomicU64::new(start_ms.max(1))
-    })
-    .fetch_add(1, Ordering::Relaxed)
+fn next_revision(last: &mut u64) -> u64 {
+    let now_us = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
+    *last = (*last + 1).max(now_us);
+    *last
 }
 
 fn rows_hash(markdown: &str) -> u64 {
@@ -104,13 +104,15 @@ pub fn record(
 ) -> u64 {
     let hash = rows_hash(markdown);
     let mut guard = ledger().lock().unwrap_or_else(|e| e.into_inner());
-    guard.reads += 1;
-    let read = guard.reads;
-    let entry = guard
+    let ledger = &mut *guard;
+    ledger.reads += 1;
+    let read = ledger.reads;
+    let last_revision = &mut ledger.last_revision;
+    let entry = ledger
         .windows
         .entry((pid, window_id))
         .or_insert_with(|| WindowEntry {
-            revision: next_revision(),
+            revision: next_revision(last_revision),
             views: VecDeque::new(),
             snapshots: VecDeque::new(),
             last_read: read,
@@ -120,7 +122,7 @@ pub fn record(
         Some(pos) => {
             let (_, previous) = entry.views.remove(pos).expect("position is in range");
             if previous != hash {
-                entry.revision = next_revision();
+                entry.revision = next_revision(last_revision);
             }
         }
         None => {
@@ -139,14 +141,14 @@ pub fn record(
         }
     }
     let revision = entry.revision;
-    if guard.windows.len() > WINDOWS {
-        if let Some(oldest) = guard
+    if ledger.windows.len() > WINDOWS {
+        if let Some(oldest) = ledger
             .windows
             .iter()
             .min_by_key(|(_, e)| e.last_read)
             .map(|(key, _)| *key)
         {
-            guard.windows.remove(&oldest);
+            ledger.windows.remove(&oldest);
         }
     }
     revision
@@ -186,24 +188,27 @@ pub fn schema() -> Value {
     })
 }
 
-/// Check an action's [`UI_TREE_REVISION_ARG`] against the target window's
-/// current revision. `Ok` when the argument is absent or current; `Err`
-/// carries the refusal. The window comes from `pid` + `window_id`, or from
-/// the read that produced `element_token`.
-pub fn check(tool: &str, args: &Value) -> Result<(), ToolResult> {
+/// Read an action's [`UI_TREE_REVISION_ARG`]. `Err` carries the
+/// `invalid_arguments` refusal for a value that is not a non-negative integer.
+pub fn parse(tool: &str, args: &Value) -> Result<Option<u64>, ToolResult> {
     let Some(value) = args.get(UI_TREE_REVISION_ARG) else {
-        return Ok(());
+        return Ok(None);
     };
-    let Some(expected) = value.as_u64() else {
+    value.as_u64().map(Some).ok_or_else(|| {
         let detail = format!("ui_tree_revision must be a non-negative integer, got {value}");
-        return Err(
-            ToolResult::error(format!("{tool}: {detail}")).with_structured(json!({
-                "code": "invalid_arguments",
-                "tool": tool,
-                "detail": detail,
-            })),
-        );
-    };
+        ToolResult::error(format!("{tool}: {detail}")).with_structured(json!({
+            "code": "invalid_arguments",
+            "tool": tool,
+            "detail": detail,
+        }))
+    })
+}
+
+/// Check the revision an action was planned from against its target
+/// window's current revision. `Err` carries the `stale_revision` refusal.
+/// The window comes from `pid` + `window_id`, or from the read that produced
+/// `element_token`.
+pub fn check(tool: &str, expected: u64, args: &Value) -> Result<(), ToolResult> {
     let window = match (
         args.get("pid").and_then(Value::as_i64),
         args.get("window_id").and_then(Value::as_u64),
@@ -322,17 +327,8 @@ mod tests {
             Some("s0009104a"),
             "- [1] Button \"OK\"",
         );
-        assert!(check(
-            "click",
-            &json!({"pid": 9104, "window_id": 7, "ui_tree_revision": rev})
-        )
-        .is_ok());
-        assert!(check(
-            "click",
-            &json!({"element_token": "s0009104a:1", "ui_tree_revision": rev})
-        )
-        .is_ok());
-        assert!(check("click", &json!({"pid": 9104, "window_id": 7})).is_ok());
+        assert!(check("click", rev, &json!({"pid": 9104, "window_id": 7})).is_ok());
+        assert!(check("click", rev, &json!({"element_token": "s0009104a:1"})).is_ok());
 
         let now = record(
             9104,
@@ -342,10 +338,10 @@ mod tests {
             "- [1] Button \"Done\"",
         );
         for args in [
-            json!({"pid": 9104, "window_id": 7, "ui_tree_revision": rev}),
-            json!({"element_token": "s0009104a:1", "ui_tree_revision": rev}),
+            json!({"pid": 9104, "window_id": 7}),
+            json!({"element_token": "s0009104a:1"}),
         ] {
-            let r = refusal(check("click", &args).unwrap_err());
+            let r = refusal(check("click", rev, &args).unwrap_err());
             assert_eq!(r["code"], "stale_revision");
             assert_eq!(r["reason"], "changed");
             assert_eq!(r["expected"], rev);
@@ -355,36 +351,43 @@ mod tests {
 
     #[test]
     fn an_unread_or_unnamed_window_is_refused() {
-        let r = refusal(
-            check(
-                "click",
-                &json!({"pid": 9105, "window_id": 1, "ui_tree_revision": 5}),
-            )
-            .unwrap_err(),
-        );
+        let r = refusal(check("click", 5, &json!({"pid": 9105, "window_id": 1})).unwrap_err());
         assert_eq!(r["code"], "stale_revision");
         assert_eq!(r["reason"], "no_revision");
         assert_eq!(r["current"], Value::Null);
 
-        let r = refusal(
-            check(
-                "press_key",
-                &json!({"element_token": "s000910f:1", "ui_tree_revision": 5}),
-            )
-            .unwrap_err(),
-        );
+        let r =
+            refusal(check("press_key", 5, &json!({"element_token": "s000910f:1"})).unwrap_err());
         assert_eq!(r["code"], "stale_revision");
         assert_eq!(r["reason"], "unknown_window");
     }
 
     #[test]
-    fn a_malformed_revision_is_invalid_arguments() {
+    fn revisions_only_grow_and_track_the_wall_clock() {
+        let mut last = 0;
+        let first = next_revision(&mut last);
+        let now_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+        assert!(
+            first <= now_us && first + 60_000_000 > now_us,
+            "{first} vs {now_us}"
+        );
+        let mut ahead = u64::MAX / 2;
+        assert_eq!(next_revision(&mut ahead), u64::MAX / 2 + 1);
+        assert!(next_revision(&mut last) > first);
+    }
+
+    #[test]
+    fn parse_reads_the_argument_and_refuses_malformed_values() {
+        assert_eq!(parse("click", &json!({})).unwrap(), None);
+        assert_eq!(
+            parse("click", &json!({"ui_tree_revision": 7})).unwrap(),
+            Some(7)
+        );
         for value in [json!(-1), json!("3"), json!(1.5), json!(null)] {
-            let result = check(
-                "click",
-                &json!({"pid": 1, "window_id": 1, "ui_tree_revision": value}),
-            )
-            .unwrap_err();
+            let result = parse("click", &json!({"ui_tree_revision": value})).unwrap_err();
             assert_eq!(
                 result.structured_content.unwrap()["code"],
                 "invalid_arguments",

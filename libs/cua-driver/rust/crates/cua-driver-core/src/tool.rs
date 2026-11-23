@@ -2343,14 +2343,18 @@ impl ToolRegistry {
                 &format!("{resolved_name}: unknown {detail}"),
             );
         }
-        if crate::ui_tree_revision::accepts(resolved_name) {
-            if let Err(refusal) = crate::ui_tree_revision::check(resolved_name, &args) {
-                return refusal;
-            }
+        let planned_revision = if crate::ui_tree_revision::accepts(resolved_name) {
+            let revision = match crate::ui_tree_revision::parse(resolved_name, &args) {
+                Ok(revision) => revision,
+                Err(refusal) => return refusal,
+            };
             if let Some(arguments) = args.as_object_mut() {
                 arguments.remove(crate::ui_tree_revision::UI_TREE_REVISION_ARG);
             }
-        }
+            revision
+        } else {
+            None
+        };
 
         // Resource adapters run at the same canonical boundary as policy and
         // manifest admission, after session capture-scope validation but
@@ -2662,6 +2666,13 @@ impl ToolRegistry {
         } else {
             None
         };
+        // Checked once the action holds its input lanes, so a read that
+        // finished while it waited for them is seen.
+        let lane_refusal = lane_refusal.or_else(|| {
+            planned_revision.and_then(|expected| {
+                crate::ui_tree_revision::check(resolved_name, expected, &args).err()
+            })
+        });
         let pending_turn = should_record
             .then(|| {
                 // Use the same trusted identities the recording owner was minted from.

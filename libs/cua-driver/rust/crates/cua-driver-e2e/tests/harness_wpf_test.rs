@@ -1561,16 +1561,18 @@ fn harness_winforms_foreground_element_key_reaches_exact_control() {
         loop {
             let state = keyboard_fixture_state(state_path);
             if state["target_up_by_key"]["F6"] == 1 {
-                // Foreground activation may emit VK_NONAME. Retain all receipts
-                // in the fixture, but verify exactly the requested key here.
+                // Foreground activation may emit VK_NONAME, and the input drain
+                // sentinel follows the key (WinForms reports its unassigned VK
+                // as Keys.None), so the last key is not the requested one.
+                // Retain all receipts in the fixture, but verify exactly the
+                // requested key here.
                 assert_eq!(state["target_down_by_key"]["F6"], 1);
                 assert_eq!(
                     state["decoy_down_by_key"]["F6"].as_u64().unwrap_or(0),
                     0,
                     "foreground key reached decoy"
                 );
-                assert_eq!(state["last_key"], "F6");
-                assert_eq!(state["last_modifiers"], "None");
+                assert_eq!(state["target_modifiers_by_key"]["F6"], "None");
                 break;
             }
             assert!(Instant::now() < deadline, "foreground key missing: {state}");

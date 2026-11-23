@@ -28,6 +28,7 @@ public sealed class WinFormsKeyboardWindow : Form
     private readonly Dictionary<string, int> _targetDownByKey = new();
     private readonly Dictionary<string, int> _targetUpByKey = new();
     private readonly Dictionary<string, int> _decoyDownByKey = new();
+    private readonly Dictionary<string, string> _targetModifiersByKey = new();
     private string _lastKey = "";
     private string _lastModifiers = "";
 
@@ -47,6 +48,7 @@ public sealed class WinFormsKeyboardWindow : Form
             Count(_targetDownByKey, e.KeyCode);
             _lastKey = e.KeyCode.ToString();
             _lastModifiers = e.Modifiers.ToString();
+            _targetModifiersByKey[_lastKey] = _lastModifiers;
             Publish();
         };
         _target.KeyUp += (_, e) => { _targetUp++; Count(_targetUpByKey, e.KeyCode); Publish(); };
@@ -77,6 +79,7 @@ public sealed class WinFormsKeyboardWindow : Form
             target_down_by_key = _targetDownByKey,
             target_up_by_key = _targetUpByKey,
             decoy_down_by_key = _decoyDownByKey,
+            target_modifiers_by_key = _targetModifiersByKey,
             link_clicks = _linkClicks,
             last_key = _lastKey,
             last_modifiers = _lastModifiers,

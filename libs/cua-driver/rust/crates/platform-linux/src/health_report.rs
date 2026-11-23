@@ -162,7 +162,9 @@ async fn check_ax_capability() -> CheckEntry {
         "Pure Wayland session: opt into the experimental Wayland backend by \
          setting CUA_DRIVER_RS_ENABLE_WAYLAND=1, or run the target under XWayland."
     } else {
-        "Set DISPLAY (X11) — under Wayland, run via XWayland or expose XDG_SESSION_TYPE=x11."
+        "Set DISPLAY (X11) — under Wayland, run via XWayland or expose XDG_SESSION_TYPE=x11. \
+         When both DISPLAY and XAUTHORITY are unset, the daemon adopts them at startup \
+         only from a single X server owned by this user with a private -auth file."
     };
     CheckEntry::fail(
         NAME_AX_CAPABILITY,

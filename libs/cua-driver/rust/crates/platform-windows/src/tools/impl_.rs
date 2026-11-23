@@ -971,6 +971,21 @@ pub(crate) async fn focus_by_pixel(
     from_zoom: bool,
     native_coordinates: bool,
 ) -> Result<(), ToolResult> {
+    // Every caller is a keyboard tool: refuse a VMware guest console before
+    // the focus click activates it.
+    let target = match window_id {
+        Some(hwnd) => Some(hwnd),
+        None => tokio::task::spawn_blocking(move || {
+            crate::win32::list_windows(Some(pid))
+                .first()
+                .map(|w| w.hwnd)
+        })
+        .await
+        .unwrap_or(None),
+    };
+    if let Some(refusal) = target.and_then(crate::vmware::refuse_console_tool) {
+        return Err(refusal);
+    }
     let click_args = focus_by_pixel_click_args(
         pid,
         window_id,

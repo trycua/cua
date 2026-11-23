@@ -10,7 +10,8 @@
 //! `SendInput`, `WM_KEYDOWN`/`WM_KEYUP` with scancode bits, and `Ctrl+G` all
 //! leave the guest prompt unchanged (#3210). `SendInput` still reports every
 //! event inserted, so without this check `press_key`, `hotkey` and
-//! `type_text` report a false success. Every keyboard route refuses instead.
+//! `type_text` report a false success. Every keyboard route refuses instead,
+//! before any focus click, UIA write or input.
 
 pub(crate) const VMWARE_FRAME_CLASS: &str = "VMUIFrame";
 pub(crate) const VMWARE_CONSOLE_CLASS: &str = "MKSEmbedded";
@@ -85,6 +86,15 @@ pub(crate) fn refuse_console_keyboard(hwnd: u64) -> anyhow::Result<()> {
         return Err(VmwareConsoleInput.into());
     }
     Ok(())
+}
+
+/// The tool refusal for a keyboard call aimed at a VMware guest console. Tools
+/// check the resolved target before any focus click, UIA route or input.
+#[cfg(target_os = "windows")]
+pub(crate) fn refuse_console_tool(hwnd: u64) -> Option<cua_driver_core::protocol::ToolResult> {
+    refuse_console_keyboard(hwnd)
+        .err()
+        .and_then(|error| console_refusal(&error))
 }
 
 /// The structured refusal for [`VmwareConsoleInput`], or `None` for any other

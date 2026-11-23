@@ -103,6 +103,9 @@ impl Tool for TypeTextTool {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
+            if let Some(refusal) = crate::vmware::refuse_console_tool(hwnd) {
+                return refusal;
+            }
             position_keyboard_cursor(&self.state, &args, hwnd, None).await;
             let text_len = text.chars().count();
             if args.get("element_token").is_none()
@@ -230,6 +233,9 @@ impl Tool for TypeTextTool {
                 }
             }
         };
+        if let Some(refusal) = crate::vmware::refuse_console_tool(hwnd) {
+            return refusal;
+        }
         if let Some(element) = admitted.as_ref() {
             let (cx, cy) = element.center;
             pin_overlay_above(&cursor_key, hwnd);

@@ -2040,6 +2040,57 @@ fn harness_appkit_scroll_background() {
     });
 }
 
+/// A list that drops arrow keys and wheel events but advertises the AX page
+/// actions scrolls through them when a row inside it is the target (#1895).
+#[test]
+#[ignore]
+fn harness_appkit_scroll_uses_the_containers_ax_page_action() {
+    run_background_case(
+        "scroll_page_action",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let mut scroll = |direction: &str, amount: u64| {
+                let snapshot = snapshot_elements(driver, pid, wid);
+                let response = driver.call(
+                    "scroll",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element_token_by_id(&snapshot, "btn-page-scroll-row"),
+                        "direction": direction,
+                        "amount": amount,
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !response.is_error(),
+                    "AppKit page-action scroll failed: {}; raw={}",
+                    response.text(),
+                    response.raw
+                );
+                assert_eq!(
+                    response.structured()["path"],
+                    "ax",
+                    "the scroll did not go through AX: {}",
+                    response.raw
+                );
+                std::thread::sleep(Duration::from_millis(200));
+                snapshot_elements(driver, pid, wid).tree_text().to_owned()
+            };
+            let after_down = scroll("down", 2);
+            assert!(
+                after_down.contains("page_offset=2"),
+                "two AXScrollDownByPage presses did not reach the list:\n{after_down}"
+            );
+            let after_up = scroll("up", 1);
+            assert!(
+                after_up.contains("page_offset=1"),
+                "AXScrollUpByPage did not reach the list:\n{after_up}"
+            );
+        },
+    );
+}
+
 /// counter: click the increment button via element_index, verify the
 /// counter label flips from 0 to 1.
 #[test]

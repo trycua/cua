@@ -16,6 +16,7 @@ macos-appkit-modified-click-selection-ax-foreground	harness_appkit_modified_clic
 macos-appkit-type-text-ax-background	harness_appkit_type_text_background
 macos-appkit-scroll-ax-foreground	harness_appkit_scroll_foreground
 macos-appkit-scroll-ax-background	harness_appkit_scroll_background
+macos-appkit-scroll-page-action-ax-background	harness_appkit_scroll_uses_the_containers_ax_page_action
 macos-appkit-left-click-ax-background	harness_appkit_counter
 macos-appkit-left-click-px-background	harness_appkit_counter_px_background
 macos-appkit-toggle-press-error-ax-background	harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved

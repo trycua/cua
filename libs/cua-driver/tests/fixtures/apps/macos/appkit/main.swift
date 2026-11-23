@@ -26,6 +26,9 @@
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   popup_select   — NSPopUpButton (Design/Research/Finance → popup_value=)
 //   scroll_target  — NSScrollView with a tall body and offset label
+//   page_scroll    — a group that scrolls only through AXScrollUpByPage /
+//                    AXScrollDownByPage (page_offset=), with a row button to
+//                    target, in the group_with_help row
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
 //   save_sheet     — opt-in (CUA_APPKIT_SAVE_SHEET=1): a button that opens an
@@ -84,6 +87,9 @@ let kPopupAID = "pop-team"
 let kPopupValueAID = "lbl-popup-value"
 let kScrollerAID = "scroll-tall"
 let kScrollOffsetAID = "lbl-scroll-offset"
+let kPageScrollListAID = "page-scroll-list"
+let kPageScrollRowAID = "btn-page-scroll-row"
+let kPageOffsetAID = "lbl-page-offset"
 let kAccelCountAID = "lbl-accel-count"
 let kScrollTopMarker = "SCROLL_TOP_MARKER_v1"
 let kScrollBottomMarker = "SCROLL_BOTTOM_MARKER_v1"
@@ -189,6 +195,55 @@ final class HelpOnlyGroupView: NSView {
     override func accessibilityActionNames() -> [NSAccessibility.Action] { [] }
 }
 
+/// A list that scrolls only through the AX page actions, like a Catalyst
+/// list that drops arrow keys and wheel events (#1895). Its row button is
+/// the element a scroll targets; its label shows the page offset.
+final class PageScrollListView: NSView {
+    let row = NSButton(title: "Message row", target: nil, action: nil)
+    let offsetLabel = NSTextField(labelWithString: "page_offset=0")
+    private var offset = 0
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        row.setAccessibilityIdentifier(kPageScrollRowAID)
+        offsetLabel.setAccessibilityIdentifier(kPageOffsetAID)
+        offsetLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        for view in [row, offsetLabel] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+            offsetLabel.leadingAnchor.constraint(equalTo: row.trailingAnchor, constant: 8),
+            offsetLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            offsetLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityLabel() -> String? { "message list" }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] {
+        [NSAccessibility.Action(rawValue: "AXScrollUpByPage"),
+         NSAccessibility.Action(rawValue: "AXScrollDownByPage")]
+    }
+
+    override func accessibilityPerformAction(_ action: NSAccessibility.Action) {
+        switch action.rawValue {
+        case "AXScrollUpByPage": offset -= 1
+        case "AXScrollDownByPage": offset += 1
+        default: return
+        }
+        offsetLabel.stringValue = "page_offset=\(offset)"
+    }
+}
+
 // MARK: - Controller
 
 final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
@@ -220,6 +275,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let rowHelpGroup = HelpfulGroupView()
     let rowHelpGroupStateLabel = NSTextField(labelWithString: "group_pressed=0")
     let helpOnlyGroup = HelpOnlyGroupView()
+    let pageScrollList = PageScrollListView()
     var rowHelpGroupPresses = 0
     var rowCustomActions = 0
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
@@ -432,7 +488,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         groupRow.addArrangedSubview(rowHelpGroupStateLabel)
         helpOnlyGroup.translatesAutoresizingMaskIntoConstraints = false
         groupRow.addArrangedSubview(helpOnlyGroup)
+        pageScrollList.setAccessibilityIdentifier(kPageScrollListAID)
+        pageScrollList.translatesAutoresizingMaskIntoConstraints = false
+        groupRow.addArrangedSubview(pageScrollList)
         NSLayoutConstraint.activate([
+            pageScrollList.widthAnchor.constraint(equalToConstant: 260),
+            pageScrollList.heightAnchor.constraint(equalToConstant: 28),
             rowHelpGroup.widthAnchor.constraint(equalToConstant: 60),
             rowHelpGroup.heightAnchor.constraint(equalToConstant: 28),
             helpOnlyGroup.widthAnchor.constraint(equalToConstant: 28),

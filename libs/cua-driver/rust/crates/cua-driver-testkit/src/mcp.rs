@@ -90,6 +90,14 @@ impl McpDriver {
         Self::spawn_internal(&[], &[], Some(recording_label), false, true)
     }
 
+    /// Spawn the driver without allocating behavior artifacts, for a test
+    /// whose oracle is the driver's first accessibility snapshot: a
+    /// behavioral recording walks the tree on its own turns before the test
+    /// could take that snapshot.
+    pub fn spawn_unrecorded() -> Option<Self> {
+        Self::spawn_internal(&[], &[], None, false, false)
+    }
+
     /// Spawn a named driver with the native cursor overlay enabled.
     ///
     /// Most testkit daemons disable the overlay so unrelated behavior tests

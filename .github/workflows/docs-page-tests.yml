@@ -10,10 +10,13 @@ on:
       - "docs/public/scripts/**"
       - "docs/scripts/tests/test_unified_sandbox_docs.py"
       - "docs/scripts/tests/test_desktop_driver_guide.py"
+      - "docs/scripts/tests/test_driver_sdk_guide.py"
       - "docs/scripts/tests/test_sandbox_secret_example.py"
       - "docs/scripts/tests/test_docs_version_facts.py"
       - "docs/scripts/tests/test_openai_agents_example.py"
       - "libs/python/cua-sandbox/**"
+      - "libs/cua-driver/python/src/cua_driver/_native.py"
+      - "libs/cua-driver/typescript/src/native/cua_driver_sdk.ts"
       - "libs/cua/VERSION"
       - "libs/cua/python/pyproject.toml"
       - "libs/cua/typescript/package.json"
@@ -51,6 +54,7 @@ jobs:
           pytest -q
           docs/scripts/tests/test_unified_sandbox_docs.py
           docs/scripts/tests/test_desktop_driver_guide.py
+          docs/scripts/tests/test_driver_sdk_guide.py
           docs/scripts/tests/test_sandbox_secret_example.py
           docs/scripts/tests/test_docs_version_facts.py
           docs/scripts/tests/test_openai_agents_example.py

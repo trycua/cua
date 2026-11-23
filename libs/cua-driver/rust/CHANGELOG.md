@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.59.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.2...cua-driver-rs-v0.59.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** attach to the Windows input queue only after the target processed its activation ([#8550](https://github.com/trycua/cua/issues/8550)) ([1491dec](https://github.com/trycua/cua/commit/1491deca00862100cfaa8e87d1229e8389a32393))
+* **cua-driver:** confirm dom_event browser clicks from the page changes their handlers cause ([#8138](https://github.com/trycua/cua/issues/8138)) ([03f73fb](https://github.com/trycua/cua/commit/03f73fbaf8b8e4a593ca7a3d52801d19666c90d7))
+* **cua-driver:** do not retype a Gecko web write whose AXValue is unreadable ([#8557](https://github.com/trycua/cua/issues/8557)) ([102af6e](https://github.com/trycua/cua/commit/102af6e9513171d89324350681fa528a5b5aec14)), closes [#6269](https://github.com/trycua/cua/issues/6269)
+* **cua-driver:** report foregrounded_window when Chrome comes forward during existing-profile attach ([#7884](https://github.com/trycua/cua/issues/7884)) ([04b60ea](https://github.com/trycua/cua/commit/04b60eafc3d278190e4b0e583e0e0d9ea8fb9c9a))
+
+## [0.59.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.1...cua-driver-rs-v0.59.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse macOS clicks on controls behind an attached sheet ([#7798](https://github.com/trycua/cua/issues/7798)) ([0240a51](https://github.com/trycua/cua/commit/0240a510b3e3917a21135cfdebb2dfef7cba50d1))
+* **cua-driver:** wait for a woken Chromium AT-SPI tree before the first Linux walk ([#7886](https://github.com/trycua/cua/issues/7886)) ([da8fbb9](https://github.com/trycua/cua/commit/da8fbb9f32a3049c2b1d033649f045a5afec5944))
+
+## [0.59.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.0...cua-driver-rs-v0.59.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** answer sent messages while attached to the target input queue on Windows ([#8522](https://github.com/trycua/cua/issues/8522)) ([e2dcfbd](https://github.com/trycua/cua/commit/e2dcfbdd36b0da1adf84c07bae51a58c82076279))
+* **cua-driver:** tell apps how many wheel clicks a Hyprland scroll was ([#8351](https://github.com/trycua/cua/issues/8351)) ([0a70e8e](https://github.com/trycua/cua/commit/0a70e8ee20cb801fe3f56289300536cf6e484a0a))
+
+## [0.59.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.2...cua-driver-rs-v0.59.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add metadata-only RuntimeWitnessV0 contract ([#7952](https://github.com/trycua/cua/issues/7952)) ([d4408c5](https://github.com/trycua/cua/commit/d4408c55de191e850dde7d68dabb9050ec0df375))
+
 ## [0.58.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.1...cua-driver-rs-v0.58.2) (2026-11-22)
 
 

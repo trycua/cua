@@ -251,6 +251,7 @@ pub fn wait_for_focused_descendant(hwnd: u64, timeout: Duration) -> Option<u64> 
 
 /// Post a Unicode character as WM_CHAR.
 pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
+    crate::vmware::refuse_console_keyboard(hwnd)?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         anyhow::bail!(msg);
     }
@@ -328,6 +329,7 @@ pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
 /// (see [`post_enter_keystroke`]) — see the LibreOffice screenshot in
 /// the PR description for the bug this fixes.
 pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> Result<()> {
+    crate::vmware::refuse_console_keyboard(hwnd)?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         anyhow::bail!(msg);
     }
@@ -447,6 +449,7 @@ fn wait_for_target_pump(h: HWND) {
 
 /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
 pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    crate::vmware::refuse_console_keyboard(hwnd)?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         anyhow::bail!(msg);
     }
@@ -563,6 +566,7 @@ pub fn send_key_synthesized_after_focus(
     if target.0.is_null() {
         bail!("invalid target hwnd");
     }
+    crate::vmware::refuse_console_keyboard(hwnd)?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         // Same UIPI defense as the PostMessage path. SendInput from UIAccess
         // _is_ allowed cross-integrity, but if our daemon is somehow at a
@@ -649,6 +653,7 @@ pub fn send_text_synthesized_paced_after_focus(
     if target.0.is_null() {
         bail!("invalid target hwnd");
     }
+    crate::vmware::refuse_console_keyboard(hwnd)?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         bail!(msg);
     }

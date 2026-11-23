@@ -675,7 +675,7 @@ impl Tool for TypeTextTool {
                     })),
                 }
             }
-            Ok((Err(e), _, _, _)) => ToolResult::error(e.to_string()),
+            Ok((Err(e), _, _, _)) => crate::vmware::input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

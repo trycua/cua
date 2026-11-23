@@ -34,6 +34,7 @@ pub mod overlay;
 pub mod recording_hooks;
 pub mod terminal;
 pub mod tools;
+pub(crate) mod vmware;
 
 // Cross-platform: pure math for MOUSEEVENTF_VIRTUALDESK absolute-coord
 // normalization. Lives outside the Windows-only `input` module so its

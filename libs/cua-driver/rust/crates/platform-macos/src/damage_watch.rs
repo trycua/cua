@@ -146,7 +146,7 @@ fn start_watching(display: u32) {
     let watcher = match started {
         Ok(watcher) => watcher,
         Err(error) => {
-            tracing::debug!(display, %error, "damage watch did not start");
+            tracing::debug!(display_id = display, %error, "damage watch did not start");
             return;
         }
     };

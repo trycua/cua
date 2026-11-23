@@ -2109,7 +2109,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\n`get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 or more), or `default` to clear, are saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. They apply to every session at once.",
+   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\n`get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 or more), or `0` / `default` to clear, are saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. They apply to every session at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2259,20 +2259,15 @@
       "type": "string"
      },
      "get_window_state.max_depth": {
-      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 or more, or default to clear it and use no depth cap. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
-      "type": [
-       "integer",
-       "string",
-       "null"
-      ]
+      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 or more, or 0 (also \"default\" or null) to clear it and use no depth cap. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "minimum": 0,
+      "type": "integer"
      },
      "get_window_state.max_elements": {
-      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or default to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
-      "type": [
-       "integer",
-       "string",
-       "null"
-      ]
+      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or 0 (also \"default\" or null) to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 5000,
+      "minimum": 0,
+      "type": "integer"
      },
      "max_image_dimension": {
       "description": "Max dimension for screenshot resizing (0 = no limit).",

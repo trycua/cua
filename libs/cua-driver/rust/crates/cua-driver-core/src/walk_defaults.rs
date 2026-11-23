@@ -49,14 +49,14 @@ fn cap(key: &str, limits: WalkLimits) -> Option<usize> {
     }
 }
 
-/// Parse one value: a whole number from 1 to the platform cap, or `null` /
-/// `"default"` to clear the saved value.
+/// Parse one value: a whole number from 1 to the platform cap, or `0`,
+/// `null` or `"default"` to clear the saved value.
 fn parse(key: &str, value: &Value, limits: WalkLimits) -> Result<Option<usize>, String> {
     let range = match cap(key, limits) {
         Some(max) => format!("a whole number from 1 to {max}"),
         None => "a whole number of at least 1".to_owned(),
     };
-    let invalid = || format!("{key} must be {range}, or default; got {value}");
+    let invalid = || format!("{key} must be {range}, or 0 or default to clear it; got {value}");
     match value {
         Value::Null => Ok(None),
         Value::String(text) if text.trim().eq_ignore_ascii_case("default") => Ok(None),
@@ -65,10 +65,10 @@ fn parse(key: &str, value: &Value, limits: WalkLimits) -> Result<Option<usize>, 
                 .as_u64()
                 .and_then(|n| usize::try_from(n).ok())
                 .ok_or_else(invalid)?;
-            if n == 0 || cap(key, limits).is_some_and(|max| n > max) {
+            if cap(key, limits).is_some_and(|max| n > max) {
                 return Err(invalid());
             }
-            Ok(Some(n))
+            Ok(Some(n).filter(|&n| n > 0))
         }
         _ => Err(invalid()),
     }
@@ -242,12 +242,14 @@ pub fn config_schema_properties(limits: WalkLimits) -> Map<String, Value> {
     properties.insert(
         MAX_ELEMENTS_KEY.to_owned(),
         json!({
-            "type": ["integer", "string", "null"],
+            "type": "integer",
+            "minimum": 0,
+            "maximum": limits.max_elements,
             "description": format!(
                 "Saved get_window_state node budget for reads that omit max_elements and pass no \
-                 query or full_output: 1 to {} (the full_output budget), or default to clear it \
-                 and use {}. A max_elements passed on the call always wins. Saved to \
-                 ~/.cua-driver/config.json and applied at once.",
+                 query or full_output: 1 to {} (the full_output budget), or 0 (also \"default\" \
+                 or null) to clear it and use {}. A max_elements passed on the call always wins. \
+                 Saved to ~/.cua-driver/config.json and applied at once.",
                 limits.max_elements,
                 crate::window_state_view::DEFAULT_MAX_ELEMENTS.min(limits.max_elements),
             ),
@@ -261,18 +263,20 @@ pub fn config_schema_properties(limits: WalkLimits) -> Map<String, Value> {
         Some(max) => max.to_string(),
         None => "no depth cap".to_owned(),
     };
-    properties.insert(
-        MAX_DEPTH_KEY.to_owned(),
-        json!({
-            "type": ["integer", "string", "null"],
-            "description": format!(
-                "Saved get_window_state depth cap for reads that omit max_depth and pass no query \
-                 or full_output: {depth_range}, or default to clear it and use {depth_default}. A \
-                 max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and \
-                 applied at once."
-            ),
-        }),
-    );
+    let mut depth = json!({
+        "type": "integer",
+        "minimum": 0,
+        "description": format!(
+            "Saved get_window_state depth cap for reads that omit max_depth and pass no query or \
+             full_output: {depth_range}, or 0 (also \"default\" or null) to clear it and use \
+             {depth_default}. A max_depth passed on the call always wins. Saved to \
+             ~/.cua-driver/config.json and applied at once."
+        ),
+    });
+    if let Some(max) = limits.max_depth {
+        depth["maximum"] = json!(max);
+    }
+    properties.insert(MAX_DEPTH_KEY.to_owned(), depth);
     properties
 }
 
@@ -326,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn default_and_null_clear_the_saved_value() {
+    fn zero_default_and_null_clear_the_saved_value() {
         let dir = tempfile::tempdir().unwrap();
         let path = config_path(&dir);
         set_at(
@@ -340,6 +344,9 @@ mod tests {
         assert_eq!(saved.max_elements, None);
         assert_eq!(saved.max_depth, Some(12));
         let (saved, _) = set_at(&path, &json!({MAX_DEPTH_KEY: null}), MAC).unwrap();
+        assert_eq!(saved, WalkDefaults::default());
+        set_at(&path, &json!({MAX_ELEMENTS_KEY: 800}), MAC).unwrap();
+        let (saved, _) = set_at(&path, &json!({MAX_ELEMENTS_KEY: 0}), MAC).unwrap();
         assert_eq!(saved, WalkDefaults::default());
         let file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(file, json!({}));
@@ -355,32 +362,28 @@ mod tests {
         for (args, error) in [
             (
                 json!({MAX_ELEMENTS_KEY: 2001}),
-                "get_window_state.max_elements must be a whole number from 1 to 2000, or default; got 2001",
-            ),
-            (
-                json!({MAX_ELEMENTS_KEY: 0}),
-                "get_window_state.max_elements must be a whole number from 1 to 2000, or default; got 0",
+                "get_window_state.max_elements must be a whole number from 1 to 2000, or 0 or default to clear it; got 2001",
             ),
             (
                 json!({MAX_DEPTH_KEY: 26}),
-                "get_window_state.max_depth must be a whole number from 1 to 25, or default; got 26",
+                "get_window_state.max_depth must be a whole number from 1 to 25, or 0 or default to clear it; got 26",
             ),
             (
                 json!({MAX_DEPTH_KEY: -1}),
-                "get_window_state.max_depth must be a whole number from 1 to 25, or default; got -1",
+                "get_window_state.max_depth must be a whole number from 1 to 25, or 0 or default to clear it; got -1",
             ),
             (
                 json!({MAX_DEPTH_KEY: 2.5}),
-                "get_window_state.max_depth must be a whole number from 1 to 25, or default; got 2.5",
+                "get_window_state.max_depth must be a whole number from 1 to 25, or 0 or default to clear it; got 2.5",
             ),
             (
                 json!({MAX_ELEMENTS_KEY: "lots"}),
-                "get_window_state.max_elements must be a whole number from 1 to 2000, or default; got \"lots\"",
+                "get_window_state.max_elements must be a whole number from 1 to 2000, or 0 or default to clear it; got \"lots\"",
             ),
             // A valid key alongside an invalid one writes neither.
             (
-                json!({MAX_ELEMENTS_KEY: 900, MAX_DEPTH_KEY: 0}),
-                "get_window_state.max_depth must be a whole number from 1 to 25, or default; got 0",
+                json!({MAX_ELEMENTS_KEY: 900, MAX_DEPTH_KEY: 30}),
+                "get_window_state.max_depth must be a whole number from 1 to 25, or 0 or default to clear it; got 30",
             ),
         ] {
             assert_eq!(set_at(&path, &args, MAC).unwrap_err(), error);
@@ -395,8 +398,8 @@ mod tests {
         let (saved, _) = set_at(&path, &json!({MAX_DEPTH_KEY: 200}), LINUX).unwrap();
         assert_eq!(saved.max_depth, Some(200));
         assert_eq!(
-            set_at(&path, &json!({MAX_DEPTH_KEY: 0}), LINUX).unwrap_err(),
-            "get_window_state.max_depth must be a whole number of at least 1, or default; got 0"
+            set_at(&path, &json!({MAX_DEPTH_KEY: -3}), LINUX).unwrap_err(),
+            "get_window_state.max_depth must be a whole number of at least 1, or 0 or default to clear it; got -3"
         );
     }
 

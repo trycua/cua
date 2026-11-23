@@ -1884,7 +1884,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately.\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nAgent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nget_window_state walk defaults: get_window_state.max_elements (1 to 2000) and get_window_state.max_depth (1 to 25) replace the built-in 250 nodes and 25 levels on reads that omit the argument and pass no query or full_output; default clears them. A per-call argument always wins. Saved to ~/.cua-driver/config.json and applied to every session at once.",
+   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately.\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nAgent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nget_window_state walk defaults: get_window_state.max_elements (1 to 2000) and get_window_state.max_depth (1 to 25) replace the built-in 250 nodes and 25 levels on reads that omit the argument and pass no query or full_output; 0 or default clears them. A per-call argument always wins. Saved to ~/.cua-driver/config.json and applied to every session at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2026,20 +2026,16 @@
       "type": "string"
      },
      "get_window_state.max_depth": {
-      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 to 25, or default to clear it and use 25. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
-      "type": [
-       "integer",
-       "string",
-       "null"
-      ]
+      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 to 25, or 0 (also \"default\" or null) to clear it and use 25. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 25,
+      "minimum": 0,
+      "type": "integer"
      },
      "get_window_state.max_elements": {
-      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 2000 (the full_output budget), or default to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
-      "type": [
-       "integer",
-       "string",
-       "null"
-      ]
+      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 2000 (the full_output budget), or 0 (also \"default\" or null) to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 2000,
+      "minimum": 0,
+      "type": "integer"
      },
      "max_image_dimension": {
       "description": "Max dimension for screenshot resizing (0 = no limit).",

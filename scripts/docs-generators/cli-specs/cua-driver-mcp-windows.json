@@ -1797,7 +1797,7 @@
    "read_only": true
   },
   {
-   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n- `get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 to 25), or `default` to clear — saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. Applies to every session at once.\n\nReturns the full updated config in the same shape as `get_config`.",
+   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n- `get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 to 25), or `0` / `default` to clear — saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. Applies to every session at once.\n\nReturns the full updated config in the same shape as `get_config`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1947,20 +1947,16 @@
       "type": "string"
      },
      "get_window_state.max_depth": {
-      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 to 25, or default to clear it and use 25. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
-      "type": [
-       "integer",
-       "string",
-       "null"
-      ]
+      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 to 25, or 0 (also \"default\" or null) to clear it and use 25. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 25,
+      "minimum": 0,
+      "type": "integer"
      },
      "get_window_state.max_elements": {
-      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or default to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
-      "type": [
-       "integer",
-       "string",
-       "null"
-      ]
+      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or 0 (also \"default\" or null) to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 5000,
+      "minimum": 0,
+      "type": "integer"
      },
      "max_image_dimension": {
       "description": "Max dimension for screenshot resizing (0 = no limit).",

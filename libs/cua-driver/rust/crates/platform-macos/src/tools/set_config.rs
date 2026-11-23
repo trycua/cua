@@ -58,7 +58,7 @@ fn def() -> &'static ToolDef {
             get_window_state walk defaults: get_window_state.max_elements (1 to \
             2000) and get_window_state.max_depth (1 to 25) replace the built-in \
             250 nodes and 25 levels on reads that omit the argument and pass no \
-            query or full_output; default clears them. A per-call argument always \
+            query or full_output; 0 or default clears them. A per-call argument always \
             wins. Saved to ~/.cua-driver/config.json and applied to every session \
             at once."
             .into(),

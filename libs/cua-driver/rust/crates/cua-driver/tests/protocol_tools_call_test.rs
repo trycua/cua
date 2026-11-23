@@ -291,12 +291,12 @@ fn get_window_state_walk_defaults_persist_across_daemons() {
         &mut d,
         3,
         "set_config",
-        serde_json::json!({"get_window_state.max_depth": 0, "cursor.halo": "off"}),
+        serde_json::json!({"get_window_state.max_depth": 26, "cursor.halo": "off"}),
     );
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
         refused["content"][0]["text"],
-        "get_window_state.max_depth must be a whole number from 1 to 25, or default; got 0"
+        "get_window_state.max_depth must be a whole number from 1 to 25, or 0 or default to clear it; got 26"
     );
     let unchanged = call(&mut d, 5, "get_config", serde_json::json!({}));
     assert_eq!(
@@ -341,7 +341,7 @@ fn get_window_state_walk_defaults_persist_across_daemons() {
         3,
         "set_config",
         serde_json::json!({
-            "get_window_state.max_elements": "default",
+            "get_window_state.max_elements": 0,
             "get_window_state.max_depth": "default",
         }),
     );

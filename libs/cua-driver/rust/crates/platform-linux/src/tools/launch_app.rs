@@ -324,6 +324,25 @@ mod launch_app_tests {
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
+    #[tokio::test]
+    async fn quote_joined_remote_debugging_switch_is_refused() {
+        for args in [
+            json!({"launch_path": "/bin/sh --remote-debugging-\"port\"=0"}),
+            json!({"name": "/bin/sh --remote-debugging-'pipe'"}),
+        ] {
+            let result = LaunchAppTool.invoke(args.clone()).await;
+            assert_eq!(result.is_error, Some(true), "{args}");
+            match result.content.first() {
+                Some(cua_driver_core::protocol::Content::Text { text, .. }) => assert_eq!(
+                    text,
+                    cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
+                    "{args}"
+                ),
+                _ => panic!("{args}: refusal has no text"),
+            }
+        }
+    }
+
     #[test]
     fn matches_exact_display_name_case_insensitively() {
         let apps = fixture();
@@ -405,10 +424,20 @@ impl Tool for LaunchAppTool {
                 "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
             );
         }
+        // Check the split argv as well as the raw strings: quotes can join
+        // fragments into a switch that no raw string spells out, such as
+        // `--remote-debugging-"port"=0`.
+        let split_commands: Vec<String> = launch_path_opt
+            .iter()
+            .chain(&name_opt)
+            .filter_map(|cmd| split_command_line(cmd))
+            .flatten()
+            .collect();
         if launch_path_opt
             .as_deref()
             .into_iter()
             .chain(name_opt.as_deref())
+            .chain(split_commands.iter().map(String::as_str))
             .chain(additional_arguments.iter().map(String::as_str))
             .any(cua_driver_core::launch_guard::contains_remote_debugging_flag)
         {

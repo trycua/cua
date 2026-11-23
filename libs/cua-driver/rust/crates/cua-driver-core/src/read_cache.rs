@@ -17,8 +17,12 @@
 //! launched without the variable behaves exactly as before. No tool argument
 //! can change the bound. Dispatch holds an [`Actuation`] around any tool that
 //! is not read-only, and no reply computed before it ends is served again, so
-//! a read after an action always reflects the action. Only the public tool is
-//! wrapped; post-action observation and `verify_state` keep reading live.
+//! a read after an action's call ends recomputes. A change that lands later,
+//! such as a window an app opens after `launch_app` returns or work a
+//! cancelled call's platform worker still finishes, is seen once the reply
+//! ages out, like any change a person or another app makes. Only the public
+//! tool is wrapped; post-action observation and `verify_state` keep reading
+//! live.
 
 use crate::protocol::{Content, ToolResult};
 use crate::tool::{Tool, ToolDef};

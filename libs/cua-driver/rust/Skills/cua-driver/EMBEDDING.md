@@ -293,9 +293,12 @@ above. A reply younger than that many milliseconds is served again for the
 same arguments. A reply up to 20 times that age is also served, and the first
 such call starts one background recompute, so the next call gets the new list.
 An older reply is recomputed before the call returns. Any action (a tool call
-that is not read-only) retires every cached reply, so the next `list_windows`
-after it reads the live window list. A window that a person or another app
-opens or closes can still be missing from a reply for up to 20 times the value.
+that is not read-only) retires every cached reply when it starts and when its
+call ends, including a call its client cancels, so the next `list_windows`
+after it reads the live window list. A change that lands after that is not
+seen until the reply ages out, up to 20 times the value. That covers a window a
+person or another app opens or closes, a window an app opens after `launch_app`
+returns, and work a cancelled call's platform worker still finishes.
 
 | Variable                           | Meaning                                    | Default    | Accepted range                       |
 | ---------------------------------- | ------------------------------------------ | ---------- | ------------------------------------ |

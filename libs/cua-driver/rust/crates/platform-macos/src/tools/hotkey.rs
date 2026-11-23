@@ -438,10 +438,17 @@ impl Tool for HotkeyTool {
                         super::invoke_menu::MenuRequest::KeyEquivalent(key_display.clone()),
                     )
                     .await;
-                    // Only unavailable background menus may fall back to keys;
-                    // target-safety refusals must survive this route unchanged.
-                    if !menu_allows_key_fallback(&menu_result) {
-                        return menu_result;
+                    // Only LibreOffice's VCL takes a disabled item's shortcut as
+                    // keys (#5306); target-safety refusals survive unchanged.
+                    let vcl = menu_allows_key_fallback(&menu_result)
+                        && tokio::task::spawn_blocking(move || {
+                            crate::input::pointer_toolkit::detect(pid)
+                                == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                        })
+                        .await
+                        .unwrap_or(false);
+                    if let Some(result) = menu_route_result(menu_result, vcl) {
+                        return result;
                     }
                 }
             }
@@ -715,6 +722,26 @@ fn menu_allows_key_fallback(result: &ToolResult) -> bool {
             == Some("background_unavailable")
 }
 
+/// The result of a background hotkey whose menu route answered `result`, or
+/// `None` when the combo goes out as keys.
+fn menu_route_result(mut result: ToolResult, vcl: bool) -> Option<ToolResult> {
+    if !menu_allows_key_fallback(&result) {
+        return Some(result);
+    }
+    if vcl {
+        return None;
+    }
+    if let Some(structured) = result.structured_content.as_mut() {
+        structured["escalation"] = serde_json::json!({
+            "recommended": "foreground",
+            "reason": "macOS keeps this menu item disabled while the app is in the background, \
+                       and background key events never reach a native app's menus.",
+            "requires": ["window_id"]
+        });
+    }
+    Some(result)
+}
+
 fn delivered_structured(foreground: bool, chromium_embedder: bool) -> Value {
     let mut structured = serde_json::json!({
         "path": if foreground { "key_events_fg" } else { "key_events" },
@@ -764,6 +791,31 @@ mod tests {
         }
         assert!(!menu_allows_key_fallback(&ToolResult::error("unknown")));
         assert!(!menu_allows_key_fallback(&ToolResult::text("done")));
+    }
+
+    #[test]
+    fn a_disabled_menu_item_is_refused_unless_the_app_takes_its_shortcut_as_keys() {
+        let unavailable = || {
+            ToolResult::error("disabled").with_structured(serde_json::json!({
+                "status": "refused",
+                "code": "background_unavailable",
+                "effect": "refused",
+            }))
+        };
+        let refused = menu_route_result(unavailable(), false).expect("a native app refuses");
+        assert_eq!(refused.is_error, Some(true));
+        let structured = refused.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+        assert!(
+            menu_route_result(unavailable(), true).is_none(),
+            "LibreOffice takes the shortcut as keys"
+        );
+        let unbound = ToolResult::error("refused")
+            .with_structured(serde_json::json!({ "code": "window_not_key" }));
+        assert!(menu_route_result(unbound, true).is_some());
+        assert!(menu_route_result(ToolResult::text("done"), true).is_some());
     }
 
     #[test]

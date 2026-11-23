@@ -29,7 +29,6 @@
 //! can delete that person in PostHog. Logs name the account by a short
 //! keyed tag only ([`crate::ident`]).
 
-
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -193,7 +192,8 @@ async fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::V
     // 4. Teams (so team access to others' machines goes too).
     let teams = relay
         .teams
-        .erase_account(sub, emails).await
+        .erase_account(sub, emails)
+        .await
         .map_err(|e| failed("teams", e))?;
 
     // 5. Whatever the account still reaches loses it: cut again with the
@@ -207,19 +207,23 @@ async fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::V
     // 6. The stores.
     let devices = relay
         .devices
-        .erase_account(sub, emails).await
+        .erase_account(sub, emails)
+        .await
         .map_err(|e| failed("devices", e))?;
     let pairing_codes = relay
         .pairing
-        .erase_account(sub).await
+        .erase_account(sub)
+        .await
         .map_err(|e| failed("pairing", e))?;
     let grants = relay
         .grants
-        .erase_account(sub, emails).await
+        .erase_account(sub, emails)
+        .await
         .map_err(|e| failed("grants", e))?;
     let usage = relay
         .meter
-        .erase_user(sub).await
+        .erase_user(sub)
+        .await
         .map_err(|e| failed("usage", e))?;
     let plan_cache = match &relay.plans {
         Some(plans) => plans.forget(sub).await.map_err(|e| failed("plans", e))?,
@@ -233,15 +237,18 @@ async fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::V
     relay.mesh.changed();
     let spaces_settings = relay
         .spaces
-        .erase_account(sub).await
+        .erase_account(sub)
+        .await
         .map_err(|e| failed("spaces", e))?;
     let pool = relay
         .pool
-        .erase_account(sub).await
+        .erase_account(sub)
+        .await
         .map_err(|e| failed("pool", e))?;
     let pending_deletions = relay
         .pending_deletions
-        .erase_account(sub).await
+        .erase_account(sub)
+        .await
         .map_err(|e| failed("pending_deletions", e))?;
 
     Ok(serde_json::json!({

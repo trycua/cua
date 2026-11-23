@@ -38,10 +38,10 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use crate::assertion::{now_secs, remove_stale_temps};
-use crate::persist::{Durable, MapUndo, StateFile};
 use crate::devices::scrub;
 use crate::directory::MachineRecord;
 use crate::oidc::Identity;
+use crate::persist::{Durable, MapUndo, StateFile};
 use crate::storage::{store, Storage};
 
 /// Teams one account may own.
@@ -666,7 +666,10 @@ impl Teams {
             e.detail = Some(team.name.clone());
             team.log(e);
             state.teams.insert(id.clone(), team.clone());
-            (self.commit(&state, MapUndo::one(id, None, Some(team.clone()))), team)
+            (
+                self.commit(&state, MapUndo::one(id, None, Some(team.clone()))),
+                team,
+            )
         };
         self.settle(committed).await?;
         Ok(team)
@@ -682,7 +685,8 @@ impl Teams {
             t.name = name;
             t.log(e);
             Ok(t.clone())
-        }).await
+        })
+        .await
     }
 
     /// Deletes a team (owner only). Returns its machines (their open team
@@ -701,7 +705,10 @@ impl Teams {
                 None => return Err(no_team()),
             }
             let removed = state.teams.remove(id).ok_or_else(no_team)?;
-            let c = self.commit(&state, MapUndo::one(id.to_owned(), Some(removed.clone()), None));
+            let c = self.commit(
+                &state,
+                MapUndo::one(id.to_owned(), Some(removed.clone()), None),
+            );
             (c, removed)
         };
         self.settle(committed).await?;
@@ -779,11 +786,17 @@ impl Teams {
             e.detail = Some(format!("{} as {}", invite.id, role.as_str()));
             t.log(e);
             Ok(NewInvite { invite, code })
-        }).await
+        })
+        .await
     }
 
     /// Revokes an open invite.
-    pub async fn revoke_invite(&self, id: &str, actor: &Actor<'_>, invite: &str) -> Result<(), TeamError> {
+    pub async fn revoke_invite(
+        &self,
+        id: &str,
+        actor: &Actor<'_>,
+        invite: &str,
+    ) -> Result<(), TeamError> {
         self.change(id, |t| {
             Self::require_manager(t, &actor.who.account)?;
             let before = t.invites.len();
@@ -795,7 +808,8 @@ impl Teams {
             e.subject = Some(invite.to_owned());
             t.log(e);
             Ok(())
-        }).await
+        })
+        .await
     }
 
     /// Joins with an invite: `code` (a link or email invite's code), or
@@ -902,7 +916,11 @@ impl Teams {
     /// their email or created by them are revoked, their device approvals
     /// are removed and their name or email in a team's audit log becomes
     /// "deleted account". Returns the number of teams changed. Idempotent.
-    pub async fn erase_account(&self, account: &str, emails: &[String]) -> Result<usize, TeamError> {
+    pub async fn erase_account(
+        &self,
+        account: &str,
+        emails: &[String],
+    ) -> Result<usize, TeamError> {
         const GONE: &str = "deleted account";
         let is_me = |s: &str| s == account || emails.iter().any(|e| e.eq_ignore_ascii_case(s));
         let (committed, changed) = {
@@ -1079,7 +1097,8 @@ impl Teams {
             t.log(actor.entry("member_left"));
             t.drop_machines_of(&actor.who.account, actor);
             Ok(t.clone())
-        }).await
+        })
+        .await
     }
 
     /// The member `who` names: an account id or an email.
@@ -1094,7 +1113,12 @@ impl Teams {
 
     /// Removes a member: the owner removes anyone else, an admin removes
     /// members. Returns the removed member.
-    pub async fn remove_member(&self, id: &str, actor: &Actor<'_>, who: &str) -> Result<Member, TeamError> {
+    pub async fn remove_member(
+        &self,
+        id: &str,
+        actor: &Actor<'_>,
+        who: &str,
+    ) -> Result<Member, TeamError> {
         self.change(id, |t| {
             let mine = Self::require_manager(t, &actor.who.account)?;
             let target = Self::find_member(t, who)
@@ -1119,7 +1143,8 @@ impl Teams {
             e.subject = Some(member_label(&target));
             t.log(e);
             Ok(target)
-        }).await
+        })
+        .await
     }
 
     /// Changes a member's role between `member` and `admin` (owner only).
@@ -1186,7 +1211,8 @@ impl Teams {
                 }
             }
             Ok(after)
-        }).await
+        })
+        .await
     }
 
     /// Files (or keeps) `device`'s approval request; an owner's or admin's
@@ -1256,7 +1282,8 @@ impl Teams {
             t.device(&actor.who.account, device)
                 .cloned()
                 .ok_or_else(|| TeamError::Storage("device request not kept".into()))
-        }).await
+        })
+        .await
     }
 
     /// Approves or denies a member device (owner or admin). `device` is the
@@ -1350,7 +1377,8 @@ impl Teams {
             e.detail = Some(record.name.clone());
             t.log(e);
             Ok(t.clone())
-        }).await
+        })
+        .await
     }
 
     /// Takes a machine off the team: an owner or admin, or the machine's
@@ -1385,7 +1413,8 @@ impl Teams {
             e.machine = Some(machine.to_owned());
             t.log(e);
             Ok(t.clone())
-        }).await
+        })
+        .await
     }
 
     /// Forgets a machine removed from the directory (every team).
@@ -1668,7 +1697,8 @@ mod tests {
 
         // Email invite: only that email joins, once.
         let inv = teams
-            .invite(&t.id, &a, Some("Bob@x.io"), TeamRole::Member, None).await
+            .invite(&t.id, &a, Some("Bob@x.io"), TeamRole::Member, None)
+            .await
             .unwrap();
         assert_eq!(inv.invite.email.as_deref(), Some("bob@x.io"));
         assert!(matches!(
@@ -1676,7 +1706,8 @@ mod tests {
             Err(TeamError::Forbidden(_))
         ));
         let (_, role) = teams
-            .join(&b, None, Some(&inv.code), Some("bob mac")).await
+            .join(&b, None, Some(&inv.code), Some("bob mac"))
+            .await
             .unwrap();
         assert_eq!(role, TeamRole::Member);
         // Bob's joining device waits for approval.
@@ -1696,15 +1727,20 @@ mod tests {
 
         // Link invite: anyone with the code joins.
         let link = teams
-            .invite(&t.id, &a, None, TeamRole::Member, Some(2)).await
+            .invite(&t.id, &a, None, TeamRole::Member, Some(2))
+            .await
             .unwrap();
         teams.join(&e, None, Some(&link.code), None).await.unwrap();
-        assert!(teams.join(&e, None, Some("team-0.bad"), None).await.is_err());
+        assert!(teams
+            .join(&e, None, Some("team-0.bad"), None)
+            .await
+            .is_err());
 
         // Machines: the owner adds one it owns, whatever OS (Macs too).
         let linux = record("space-linux0001", "ada");
         teams
-            .add_machine(&t.id, &a, &linux, None, Some("linux")).await
+            .add_machine(&t.id, &a, &linux, None, Some("linux"))
+            .await
             .unwrap();
         teams
             .add_machine(
@@ -1713,7 +1749,8 @@ mod tests {
                 &record("space-mac00001", "ada"),
                 None,
                 Some("macos"),
-            ).await
+            )
+            .await
             .unwrap();
         // A Space a Mac provides, and the whole Mac (a host).
         let mut on_mac = record("space-onmac0001", "ada");
@@ -1721,9 +1758,13 @@ mod tests {
         let mut mac_host = record("host-mac", "ada");
         mac_host.meta.insert(META_HOST_OS.into(), "macos".into());
         teams
-            .add_machine(&t.id, &a, &on_mac, Some(&mac_host), None).await
+            .add_machine(&t.id, &a, &on_mac, Some(&mac_host), None)
+            .await
             .unwrap();
-        teams.add_machine(&t.id, &a, &mac_host, None, None).await.unwrap();
+        teams
+            .add_machine(&t.id, &a, &mac_host, None, None)
+            .await
+            .unwrap();
         // Not the owner of the machine: refused.
         assert!(teams
             .add_machine(
@@ -1732,7 +1773,8 @@ mod tests {
                 &record("space-bobs0001", "bob"),
                 None,
                 Some("linux")
-            ).await
+            )
+            .await
             .is_err());
 
         assert_eq!(teams.access(&linux, None, "bob")[0].1, TeamRole::Member);
@@ -1756,7 +1798,10 @@ mod tests {
             teams.check_device(&t.id, &bob, Some("dev_bob2"), "space-linux0001"),
             DeviceCheck::Refused(_)
         ));
-        teams.decide_device(&t.id, &a, "dev_bob", true).await.unwrap();
+        teams
+            .decide_device(&t.id, &a, "dev_bob", true)
+            .await
+            .unwrap();
         assert_eq!(
             teams.check_device(&t.id, &bob, Some("dev_bob"), "space-linux0001"),
             DeviceCheck::Approved
@@ -1773,18 +1818,29 @@ mod tests {
 
         // Roles: only the owner promotes; an admin cannot remove an admin.
         assert!(teams
-            .set_role(&t.id, &b, "eve@x.io", TeamRole::Admin).await
+            .set_role(&t.id, &b, "eve@x.io", TeamRole::Admin)
+            .await
             .is_err());
         teams
-            .set_role(&t.id, &a, "eve@x.io", TeamRole::Admin).await
+            .set_role(&t.id, &a, "eve@x.io", TeamRole::Admin)
+            .await
             .unwrap();
-        teams.set_role(&t.id, &a, "bob", TeamRole::Admin).await.unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Admin)
+            .await
+            .unwrap();
         assert!(teams.remove_member(&t.id, &e, "bob").await.is_err());
-        teams.set_role(&t.id, &a, "bob", TeamRole::Member).await.unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Member)
+            .await
+            .unwrap();
         teams.remove_member(&t.id, &e, "bob@x.io").await.unwrap();
         assert!(teams.access(&linux, None, "bob").is_empty());
         assert!(teams.remove_member(&t.id, &e, "ada").await.is_err());
-        assert!(teams.leave(&t.id, &a).await.is_err(), "the owner deletes instead");
+        assert!(
+            teams.leave(&t.id, &a).await.is_err(),
+            "the owner deletes instead"
+        );
 
         // The audit names every step.
         let kinds: Vec<_> = teams
@@ -1831,21 +1887,30 @@ mod tests {
         let t = teams.create(&a, "Demote").await.unwrap();
         teams.request_approval(&t.id, &a, "ada mac").await.unwrap();
         let inv = teams
-            .invite(&t.id, &a, Some("bob@x.io"), TeamRole::Member, None).await
+            .invite(&t.id, &a, Some("bob@x.io"), TeamRole::Member, None)
+            .await
             .unwrap();
         let b = |device| Actor {
             who: &bob,
             device: Some(device),
         };
         teams
-            .join(&b("dev_bob_old"), None, Some(&inv.code), None).await
+            .join(&b("dev_bob_old"), None, Some(&inv.code), None)
+            .await
             .unwrap();
         // The owner approves Bob's first device by hand while he is a member.
-        teams.decide_device(&t.id, &a, "dev_bob_old", true).await.unwrap();
-        // Promoted: his next device is approved by the role alone.
-        teams.set_role(&t.id, &a, "bob", TeamRole::Admin).await.unwrap();
         teams
-            .request_approval(&t.id, &b("dev_bob_role"), "laptop").await
+            .decide_device(&t.id, &a, "dev_bob_old", true)
+            .await
+            .unwrap();
+        // Promoted: his next device is approved by the role alone.
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Admin)
+            .await
+            .unwrap();
+        teams
+            .request_approval(&t.id, &b("dev_bob_role"), "laptop")
+            .await
             .unwrap();
         let state_of = |id: &str| {
             let team = teams.get_for(&t.id, "ada").unwrap().0;
@@ -1858,7 +1923,10 @@ mod tests {
         assert_eq!(state_of("dev_bob_role").state, DeviceApproval::Approved);
         assert_eq!(state_of("dev_bob_role").decided_by.as_deref(), Some("auto"));
 
-        teams.set_role(&t.id, &a, "bob", TeamRole::Member).await.unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Member)
+            .await
+            .unwrap();
 
         let reset = state_of("dev_bob_role");
         assert_eq!(reset.state, DeviceApproval::Pending);
@@ -1879,10 +1947,17 @@ mod tests {
         assert!(kinds.iter().any(|k| k == "device_approval_reset"));
         // An admin approving the pending device again makes it explicit.
         teams
-            .decide_device(&t.id, &a, "dev_bob_role", true).await
+            .decide_device(&t.id, &a, "dev_bob_role", true)
+            .await
             .unwrap();
-        teams.set_role(&t.id, &a, "bob", TeamRole::Admin).await.unwrap();
-        teams.set_role(&t.id, &a, "bob", TeamRole::Member).await.unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Admin)
+            .await
+            .unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Member)
+            .await
+            .unwrap();
         assert_eq!(state_of("dev_bob_role").state, DeviceApproval::Approved);
     }
 
@@ -1899,7 +1974,8 @@ mod tests {
             let teams = Teams::open(path.clone()).unwrap();
             let t = teams.create(&a, "Persisted").await.unwrap();
             teams
-                .invite(&t.id, &a, Some("bob@x.io"), TeamRole::Member, None).await
+                .invite(&t.id, &a, Some("bob@x.io"), TeamRole::Member, None)
+                .await
                 .unwrap();
             t.id
         };

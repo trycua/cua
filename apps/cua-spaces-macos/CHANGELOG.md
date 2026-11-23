@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.41.7](https://github.com/trycua/cua/compare/cua-spaces-v0.41.6...cua-spaces-v0.41.7) (2026-11-23)
+
+
+### Bug Fixes
+
+* **cua-driver,spaces-macos:** give the + route in the macOS permission guides ([#8572](https://github.com/trycua/cua/issues/8572)) ([c7ed4ad](https://github.com/trycua/cua/commit/c7ed4ad7e3ae949123090c71869c097ba1daf6e3))
+* **spaces-macos:** bundle Cua Driver 0.59.4 in Cua Spaces ([#8580](https://github.com/trycua/cua/issues/8580)) ([33f12a5](https://github.com/trycua/cua/commit/33f12a596fb4c9234dbf1ddd8484b6e874e1af61))
+
 ## [0.41.6](https://github.com/trycua/cua/compare/cua-spaces-v0.41.5...cua-spaces-v0.41.6) (2026-11-23)
 
 

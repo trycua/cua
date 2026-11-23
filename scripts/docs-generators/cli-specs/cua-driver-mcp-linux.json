@@ -307,7 +307,7 @@
       "type": "string"
      },
      "launch_path": {
-      "description": "Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; split with shell quoting rules and run directly, not through a shell.",
+      "description": "Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; split on whitespace with shell-style quotes and escapes (no expansion or comments) and run directly, not through a shell.",
       "type": "string"
      },
      "name": {

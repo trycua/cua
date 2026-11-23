@@ -32,8 +32,6 @@ image = { workspace = true }
 memmap2 = "0.9"
 # kill(2) for the kill_app tool — SIGKILL via libc::kill.
 libc = "0.2"
-# Quote-aware splitting of launch_app command lines (XDG `Exec=` values).
-shlex = "2"
 # Native AT-SPI over D-Bus (pure Rust, via zbus) — replaces the pyatspi
 # subprocess bridge so accessibility input/readback needs no Python or GI
 # typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`

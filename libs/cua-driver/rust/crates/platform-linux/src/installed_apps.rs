@@ -249,8 +249,8 @@ fn bool_key(section: &str, key: &str) -> bool {
 
 /// Strip XDG `Exec=` field codes (`%f`, `%F`, `%u`, `%U`, `%i`, `%c`, `%k`)
 /// and return the rest of the command line, quotes intact. The caller passes
-/// the result to `launch_app(launch_path=...)`, which splits it with shell
-/// quoting rules and runs it directly.
+/// the result to `launch_app(launch_path=...)`, which splits it with shell-style
+/// quotes and runs it directly.
 fn strip_exec_field_codes(exec: &str) -> String {
     let mut out = String::with_capacity(exec.len());
     let mut chars = exec.chars().peekable();

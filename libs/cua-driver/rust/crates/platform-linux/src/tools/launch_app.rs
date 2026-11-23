@@ -15,21 +15,75 @@ use super::impl_::{chromium_family_program, exec_basename, window_record_json};
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Split a launcher command line into argv: whitespace separates arguments,
+/// single quotes are literal, double quotes honor the XDG `Exec=` escapes
+/// (`\"`, `` \` ``, `\$`, `\\`), and a bare backslash escapes the next
+/// character. Nothing is expanded and `#` is an ordinary character, since the
+/// result is executed directly rather than by a shell. `None` for an
+/// unterminated quote or a trailing backslash.
+fn split_command_line(cmd: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let mut arg = String::new();
+    let mut in_arg = false;
+    let mut chars = cmd.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => loop {
+                in_arg = true;
+                match chars.next()? {
+                    '\'' => break,
+                    c => arg.push(c),
+                }
+            },
+            '"' => loop {
+                in_arg = true;
+                match chars.next()? {
+                    '"' => break,
+                    '\\' => match chars.next()? {
+                        c @ ('"' | '`' | '$' | '\\') => arg.push(c),
+                        c => {
+                            arg.push('\\');
+                            arg.push(c);
+                        }
+                    },
+                    c => arg.push(c),
+                }
+            },
+            '\\' => {
+                in_arg = true;
+                arg.push(chars.next()?);
+            }
+            c if c.is_whitespace() => {
+                if in_arg {
+                    args.push(std::mem::take(&mut arg));
+                    in_arg = false;
+                }
+            }
+            c => {
+                in_arg = true;
+                arg.push(c);
+            }
+        }
+    }
+    if in_arg {
+        args.push(arg);
+    }
+    Some(args)
+}
+
 /// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
 /// `Exec=` value with field codes stripped) in the background and return the
 /// child pid.
 ///
-/// The line is split with shell quoting rules, which cover the XDG `Exec=`
-/// quoting, and run directly rather than through a shell. Splitting on bare
-/// whitespace broke every quoted argument: `sh -c 'kill -9 42'` reached `sh`
-/// as `-c`, `'kill`, `-9`, `42'` (#2661).
+/// Splitting on bare whitespace broke every quoted argument: `sh -c 'kill -9
+/// 42'` reached `sh` as `-c`, `'kill`, `-9`, `42'` (#2661).
 fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
-    let mut parts = shlex::split(cmd)
+    let mut parts = split_command_line(cmd)
         .filter(|parts| !parts.is_empty())
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("launch command `{cmd}` is empty or has unbalanced quotes"),
+                format!("launch command `{cmd}` is empty or has an unterminated quote or escape"),
             )
         })?
         .into_iter();
@@ -247,6 +301,22 @@ mod launch_app_tests {
     }
 
     #[test]
+    fn command_line_splits_quotes_and_escapes_without_shell_syntax() {
+        let split = |cmd| split_command_line(cmd).expect("well-formed");
+        assert_eq!(split("sh -c 'kill -9 42'"), ["sh", "-c", "kill -9 42"]);
+        assert_eq!(
+            split(r#""/opt/My App/app" --name="a \"b\" \$c" x\ y"#),
+            ["/opt/My App/app", "--name=a \"b\" $c", "x y"]
+        );
+        // Executed directly, so `#` starts no comment and `''` is an argument.
+        assert_eq!(split("app #notes a#b ''"), ["app", "#notes", "a#b", ""]);
+        assert_eq!(split("  app\t--flag  "), ["app", "--flag"]);
+        assert_eq!(split_command_line("app 'open"), None);
+        assert_eq!(split_command_line("app \"open"), None);
+        assert_eq!(split_command_line("app \\"), None);
+    }
+
+    #[test]
     fn launch_command_with_unbalanced_quotes_is_refused() {
         let err = spawn_launch_command("/bin/sh -c 'exit", &[]).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
@@ -314,7 +384,7 @@ impl Tool for LaunchAppTool {
                 URLs to open). Resolution precedence: launch_path > name > bundle_id. Errors \
                 when the name resolves to nothing launchable.".into(),
             input_schema: json!({"type":"object","properties":{
-                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; split with shell quoting rules and run directly, not through a shell."},
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; split on whitespace with shell-style quotes and escapes (no expansion or comments) and run directly, not through a shell."},
                 "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},

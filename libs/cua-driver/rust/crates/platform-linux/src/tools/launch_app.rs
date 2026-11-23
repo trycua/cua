@@ -77,6 +77,11 @@ fn split_command_line(cmd: &str) -> Option<Vec<String>> {
 ///
 /// Splitting on bare whitespace broke every quoted argument: `sh -c 'kill -9
 /// 42'` reached `sh` as `-c`, `'kill`, `-9`, `42'` (#2661).
+///
+/// The remote-debugging guard runs here on the split argv, so it covers a
+/// caller's command and a resolved desktop entry alike: quotes can join
+/// fragments into a switch no raw string spells out, such as
+/// `--remote-debugging-"port"=0`. A refusal is `PermissionDenied`.
 fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
     let mut parts = split_command_line(cmd)
         .filter(|parts| !parts.is_empty())
@@ -90,6 +95,15 @@ fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::
     let prog = parts.next().unwrap_or_default();
     let mut rest: Vec<String> = parts.collect();
     rest.extend(additional_arguments.iter().cloned());
+    if std::iter::once(&prog)
+        .chain(&rest)
+        .any(|arg| cua_driver_core::launch_guard::contains_remote_debugging_flag(arg))
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
+        ));
+    }
     let mut launch = std::process::Command::new(&prog);
     launch
         .args(&rest)
@@ -324,23 +338,16 @@ mod launch_app_tests {
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
-    #[tokio::test]
-    async fn quote_joined_remote_debugging_switch_is_refused() {
-        for args in [
-            json!({"launch_path": "/bin/sh --remote-debugging-\"port\"=0"}),
-            json!({"name": "/bin/sh --remote-debugging-'pipe'"}),
-        ] {
-            let result = LaunchAppTool.invoke(args.clone()).await;
-            assert_eq!(result.is_error, Some(true), "{args}");
-            match result.content.first() {
-                Some(cua_driver_core::protocol::Content::Text { text, .. }) => assert_eq!(
-                    text,
-                    cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
-                    "{args}"
-                ),
-                _ => panic!("{args}: refusal has no text"),
-            }
-        }
+    #[test]
+    fn spawn_refuses_a_quote_joined_remote_debugging_switch() {
+        // Both a caller's command and a resolved desktop entry spawn through
+        // here, and the raw-string check in `invoke` cannot see this switch.
+        let err = spawn_launch_command("/bin/sh --remote-debugging-'port'=0", &[]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            err.to_string(),
+            cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL
+        );
     }
 
     #[test]
@@ -424,20 +431,10 @@ impl Tool for LaunchAppTool {
                 "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
             );
         }
-        // Check the split argv as well as the raw strings: quotes can join
-        // fragments into a switch that no raw string spells out, such as
-        // `--remote-debugging-"port"=0`.
-        let split_commands: Vec<String> = launch_path_opt
-            .iter()
-            .chain(&name_opt)
-            .filter_map(|cmd| split_command_line(cmd))
-            .flatten()
-            .collect();
         if launch_path_opt
             .as_deref()
             .into_iter()
             .chain(name_opt.as_deref())
-            .chain(split_commands.iter().map(String::as_str))
             .chain(additional_arguments.iter().map(String::as_str))
             .any(cua_driver_core::launch_guard::contains_remote_debugging_flag)
         {
@@ -493,6 +490,14 @@ impl Tool for LaunchAppTool {
                                 Some(pid),
                                 cmd.to_owned(),
                             ));
+                        }
+                        // The guard's refusal carries a payload; an OS EACCES
+                        // from exec does not, and still falls through below.
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::PermissionDenied
+                                && e.get_ref().is_some() =>
+                        {
+                            return Err(e.into());
                         }
                         Err(_) => {
                             // Not an executable on PATH. Resolve the name against

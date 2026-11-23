@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.5...cua-spacesd-v0.17.6) (2026-11-23)
+
+
+### Bug Fixes
+
+* **relay:** refresh the service token in the background; no lock across network calls (CUA-4415) ([#8614](https://github.com/trycua/cua/issues/8614)) ([5f2a04f](https://github.com/trycua/cua/commit/5f2a04f66a60fe5c7021afc555d138619fabd584))
+
 ## [0.17.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.4...cua-spacesd-v0.17.5) (2026-11-23)
 
 

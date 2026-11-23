@@ -143,6 +143,41 @@ pub fn desktop_max_image_dimension_schema() -> Value {
     })
 }
 
+/// Shared `get_desktop_state.exclude_window_ids`: windows the capture leaves
+/// out. Every platform advertises it; the ones that cannot exclude a window
+/// refuse a non-empty list through [`refuse_desktop_window_exclusion`].
+pub fn desktop_exclude_window_ids_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": { "type": "integer", "minimum": 1 },
+        "description": "Optional window_ids from list_windows to leave out of the capture, \
+            e.g. your own floating panel, so its pixels never reach the model. macOS only: \
+            other platforms refuse a non-empty list with code `window_exclusion_unsupported`. \
+            When the windows cannot be left out (an unknown window_id, or ScreenCaptureKit \
+            unavailable), the call fails and returns no image."
+    })
+}
+
+/// Refuse a non-empty `get_desktop_state.exclude_window_ids` on a platform
+/// whose display capture cannot leave a window out. `reason` names the
+/// platform limitation.
+pub fn refuse_desktop_window_exclusion(
+    exclude_window_ids: Option<&[u64]>,
+    reason: &str,
+) -> Result<(), crate::protocol::ToolResult> {
+    match exclude_window_ids {
+        Some(ids) if !ids.is_empty() => Err(crate::protocol::ToolResult::error(format!(
+            "get_desktop_state: exclude_window_ids is not supported here: {reason}"
+        ))
+        .with_structured(json!({
+            "code": "window_exclusion_unsupported",
+            "tool": "get_desktop_state",
+            "detail": reason,
+        }))),
+        _ => Ok(()),
+    }
+}
+
 /// Clamp a caller-supplied `timeout_ms` to the shared bounds, or apply the
 /// default when absent / not an integer.
 pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
@@ -341,6 +376,17 @@ mod tests {
             resolve_timeout_ms_with_first_snapshot_grace(Some(&json!(750)), false, 2_000),
             750
         );
+    }
+
+    #[test]
+    fn desktop_window_exclusion_refuses_only_a_nonempty_list() {
+        assert!(refuse_desktop_window_exclusion(None, "no exclusion").is_ok());
+        assert!(refuse_desktop_window_exclusion(Some(&[]), "no exclusion").is_ok());
+        let refused = refuse_desktop_window_exclusion(Some(&[42]), "no exclusion").unwrap_err();
+        assert_eq!(refused.is_error, Some(true));
+        let structured = refused.structured_content.unwrap();
+        assert_eq!(structured["code"], "window_exclusion_unsupported");
+        assert_eq!(structured["detail"], "no exclusion");
     }
 
     #[test]

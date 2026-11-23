@@ -570,6 +570,18 @@ pub struct GetDesktopStateInput {
     #[schemars(schema_with = "nonnegative_integer_schema")]
     #[uniffi(default = None)]
     pub max_image_dimension: Option<u32>,
+    /// Windows to leave out of the capture, by the `window_id` that
+    /// `list_windows` reports. Only macOS supports this; other platforms
+    /// refuse a non-empty list with `window_exclusion_unsupported`. When the
+    /// windows cannot be left out, the call fails and returns no image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "window_id_list_schema")]
+    #[uniffi(default = None)]
+    pub exclude_window_ids: Option<Vec<u64>>,
+}
+
+fn window_id_list_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "array", "items": { "type": "integer", "minimum": 1 } })
 }
 
 fn nonnegative_integer_schema(_: &mut SchemaGenerator) -> Schema {

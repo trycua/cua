@@ -48,7 +48,8 @@ impl Tool for GetDesktopStateTool {
                 "properties": {
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." },
-                    "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
+                    "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema(),
+                    "exclude_window_ids": cua_driver_core::tool_schema::desktop_exclude_window_ids_schema()
                 },
                 "additionalProperties": false
             }),
@@ -63,6 +64,12 @@ impl Tool for GetDesktopStateTool {
             Ok(input) => input,
             Err(error) => return error,
         };
+        if let Err(refused) = cua_driver_core::tool_schema::refuse_desktop_window_exclusion(
+            input.exclude_window_ids.as_deref(),
+            "Windows display capture cannot leave out another process's window; its owner can call SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) instead",
+        ) {
+            return refused;
+        }
         let screenshot_out_file = input.screenshot_out_file;
         let max_image_dimension = input.max_image_dimension.filter(|cap| *cap > 0);
 

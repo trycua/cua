@@ -44,14 +44,16 @@ fn def() -> &'static ToolDef {
             `max_image_dimension` (the configured default unless given); pixels of the \
             returned image map back to the screen through its capture. Use its PNG as the coordinate source for actions \
             whose target is {kind:\"desktop\",display_id:\"primary\"}. Returns the true \
-            screen size and backing scale factor. Vision-only: no AX tree walk."
+            screen size and backing scale factor. Vision-only: no AX tree walk. \
+            `exclude_window_ids` leaves the given windows out of the image, or the call fails."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." },
-                "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
+                "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema(),
+                "exclude_window_ids": cua_driver_core::tool_schema::desktop_exclude_window_ids_schema()
             },
             "additionalProperties": false
         }),
@@ -86,6 +88,11 @@ impl Tool for GetDesktopStateTool {
             )
         });
         let max_image_dimension = max_image_dimension.filter(|cap| *cap > 0);
+        let exclude_window_ids = match parse_exclude_window_ids(input.exclude_window_ids.as_deref())
+        {
+            Ok(ids) => ids,
+            Err(result) => return result,
+        };
         let screenshot_out_file = input.screenshot_out_file.map(|s| {
             // Expand ~ prefix (mirrors get_window_state).
             if let Some(relative) = s.strip_prefix("~/") {
@@ -105,6 +112,7 @@ impl Tool for GetDesktopStateTool {
         // Capture the FULL display at native size — no resize. Run the
         // blocking display capture off the async runtime.
         let out_file = screenshot_out_file.clone();
+        let excluded = exclude_window_ids.clone();
         let res = tokio::task::spawn_blocking(
             move || -> anyhow::Result<(
                 Vec<u8>,
@@ -117,7 +125,7 @@ impl Tool for GetDesktopStateTool {
                 // The agent reads this image, so the Driver's own cursor and
                 // session pill must not sit over the controls it is reading.
                 let (png, overlay_capture) =
-                    crate::capture::screenshot_display_bytes_excluding_overlay()?;
+                    crate::capture::screenshot_display_bytes_excluding_overlay(&excluded)?;
                 let full = crate::capture::png_dimensions(&png)?;
                 // Capped image: later desktop-scope pixels from it are
                 // mapped back at dispatch and by its capture_id.
@@ -141,7 +149,17 @@ impl Tool for GetDesktopStateTool {
         let (png, file_path, screenshot_width, screenshot_height, full_size, overlay_capture) =
             match res {
                 Ok(Ok(v)) => v,
-                Ok(Err(e)) => return ToolResult::error(format!("Desktop screenshot failed: {e}")),
+                Ok(Err(e)) => {
+                    let result = ToolResult::error(format!("Desktop screenshot failed: {e}"));
+                    return match e.downcast_ref::<crate::capture::WindowExclusionError>() {
+                        Some(exclusion) => result.with_structured(serde_json::json!({
+                            "code": exclusion.code(),
+                            "tool": "get_desktop_state",
+                            "detail": exclusion.to_string(),
+                        })),
+                        None => result,
+                    };
+                }
                 Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
             };
 
@@ -194,6 +212,9 @@ impl Tool for GetDesktopStateTool {
         if let Some(ref fp) = file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
+        if !exclude_window_ids.is_empty() {
+            structured["excluded_window_ids"] = serde_json::json!(exclude_window_ids);
+        }
 
         ToolResult {
             content,
@@ -202,6 +223,25 @@ impl Tool for GetDesktopStateTool {
             action_record: None,
         }
     }
+}
+
+/// macOS window ids are `CGWindowID`s; a wider value names no window.
+fn parse_exclude_window_ids(ids: Option<&[u64]>) -> Result<Vec<u32>, ToolResult> {
+    ids.unwrap_or_default()
+        .iter()
+        .map(|&id| {
+            u32::try_from(id).map_err(|_| {
+                ToolResult::error(format!(
+                    "get_desktop_state: exclude_window_ids entry {id} is not a macOS window id"
+                ))
+                .with_structured(serde_json::json!({
+                    "code": "invalid_arguments",
+                    "tool": "get_desktop_state",
+                    "detail": format!("exclude_window_ids entry {id} exceeds u32"),
+                }))
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -228,6 +268,7 @@ mod tests {
         );
         assert!(props.contains_key("session"));
         assert!(props.contains_key("screenshot_out_file"));
+        assert!(props.contains_key("exclude_window_ids"));
         assert_eq!(
             d.input_schema["additionalProperties"],
             serde_json::json!(false)
@@ -241,6 +282,20 @@ mod tests {
         assert!(
             desc.contains("screen") || desc.contains("display"),
             "description must mention 'screen' or 'display'"
+        );
+    }
+
+    #[test]
+    fn exclude_window_ids_refuses_ids_wider_than_a_cg_window_id() {
+        assert_eq!(parse_exclude_window_ids(None).unwrap(), Vec::<u32>::new());
+        assert_eq!(
+            parse_exclude_window_ids(Some(&[7, 42])).unwrap(),
+            vec![7, 42]
+        );
+        let refused = parse_exclude_window_ids(Some(&[u64::from(u32::MAX) + 1])).unwrap_err();
+        assert_eq!(
+            refused.structured_content.unwrap()["code"],
+            "invalid_arguments"
         );
     }
 }

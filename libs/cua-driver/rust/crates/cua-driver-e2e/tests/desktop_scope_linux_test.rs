@@ -710,3 +710,24 @@ fn window_scope_rejects_windowless_click() {
         Observation::delivered(vec![OracleKind::Protocol], Evidence::default())
     });
 }
+
+/// This platform's display capture cannot leave a window out, so a non-empty
+/// `exclude_window_ids` is refused instead of returning an image that still
+/// shows the window.
+#[test]
+#[ignore]
+fn desktop_state_refuses_window_exclusion() {
+    let label = "linux-desktop-state-exclude-window";
+    let mut driver = McpDriver::spawn_named(label).expect("start source-built driver");
+    start_scope(&mut driver, label, "desktop");
+    let refused = driver.call(
+        "get_desktop_state",
+        serde_json::json!({ "session": label, "exclude_window_ids": [1] }),
+    );
+    assert!(
+        refused.is_error()
+            && refused.structured()["code"].as_str() == Some("window_exclusion_unsupported"),
+        "window exclusion was not refused: {}",
+        refused.text()
+    );
+}

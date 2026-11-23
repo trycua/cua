@@ -74,6 +74,11 @@ fn document_is_setup_page(
     }
 }
 
+/// Whether the approved window is showing the setup page. The rendered
+/// document URI decides in every UI language. Only when the browser reports
+/// no URI does the page's own text join the proof: the heading is localized
+/// page content, so it may narrow that fallback but never stands in for the
+/// URI.
 fn setup_page_proven(
     nodes: &[AtspiNode],
     descriptor: &BrowserSetupDescriptor,
@@ -84,6 +89,9 @@ fn setup_page_proven(
             !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
         })
     });
+    if let Some(exact_document) = document_is_setup_page(nodes, descriptor) {
+        return exact_document && !has_contradictory_address_bar;
+    }
     let exact_url = native_fields(nodes).any(|node| omnibox_holds_setup_url(node, descriptor));
     let exact_heading = nodes.iter().any(|node| {
         role_is(node, &["heading", "section", "static"])
@@ -96,13 +104,14 @@ fn setup_page_proven(
                 .iter()
                 .any(|title| field_equals(node, title))
     });
-    let exact_identity = match document_is_setup_page(nodes, descriptor) {
-        Some(exact_document) => exact_document && !has_contradictory_address_bar,
-        None => exact_url || (trusted_navigation && !has_contradictory_address_bar && exact_page),
-    };
+    let exact_identity =
+        exact_url || (trusted_navigation && !has_contradictory_address_bar && exact_page);
     exact_identity && exact_heading
 }
 
+/// The setup page's one actionable checkbox inside the rendered document.
+/// Its label is localized page text, so it is found by role and position, as
+/// the Windows adapter does; a second candidate is refused.
 fn exact_setup_checkbox<'a>(
     nodes: &'a [AtspiNode],
     descriptor: &BrowserSetupDescriptor,
@@ -114,8 +123,8 @@ fn exact_setup_checkbox<'a>(
     let matches = nodes
         .iter()
         .filter(|node| {
-            role_is(node, &["check box", "checkbox"])
-                && field_equals(node, descriptor.checkbox_label)
+            node.in_web_content
+                && role_is(node, &["check box", "checkbox"])
                 && !node.actions.is_empty()
                 && node.enabled != Some(false)
                 && node.element_index.is_some()
@@ -126,7 +135,7 @@ fn exact_setup_checkbox<'a>(
         [node] => Ok(Some(*node)),
         _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple exact remote-debugging checkboxes were exposed",
+            "multiple web remote-debugging checkboxes were exposed on the setup page",
         )),
     }
 }

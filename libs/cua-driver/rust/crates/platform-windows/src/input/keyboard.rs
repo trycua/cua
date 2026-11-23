@@ -930,11 +930,18 @@ fn with_confirmed_foreground<T>(
             Some(attachment) if attachment.wait_for_drain(Duration::from_secs(2)) => {
                 TypingTurn::Drained
             }
-            Some(_) => {
+            Some(attachment) => {
+                // Same evidence as a stalled text unit: whether the target
+                // thread still answers messages (busy in its own handler vs.
+                // waiting on input it never gets) and where its focus is.
+                let actual = unsafe { GetForegroundWindow() };
                 result = Err(anyhow::anyhow!(
                     "input_delivery_stalled: Windows did not confirm that the target read the \
                      {operation} input within 2000 ms. It was inserted and may still appear in \
-                     the target. Nothing was retried; inspect the target before repeating it."
+                     the target. Nothing was retried; inspect the target before repeating it. \
+                     Foreground window now: {fg}. {detail}",
+                    fg = window_label(actual),
+                    detail = attachment.stall_detail(actual),
                 ));
                 TypingTurn::Undrained
             }

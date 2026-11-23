@@ -199,6 +199,9 @@ impl Tool for TypeTextTool {
             }
         }
 
+        if let Some(refusal) = hwnd_opt.and_then(crate::vmware::refuse_console_tool) {
+            return refusal;
+        }
         // Same no-raise guard as click: a XAML/WPF ValuePattern.SetValue handler
         // calls UIElement.Focus()→SetForegroundWindow; WS_EX_NOACTIVATE on the
         // target makes that a no-op while the value still gets set. Safe because

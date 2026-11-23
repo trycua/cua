@@ -1,12 +1,19 @@
 from typing import Any, Dict, List
 
+from ..usage import normalize_response_cost
 from .base import AsyncCallbackHandler
 
 
 class BudgetExceededError(Exception):
-    """Exception raised when budget is exceeded."""
+    """Exception raised when a spending limit is exceeded or cannot be enforced."""
 
     pass
+
+
+UNKNOWN_COST_MESSAGE = (
+    "Cannot enforce budget: response cost is unknown. "
+    "Configure model pricing before continuing a budgeted run."
+)
 
 
 class BudgetManagerCallback(AsyncCallbackHandler):
@@ -27,16 +34,26 @@ class BudgetManagerCallback(AsyncCallbackHandler):
         self.reset_after_each_run = reset_after_each_run
         self.raise_error = raise_error
         self.total_cost = 0.0
+        self._cost_unknown = False
 
     async def on_run_start(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]) -> None:
         """Reset budget if configured to do so."""
         if self.reset_after_each_run:
             self.total_cost = 0.0
+            self._cost_unknown = False
 
     async def on_usage(self, usage: Dict[str, Any]) -> None:
         """Track usage costs."""
-        if "response_cost" in usage:
-            self.total_cost += usage["response_cost"]
+        cost = normalize_response_cost(usage.get("response_cost"))
+        if cost is None:
+            first_unknown = not self._cost_unknown
+            self._cost_unknown = True
+            if self.raise_error:
+                raise BudgetExceededError(UNKNOWN_COST_MESSAGE)
+            if first_unknown:
+                print(UNKNOWN_COST_MESSAGE)
+        else:
+            self.total_cost += cost
 
     async def on_run_continue(
         self,
@@ -45,6 +62,10 @@ class BudgetManagerCallback(AsyncCallbackHandler):
         new_items: List[Dict[str, Any]],
     ) -> bool:
         """Check if budget allows continuation."""
+        if self._cost_unknown:
+            if self.raise_error:
+                raise BudgetExceededError(UNKNOWN_COST_MESSAGE)
+            return False
         if self.total_cost >= self.max_budget:
             if self.raise_error:
                 raise BudgetExceededError(

@@ -1039,6 +1039,8 @@ class ComputerAgent:
                             prompt_tokens=0,
                             completion_tokens=0,
                             total_tokens=0,
+                            # Tool results do not make a model request.
+                            response_cost=0.0,
                         ),
                     }
 

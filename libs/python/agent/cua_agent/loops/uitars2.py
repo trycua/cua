@@ -20,6 +20,7 @@ from litellm.responses.litellm_completion_transformation.transformation import (
 )
 
 from ..decorators import register_agent
+from ..usage import normalize_response_cost
 from .omniparser import get_last_computer_call_output  # type: ignore
 
 try:
@@ -835,7 +836,7 @@ class UITARS2Config:
             **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(  # type: ignore
                 response.usage
             ).model_dump(),
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
+            "response_cost": normalize_response_cost(response._hidden_params.get("response_cost")),
         }
         if _on_usage:
             await _on_usage(usage)

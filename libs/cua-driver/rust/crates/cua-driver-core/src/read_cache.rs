@@ -164,7 +164,10 @@ impl<V: Clone> ReplyCache<V> {
             return Lookup::Miss;
         };
         if entry.generation != generation {
-            entries.remove(key);
+            // An entry from after this read's action stays for later reads.
+            if entry.generation < generation {
+                entries.remove(key);
+            }
             return Lookup::Miss;
         }
         let age = now.saturating_duration_since(entry.started);
@@ -184,22 +187,27 @@ impl<V: Clone> ReplyCache<V> {
     }
 
     /// Record `computed`, given the generation current now. A refresh ends
-    /// only the refresh of the entry it was started for. An error, a
-    /// computation from a retired generation, and one older than the kept
-    /// entry are not stored.
+    /// the refresh of, and may replace, only the entry it was started for.
+    /// An error, a computation from a retired generation, and one older than
+    /// the kept entry are not stored.
     fn store(&self, key: String, computed: Computed<V>, current_generation: u64) {
         let mut entries = self.lock();
         let current = entries.get_mut(&key);
+        let owns_entry = computed.refreshes.is_none_or(|entry| {
+            current
+                .as_ref()
+                .is_some_and(|current| current.started == entry)
+        });
         let newer_kept = current
             .as_ref()
             .is_some_and(|entry| entry.started > computed.started);
         let is_new_key = current.is_none();
-        if let Some(entry) = current.filter(|entry| computed.refreshes == Some(entry.started)) {
+        if let Some(entry) = current.filter(|_| owns_entry && computed.refreshes.is_some()) {
             entry.refreshing = false;
         }
         let Some(value) = computed
             .value
-            .filter(|_| !newer_kept && computed.generation == current_generation)
+            .filter(|_| owns_entry && !newer_kept && computed.generation == current_generation)
         else {
             return;
         };

@@ -52,22 +52,26 @@ fn is_manifest(body: &str) -> bool {
         .any(|(key, _)| MANIFEST_KEYS.contains(&key.trim().trim_matches(['"', '\''])))
 }
 
-/// YAML fences that are capability manifests, as (line, body).
+/// YAML fences that are capability manifests, as (line, body). A fence
+/// indented under a list item has that indent removed from its body.
 fn manifest_fences(text: &str) -> Vec<(usize, String)> {
     let mut fences = Vec::new();
-    let mut open: Option<(usize, String)> = None;
+    let mut open: Option<(usize, usize, String)> = None;
     for (index, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
         match open.as_mut() {
-            None if trimmed.starts_with("```yaml") => open = Some((index + 1, String::new())),
+            None if trimmed.starts_with("```yaml") => {
+                open = Some((index + 1, line.len() - trimmed.len(), String::new()))
+            }
             Some(_) if trimmed.starts_with("```") => {
-                let (start, body) = open.take().unwrap();
+                let (start, _, body) = open.take().unwrap();
                 if is_manifest(&body) {
                     fences.push((start, body));
                 }
             }
-            Some((_, body)) => {
-                body.push_str(line);
+            Some((_, indent, body)) => {
+                let strip = line.len() - line.trim_start().len();
+                body.push_str(&line[strip.min(*indent)..]);
                 body.push('\n');
             }
             None => {}
@@ -114,5 +118,27 @@ fn documented_capability_manifests_load_in_bounded_mode() {
         failures.is_empty(),
         "documented capability manifests the driver rejects:\n{}",
         failures.join("\n")
+    );
+}
+
+#[test]
+fn selector_finds_nested_quoted_and_unparseable_manifests() {
+    let page = concat!(
+        "```yaml\nallow:\n  tools: [click]\n```\n",
+        "1. Write the manifest:\n\n   ```yaml\n   version: 4\n   allow:\n     tools: [click]\n   ```\n",
+        "```yaml\n\"version\": 3\n```\n",
+        "```yaml\nversion: 3\nversion: 3\n```\n",
+    );
+    let found: Vec<_> = manifest_fences(page)
+        .into_iter()
+        .map(|(line, body)| (line, body.lines().next().unwrap().to_owned()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (7, "version: 4".to_owned()),
+            (12, "\"version\": 3".to_owned()),
+            (15, "version: 3".to_owned()),
+        ]
     );
 }

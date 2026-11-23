@@ -12,9 +12,17 @@ import { expect, test } from "./host";
 
 test("the image list is not clipped by the System card", async ({ page }) => {
   await page.goto("/spaces?bridge=demo&parity");
-  await page.getByRole("button", { name: /New Space/ }).first().click();
   const wizard = page.locator("[data-new-space]");
-  await expect(wizard).toHaveAttribute("data-step", "0");
+  // A click that lands before the page has wired its handlers (a slow runner)
+  // opens nothing: click again until the wizard is there.
+  await expect(async () => {
+    if (!(await wizard.isVisible()))
+      await page
+        .getByRole("button", { name: /New Space/ })
+        .first()
+        .click();
+    await expect(wizard).toHaveAttribute("data-step", "0", { timeout: 2000 });
+  }).toPass({ timeout: 20_000 });
   await wizard.locator("[data-image-toggle]").click();
   const list = wizard.locator("[data-image-suggestions]");
   await expect(list).toBeVisible();

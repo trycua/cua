@@ -182,6 +182,9 @@ mod tests {
             created_ms: 1,
             expires_ms: None,
             url: "https://x".into(),
+            tcp: None,
+            origin: None,
+            waiting: None,
         }
     }
 

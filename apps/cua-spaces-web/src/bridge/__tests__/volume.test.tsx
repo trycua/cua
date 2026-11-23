@@ -32,7 +32,13 @@ describe("the demo host's Cua Volume", () => {
     await a.call("volume.resolve", { path: "public/plan.md" });
     expect((await a.call("volume.overview", {})).sync?.conflicts).toEqual([]);
     const check = await a.call("volume.storageSet", {
-      update: { backend: "s3", s3: { region: "us-east-1", bucket: "b", root: "", path_style: false }, access_key_id: "k", secret_access_key: "s", dry_run: true },
+      update: {
+        backend: "s3",
+        s3: { region: "us-east-1", bucket: "b", root: "", path_style: false },
+        access_key_id: "k",
+        secret_access_key: "s",
+        dry_run: true,
+      },
     });
     expect(check).toMatchObject({ ok: true, applied: false });
     expect((await a.call("volume.storage", {}))?.backend).toBe("fs");
@@ -129,6 +135,6 @@ describe.skipIf(!wasmBuilt)("the first run's Cua Volume page", () => {
     act(() => probe.flow.send({ type: "mode-chosen", mode: "client" }));
     const volume = probe.flow.view?.todos?.find((t) => t.id === "volume");
     expect(volume?.done).toBe(true);
-    expect(volume?.note).toBe("Shared folder: files your agents can share across your machines. In Finder.");
+    expect(volume?.note).toBe("Shared folder: files your agents can share across your computers. In Finder.");
   });
 });

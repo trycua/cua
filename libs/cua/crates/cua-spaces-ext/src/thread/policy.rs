@@ -510,6 +510,7 @@ mod tests {
             DENIED
         );
         assert_eq!(g(&member, "notifications_list").unwrap_err(), DENIED);
+        assert_eq!(g(&member, "notifications_delete").unwrap_err(), DENIED);
         assert_eq!(g(&member, "agent_add").unwrap_err(), DENIED);
         assert!(g(&relay("admin", "a"), "agent_set_rights").is_ok());
         assert!(g(&relay("owner", "o"), "agent_schedule_add").is_ok());

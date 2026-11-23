@@ -236,6 +236,17 @@ impl OnboardingStore {
             .unwrap_or_default()
     }
 
+    /// Settings, About, "Reset & Show": the saved first run is forgotten, so it
+    /// is due from its first step. The file is removed, as the app core's reset
+    /// plan says (`onboarding_reset.rs`: `onboarding.json`). Safe to run twice.
+    pub fn reset(&self) -> Result<(), String> {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("{}: {e}", self.path.display())),
+        }
+    }
+
     pub fn complete(&self, mode: OnboardingMode) -> Result<(), String> {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -364,6 +375,10 @@ impl HostCommands {
             mode: stored.mode,
             installer_mode: self.installer_mode,
         }
+    }
+
+    pub fn reset_onboarding(&self) -> Result<(), String> {
+        self.onboarding.reset()
     }
 
     pub fn complete_onboarding(&self, mode: &str) -> Result<(), String> {

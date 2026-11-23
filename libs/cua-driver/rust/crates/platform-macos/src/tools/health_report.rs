@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `health_report` provider.
 //!
 //! Implements [`HealthCheckProvider`] for darwin. Reuses the existing
@@ -316,7 +319,7 @@ fn check_screen_capture_capability() -> CheckEntry {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn application_bundle_identifier_for_pid(pid: u32) -> Option<String> {
+pub(super) fn application_bundle_identifier_for_pid(pid: u32) -> Option<String> {
     use core_foundation::url::kCFURLPOSIXPathStyle;
     use security_framework::os::macos::code_signing::{Flags, GuestAttributes, SecCode};
 

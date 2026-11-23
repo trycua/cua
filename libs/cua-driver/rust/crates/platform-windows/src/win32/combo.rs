@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `set_value` on a native Win32 combo box (the `COMBOBOX` class, which
 //! WinForms and MFC combo boxes subclass).
 //!
@@ -181,8 +184,8 @@ fn edit_child(combo: isize) -> Option<isize> {
     let class = wide("Edit");
     unsafe {
         FindWindowExW(
-            hwnd(combo),
-            HWND::default(),
+            Some(hwnd(combo)),
+            None,
             PCWSTR(class.as_ptr()),
             PCWSTR::null(),
         )

@@ -6,7 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / ".github/workflows"
-TAG_PUSH = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
+TAG_PUSH = (
+    "((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) "
+    "|| (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))"
+)
 
 
 def source(name: str) -> str:
@@ -17,12 +20,9 @@ def test_driver_stable_publish_gate_and_workflow_name_are_frozen():
     driver = source("cd-rust-cua-driver.yml")
     assert driver.startswith('name: "CD: Cua Driver (cross-platform)"')
     release = driver.split("\n  release:\n", 1)[1].split("    steps:\n", 1)[0]
-    # Only the stable tag push publishes. Nightly workflow_call runs inherit
+    # Only the stable tag push, or a main-dispatched rebuild of an existing stable tag, publishes. Nightly workflow_call runs inherit
     # the caller's schedule/workflow_dispatch event and can never match.
-    assert (
-        "    if: github.event_name == 'push' && "
-        "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')\n"
-    ) in release
+    assert f"    if: {TAG_PUSH}\n" in release
     assert "inputs.publish" not in driver
     sdk = source("cd-py-cua-driver.yml")
     assert 'workflows: ["CD: Cua Driver (cross-platform)"]' in sdk
@@ -42,7 +42,9 @@ def test_driver_nightly_publishes_only_after_the_desktop_e2e_gate():
     build = nightly.split("\n  build:\n", 1)[1].split("\n\n", 1)[0]
     assert "      channel: nightly\n" in build
     assert "      source_ref: ${{ inputs.source_sha || github.sha }}\n" in build
-    gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
+    gate_sha = (
+            "${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}"
+        )
     for job, sha_input in (
         ("e2e-linux", "ref"),
         ("e2e-windows", "ref"),
@@ -50,7 +52,7 @@ def test_driver_nightly_publishes_only_after_the_desktop_e2e_gate():
         ("e2e-standalone-browsers", "ref"),
     ):
         block = driver.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
-        assert f"    if: ({TAG_PUSH}) || inputs.channel == 'nightly'\n" in block
+        assert f"    if: {TAG_PUSH} || inputs.channel == 'nightly'\n" in block
         assert f"\n      {sha_input}: {gate_sha}" in block
     # A failed suite fails the reusable build, and publish requires a
     # successful build with no status-function bypass.

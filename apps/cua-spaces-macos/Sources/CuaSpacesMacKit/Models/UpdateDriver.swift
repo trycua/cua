@@ -35,9 +35,13 @@ public struct UpdateState: Equatable, Sendable {
 
     public static func idle(currentVersion: String) -> UpdateState { UpdateState(currentVersion: currentVersion) }
 
-    /// The release's page: the repository's tag for a Cua Spaces version.
+    /// The release's page: the repository's tag for a Cua Spaces version;
+    /// for a nightly, the rolling nightly release (its notes list the changes).
     public static func notesURL(version: String) -> String {
-        "https://github.com/trycua/cua/releases/tag/cua-spaces-v\(version)"
+        if version.split(separator: "+").first?.contains("-nightly") == true {
+            return "https://github.com/trycua/cua/releases/tag/cua-spaces-nightly"
+        }
+        return "https://github.com/trycua/cua/releases/tag/cua-spaces-v\(version)"
     }
 
     /// The bridge's record; absent values are explicit nulls.
@@ -155,9 +159,55 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
     public var onEvent: ((String) -> Void)?
     /// Sparkle's held "ready to install" reply.
     private var heldReply: ((SPUUserUpdateChoice) -> Void)?
-    /// The silent path's immediate install (`willInstallUpdateOnQuit`).
-    private var immediateInstall: (() -> Void)?
+    /// An update downloaded on the silent path (`willInstallUpdateOnQuit`).
+    /// Sparkle's session for it has ended and its installer tool waits for
+    /// the app to quit, so the install block it handed out is dead.
+    private var silentPending = false
+    /// "Restart to update" was pressed on the silent path; the resumed
+    /// session's ready-to-install reply is answered with `.install`.
+    private var installWhenReady = false
+    /// Starts a check, which resumes the silently downloaded update and
+    /// reaches `showReady` (set by `UpdatesModel`).
+    public var resumeSilentUpdate: (() -> Void)?
     private var told = false
+
+    // MARK: - When "Restart to update" does nothing
+
+    /// How long a restart may take before it is treated as stuck.
+    var restartGrace: TimeInterval = 6
+    /// Runs `work` after `delay` seconds (tests run it by hand).
+    var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    /// Quits the app, so Sparkle's own installer applies the staged update on
+    /// the way out (set by `UpdatesModel`).
+    public var quitApp: (() -> Void)?
+    /// Each click on "Restart to update" is one attempt; a late timer of an
+    /// older attempt does nothing.
+    private var restartAttempt = 0
+
+    /// The plain line shown when the update could not be applied by the click
+    /// or by quitting from here.
+    static let restartStuckMessage =
+        "Cua Spaces could not restart by itself. Quit it from the menu bar and open it again to finish the update."
+
+    /// Called when a restart was asked for. A working restart quits the app,
+    /// so a process still running after the grace time is a stuck one: quit
+    /// it (the update is staged, Sparkle installs it at quit), and if even
+    /// that does not end the app, say what to do.
+    private func watchRestart() {
+        restartAttempt += 1
+        let attempt = restartAttempt
+        schedule(restartGrace) { [weak self] in
+            guard let self, attempt == self.restartAttempt else { return }
+            NSLog("Cua Spaces: Restart to update did not restart the app; quitting so the staged update installs")
+            self.quitApp?()
+            self.schedule(self.restartGrace) { [weak self] in
+                guard let self, attempt == self.restartAttempt, self.flow.state.status != .error else { return }
+                self.handleError(Self.restartStuckMessage)
+            }
+        }
+    }
 
     public var state: UpdateState { flow.state }
 
@@ -185,9 +235,9 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
     }
 
     /// The silent path (`automaticallyDownloadsUpdates`): Sparkle installs on
-    /// quit, or at once through `install`.
-    public func silentlyDownloaded(version: String, install: @escaping () -> Void) {
-        immediateInstall = install
+    /// quit, or at once when `installNow` resumes the update.
+    public func silentlyDownloaded(version: String) {
+        silentPending = true
         if flow.state.version == nil { changed { $0.found(version: version) } }
         becameReady()
     }
@@ -200,10 +250,16 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
         if let reply = heldReply {
             heldReply = nil
             reply(.install)
+            watchRestart()
             return true
         }
-        if let install = immediateInstall {
-            install()
+        if silentPending, let resume = resumeSilentUpdate {
+            // Sparkle ignores the install block once it is not given the
+            // install (`willInstallUpdateOnQuit` returns false), so resume
+            // the update through a check and answer its ready prompt.
+            installWhenReady = true
+            resume()
+            watchRestart()
             return true
         }
         return false
@@ -264,6 +320,7 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
     /// a plain line for it (no dialog, so nothing loops).
     func handleError(_ message: String) {
         NSLog("Cua Spaces: the updater failed: %@", message)
+        installWhenReady = false
         changed { $0.failed(message) }
     }
 
@@ -277,8 +334,13 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
 
     public func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
         // Held until installNow: replying here would restart the app.
-        heldReply = reply
         becameReady()
+        if installWhenReady {
+            installWhenReady = false
+            reply(.install)
+            return
+        }
+        heldReply = reply
     }
 
     public func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool,
@@ -295,7 +357,8 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
 
     public func dismissUpdateInstallation() {
         heldReply = nil
-        immediateInstall = nil
+        silentPending = false
+        installWhenReady = false
         told = false
         changed { $0.dismissed() }
     }

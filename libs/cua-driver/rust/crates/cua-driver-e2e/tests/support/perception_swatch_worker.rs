@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Deterministic, model-free stand-in for the `cua-perception` worker.
 //!
 //! The canonical desktop E2E installs this program as a developer-only

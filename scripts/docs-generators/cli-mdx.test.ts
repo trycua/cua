@@ -91,7 +91,7 @@ test('CLI reference: index, one page per group, nav', () => {
   for (const [name, page] of files) {
     if (!name.endsWith('.mdx')) continue;
     assert.ok(page.includes(GENERATED_MARKER), name);
-    assert.ok(page.includes('Version: 1.2.3'), name);
+    assert.ok(!/^\s*Version:/m.test(page), `${name} carries a release version stamp`);
     assert.ok(!page.includes('secret') && !page.includes('dump-docs'), `${name} shows a hidden command`);
     assert.ok(!/undefined|\[object Object\]|—/.test(page), `${name} renders a placeholder or an em dash`);
     assertUniqueAnchors(name, page);
@@ -230,7 +230,6 @@ const mcp: McpReference = {
   server: 'demo mcp',
   generator: 'gen',
   source: 'src',
-  version: '1.2.3',
   description: 'Demo tools.',
   categories: [
     { slug: 'act', title: 'Action tools', summary: 'Act' },

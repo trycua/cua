@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keyed per-session cursor render map shared by every platform overlay.
 //!
 //! Each declared session owns one cursor, keyed by [`CursorKey`]. The macOS,

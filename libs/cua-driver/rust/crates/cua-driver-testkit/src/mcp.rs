@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MCP transport: one long-lived `cua-driver` server over stdio JSON-RPC.
 
 use std::io::{BufRead, BufReader, Write};
@@ -30,8 +33,15 @@ pub struct McpDriver {
     rx: Receiver<String>,
     next_id: u32,
     recording_dir: Option<PathBuf>,
-    recording_started: bool,
-    recording_started_at: Option<Instant>,
+    behavior_video: BehaviorVideo,
+}
+
+/// Where the per-cell behavioral clip is in its lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BehaviorVideo {
+    NotStarted,
+    Recording(Instant),
+    Stopped,
 }
 
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -79,6 +89,14 @@ impl McpDriver {
         Self::spawn_internal(&[], &[], Some(recording_label), false, true)
     }
 
+    /// Spawn the driver without allocating behavior artifacts, for a test
+    /// whose oracle is the driver's first accessibility snapshot: a
+    /// behavioral recording walks the tree on its own turns before the test
+    /// could take that snapshot.
+    pub fn spawn_unrecorded() -> Option<Self> {
+        Self::spawn_internal(&[], &[], None, false, false)
+    }
+
     /// Spawn a named driver with the native cursor overlay enabled.
     ///
     /// Most testkit daemons disable the overlay so unrelated behavior tests
@@ -101,7 +119,12 @@ impl McpDriver {
     /// source-tree daemon.
     pub fn spawn_daemon_proxy_named(socket: &str, recording_label: &str) -> Option<Self> {
         if !daemon_socket_is_reachable(socket) {
-            eprintln!("[testkit] CuaDriver daemon not listening at {socket} — skipping");
+            let hint = if cfg!(target_os = "macos") {
+                " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
+            } else {
+                " —"
+            };
+            eprintln!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
             return None;
         }
         Self::spawn_internal(
@@ -252,8 +275,7 @@ impl McpDriver {
             rx,
             next_id: 2,
             recording_dir: None,
-            recording_started: false,
-            recording_started_at: None,
+            behavior_video: BehaviorVideo::NotStarted,
         };
         d.initialize();
         if prepare_recording {
@@ -270,35 +292,11 @@ impl McpDriver {
     /// daemon is the product path agents use, so ignored GUI tests proxy through an
     /// already-running daemon and skip with a clear note when it is absent.
     #[cfg(target_os = "macos")]
-    pub fn spawn_macos_daemon_proxy() -> Option<Self> {
-        Self::spawn_macos_daemon_proxy_internal(None)
-    }
-
-    /// macOS daemon-proxy variant with a stable recording artifact label.
-    #[cfg(target_os = "macos")]
     pub fn spawn_macos_daemon_proxy_named(recording_label: &str) -> Option<Self> {
-        Self::spawn_macos_daemon_proxy_internal(Some(recording_label))
-    }
-
-    #[cfg(target_os = "macos")]
-    fn spawn_macos_daemon_proxy_internal(recording_label: Option<&str>) -> Option<Self> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
         let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
             .unwrap_or_else(|_| format!("{home}/Library/Caches/cua-driver/cua-driver.sock"));
-        if !daemon_socket_is_reachable(&socket) {
-            eprintln!(
-                "[testkit] CuaDriver daemon not listening at {socket} — \
-                 run `./scripts/install-local.sh` and `cua-driver permissions grant`; skipping"
-            );
-            return None;
-        }
-        Self::spawn_internal(
-            &[],
-            &["mcp", "--socket", &socket],
-            recording_label,
-            false,
-            true,
-        )
+        Self::spawn_daemon_proxy_named(&socket, recording_label)
     }
 
     pub fn daemon_socket(&self) -> &str {
@@ -380,17 +378,30 @@ impl McpDriver {
     /// background posture have been established. The settle interval gives
     /// the video backend time to encode a visible baseline before dispatch.
     pub fn start_behavior_recording(&mut self) {
+        self.start_behavior_recording_with(true);
+    }
+
+    /// [`Self::start_behavior_recording`] without the per-turn accessibility
+    /// walks, for a fixture that publishes no accessibility tree. The
+    /// trajectory declares it, so the validator accepts turns whose state is
+    /// classified `state_capture_disabled`.
+    pub fn start_behavior_recording_without_accessibility_tree(&mut self) {
+        self.start_behavior_recording_with(false);
+    }
+
+    fn start_behavior_recording_with(&mut self, include_accessibility_tree: bool) {
         let Some(output_dir) = self.recording_dir.clone() else {
             return;
         };
-        if self.recording_started {
+        if self.behavior_video != BehaviorVideo::NotStarted {
             return;
         }
         let response = self.call(
             "start_recording",
             serde_json::json!({
                 "output_dir": output_dir.to_string_lossy(),
-                "record_video": true
+                "record_video": true,
+                "include_accessibility_tree": include_accessibility_tree
             }),
         );
         let video_active = response.structured()["video_active"]
@@ -404,8 +415,10 @@ impl McpDriver {
                 response.structured()
             );
         }
-        self.recording_started = true;
-        self.recording_started_at = Some(Instant::now());
+        self.behavior_video = BehaviorVideo::Recording(Instant::now());
+        if !include_accessibility_tree {
+            declare_accessibility_tree_disabled(&output_dir);
+        }
         update_behavior_video_status(&output_dir, "started");
         std::thread::sleep(Duration::from_millis(300));
         mark_behavior_video_baseline_ready(&output_dir);
@@ -415,22 +428,30 @@ impl McpDriver {
         );
     }
 
-    fn stop_e2e_recording(&mut self) {
-        let Some(output_dir) = self.recording_dir.clone() else {
-            return;
-        };
-        if !self.recording_started {
-            let message = "E2E behavioral video boundary was never reached; fixture setup or posture failed before capture";
-            eprintln!("[testkit] {message}");
-            let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
-            return;
-        }
-        if let Some(started_at) = self.recording_started_at.take() {
-            let remaining = remaining_behavior_recording_time(started_at.elapsed());
-            if !remaining.is_zero() {
-                std::thread::sleep(remaining);
+    /// End the behavioral clip now, so the test can inspect the video it
+    /// recorded. Returns the finalized `recording.mp4`, or `None` when no clip
+    /// was recorded or it failed to finalize (`recording-error.txt` says why).
+    pub fn finish_behavior_recording(&mut self) -> Option<PathBuf> {
+        self.stop_e2e_recording()
+    }
+
+    fn stop_e2e_recording(&mut self) -> Option<PathBuf> {
+        let output_dir = self.recording_dir.clone()?;
+        let started_at = match self.behavior_video {
+            BehaviorVideo::Stopped => return None,
+            BehaviorVideo::NotStarted => {
+                let message = "E2E behavioral video boundary was never reached; fixture setup or posture failed before capture";
+                eprintln!("[testkit] {message}");
+                let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
+                return None;
             }
+            BehaviorVideo::Recording(started_at) => started_at,
+        };
+        let remaining = remaining_behavior_recording_time(started_at.elapsed());
+        if !remaining.is_zero() {
+            std::thread::sleep(remaining);
         }
+        self.behavior_video = BehaviorVideo::Stopped;
         let response = self.call("stop_recording", serde_json::json!({}));
         let video_path = output_dir.join("recording.mp4");
         let valid_video = !response.is_error()
@@ -441,7 +462,7 @@ impl McpDriver {
         if valid_video {
             update_behavior_video_status(&output_dir, "finalized");
             eprintln!("[testkit] finalized E2E video at {}", video_path.display());
-            return;
+            return Some(video_path);
         }
 
         let message = format!(
@@ -453,6 +474,7 @@ impl McpDriver {
         update_behavior_video_status(&output_dir, "error");
         let _ = std::fs::create_dir_all(&output_dir);
         let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
+        None
     }
 
     /// Mutable access to the child reaper, e.g. to launch a target app whose
@@ -495,7 +517,8 @@ impl McpDriver {
     pub fn call_raw(&mut self, tool: &str, args: Value) -> Value {
         let id = self.next_id;
         self.next_id += 1;
-        let timeout = call_timeout(self.recording_started, tool, cfg!(target_os = "macos"));
+        let recording = matches!(self.behavior_video, BehaviorVideo::Recording(_));
+        let timeout = call_timeout(recording, tool, cfg!(target_os = "macos"));
         let args = crate::driver::with_full_window_state(tool, args);
         let request = serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -570,7 +593,7 @@ fn daemon_socket_is_reachable(socket: &str) -> bool {
 
 impl Drop for McpDriver {
     fn drop(&mut self) {
-        self.stop_e2e_recording();
+        let _ = self.stop_e2e_recording();
     }
 }
 
@@ -633,6 +656,21 @@ fn update_behavior_video_status(output_dir: &std::path::Path, status: &str) {
     );
 }
 
+fn declare_accessibility_tree_disabled(output_dir: &std::path::Path) {
+    let path = output_dir.join("trajectory.json");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let Ok(mut manifest) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    manifest["accessibility_tree"] = Value::String("disabled".to_owned());
+    let _ = std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    );
+}
+
 fn mark_behavior_video_baseline_ready(output_dir: &std::path::Path) {
     let path = output_dir.join("trajectory.json");
     let Ok(bytes) = std::fs::read(&path) else {
@@ -686,8 +724,7 @@ mod tests {
             rx,
             next_id: 2,
             recording_dir: Some(dir.path().to_owned()),
-            recording_started: false,
-            recording_started_at: None,
+            behavior_video: BehaviorVideo::NotStarted,
         };
         tx.send(
             serde_json::json!({"result": {"content": [
@@ -786,5 +823,65 @@ mod tests {
             timeout_error_message("click", MACOS_RECORDED_CALL_TIMEOUT),
             "TIMEOUT (>75s) on click"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    const PROXY_CHILD_ENV: &str = "CUA_TESTKIT_PROXY_CHILD";
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore]
+    fn macos_proxy_child() {
+        if std::env::var_os(PROXY_CHILD_ENV).is_some() {
+            assert!(super::McpDriver::spawn_macos_daemon_proxy_named("child").is_none());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_proxy_child(socket: &std::path::Path) -> String {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "mcp::tests::macos_proxy_child",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(PROXY_CHILD_ENV, "1")
+            .env("CUA_E2E_MACOS_DAEMON_SOCKET", socket)
+            .env("CUA_TEST_DRIVER_BIN", socket.with_extension("missing-bin"))
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("running 1 test"));
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_proxy_with_missing_socket_prints_install_hint() {
+        let dir = std::env::temp_dir().join(format!("cua-proxy-miss-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("d.sock");
+        let stderr = run_proxy_child(&socket);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(stderr.contains(&format!("not listening at {}", socket.display())));
+        assert!(stderr.contains("./scripts/install-local.sh"));
+        assert!(stderr.contains("cua-driver permissions grant"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_proxy_with_reachable_socket_probes_once() {
+        let dir = crate::socket_tempdir().unwrap();
+        let socket = dir.path().join("d.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stderr = run_proxy_child(&socket);
+        let mut probes = 0;
+        while listener.accept().is_ok() {
+            probes += 1;
+        }
+        assert_eq!(probes, 1);
+        assert!(!stderr.contains("not listening"));
     }
 }

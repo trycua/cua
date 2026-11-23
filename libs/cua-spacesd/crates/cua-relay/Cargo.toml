@@ -9,6 +9,14 @@ repository.workspace = true
 publish = false
 
 [features]
+# jemalloc as the relay binary's allocator (src/main.rs) and its heap
+# gauges (src/process_memory.rs). On by default, so `cargo build -p cua-relay`
+# (the relay image) has it. cua-spacesd embeds this crate as a library and
+# turns it off: it does not use the allocator, and jemalloc does not build
+# for aarch64-unknown-linux-musl, the static cua-spacesd release asset
+# (CD: cua-spacesd failed on 0.17.1).
+default = ["jemalloc"]
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-ctl"]
 # Optional hosted-relay features, on for the hosted relay (cua.ai): plan
 # metering and allowances (`meter`, `plan_source`), Teams (`teams`,
 # `team_api`, `team_sharing`, `org_access`), account erasure and the
@@ -18,9 +26,18 @@ publish = false
 # this relay" (src/free.rs).
 hosted = []
 
+# Measures the heap with jemalloc's own counters.
+[[test]]
+name = "churn_bounded"
+required-features = ["jemalloc"]
+
 [dependencies]
 # The WireGuard®-based mesh protocol and node (MIT).
 cua-mesh = { path = "../../../cua/crates/cua-mesh" }
+# Push notifications for the phone app (the registry, the providers).
+cua-push = { path = "../../../cua/crates/cua-push" }
+# The viewer page the relay serves itself to a request without a credential.
+cua-spacesd-html5 = { path = "../../../cua/crates/cua-spacesd-html5" }
 axum = { version = "0.8", features = ["ws"] }
 base64.workspace = true
 bytes.workspace = true
@@ -30,7 +47,9 @@ http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
-hyper-util = { workspace = true, features = ["client-proxy"] }
+# `service`: TowerToHyperService (TCP shares serve the router in-process).
+hyper-util = { workspace = true, features = ["client-proxy", "service"] }
+tower.workspace = true
 # Account mode: OIDC access-token validation (JWKS) and relay-signed
 # EdDSA principal assertions. ring is already the workspace's TLS crypto.
 jsonwebtoken = "9"
@@ -53,8 +72,17 @@ yamux.workspace = true
 [target.'cfg(unix)'.dependencies]
 # statvfs: the state volume's free space (pool write budget, /readyz).
 libc = "0.2"
+# The relay's allocator (src/main.rs, `process_memory::use_jemalloc`):
+# glibc malloc kept what reconnect churn freed in fragmented per-thread
+# arenas (relay.cua.ai, 20 Nov 2026). jemalloc returns freed pages to the
+# system on a timer and reports its own heap (`cua_relay_heap_*_bytes`).
+tikv-jemallocator = { version = "0.7", optional = true }
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"], optional = true }
 
 [dev-dependencies]
+# The list of calls a viewer ticket may make is the machine's: a test keeps the relay's copy equal.
+cua-proto = { path = "../../../cua/crates/cua-proto" }
 native-tls.workspace = true
 tokio-native-tls.workspace = true
 tempfile.workspace = true
+

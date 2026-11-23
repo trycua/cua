@@ -192,7 +192,7 @@ impl NetworkMode {
 }
 
 /// Options for [`Sandboxes::create`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CreateOptions {
     /// Provider.
     pub provider: ProviderKind,
@@ -287,6 +287,12 @@ pub struct CreateOptions {
     /// the guest, from its first instruction (local runtimes that can;
     /// everything else refuses a non-empty one).
     pub egress: cua_vmm::egress::EgressPolicy,
+    /// Network settings ([`cua_vmm::network`]): a preset and the user's
+    /// lists. `None`: what `network` and `egress` say
+    /// ([`cua_vmm::network::NetworkSettings::from_legacy`]).
+    pub network_settings: Option<cua_vmm::network::NetworkSettings>,
+    /// The tree it belongs to (a top-level Space's id); `None`: its own.
+    pub network_tree: Option<String>,
     /// The process that owns an ephemeral local sandbox (recorded in its
     /// lease; the sandbox is reaped once that process is gone). `None`:
     /// this process. A daemon passes its client's pid.
@@ -316,6 +322,51 @@ pub struct CreateOptions {
     /// share its pages ([`Sandboxes::checkpoint`], [`Sandboxes::fork`]). It
     /// never claims a warm-pool member. Other kinds ignore it.
     pub forkable: bool,
+}
+
+impl std::fmt::Debug for CreateOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateOptions")
+            .field("provider", &self.provider)
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("ready_timeout_given", &self.ready_timeout_given)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("env_token", &self.env_token.as_ref().map(|_| "<redacted>"))
+            .field("firmware", &self.firmware)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_credentials",
+                &self.registry_credentials.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("container_runtime", &self.container_runtime)
+            .field("network", &self.network)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("egress", &self.egress)
+            .field("network_settings", &self.network_settings)
+            .field("network_tree", &self.network_tree)
+            .field("owner_pid", &self.owner_pid)
+            .field("contrib", &self.contrib)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("mounts", &self.mounts)
+            .field("ephemeral_name", &self.ephemeral_name)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
 }
 
 impl CreateOptions {
@@ -348,6 +399,8 @@ impl CreateOptions {
             headless: false,
             spacesd: None,
             egress: Default::default(),
+            network_settings: None,
+            network_tree: None,
             owner_pid: None,
             contrib: None,
             keep_on_failure: false,
@@ -356,6 +409,18 @@ impl CreateOptions {
             ephemeral_name: None,
             forkable: false,
         }
+    }
+
+    /// The network settings this create asks for: `network_settings`, else
+    /// what `network` and `egress` say (`internet` when neither says
+    /// anything).
+    pub fn effective_network(&self) -> cua_vmm::network::NetworkSettings {
+        self.network_settings.clone().unwrap_or_else(|| {
+            cua_vmm::network::NetworkSettings::from_legacy(
+                &self.egress,
+                self.network == NetworkMode::None,
+            )
+        })
     }
 
     /// Adds a sidecar.
@@ -1153,10 +1218,14 @@ impl Sandboxes {
             container_runtime: o.container_runtime.clone(),
             kind: (o.kind != Kind::Auto).then(|| o.kind.to_string()),
             runtime: (o.runtime != Runtime::Auto).then(|| o.runtime.to_string()),
-            restrict_network: o.network == NetworkMode::None,
+            // `none` settings cut the network the way every runtime knows.
+            restrict_network: o.network == NetworkMode::None
+                || o.effective_network().preset == cua_vmm::network::NetworkPreset::None,
             headless: o.headless,
             spacesd: o.spacesd,
             egress: o.egress.clone(),
+            network: Some(o.effective_network()),
+            tree: o.network_tree.clone(),
             gpu: o.gpu.clone().filter(|g| !g.trim().is_empty()),
             probes: o
                 .wait_for
@@ -1443,6 +1512,18 @@ impl Sandboxes {
             Ok(rt) => !matches!(rt.status(name).await, Err(crate::RuntimeError::NotFound(_))),
             Err(_) => false,
         }
+    }
+
+    /// Whether `name` is provably gone locally: a local runtime is
+    /// configured, nothing is recorded under it and the runtime answers
+    /// [`crate::RuntimeError::NotFound`]. Any other answer (no runtime, an
+    /// engine that is down) is not proof.
+    pub async fn local_name_gone(&self, name: &str) -> bool {
+        let Ok(rt) = self.local() else {
+            return false;
+        };
+        self.inner.state.load(name).is_none()
+            && matches!(rt.status(name).await, Err(crate::RuntimeError::NotFound(_)))
     }
 
     /// Deletes local instance `name` straight through the local runtime,
@@ -1825,6 +1906,43 @@ impl Sandboxes {
         out
     }
 
+    /// Repairs the running local sandboxes that lost what they need to be
+    /// reached (a macOS VM whose network gateway ended is restarted behind a
+    /// new one) and records where they listen now; the names of those it
+    /// restarted, whose open connections are stale.
+    pub async fn mend_local(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let Some(rt) = self.inner.local.as_ref() else {
+            return out;
+        };
+        for s in self.inner.state.list_all() {
+            // A stopped record too: the restart that mends a VM is seen as
+            // a stop by the watch ([`Self::note_unasked_stops`]) and its
+            // record says stopped while the VM runs again.
+            if provider_of(&s) != ProviderKind::Local
+                || !matches!(s.status(), "running" | "stopped")
+                || s.runtime_type() == "direct"
+            {
+                continue;
+            }
+            let name = s.name().to_string();
+            match rt.mend(&name, s.runtime_type()).await {
+                Ok(Some(inst)) => {
+                    if let Err(e) = self.record_endpoints(&name, &inst) {
+                        tracing::warn!(sandbox = %name, "recording where it listens now: {e}");
+                    }
+                    if let Err(e) = self.inner.state.set_status(&name, "running") {
+                        tracing::warn!(sandbox = %name, "recording that it runs: {e}");
+                    }
+                    out.push(name);
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(sandbox = %name, "repairing it: {e}"),
+            }
+        }
+        out
+    }
+
     /// [`Self::note_unasked_stops`] for the one local sandbox `name`, looked
     /// at now: `Some` (and recorded as stopped) when it was running and its
     /// engine says it stopped without being asked to. A job's Space is
@@ -1971,6 +2089,35 @@ impl Sandboxes {
         }
     }
 
+    /// Replaces sandbox `name`'s network settings ([`cua_vmm::network`]) on
+    /// its local runtime; says whether they hold now or from its next start.
+    pub async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> Result<cua_vmm::network::Applied> {
+        settings
+            .validate()
+            .map_err(|e| Error::InvalidArgument(e.0))?;
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.set_network(name, settings).await?),
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: "network settings (they are kept by the machine a sandbox runs on)".into(),
+            }),
+        }
+    }
+
+    /// What sandbox `name` tried to reach and its network rules refused,
+    /// most recent first: counted on its local runtime; empty for a sandbox
+    /// that is not local.
+    pub async fn network_events(&self, name: &str) -> Result<Vec<cua_vmm::egress::NetworkEvent>> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.network_events(name).await?),
+            _ => Ok(vec![]),
+        }
+    }
+
     /// The egress policy kept with sandbox `name` (empty: none, or a
     /// sandbox that is not local).
     pub async fn egress(&self, name: &str) -> Result<cua_vmm::egress::EgressPolicy> {
@@ -1988,7 +2135,10 @@ impl Sandboxes {
                 rt.stop(name).await?;
                 let inst = rt.resume(name).await?;
                 self.record_endpoints(name, &inst)?;
-                self.inner.state.set_status(name, "running")
+                self.inner.state.set_status(name, "running")?;
+                // Restarted means answering, as a resume and a resize are
+                // waited for: a VM's resume returns while its guest boots.
+                self.wait_recorded_probes(name).await
             }
             (kind, _) => Err(Error::Unsupported {
                 provider: kind,
@@ -2016,24 +2166,30 @@ impl Sandboxes {
                     self.inner.state.save(&SandboxState::Local(l))?;
                 }
                 self.inner.state.set_status(name, "running")?;
-                let probes = self
-                    .inner
-                    .state
-                    .load_raw(name)
-                    .and_then(|m| m.get("ready_probes").cloned())
-                    .map(probes_from_json)
-                    .unwrap_or_default();
-                if !probes.is_empty() {
-                    let sb = self.connect(name).await?;
-                    sb.wait_ready(&probes, RESUME_READY_TIMEOUT).await?;
-                }
-                Ok(())
+                self.wait_recorded_probes(name).await
             }
             (kind, s) => Err(Error::Unsupported {
                 provider: kind,
                 op: format!("resizing {name} ({} cannot be resized)", s.runtime_type()),
             }),
         }
+    }
+
+    /// Waits for the ready probes recorded with sandbox `name` (none: it
+    /// answers when its runtime says so).
+    async fn wait_recorded_probes(&self, name: &str) -> Result<()> {
+        let probes = self
+            .inner
+            .state
+            .load_raw(name)
+            .and_then(|m| m.get("ready_probes").cloned())
+            .map(probes_from_json)
+            .unwrap_or_default();
+        if !probes.is_empty() {
+            let sb = self.connect(name).await?;
+            sb.wait_ready(&probes, RESUME_READY_TIMEOUT).await?;
+        }
+        Ok(())
     }
 
     /// How the sandbox `name` turns off and on again (`None`: it cannot,

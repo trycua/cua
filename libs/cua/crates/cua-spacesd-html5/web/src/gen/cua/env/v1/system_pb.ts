@@ -933,7 +933,8 @@ export type CreateViewerTicketRequest = Message<"cua.env.v1.CreateViewerTicketRe
 
   /**
    * Highest session policy the viewer may open media with. Unset means
-   * `SESSION_POLICY_ALLOW_ACTIVATION` (a full interactive viewer).
+   * `SESSION_POLICY_VIEW_ONLY`: a viewer that can look and cannot touch.
+   * Input is asked for by name.
    *
    * @generated from field: cua.env.v1.SessionPolicy policy = 2;
    */

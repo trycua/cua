@@ -119,7 +119,7 @@ jobs:
           # Release assets are staged before the draft becomes public. Keep a
           # short retry window only for transient GitHub/CDN propagation.
           curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 2 --retry-all-errors \
+            --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
             "$BINARY_URL" -o cua-driver-release.tar.gz
 
       - name: Cache released binary for matrix

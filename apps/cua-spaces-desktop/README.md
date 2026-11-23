@@ -712,14 +712,17 @@ time, default `trycua/cua`, baked into `app-update.yml`). GitHub's own
 provider does not fit this monorepo: it needs semver tags and reads the
 repository-wide latest release.
 
-Electron builds ship as Cua Spaces prereleases only (`X.Y.Z-suffix`, built
-and published by `cd-cua-spaces.yml`, see "Releases" below), so the only
-feed is the beta channel (`beta.yml`, `beta-mac.yml`, `beta-linux*.yml`).
-The updater is **off by default**: set `CUA_SPACES_AUTO_UPDATE=1` or put
-`"autoUpdate": true` in `settings.json` to opt in. A build follows the
-channel it was cut for; `"updateChannel": "beta"` or `"stable"` in
-`settings.json` overrides it. The stable channel is served only after the
-Sparkle cutover (`STABLE_FEED` in `src/updater.ts`,
+Two channels (Settings, Advanced, Updates): Stable reads `latest.yml` and
+`latest-linux*.yml` on the rolling `cua-spaces-latest` release; Nightly reads
+`nightly.yml` and `nightly-linux*.yml` on the rolling `cua-spaces-nightly`
+release (`nightly-cua-spaces.yml` builds main every night). The updater sets
+the chosen channel's feed before each check, whatever URL the build baked into
+app-update.yml. A build follows the channel it was cut for (`X.Y.Z-suffix`:
+Nightly); `"updateChannel": "nightly"` or `"stable"` in `settings.json`
+overrides it, and a saved `"beta"` (there are no betas any more) is Nightly.
+Both channels are served on Windows and Linux; on macOS the Mac app is the
+Swift app, and this app's Stable feed waits for the Sparkle cutover
+(`STABLE_FEED` in `src/updater.ts`,
 [docs/sparkle-cutover.md](docs/sparkle-cutover.md)). Nothing downgrades.
 
 ## Releases
@@ -764,3 +767,57 @@ Swift app's files stay as they are.
 | `CUA_SPACES_TEST_STREAM_URL` | Answer every `spaces.openStream` with this URL (`{id}`, `{tier}` filled in), for the WebCodecs harness |
 | `CUA_SPACES_TEST_PRESENCE=1` | Answer every `presence.join` with two synthetic participants circling the picture (screenshots, the WebCodecs harness) |
 | `CUA_BIN`, `CUA_HOME` | Where to find `cua` and `~/.cua`. A `CUA_BIN` that doesn't exist means no cua (demo data) |
+
+## Run a Local build next to the released app (Windows)
+
+`scripts/install-local.ps1` builds this checkout and installs it as **Cua Spaces
+Local**, beside a released Cua Spaces, so you can try a branch (a new UI, the
+`windows:*` images) without touching the app you use. It is the Windows
+counterpart of `apps/cua-spaces-macos/scripts/install-local.sh`, and unsigned.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-local.ps1
+powershell -File scripts\install-local.ps1 -NoLaunch        # install without starting it
+powershell -File scripts\install-local.ps1 -Release         # build with the release Electron fuses
+powershell -File scripts\install-local.ps1 -Prefix D:\apps  # app in D:\apps\Programs\Cua Spaces Local
+powershell -File scripts\install-local.ps1 -SkipRustBuild   # use native\win32-<arch> as it is
+powershell -File scripts\install-local.ps1 -SkipWebBuild    # use apps\cua-spaces-web\dist as it is
+powershell -File scripts\install-local.ps1 -NoIntegration   # files only: no Start Menu, PATH or scheme
+powershell -File scripts\uninstall-local.ps1 [-Purge]       # remove it (-Purge also its state)
+```
+
+It first lists, in one message, everything the build needs that is missing:
+Rust (rustup, MSVC) with the Visual Studio C++ Build Tools, CMake, Node 22 or
+later, pnpm, and for the web UI the `wasm32` Rust target and `wasm-bindgen-cli`
+(the versions the release build pins). Nothing is built before they are all
+there. Builds run at BelowNormal priority (`-NormalPriority` opts out). On a
+cold machine the Rust build takes a while.
+
+| | Cua Spaces | Cua Spaces Local |
+|---|---|---|
+| App | `%LOCALAPPDATA%\Programs\cua-spaces` | `%LOCALAPPDATA%\Programs\Cua Spaces Local` (`Cua Spaces Local.exe`) |
+| App id, AppUserModelID | `ai.cua.spaces.desktop` | `ai.cua.spaces.desktop.local` (own taskbar group and Run entry) |
+| CLI | `cua` | `cua-local` (`...\Cua Spaces Local\bin`, added to the user PATH) |
+| Cua home | `%USERPROFILE%\.cua` | `%USERPROFILE%\.cua-local` (the app sets `CUA_HOME`) |
+| Channel, ports, sign-in | `CUA_CHANNEL=stable` | `CUA_CHANNEL=local`, set by the app (`CuaChannel::Local`) |
+| Backend | production | staging (`CUA_ENV=prod` opts in) |
+| User data | `%APPDATA%\Cua Spaces` | `%APPDATA%\Cua Spaces Local` |
+| URL scheme | `cua://` | `cua-local://` |
+| Updates | electron-updater feed | none (no `app-update.yml`) |
+
+The shell knows it is Local from its executable name or `CUA_CHANNEL=local`
+(`src/channel.ts`); the packaging is `packaging/electron-builder.local.cjs`
+(`electron-builder --win dir`, no installer). The build is staged next to the
+install and verified (`cua-local --version`, the native layer, the web UI, no
+update feed) before the live copy is swapped, and the old copy is put back if the
+swap fails. The script refuses a `-Prefix` that would put the app on, inside or
+above anything the released Cua Spaces owns, and a folder at the Local path that
+the installer did not make (it keeps a `.cua-spaces-local.json` marker there).
+It stops only processes running from the Local folder.
+
+`scripts/tests/install-local.tests.ps1` tests the path, refusal and PATH checks
+and that the names match `src/channel.ts`, the builder config and
+`CuaChannel::Local`; it builds nothing and touches no registry or PATH.
+
+Not covered: the unattended-access host service (`cua host setup`) still
+downloads the pinned `cua-spacesd`, which does not know the Local ports.

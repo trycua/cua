@@ -78,6 +78,26 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
         return try await native.streamSession(options: options, frames: frames, audio: audio)
     }
 
+    /// Through the Space's cua-spacesd (`ComputerService.SetClipboard`), on
+    /// whichever route the Space is reached by. Only under `viewing`: `ask`
+    /// needs a prompt this viewer does not have, and `off` moves nothing.
+    /// The setting is read on each paste, not from the handle's
+    /// connection-time info: it can change while a viewer stays open.
+    public func sendClipboard(_ text: String) async throws -> Bool {
+        let native = try await handle()
+        guard let setting = try await space.clipboardSetting(),
+              Self.pasteSendsClipboard(setting: setting) else { return false }
+        _ = try await native.spacesd().setClipboard(text: text)
+        return true
+    }
+
+    /// Whether a paste in the viewer sends this Mac's clipboard under the
+    /// Space's clipboard `setting` (empty is the default, `viewing`).
+    public static func pasteSendsClipboard(setting: String) -> Bool {
+        let word = setting.trimmingCharacters(in: .whitespaces).lowercased()
+        return word.isEmpty || word == "viewing"
+    }
+
     /// The input policy a viewer of `source` opens its session with.
     ///
     /// A window takes input in the background (no focus change on the
@@ -86,8 +106,8 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     /// every click on a desktop stream went nowhere. The desktop is driven
     /// like a physical mouse and keyboard, which is `allow_activation`: the
     /// same policy the Tauri and HTML5 viewers use for it. A window whose
-    /// input the Space can only deliver by activating it (Hyprland outside
-    /// its qualified apps, X11 toolkits that drop synthetic events) is
+    /// input the Space can only deliver by activating it (an XWayland window
+    /// on Hyprland, X11 toolkits that drop synthetic events) is
     /// refused as would-require-activation; `LiveStreamSession` then reopens
     /// that window with `allow_activation`.
     public static func inputPolicy(for source: StreamSource) -> String {
@@ -98,8 +118,15 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     }
 
     public func joinPresence(name: String, color: String?) async throws -> SpacePresence {
+        try await joinPresence(name: name, color: color, source: .desktop)
+    }
+
+    public func joinPresence(name: String, color: String?, source: StreamSource) async throws -> SpacePresence {
         let id = "swift-\(ProcessInfo.processInfo.processIdentifier)-\(name)"
-        return try await handle().joinPresence(
+        var window: String?
+        if case let .window(w) = source { window = w.id }
+        return try await handle().joinPresenceFor(
+            windowId: window,
             identity: PresenceIdentity(id: id, displayName: name, color: color ?? "", agent: false),
             timeoutMs: 10_000)
     }
@@ -117,6 +144,9 @@ extension StreamWindow {
                   surfaceSize: window.pixelSize,
                   scaleFactor: window.scaleFactor,
                   appID: window.appID,
-                  processID: UInt32(clamping: max(0, window.processID ?? 0)))
+                  processID: UInt32(clamping: max(0, window.processID ?? 0)),
+                  origin: window.origin.map {
+                      StreamWindowOrigin(spaceID: $0.spaceID, name: $0.name, os: $0.os)
+                  })
     }
 }

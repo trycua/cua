@@ -3,12 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  applyDragOverlay,
-  initialDragOverlay,
-  type DragOverlayEvent,
-  type DragOverlayState,
-} from "./dragOverlay";
+import { applyDragOverlay, initialDragOverlay, type DragOverlayEvent, type DragOverlayState } from "./dragOverlay";
 
 function run(events: DragOverlayEvent[], start: DragOverlayState = initialDragOverlay) {
   let state = start;

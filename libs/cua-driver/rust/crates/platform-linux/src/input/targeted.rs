@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! X11 targeted one-shot input with explicit delivery semantics.
 //!
 //! The Linux adapter for the cross-platform contract in
@@ -868,7 +871,7 @@ fn pointer_foreground(
                     // Chromium needs the first pair processed before the next
                     // for a DOM dblclick.
                     sync(conn)?;
-                    std::thread::sleep(Duration::from_millis(50));
+                    std::thread::sleep(Duration::from_millis(super::DOUBLE_CLICK_DELAY_MS));
                 }
             }
             release_keys(conn, root, &held)?;

@@ -234,7 +234,11 @@ if [[ "$(/usr/bin/id -u)" -ne 0 ]]; then
 fi
 
 [[ -f "${TCC_DB}" ]] || fail "system TCC.db does not exist at ${TCC_DB}"
-ACCESS_COLUMNS="$(run_sudo /usr/bin/sqlite3 "${TCC_DB}" 'PRAGMA table_info(access);')"
+# tccd keeps TCC.db open and writes to it at any time, so a bare sqlite3 call
+# can fail at once with "database is locked". Wait up to 30 s for the lock
+# instead, and take the write lock when the transaction starts.
+TCC_SQLITE=(/usr/bin/sqlite3 -cmd ".timeout 30000")
+ACCESS_COLUMNS="$(run_sudo "${TCC_SQLITE[@]}" "${TCC_DB}" 'PRAGMA table_info(access);')"
 CLIENT_SQL="$(sql_escape "${CLIENT}")"
 
 if ! /usr/bin/grep -q '|auth_value|' <<< "${ACCESS_COLUMNS}"; then
@@ -242,7 +246,7 @@ if ! /usr/bin/grep -q '|auth_value|' <<< "${ACCESS_COLUMNS}"; then
 fi
 
 SQL="
-BEGIN;
+BEGIN IMMEDIATE;
 INSERT OR REPLACE INTO access(
   service,client,client_type,auth_value,auth_reason,auth_version,
   csreq,flags,indirect_object_identifier_type,
@@ -256,8 +260,8 @@ COMMIT;
 "
 VERIFY_SQL="SELECT count(*) FROM access WHERE client='${CLIENT_SQL}' AND client_type=${CLIENT_TYPE} AND auth_value=2 AND service IN ('kTCCServiceAccessibility','kTCCServiceScreenCapture');"
 
-run_sudo /usr/bin/sqlite3 "${TCC_DB}" "${SQL}"
-ROW_COUNT="$(run_sudo /usr/bin/sqlite3 "${TCC_DB}" "${VERIFY_SQL}")"
+run_sudo "${TCC_SQLITE[@]}" "${TCC_DB}" "${SQL}"
+ROW_COUNT="$(run_sudo "${TCC_SQLITE[@]}" "${TCC_DB}" "${VERIFY_SQL}")"
 [[ "${ROW_COUNT}" == 2 ]] || fail "expected two granted rows for ${CLIENT}, found ${ROW_COUNT}"
 
 if run_sudo /usr/bin/pgrep -x tccd >/dev/null 2>&1; then

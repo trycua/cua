@@ -67,8 +67,8 @@ pub use http::{
     DEFAULT_HTTP_RESPONSE_LIMIT, DEFAULT_HTTP_TIMEOUT, HttpCall, HttpReply, MAX_HTTP_REQUEST_BYTES,
 };
 pub use process::{
-    Command, DEFAULT_PROCESS_KEEPALIVE, ExitStatus, Output, PROCESS_RUN_AS_FEATURE, ProcessEvent,
-    ProcessHandle, ProcessRef, Replay, RunAsMode,
+    Command, DEFAULT_PROCESS_KEEPALIVE, ExitStatus, Output, PROCESS_RUN_AS_FEATURE,
+    PROCESS_START_DEADLINE, ProcessEvent, ProcessHandle, ProcessRef, Replay, RunAsMode,
 };
 pub use record::{RecordOptions, Recorded, ScreenRecording, find_ffmpeg};
 pub use transport::{

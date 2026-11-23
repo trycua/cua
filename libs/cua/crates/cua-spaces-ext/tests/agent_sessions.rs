@@ -332,10 +332,11 @@ async fn a_second_session_gets_task_claimed_with_the_holder() {
         let lost = bridge_call(&fx, &p, k, "thread_claim", json!({"task": seq})).await;
         let msg = bridge_error(&lost);
         assert!(
-            msg.contains("task_claimed") || msg.contains("claimed by ada/2@1"),
+            msg.contains("Another ada run is already working on this task."),
             "{msg}"
         );
-        assert!(msg.contains("ada/2@1"), "{msg}");
+        // People may read it: no holder id, task id or time in it.
+        assert!(!msg.contains("ada/2@1") && !msg.contains('#'), "{msg}");
         // ... and may not answer it either.
         let r = bridge_call(
             &fx,
@@ -345,7 +346,7 @@ async fn a_second_session_gets_task_claimed_with_the_holder() {
             json!({"task": seq, "text": "mine"}),
         )
         .await;
-        assert!(bridge_error(&r).contains("ada/2@1"));
+        assert!(bridge_error(&r).contains("already working on this task"));
     }
     // A person claiming for the agent gets the exact error code.
     let e = call(
@@ -356,7 +357,7 @@ async fn a_second_session_gets_task_claimed_with_the_holder() {
     .await
     .unwrap_err();
     assert_eq!(e.0, "task_claimed");
-    assert!(e.1.contains("ada/2@1"));
+    assert!(e.1.contains("already working on this task") && !e.1.contains("ada/2@1"));
     let e = call(
         &fx.mcp,
         "thread_claim",
@@ -415,8 +416,20 @@ async fn an_expired_claim_requeues_its_task_with_a_note() {
         .cloned()
         .expect("a note about the task");
     assert!(
-        note["text"].as_str().unwrap().contains("Session 2's claim"),
+        note["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("ada stopped working on ")
+            && note["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("It will pick it up again."),
         "{note}"
+    );
+    let text = note["text"].as_str().unwrap();
+    assert!(
+        !text.contains('#') && !text.contains('/') && !text.chars().any(|c| c.is_ascii_digit()),
+        "{text}"
     );
     // The same pass gave it to the lowest free session (1 is mid turn).
     let now = task(&fx, seq).await;
@@ -644,4 +657,80 @@ async fn without_sessions_a_member_is_one_session_and_old_shapes_hold() {
     .await
     .unwrap_err();
     assert_eq!(e.0, "permission_denied");
+}
+
+fn record(fx: &Fx, name: &str) -> Value {
+    let all: Vec<Value> = serde_json::from_slice(&std::fs::read(agents_json(fx)).unwrap()).unwrap();
+    all.into_iter().find(|r| r["name"] == name).unwrap()
+}
+
+/// `brief` (standing instructions) and `standby` (a run kept ready) are
+/// stored with the member, and adding the member again updates its model,
+/// endpoint and brief while the standby choice stays unless it is given.
+#[tokio::test]
+async fn agent_add_keeps_brief_and_standby_and_updates_them() {
+    let fx = setup().await;
+    let args = json!({"space": fx.space, "name": "ada", "harness": "claude-code",
+                      "model": "small", "brief": "You live in the repo.", "standby": true});
+    call(&fx.mcp, "agent_add", args).await.unwrap();
+    let r = record(&fx, "ada");
+    assert_eq!(r["model"], "small");
+    assert_eq!(r["brief"], "You live in the repo.");
+    assert_eq!(r["policy"]["standby"], true);
+
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": fx.space, "name": "ada", "harness": "claude-code",
+               "model": "large", "brief": "Ask before you push."}),
+    )
+    .await
+    .unwrap();
+    let r = record(&fx, "ada");
+    assert_eq!(r["model"], "large");
+    assert_eq!(r["brief"], "Ask before you push.");
+    assert_eq!(r["policy"]["standby"], true, "standby stays when not given");
+
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": fx.space, "name": "ada", "harness": "claude-code", "standby": false}),
+    )
+    .await
+    .unwrap();
+    assert!(record(&fx, "ada")["policy"].get("standby").is_none());
+    assert_eq!(record(&fx, "ada")["brief"], "Ask before you push.");
+}
+
+/// `agent send` to an idle run delivers the message once: the thread entry
+/// that records it is written already claimed, so the dispatcher, which
+/// still reads the run as idle until its runner picks the message up, does
+/// not deliver it again as a `[thread #N from ...]` turn (issue 8216).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_message_sent_to_an_idle_run_is_delivered_once() {
+    let mut fx = setup().await;
+    let p = member(&mut fx, 1).await;
+    // The dispatcher runs as the message is sent (a thread entry wakes it),
+    // and reads the run as idle until its runner picks the message up.
+    let ticking = {
+        let p = p.clone();
+        tokio::spawn(async move {
+            for _ in 0..400 {
+                Box::pin(p.tick()).await;
+                tokio::task::yield_now().await;
+            }
+        })
+    };
+    call(
+        &fx.mcp,
+        "agent_send",
+        json!({"name": "ada", "text": "hello"}),
+    )
+    .await
+    .unwrap();
+    ticking.await.unwrap();
+    assert_eq!(inbox(&fx, 1), vec!["hello".to_string()], "delivered twice");
+    let ts = tasks(&fx).await;
+    assert_eq!(ts.len(), 1, "{ts:?}");
+    assert_eq!(ts[0]["holder"], "ada/1@1");
 }

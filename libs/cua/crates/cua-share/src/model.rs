@@ -175,6 +175,85 @@ pub struct Owner {
     pub email: Option<String>,
 }
 
+/// How long a public TCP share lasts unless asked otherwise: the most a
+/// share may last ([`MAX_TTL`]); the daemon's keep-alive holds its port on
+/// the relay meanwhile.
+pub const TCP_TTL: Duration = MAX_TTL;
+
+/// Space ports a public TCP share never exposes: remote shells and
+/// desktops, game-server consoles (Minecraft RCON), container and cluster
+/// control planes, and databases. The relay and cua-spacesd keep their own
+/// copies of this rule.
+pub const REFUSED_TCP_PORTS: &[u16] = &[
+    22, 23, 2375, 2376, 3306, 3389, 5432, 5900, 5901, 6379, 6443, 10250, 25575, 27017,
+];
+
+/// Where people reach a public TCP share.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TcpEndpoint {
+    /// `host:port` to connect to.
+    pub address: String,
+    /// The host part.
+    pub host: String,
+    /// The public port.
+    pub port: u16,
+    /// A name that finds the port through DNS SRV (`mc-….m.cua.sh`), when
+    /// the service has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub srv_name: Option<String>,
+    /// The SRV service (`minecraft`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    /// How people reach it: `host` (the Space's own cloud host), `edge`
+    /// (a share edge in the owner's cloud) or `relay` (Cua's relay).
+    #[serde(default = "relay_route")]
+    pub route: String,
+    /// The cloud a `host` or `edge` route uses (`aws`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<String>,
+    /// The plain line shown next to the address ("Through your AWS
+    /// account", "Through Cua").
+    #[serde(default)]
+    pub route_line: String,
+    /// Who may connect (CIDRs); empty: anyone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// Drop Minecraft Java connections that did not dial this address.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub check_host: bool,
+    /// The data the share may move (its part of the daily cap); 0: none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub max_bytes: u64,
+    /// The share slot (host route) or the edge's port (edge route).
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub slot: u16,
+}
+
+fn relay_route() -> String {
+    "relay".into()
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
+
+fn is_zero_u16(v: &u16) -> bool {
+    *v == 0
+}
+
+/// Why a share is not live yet.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Waiting {
+    /// `approval` (an agent asked for a public share) or `consent` (the
+    /// first share edge in a cloud).
+    pub reason: String,
+    /// What to show the owner (the consent card's text, or who asked).
+    pub text: String,
+    /// The route it would take, in plain words.
+    #[serde(default)]
+    pub route_line: String,
+}
+
 /// One share, as the daemon keeps it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
@@ -201,8 +280,19 @@ pub struct Share {
     /// made without `--ttl`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_ms: Option<u64>,
-    /// The link.
+    /// The link (`tcp://<address>` for a TCP share).
     pub url: String,
+    /// A public TCP share: where people connect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp: Option<TcpEndpoint>,
+    /// The Space whose agent made it (through its spawn channel); the share
+    /// ends with that Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// Set while the share waits for the owner (approval or consent): it
+    /// serves nothing until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<Waiting>,
 }
 
 impl Share {

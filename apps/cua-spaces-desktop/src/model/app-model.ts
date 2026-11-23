@@ -180,6 +180,8 @@ export class AppModel {
   hosts: AppSpaceHost[] = [];
   /** Windows or Linux without a usable local runtime: why, and the fix New Space offers (null when one is ready). */
   runtimeAdvice: WindowsRuntimeAdvice | null = null;
+  /** Windows: the app's own engine is installed but waits for a restart, so local Spaces can't be made yet. */
+  private restartBlocksLocal = false;
   readonly windowsRuntime: WindowsRuntime | null;
   readonly linuxRuntime: LinuxRuntime | null;
   /** How long one read of the registry may take before a refresh gives up on it (s). */
@@ -318,14 +320,17 @@ export class AppModel {
 
   /** What the Machines page is listed from (`machines::MachinesPageInput`), the same for its rows and its view. */
   get machinesPageInput(): AppMachinesPageInput {
-    const devices = this.devices.snapshot === null ? [] : this.devices.input.devices.map((d) => ({
-      id: d.id,
-      name: d.name,
-      platform: d.platform ?? "",
-      lastSeen: d.lastSeen,
-      current: d.current,
-      state: d.state,
-    }));
+    const devices =
+      this.devices.snapshot === null
+        ? []
+        : this.devices.input.devices.map((d) => ({
+            id: d.id,
+            name: d.name,
+            platform: d.platform ?? "",
+            lastSeen: d.lastSeen,
+            current: d.current,
+            state: d.state,
+          }));
     return {
       hostOs: this.hostOs,
       spaces: this.spaces,
@@ -432,7 +437,7 @@ export class AppModel {
 
   /** The detail as this machine sees it (`appSpaceDetailFor`). */
   detail(space: AppSpace): AppSpaceDetail {
-    return this.native.appSpaceDetailFor(space, this.usage.get(space.id), this.hostArch, this.settings.experiments, this.devices.accessNotice);
+    return this.native.appSpaceDetailFor(space, this.usage.get(space.id), this.hostArch, this.devices.accessNotice);
   }
 
   /** The Spaces whose desktop can be shown (running and reachable). */
@@ -615,7 +620,9 @@ export class AppModel {
       this.listReaching = list.reaching;
       this.listStale = list.stale;
       // A create this app asked another computer for already has its own pending row.
-      this.creatingElsewhere = (list.creating ?? []).filter((c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))));
+      this.creatingElsewhere = (list.creating ?? []).filter(
+        (c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))),
+      );
       // Your other computers could not be read: their rows are the last known ones.
       this.rosterError = list.notice ? "Could not reach your other machines. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {
@@ -646,7 +653,12 @@ export class AppModel {
 
   /** What Settings, Advanced's runtime rows are laid out from (`runtimes::section`): every kind, "Checking…" until read. */
   runtimesInput(): AppRuntimesInput {
-    const os = process.platform === "darwin" ? this.native.AppSpaceOs.Macos : process.platform === "win32" ? this.native.AppSpaceOs.Windows : this.native.AppSpaceOs.Linux;
+    const os =
+      process.platform === "darwin"
+        ? this.native.AppSpaceOs.Macos
+        : process.platform === "win32"
+          ? this.native.AppSpaceOs.Windows
+          : this.native.AppSpaceOs.Linux;
     return {
       os,
       hostArch: this.hostArch,
@@ -689,9 +701,26 @@ export class AppModel {
   private async readRuntimeAdvice(runtimes: LocalRuntimes | null): Promise<void> {
     if (!runtimes) return;
     const w = this.windowsRuntime;
+    this.restartBlocksLocal = false;
     if (runtimes.ready.length > 0) {
+      // Only the app's own engine, and Windows still has to restart for it: it is not ready yet.
+      if (w && runtimes.ready.every((r) => r === "managed") && (await w.restartWanted().catch(() => false))) {
+        this.restartBlocksLocal = true;
+        this.runtimeAdvice = await w.advice().catch(() => null);
+        return;
+      }
       w?.settled();
       this.runtimeAdvice = null;
+      return;
+    }
+    // Windows: Cua Spaces runs its own engine in WSL 2 and never offers Docker Desktop.
+    // When the doctor says why it cannot, that is the reason; WSL 2 not set up is one
+    // click here (one Windows prompt), anything else (virtualization off, no disk) is
+    // the doctor's own words.
+    const managed = runtimes.details.get("managed");
+    if (process.platform === "win32" && managed && /wsl|virtual|not enough disk space/i.test(managed)) {
+      const setUp = /not installed|Windows feature|wsl --install|Virtual Machine Platform/i.test(managed);
+      this.runtimeAdvice = setUp && w ? await w.advice().catch(() => ({ reason: managed, fix: null })) : { reason: managed, fix: null };
       return;
     }
     if (w) this.runtimeAdvice = await w.advice().catch(() => null);
@@ -703,7 +732,7 @@ export class AppModel {
     return this.runtimeAdvice?.fix ?? null;
   }
 
-  /** Runs a New Space fix ("Install Docker Desktop"); the page reads the options again to follow it. */
+  /** Runs a New Space fix ("Set up Linux support"); the page reads the options again to follow it. */
   fixRuntime(action: RuntimeFixAction): void {
     if (action === "restart-app") {
       if (!this.linuxRuntime) throw new Error("no runtime fix on this system");
@@ -720,13 +749,13 @@ export class AppModel {
   }
 
   private wizardEnv(runtimes: LocalRuntimes | null, storage: LocalStorage | null, gpus: AppGpuChoice[] | null): AppWizardEnv {
-    const backends = runtimes?.ready;
+    const backends = this.restartBlocksLocal ? [] : runtimes?.ready;
     const env: AppWizardEnv = {
       defaultLocation: this.settings.defaultLocation,
       localAvailable: backends ? backends.length > 0 : true,
       localReason:
         backends && backends.length === 0
-          ? (this.runtimeAdvice?.reason ?? noLocalRuntimeReason(process.platform, runtimes?.details.get("container")))
+          ? (this.runtimeAdvice?.reason ?? noLocalRuntimeReason(process.platform, runtimes?.details.get("container"), runtimes?.details.get("managed")))
           : undefined,
       localBackends: backends,
       localDetails: runtimes?.details,
@@ -836,7 +865,10 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }));
+      else
+        this.sendCreate(
+          new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }),
+        );
       throw error;
     }
   }
@@ -1106,5 +1138,12 @@ export class AppModel {
 /** The SDK's storage probe as the wizard env takes it. */
 export function wizardStorage(s: LocalStorage): AppLocalStorage {
   const volume = (v: LocalStorage["lume"]) => (v ? { availableBytes: v.availableBytes, totalBytes: v.totalBytes, name: v.name } : undefined);
-  return { reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu), container: volume(s.container), pulled: s.pulled, linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes };
+  return {
+    reserveBytes: s.reserveBytes,
+    lume: volume(s.lume),
+    qemu: volume(s.qemu),
+    container: volume(s.container),
+    pulled: s.pulled,
+    linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes,
+  };
 }

@@ -20,7 +20,21 @@ export const runAgentPrompt = (spaceName: string) => `Open the Cua Space "${spac
  * first (one button) and then shows the request. The agent's work shows up
  * on the Agents page.
  */
-export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnected, prompt: asked }: { open: boolean; space: Space; onOpenChange: (open: boolean) => void; onManual?: () => void; onConnected?: () => void; /** The request to show; the default only looks at the screen. */ prompt?: string }) {
+export function RunAgentDialog({
+  open,
+  space,
+  onOpenChange,
+  onManual,
+  onConnected,
+  prompt: asked,
+}: {
+  open: boolean;
+  space: Space;
+  onOpenChange: (open: boolean) => void;
+  onManual?: () => void;
+  onConnected?: () => void;
+  /** The request to show; the default only looks at the screen. */ prompt?: string;
+}) {
   const { agentSetup, configureAgents } = useAgents();
   const navigate = useNavigate();
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
@@ -67,7 +81,10 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup data-run-agent={rows === null ? "loading" : ready.length ? "ready" : "setup"} className="top-[12vh] w-[min(520px,calc(100vw-2rem))] bg-popover">
+      <DialogPopup
+        data-run-agent={rows === null ? "loading" : ready.length ? "ready" : "setup"}
+        className="top-[12vh] w-[min(520px,calc(100vw-2rem))] bg-popover"
+      >
         <div className="px-6 pt-5 pb-6">
           <DialogTitle className="text-[15px] font-semibold">Run an agent in {space.name}</DialogTitle>
           {rows === null ? (
@@ -98,7 +115,7 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
           ) : toSet ? (
             <>
               <DialogDescription className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-                To let an agent work in {space.name}, connect it to Cua first. This takes a few seconds and changes nothing else about {toSet.name}.
+                Connect {toSet.name} to Cua first. It takes a few seconds.
               </DialogDescription>
               <ul className="mt-4 divide-y rounded-lg border">
                 {pending.map((r) => (

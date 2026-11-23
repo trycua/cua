@@ -1609,7 +1609,7 @@ def clear_task_files():
 
     if failed_files and rmed_files:
         return (
-            f"Failed to remove ({failed_files}) but sucessfully cleared ({rmed_files}) from {repr(path_to_rm)}.",
+            f"Failed to remove ({failed_files}) but successfully cleared ({rmed_files}) from {repr(path_to_rm)}.",
             200,
         )
     if failed_files and not rmed_files:

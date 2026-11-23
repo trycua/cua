@@ -41,13 +41,35 @@ function fallbackRows(rows: ConnectionRow[]): ConnectionRowView[] {
   return rows
     .filter((r) => r.state !== "not_installed")
     .map((r) => {
-      const detail = r.version ? (r.previous_version && r.previous_version !== r.version ? `${r.version}, updated from ${r.previous_version}` : r.version) : null;
+      const detail = r.version
+        ? r.previous_version && r.previous_version !== r.version
+          ? `${r.version}, updated from ${r.previous_version}`
+          : r.version
+        : null;
       const signIn = r.signin_import === "ok" && r.sign_in ? `${r.sign_in} in Keyvault` : null;
       if (r.state === "connected")
         return { id: r.id, name: r.name, state: "connected", label: "Connected", problem: false, detail, signIn, action: act(r.problem?.action) };
       if (r.state === "attention")
-        return { id: r.id, name: r.name, state: "attention", label: r.problem?.line ?? "Something needs you.", problem: true, detail, signIn, action: act(r.problem?.action) };
-      return { id: r.id, name: r.name, state: "not_connected", label: "Not connected", problem: false, detail, signIn, action: { id: "connect", label: "Connect" } };
+        return {
+          id: r.id,
+          name: r.name,
+          state: "attention",
+          label: r.problem?.line ?? "Something needs you.",
+          problem: true,
+          detail,
+          signIn,
+          action: act(r.problem?.action),
+        };
+      return {
+        id: r.id,
+        name: r.name,
+        state: "not_connected",
+        label: "Not connected",
+        problem: false,
+        detail,
+        signIn,
+        action: { id: "connect", label: "Connect" },
+      };
     });
 }
 

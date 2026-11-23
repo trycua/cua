@@ -164,7 +164,7 @@ const DEMO_PAGES: PageSpec[] = [
 
 function render() {
   const facts = parseContractFacts(FACTS_RS);
-  const files = generateProtoReference(FIXTURE, facts, '9.9.9', DEMO_PAGES);
+  const files = generateProtoReference(FIXTURE, facts, DEMO_PAGES);
   const byName = new Map([...files].map(([file, content]) => [path.basename(file), content]));
   return { facts, byName };
 }
@@ -224,7 +224,7 @@ test('rendering is deterministic', () => {
 test('a contract file without a page fails generation', () => {
   const facts = parseContractFacts(FACTS_RS);
   assert.throws(
-    () => generateProtoReference(FIXTURE, facts, '9.9.9', DEMO_PAGES.slice(0, 1)),
+    () => generateProtoReference(FIXTURE, facts, DEMO_PAGES.slice(0, 1)),
     /cua\/demo\/v1\/common\.proto is not assigned to a reference page/
   );
 });

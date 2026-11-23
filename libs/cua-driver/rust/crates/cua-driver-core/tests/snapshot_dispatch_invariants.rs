@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::authorization::PermissionMode;
 use cua_driver_core::element_token::{token_for, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
@@ -15,14 +18,25 @@ use tokio::sync::Notify;
 
 #[test]
 fn background_window_sources_delegate_without_space_queries_or_refiltering() {
-    let gate = include_str!("../../platform-macos/src/ax/exact_target.rs");
-    let start = gate.find("pub fn gather_background_facts(").unwrap();
-    let end = start + gate[start..].find("\n}\n").unwrap();
-    let gate = &gate[start..end];
-    assert!(gate.contains("all_windows_without_spaces()"));
-    assert!(!gate.contains("all_windows()"));
+    // A Windows checkout with core.autocrlf has CRLF sources; the searches below
+    // look for LF-only `\n}\n`, so normalize first.
+    let source = include_str!("../../platform-macos/src/ax/exact_target.rs").replace("\r\n", "\n");
+    let function = |signature: &str| {
+        let start = source.find(signature).unwrap();
+        &source[start..start + source[start..].find("\n}\n").unwrap()]
+    };
+    let gate = function("pub fn gather_background_facts(");
+    let rows = function("fn ax_mapped_window_rows(");
+    assert!(gate.contains("resolve_window_owner(pid, window_id)"));
+    assert!(gate.contains("ax_mapped_window_rows(&records, ax_target)"));
+    assert!(rows.contains(".filter_map(describe_window)"));
+    for body in [gate, rows] {
+        assert!(!body.contains("windows("));
+        assert!(!body.to_lowercase().contains("space"));
+    }
 
-    let detector = include_str!("../../platform-macos/src/window_change_detector.rs");
+    let detector =
+        include_str!("../../platform-macos/src/window_change_detector.rs").replace("\r\n", "\n");
     let start = detector
         .find("fn host_windows() -> Vec<WindowInfo> {")
         .unwrap();

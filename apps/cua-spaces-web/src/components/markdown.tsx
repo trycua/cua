@@ -67,11 +67,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
           code.split("\n").map((line, i) => (
             <div
               key={i}
-              className={cn(
-                "-mx-3 px-3",
-                line.startsWith("+") && "bg-success/10 text-success",
-                line.startsWith("-") && "bg-destructive/10 text-destructive",
-              )}
+              className={cn("-mx-3 px-3", line.startsWith("+") && "bg-success/10 text-success", line.startsWith("-") && "bg-destructive/10 text-destructive")}
             >
               {line || " "}
             </div>
@@ -85,7 +81,15 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
 }
 
 /** Inline Markdown. `renderText` draws the plain runs (the thread's mention chips). */
-export function Inlines({ nodes, onOpenLink, renderText }: { nodes: Inline[]; onOpenLink?: (url: string) => void; renderText?: (text: string, key: number) => ReactNode }): ReactNode {
+export function Inlines({
+  nodes,
+  onOpenLink,
+  renderText,
+}: {
+  nodes: Inline[];
+  onOpenLink?: (url: string) => void;
+  renderText?: (text: string, key: number) => ReactNode;
+}): ReactNode {
   return nodes.map((n, i) => {
     switch (n.type) {
       case "text":
@@ -117,7 +121,14 @@ export function Inlines({ nodes, onOpenLink, renderText }: { nodes: Inline[]; on
           onOpenLink(n.href);
         };
         return (
-          <a key={i} href={n.href} target="_blank" rel="noreferrer" onClick={open} className="text-brand-strong underline decoration-brand/40 underline-offset-2 hover:decoration-brand">
+          <a
+            key={i}
+            href={n.href}
+            target="_blank"
+            rel="noreferrer"
+            onClick={open}
+            className="text-brand-strong underline decoration-brand/40 underline-offset-2 hover:decoration-brand"
+          >
             <Inlines nodes={n.children} onOpenLink={onOpenLink} renderText={renderText} />
           </a>
         );

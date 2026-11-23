@@ -121,6 +121,9 @@ impl Spaces {
         }
         self.inner.registry.update_meta(&id.to_string(), |m| {
             m.egress = policy.clone();
+            // The lists are the network settings' own lists too.
+            m.network = Some(with_lists(m.network.take(), policy));
+            m.network_generation = m.network_generation.saturating_add(1);
         })
     }
 
@@ -141,9 +144,39 @@ impl Spaces {
     }
 }
 
+/// `settings` with `policy` as its lists: `internet` with lists becomes
+/// `custom` from `internet`, `none` with lists `custom` from `none`, and
+/// `custom` without lists goes back to its base.
+pub(crate) fn with_lists(
+    settings: Option<crate::network::NetworkSettings>,
+    policy: &EgressPolicy,
+) -> crate::network::NetworkSettings {
+    crate::network::NetworkSettings::with_lists(settings, policy)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_egress_keeps_the_network_settings_in_step() {
+        use crate::network::{NetworkPreset as P, NetworkSettings};
+        let p = EgressPolicy {
+            allow: vec!["1.1.1.1".into()],
+            deny: vec!["all".into()],
+        };
+        let s = with_lists(None, &p);
+        assert_eq!((s.preset, s.custom_base), (P::Custom, P::Internet));
+        assert_eq!(s.custom, p);
+        let s = with_lists(Some(NetworkSettings::none()), &p);
+        assert_eq!((s.preset, s.custom_base), (P::Custom, P::None));
+        assert!(s.validate().is_ok());
+        let back = with_lists(Some(s), &EgressPolicy::default());
+        assert_eq!(back, NetworkSettings::none());
+        let lan = with_lists(Some(NetworkSettings::preset(P::Lan)), &p);
+        assert_eq!(lan.preset, P::Lan);
+        assert_eq!(lan.custom, p);
+    }
 
     #[test]
     fn the_policy_model_is_the_runtimes() {

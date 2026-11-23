@@ -34,12 +34,21 @@ use crate::node::{ExecEnd, ExecOutcome, JobExecutor, Offers};
 use crate::peers::{MemberNet, PeerRouter, route_member};
 
 /// How to reach this host's own cua-spacesd.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HostSpacesd {
     /// Its URL (`http://127.0.0.1:3211`).
     pub url: String,
     /// Its token.
     pub token: String,
+}
+
+impl std::fmt::Debug for HostSpacesd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostSpacesd")
+            .field("url", &self.url)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 type SpacesdFn = Arc<dyn Fn() -> Result<HostSpacesd, String> + Send + Sync>;

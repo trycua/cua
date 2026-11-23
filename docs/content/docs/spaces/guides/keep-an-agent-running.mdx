@@ -1,12 +1,12 @@
 ---
 title: Keep an agent running through crashes
-description: 'Run a coding agent so a crash of the process or machine driving it resumes the same session, with tool calls journaled before they run and a newer driver cutting off an older one.'
+description: 'Run a coding agent so a crash of the process or computer driving it resumes the same session, with tool calls journaled before they run and a newer driver cutting off an older one.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 A durable agent runs under a re-driver. When the process that drives the agent
-dies, or the machine it runs on does, the session is started again, the
+dies, or the computer it runs on does, the session is started again, the
 agent's own session is reloaded, and the agent is told what had already
 happened. It works with any harness that speaks the Agent Client Protocol
 (ACP); the same runner drives all of them.
@@ -26,7 +26,7 @@ cua agent run --durable --on auto auto claude-code "Fix the failing tests in /wo
 
 The two commands do the same: `cua agent add --durable` is `cua agent run
 --durable` with the agent's name as the session's name. `--on` picks the
-machine the driver runs on (`auto`, or one of your machines by name; the
+computer the driver runs on (`auto`, or one of your computers by name; the
 default is this one), `--in` a durable Space to work in (default none),
 `--max-attempts` caps the drives (default 5) and `--stall-secs` sets when a
 silent driver counts as wedged (default 120).
@@ -46,10 +46,10 @@ today.
 
 The session keeps a journal in its state directory (`CUA_SESSION_STATE_DIR`,
 or `$CUA_JOB_DATA/session` when that is empty). `cua agent add --durable`
-leaves it empty, so the journal sits in the run's data folder on the machine
+leaves it empty, so the journal sits in the run's data folder on the computer
 that drives it: it outlives the driver's Space, and a driver that dies or stalls
-is started again on the same machine with the same conversation. A new drive on
-another machine does not find it and starts the task from the beginning. It holds:
+is started again on the same computer with the same conversation. A new drive on
+another computer does not find it and starts the task from the beginning. It holds:
 
 | File | What |
 |---|---|
@@ -60,28 +60,28 @@ another machine does not find it and starts the task from the beginning. It hold
 
 ## What to expect, by kind of failure
 
-Measured on real machines (Linux, Docker with gVisor, three machines on a
+Measured on real computers (Linux, Docker with gVisor, three computers on a
 private account, a scripted model so no model keys or spend; three runs per
 cell, so read the times as rough).
 
 | What fails | What happens | Same conversation? |
 |---|---|---|
 | The agent process dies (`kill -9`) | The runner restarts it in place and resumes the session, in seconds | Yes, the recovery note lists what ran and what may have run halfway |
-| The runner (the driver process) dies | Noticed at once; a new driver starts a new Space on the same machine, 40 to 80 s with Claude Code and Codex | Yes by the journal: the harness's own session files are gone with the old Space, so the recovery note carries the journal's summary instead of the conversation |
-| The driver's Space is killed or runs out of memory | The machine sees the Space stop within a few seconds and ends the driver; a new driver starts a new Space on the same machine, about 55 s from the kill to the resumed agent with Claude Code | Same as above |
+| The runner (the driver process) dies | Noticed at once; a new driver starts a new Space on the same computer, 40 to 80 s with Claude Code and Codex | Yes by the journal: the harness's own session files are gone with the old Space, so the recovery note carries the journal's summary instead of the conversation |
+| The driver's Space is killed or runs out of memory | The computer sees the Space stop within a few seconds and ends the driver; a new driver starts a new Space on the same computer, about 55 s from the kill to the resumed agent with Claude Code | Same as above |
 | The driver's Space is removed, or the driver freezes | Noticed only by the stall limit (`--stall-secs`, default 120 s): about 140 to 170 s from the fault to the resumed agent | Same as above |
-| The machine running the agent stops answering | After about 65 to 75 s the session records the lost machine and starts the next drive on **another machine** (see the cases below) | **No.** The task starts from the beginning |
-| The daemon on the machine running the agent restarts (an update) | The driver is lost 2 to 11 s later (the job runner lives in the daemon) and the next drive starts on the same machine about a second after the 2 s backoff; it finishes 35 to 55 s after the restart. The old driver's Space is removed by the machine within 30 s | Yes, by the journal, on the same machine |
-| The daemon on the machine that coordinates restarts | Nothing visible; a run on another machine is not disturbed (down 0.7 to 14 s, five runs) | Not applicable |
-| The disk of the machine is full | Each drive crashes at its first write (`exit 1`, 38 to 61 s) and uses a try; the status line names `ENOSPC`. With the space freed in time the next drive finishes: two runs ended done on drive 4 of 5 | Yes, by the journal |
-| The machine's clock is 10 minutes ahead or behind | The machine is shown `down` and a session pinned to it waits; the message says the clock is off. When the coordinator machine's clock is 10 minutes ahead the first drive starts about 86 s late; 10 minutes behind made no difference | Not applicable |
+| The computer running the agent stops answering | After about 65 to 75 s the session records the lost computer and starts the next drive on **another computer** (see the cases below) | **No.** The task starts from the beginning |
+| The daemon on the computer running the agent restarts (an update) | The driver is lost 2 to 11 s later (the job runner lives in the daemon) and the next drive starts on the same computer about a second after the 2 s backoff; it finishes 35 to 55 s after the restart. The old driver's Space is removed by the computer within 30 s | Yes, by the journal, on the same computer |
+| The daemon on the computer that coordinates restarts | Nothing visible; a run on another computer is not disturbed (down 0.7 to 14 s, five runs) | Not applicable |
+| The disk of the computer is full | Each drive crashes at its first write (`exit 1`, 38 to 61 s) and uses a try; the status line names `ENOSPC`. With the space freed in time the next drive finishes: two runs ended done on drive 4 of 5 | Yes, by the journal |
+| The computer's clock is 10 minutes ahead or behind | The computer is shown `down` and a session pinned to it waits; the message says the clock is off. When the coordinator computer's clock is 10 minutes ahead the first drive starts about 86 s late; 10 minutes behind made no difference | Not applicable |
 | The network is slow (300 ms added, 5% loss, three runs) | About 2.5 times slower (340 to 369 s against 138 s for a 20 step task); no restart and no move | Not applicable |
 
-The machine-lost case in numbers (three machines, Claude Code and Codex, a
-scripted model; the machine was cut off with a firewall rule):
+The lost-computer case in numbers (three computers, Claude Code and Codex, a
+scripted model; the computer was cut off with a firewall rule):
 
 - **Cut off from the account but still running** (traffic to the relay dropped,
-  the model server still reachable), eight runs: the other machines declare it
+  the model server still reachable), eight runs: the other computers declare it
   lost after 64 to 66 s and the next drive is running 67 s after the cut. Its
   first tool step comes 107 to 121 s after the cut (median 114 s, the six runs
   where it was timed). **The old
@@ -90,32 +90,32 @@ scripted model; the machine was cut off with a firewall rule):
   drivers at once for 8 to 17 s), and the new driver repeats every step the old
   one had done. When the cut ends, the coordinator's cancel stops the old
   driver within 2 to 11 s; the epoch fence does not, because it is a file on
-  each machine. A task whose side effects leave the machine (a `git push`, an
+  each computer. A task whose side effects leave the computer (a `git push`, an
   API call, a message) can run twice at the same time.
 - **Cut off completely**, four runs: lost after 65.6 to 65.9 s. The old driver
   cannot reach the model, so it stops by itself within a step; no overlap.
-- **When the cut-off machine also held the coordinator**, six runs: the next
+- **When the cut-off computer also held the coordinator**, six runs: the next
   drive starts 94 to 186 s after the cut, because the new coordinator starts
   counting the silence only when it takes over.
-- **Three machine losses in a row** on one session: it moved between the two
-  machines each time, finished on drive 4 of 5, and each drive started the task
-  from the beginning. A drive that comes back to a machine that ran an earlier
-  drive resumes that machine's old journal (and sees only its old working
+- **Three computer losses in a row** on one session: it moved between the two
+  computers each time, finished on drive 4 of 5, and each drive started the task
+  from the beginning. A drive that comes back to a computer that ran an earlier
+  drive resumes that computer's old journal (and sees only its old working
   folder), not the progress made elsewhere.
-- **Every machine unreachable:** the session waits (`waiting for a machine that
-  can take work`) with no deadline and uses no try; when the machines answer
+- **Every computer unreachable:** the session waits (`waiting for a computer that
+  can take work`) with no deadline and uses no try; when the computers answer
   again it carries on, or ends `failed` at the limit.
 
-Other measurements: signing out of the account on the machine you type on leaves a
+Other measurements: signing out of the account on the computer you type on leaves a
 running session alone, but `cua agent sessions` then lists only the sessions of this
-machine without a warning and other commands wait about a minute before saying you
-are not signed in. Signing the machine that runs the agent out lets the driver
-finish, but the session stays `running` until the machine signs in again. Starting
-the same name again from another machine used to start a second driver; since
-#6236 it does not. Twenty agents pinned to one 4 CPU, 7.7 GB machine took 1643 s one
+computer without a warning and other commands wait about a minute before saying you
+are not signed in. Signing the computer that runs the agent out lets the driver
+finish, but the session stays `running` until the computer signs in again. Starting
+the same name again from another computer used to start a second driver; since
+#6236 it does not. Twenty agents pinned to one 4 CPU, 7.7 GB computer took 1643 s one
 at a time when each driver reserved 4 GiB; the driver now reserves 1.5 GiB and four
 run at once (12 of 12 sessions finished on drive 1 with no out-of-memory kill). A
-killed agent waits for a free slot when the machine is full: 158 s from the kill to
+killed agent waits for a free slot when the computer is full: 158 s from the kill to
 the resumed request with six running.
 
 **By harness** (a runner kill, from the kill to the first model request that
@@ -124,26 +124,26 @@ carries the recovery note): Claude Code 50 to 80 s, Codex 38 s, OpenCode 47 s
 lost its own (three runs), Pi 49 s (one run, since Pi runs through the same driver
 as the others). Three runs per cell elsewhere, so read them as rough.
 
-When a drive moves to another machine, the new one does not have the journal,
+When a drive moves to another computer, the new one does not have the journal,
 the conversation or the working folder of the old one. Plan for it:
 
 - Put the files the task needs, and the results you want to keep, in
   [Cua Volume](/spaces/guides/cua-volume). The default storage, This Mac, is a
-  folder on one machine, so another machine does not see it. Use your own
-  S3-compatible bucket (AWS S3, R2, MinIO) so every machine reaches the same
+  folder on one computer, so another computer does not see it. Use your own
+  S3-compatible bucket (AWS S3, R2, MinIO) so every computer reaches the same
   files. `cua agent add --durable --on auto` says so when more than one
-  machine is signed in and Cua Volume is still on This Mac. The same goes for
-  a durable Space (`durable=true`): it is created again on another machine
+  computer is signed in and Cua Volume is still on This Mac. The same goes for
+  a durable Space (`durable=true`): it is created again on another computer
   with an empty disk, and a Volume on This Mac is not visible from there.
 - Write the task so running it again from the start is safe.
 - A session makes at most 5 drives by default (`--max-attempts`), counting the
   first one and every restart for any reason. When they are used up it ends
   `failed` and says it gave up after 5 of 5 drives, with the last failure.
-- A drive that no machine has room for waits and says what it waits for, for
+- A drive that no computer has room for waits and says what it waits for, for
   example `waiting for a machine with 1 CPU and 1.5 GB memory free`. A driver
-  that runs a harness asks for 1 CPU and 1.5 GiB, so a machine with 8 GB runs
+  that runs a harness asks for 1 CPU and 1.5 GiB, so a computer with 8 GB runs
   four of them at once.
-- A durable Space whose machine is lost is created again on another machine
+- A durable Space whose computer is lost is created again on another computer
   within about a minute, with the same name and an empty disk; the old record
   stays listed as offline until you delete it.
 
@@ -157,14 +157,14 @@ output; `cua agent status` has the history of every drive.
 ## What happens when it crashes
 
 1. The re-driver issues a higher **epoch** and starts the driver again, on the
-   machine that ran the last drive when it has room, else on another one (which
+   computer that ran the last drive when it has room, else on another one (which
    starts the task from the beginning, see above).
 2. The new driver raises the fence first. An older driver that is still alive
-   **on the same machine** sees the higher floor on its next write, stops, and
+   **on the same computer** sees the higher floor on its next write, stops, and
    exits with code 75 without writing anything. The fence is a file in the
-   machine's own run folder, so it cannot reach an old driver on a machine that
+   computer's own run folder, so it cannot reach an old driver on a computer that
    is cut off from the account; the coordinator's cancel stops that one when the
-   machine is reachable again.
+   computer is reachable again.
 3. The driver reloads the agent's session (`session/resume`, else
    `session/load`). A harness with neither gets a **new** session and the run
    is marked `degraded`: the recovery note then carries a summary of the
@@ -205,18 +205,18 @@ transactional mode keeps the workspace image in its log); the ACP driver's journ
 holds the agent's conversation and tool ledger, not the Space's files, so
 the agent is told which calls completed but must recreate the files itself.
 
-## Files on all your machines
+## Files on all your computers
 
-With one machine signed in, the Volume lives on that machine only. Once you are
-signed in on a second machine and no bucket is set as the Volume's storage, the
-Cua Spaces daemon keeps a copy of the Volume on each of your machines, with no
-cloud involved. One machine owns writes at a time and the others receive them.
-A write counts as durable when two machines hold it, and it never waits for a
-machine that is away. When the owner goes away, the most reliable machine with
+With one computer signed in, the Volume lives on that computer only. Once you are
+signed in on a second computer and no bucket is set as the Volume's storage, the
+Cua Spaces daemon keeps a copy of the Volume on each of your computers, with no
+cloud involved. One computer owns writes at a time and the others receive them.
+A write counts as durable when two computers hold it, and it never waits for a
+computer that is away. When the owner goes away, the most reliable computer with
 a copy takes over, and if the old owner wakes up later it is fenced: it loses
 nothing and writes nothing over the new owner.
 
-Durable Spaces are placed on the most reliable machine that has room: an
+Durable Spaces are placed on the most reliable computer that has room: an
 always-on desktop before a laptop on power, a laptop on power before a laptop
 on battery, and never the laptop you are using unless it is the only one that
 fits. Closing a laptop's lid still puts it to sleep unless it is plugged in
@@ -227,7 +227,7 @@ daemon with `CUA_REPLICA=0`. Turning it on never costs data: the Volume's
 current heads are backed up first, a Volume prepared by a newer Cua Spaces is
 refused with a message instead of being rewritten, and a build that does not
 know replication can still read the same folder. History from before a second
-machine joined stays on the machine that wrote it, and two copies are kept.
+computer joined stays on the computer that wrote it, and two copies are kept.
 
 ## What is and is not guaranteed
 

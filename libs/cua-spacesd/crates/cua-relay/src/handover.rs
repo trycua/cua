@@ -29,7 +29,7 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 
-use axum::{http::StatusCode, routing::get, Router};
+use axum::{routing::get, Router};
 
 /// The lock file's name in the state directory.
 pub const LOCK_FILE: &str = ".relay.lock";
@@ -111,7 +111,7 @@ impl StateLock {
 /// probe port, answering in standby too, when the main port does not
 /// accept yet.
 pub async fn serve_health(listener: tokio::net::TcpListener) -> std::io::Result<()> {
-    let router = Router::new().route("/healthz", get(|| async { StatusCode::NO_CONTENT }));
+    let router = Router::new().route("/healthz", get(crate::route_marker::healthz));
     axum::serve(listener, router).await
 }
 

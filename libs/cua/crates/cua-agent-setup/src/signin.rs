@@ -372,7 +372,8 @@ pub fn find_setup_token(out: &str) -> Option<String> {
 ///
 /// When the copy found has run out, Claude Code is asked to refresh its own
 /// sign-in (a one-line request through `claude -p`, up to `wait`) and the
-/// sign-in is read again.
+/// sign-in is read again. A zero `wait` never runs Claude Code (a sign-in-only
+/// connect): an expired sign-in is refused instead.
 fn claude_import(
     env: &HostEnv,
     keychain: &dyn claude_login::Keychain,
@@ -382,6 +383,7 @@ fn claude_import(
     let mut lookup = claude_login::lookup(env, keychain, now_ms());
     if let Lookup::Found(f) = &lookup
         && f.oauth.expired(now_ms())
+        && !wait.is_zero()
         && claude_login::ask_claude_to_refresh(env, wait)
     {
         lookup = claude_login::lookup(env, keychain, now_ms());
@@ -664,9 +666,41 @@ pub fn importable(agent: &str) -> bool {
     matches!(agent, "codex" | "claude-code")
 }
 
-/// Whether Cua can start the agent's own sign-in (`codex login`).
+/// Whether Cua can start the agent's own sign-in.
 pub fn can_start_sign_in(agent: &str) -> bool {
-    registry::find(agent).is_some_and(|a| a.login.is_some())
+    login_command(agent).is_some()
+}
+
+/// How an agent's own sign-in starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoginCommand {
+    /// Arguments to the agent's binary.
+    pub args: &'static [&'static str],
+    /// The command asks questions, so it runs in Terminal (the agent's own
+    /// screen) rather than in the background (it opens the browser itself).
+    pub terminal: bool,
+}
+
+/// The agent's own sign-in command, when it has one Cua can start:
+/// `codex login` and `claude auth login` open the browser on their own;
+/// Hermes picks a provider by asking, so `hermes model` runs in Terminal.
+pub fn login_command(agent: &str) -> Option<LoginCommand> {
+    let id = registry::find(agent)?.id;
+    match id {
+        "codex" => Some(LoginCommand {
+            args: &["login"],
+            terminal: false,
+        }),
+        "claude-code" => Some(LoginCommand {
+            args: &["auth", "login"],
+            terminal: false,
+        }),
+        "hermes" => Some(LoginCommand {
+            args: &["model"],
+            terminal: true,
+        }),
+        _ => None,
+    }
 }
 
 /// What the row's indented tick copies ("ChatGPT sign-in"), when any.
@@ -685,6 +719,23 @@ pub fn copy_source(_env: &HostEnv, agent: &str) -> Option<String> {
         "codex" => Some("codex login --device-auth".into()),
         "claude-code" => Some("Claude Code's own sign-in".into()),
         _ => None,
+    }
+}
+
+/// A sign-in command that stopped with an error, in plain words: what it
+/// last said (without terminal colors), else its exit code.
+pub fn sign_in_failure(name: &str, code: Option<i32>, said: &str) -> String {
+    let last = plain(said)
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .map(|l| l.chars().take(200).collect::<String>());
+    match (last, code) {
+        (Some(l), _) => format!("{name}'s sign-in stopped: {l}"),
+        (None, Some(c)) => {
+            format!("{name}'s sign-in stopped (exit code {c}). Try signing in from its own app.")
+        }
+        (None, None) => format!("{name}'s sign-in was stopped. Try again."),
     }
 }
 
@@ -847,9 +898,15 @@ pub fn start_device_sign_in(
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
-    Err(CopyRefusal::Failed(
-        "Codex didn't show a sign-in code. Try again.".into(),
-    ))
+    let said = plain(&seen);
+    let last = said.lines().map(str::trim).rfind(|l| !l.is_empty());
+    Err(CopyRefusal::Failed(match last {
+        Some(l) => format!(
+            "Codex didn't show a sign-in code. It said: {}",
+            l.chars().take(200).collect::<String>()
+        ),
+        None => "Codex didn't show a sign-in code. Try again.".into(),
+    }))
 }
 
 use std::io::Read as _;

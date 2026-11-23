@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -174,7 +177,7 @@ impl Tool for LaunchAppTool {
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
-                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
+                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only window screenshots and `delivery_mode:\"foreground\"` need it restored."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: true,
         })
@@ -574,7 +577,7 @@ impl Tool for LaunchAppTool {
                         unsafe {
                             CreateProcessW(
                                 PCWSTR(file_w.as_ptr()),
-                                PWSTR(command_line.as_mut_ptr()),
+                                Some(PWSTR(command_line.as_mut_ptr())),
                                 None,
                                 None,
                                 false,
@@ -805,10 +808,9 @@ impl Tool for LaunchAppTool {
             if !windows_json.is_empty() {
                 break;
             }
-            let wins =
-                tokio::task::spawn_blocking(move || crate::win32::list_windows_win32_first(pid))
-                    .await
-                    .unwrap_or_default();
+            let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                .await
+                .unwrap_or_default();
             if !wins.is_empty() {
                 let window_count = wins.len();
                 windows_json = wins.iter().enumerate().map(|(position, w)| json!({
@@ -828,7 +830,7 @@ impl Tool for LaunchAppTool {
             // with (e.g. "gimp-3.exe" → prefix "gimp" matches "gimp-3.2.exe").
             let basename_for_match = target_file_opt
                 .as_deref()
-                .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
+                .and_then(|t| t.rsplit(['\\', '/']).next())
                 .unwrap_or("")
                 .to_owned();
             // Known-slow launchers get an extended retry budget. GIMP 3.x in
@@ -866,7 +868,7 @@ impl Tool for LaunchAppTool {
                     for _ in 0..max_candidate_attempts {
                         total_attempts += 1;
                         let wins = tokio::task::spawn_blocking(move || {
-                            crate::win32::list_windows_win32_first(candidate_pid)
+                            crate::win32::list_windows(Some(candidate_pid))
                         })
                         .await
                         .unwrap_or_default();
@@ -941,7 +943,7 @@ impl Tool for LaunchAppTool {
             // pick up launcher-stub child processes.
             let stub_basename = target_file_opt
                 .as_deref()
-                .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
+                .and_then(|t| t.rsplit(['\\', '/']).next())
                 .unwrap_or("")
                 .to_owned();
             // parent_pid is the launched pid family root — used below to

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux worker containment: process group, parent-death signal, resource
 //! limits, `PR_SET_NO_NEW_PRIVS`, a Landlock ruleset that confines reads,
 //! executes and writes to an exact allowlist, and a seccomp filter that denies

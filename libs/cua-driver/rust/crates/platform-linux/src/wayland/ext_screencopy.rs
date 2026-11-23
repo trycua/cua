@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Output capture via `ext-image-copy-capture-v1` (staging protocol).
 //!
 //! The wlroots `zwlr_screencopy_manager_v1` capture path in `mod.rs` works
@@ -18,14 +21,15 @@
 //!     → frame emits ready (success) or failed (error)
 //!     → read pixels out of the mmap'd buffer, PNG-encode, destroy
 //!
-//! Per-window capture (ext_foreign_toplevel_image_capture_source_manager_v1)
-//! is a follow-up — needs the existing `list_windows` to migrate from
-//! `zwlr_foreign_toplevel_manager_v1` to `ext_foreign_toplevel_list_v1` so
-//! the window_id handles match up.
+//! [`screenshot_toplevel`] copies one window the same way, from an
+//! `ext_foreign_toplevel_image_capture_source_manager_v1` source built on
+//! the `ext_foreign_toplevel_handle_v1` whose stable identifier
+//! [`super::ext_toplevel`] issued the window_id for.
 
 use std::time::Duration;
 
 use wayland_client::{
+    event_created_child,
     protocol::{
         wl_buffer::WlBuffer,
         wl_output::WlOutput,
@@ -33,9 +37,14 @@ use wayland_client::{
         wl_shm::{self, WlShm},
         wl_shm_pool::WlShmPool,
     },
-    Connection, Dispatch, Proxy, QueueHandle,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+};
+use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
+    ext_foreign_toplevel_handle_v1::{self, ExtForeignToplevelHandleV1},
+    ext_foreign_toplevel_list_v1::{self, ExtForeignToplevelListV1, EVT_TOPLEVEL_OPCODE},
 };
 use wayland_protocols::ext::image_capture_source::v1::client::{
+    ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1,
     ext_image_capture_source_v1::ExtImageCaptureSourceV1,
     ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
 };
@@ -47,8 +56,13 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
 
 #[derive(Default)]
 struct CapState {
+    /// Bind the toplevel list and its source manager instead of an output.
+    toplevel_capture: bool,
     output: Option<WlOutput>,
     source_mgr: Option<ExtOutputImageCaptureSourceManagerV1>,
+    toplevel_list: Option<ExtForeignToplevelListV1>,
+    toplevel_source_mgr: Option<ExtForeignToplevelImageCaptureSourceManagerV1>,
+    toplevels: Vec<(ExtForeignToplevelHandleV1, String)>,
     copy_mgr: Option<ExtImageCopyCaptureManagerV1>,
     shm: Option<WlShm>,
     // Buffer specs reported by the session before we allocate.
@@ -57,6 +71,7 @@ struct CapState {
     height: u32,
     stride: u32,
     done: bool,
+    stopped: bool,
     // Frame outcome
     ready: bool,
     failed: bool,
@@ -86,6 +101,52 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     let source_mgr = state.source_mgr.clone().ok_or_else(|| {
         anyhow::anyhow!("compositor does not expose ext_output_image_capture_source_manager_v1")
     })?;
+    let source: ExtImageCaptureSourceV1 = source_mgr.create_source(&output, &qh, ());
+    copy_source(&mut queue, &mut state, source)
+}
+
+/// Capture the toplevel whose `ext_foreign_toplevel_handle_v1` carries
+/// `identifier`, return raw PNG bytes. The compositor copies that window's
+/// own content, so covering windows and other workspaces never show.
+pub fn screenshot_toplevel(identifier: &str) -> anyhow::Result<Vec<u8>> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<CapState>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+
+    let mut state = CapState {
+        toplevel_capture: true,
+        ..CapState::default()
+    };
+    queue.roundtrip(&mut state)?;
+    if state.toplevel_list.is_none() {
+        anyhow::bail!("compositor does not expose ext_foreign_toplevel_list_v1");
+    }
+    let source_mgr = state.toplevel_source_mgr.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "compositor does not expose ext_foreign_toplevel_image_capture_source_manager_v1"
+        )
+    })?;
+    for _ in 0..3 {
+        queue.roundtrip(&mut state)?;
+    }
+
+    let handle = state
+        .toplevels
+        .iter()
+        .find_map(|(handle, known)| (known == identifier).then(|| handle.clone()))
+        .ok_or_else(|| anyhow::anyhow!("the compositor no longer lists toplevel {identifier:?}"))?;
+    let source: ExtImageCaptureSourceV1 = source_mgr.create_source(&handle, &qh, ());
+    copy_source(&mut queue, &mut state, source)
+}
+
+/// Copy one frame of `source` into a wl_shm buffer and PNG-encode it.
+fn copy_source(
+    queue: &mut EventQueue<CapState>,
+    state: &mut CapState,
+    source: ExtImageCaptureSourceV1,
+) -> anyhow::Result<Vec<u8>> {
+    let qh = queue.handle();
     let copy_mgr = state.copy_mgr.clone().ok_or_else(|| {
         anyhow::anyhow!("compositor does not expose ext_image_copy_capture_manager_v1")
     })?;
@@ -94,8 +155,6 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor does not expose wl_shm"))?;
 
-    // Create source + session.
-    let source: ExtImageCaptureSourceV1 = source_mgr.create_source(&output, &qh, ());
     let session: ExtImageCopyCaptureSessionV1 = copy_mgr.create_session(
         &source,
         ext_image_copy_capture_manager_v1::Options::empty(),
@@ -105,13 +164,16 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
 
     // Wait for the session to announce buffer dimensions + format + done.
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
-    while !state.done && std::time::Instant::now() < deadline {
-        queue.roundtrip(&mut state)?;
+    while !state.done && !state.stopped && std::time::Instant::now() < deadline {
+        queue.roundtrip(state)?;
         if state.width > 0 && state.height > 0 && state.fmt.is_some() {
             // Some compositors don't emit `done` explicitly — proceed once
             // we have geometry + format.
             state.done = true;
         }
+    }
+    if state.stopped {
+        anyhow::bail!("ext-image-copy-capture session stopped before reporting buffer specs");
     }
     if !state.done || state.width == 0 || state.height == 0 || state.fmt.is_none() {
         anyhow::bail!(
@@ -177,11 +239,11 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     let frame: ExtImageCopyCaptureFrameV1 = session.create_frame(&qh, ());
     frame.attach_buffer(&buffer);
     frame.capture();
-    queue.roundtrip(&mut state)?;
+    queue.roundtrip(state)?;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while !state.ready && !state.failed && std::time::Instant::now() < deadline {
-        queue.roundtrip(&mut state)?;
+    while !state.ready && !state.failed && !state.stopped && std::time::Instant::now() < deadline {
+        queue.roundtrip(state)?;
     }
     if state.failed {
         super::cleanup_mmap(ptr, size, fd);
@@ -192,6 +254,9 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     }
     if !state.ready {
         super::cleanup_mmap(ptr, size, fd);
+        if state.stopped {
+            anyhow::bail!("ext-image-copy-capture session stopped before the frame was ready");
+        }
         anyhow::bail!("ext-image-copy-capture frame timed out without ready event");
     }
 
@@ -203,7 +268,7 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     session.destroy();
     source.destroy();
     pool.destroy();
-    queue.roundtrip(&mut state).ok();
+    queue.roundtrip(state).ok();
     super::cleanup_mmap(ptr, size, fd);
 
     Ok(png)
@@ -267,7 +332,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for CapState {
         } = event
         {
             match interface.as_str() {
-                "wl_output" => {
+                "wl_output" if !state.toplevel_capture => {
                     if state.output.is_none() {
                         state.output =
                             Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
@@ -276,7 +341,23 @@ impl Dispatch<wl_registry::WlRegistry, ()> for CapState {
                 "wl_shm" => {
                     state.shm = Some(registry.bind::<WlShm, _, _>(name, 1, qh, ()));
                 }
-                "ext_output_image_capture_source_manager_v1" => {
+                "ext_foreign_toplevel_list_v1" if state.toplevel_capture => {
+                    state.toplevel_list =
+                        Some(registry.bind::<ExtForeignToplevelListV1, _, _>(name, 1, qh, ()));
+                }
+                "ext_foreign_toplevel_image_capture_source_manager_v1"
+                    if state.toplevel_capture =>
+                {
+                    state.toplevel_source_mgr = Some(
+                        registry.bind::<ExtForeignToplevelImageCaptureSourceManagerV1, _, _>(
+                            name,
+                            1,
+                            qh,
+                            (),
+                        ),
+                    );
+                }
+                "ext_output_image_capture_source_manager_v1" if !state.toplevel_capture => {
                     state.source_mgr =
                         Some(registry.bind::<ExtOutputImageCaptureSourceManagerV1, _, _>(
                             name,
@@ -350,6 +431,53 @@ impl Dispatch<ExtOutputImageCaptureSourceManagerV1, ()> for CapState {
     ) {
     }
 }
+impl Dispatch<ExtForeignToplevelImageCaptureSourceManagerV1, ()> for CapState {
+    fn event(
+        _: &mut Self,
+        _: &ExtForeignToplevelImageCaptureSourceManagerV1,
+        _: <ExtForeignToplevelImageCaptureSourceManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+impl Dispatch<ExtForeignToplevelListV1, ()> for CapState {
+    fn event(
+        _: &mut Self,
+        _: &ExtForeignToplevelListV1,
+        _: ext_foreign_toplevel_list_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+
+    event_created_child!(CapState, ExtForeignToplevelListV1, [
+        EVT_TOPLEVEL_OPCODE => (ExtForeignToplevelHandleV1, ()),
+    ]);
+}
+impl Dispatch<ExtForeignToplevelHandleV1, ()> for CapState {
+    fn event(
+        state: &mut Self,
+        handle: &ExtForeignToplevelHandleV1,
+        event: ext_foreign_toplevel_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            ext_foreign_toplevel_handle_v1::Event::Identifier { identifier } => {
+                state.toplevels.push((handle.clone(), identifier));
+            }
+            ext_foreign_toplevel_handle_v1::Event::Closed => {
+                state.toplevels.retain(|(known, _)| known != handle);
+                handle.destroy();
+            }
+            _ => {}
+        }
+    }
+}
 impl Dispatch<ExtImageCaptureSourceV1, ()> for CapState {
     fn event(
         _: &mut Self,
@@ -396,6 +524,9 @@ impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for CapState {
             }
             Ev::Done => {
                 state.done = true;
+            }
+            Ev::Stopped => {
+                state.stopped = true;
             }
             _ => {}
         }

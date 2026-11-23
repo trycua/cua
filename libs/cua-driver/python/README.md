@@ -49,7 +49,9 @@ from cua_driver import (
 async def main() -> None:
     driver = CuaDriver.create()
     await driver.start_session(
-        StartSessionInput(session="demo", capture_scope=None, cursor_theme=None)
+        StartSessionInput(
+            session="demo", capture_scope=None, cursor_theme=None, cursor_motion=None
+        )
     )
     try:
         await driver.set_agent_cursor_theme(
@@ -174,6 +176,18 @@ clients and MCP proxies before stopping or restarting, then reconnect from the
 new connection. `wait_for_exit(connection.generation)` observes unexpected
 termination. Dropping the host closes its parent-liveness pipe and kills the
 child as a fallback, but orderly applications should still await `stop()`.
+
+To start the daemon without the agent cursor overlay, construct the host with
+`EmbeddedCuaDriverHost.with_options()` and set `no_overlay=True`; the host then
+passes `--no-overlay` to the `serve` process it owns. The default is `False`.
+
+For startup troubleshooting, set `capture_stderr=True` on the same options. After a
+failed start, `last_diagnostics()` returns the generation-scoped final 65,536
+bytes, exit code, and truncation state; a successful start clears the previous
+diagnostics. Captured text is raw child stderr and can contain application data,
+so do not place secrets in daemon stderr or forward diagnostics to telemetry.
+When `inherit_stderr` is also enabled, the host tees output on a bounded
+best-effort path so a blocked terminal cannot stop diagnostic collection.
 
 ## Binary wrapper
 

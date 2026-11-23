@@ -70,7 +70,7 @@ export function planFailure(raw: string): { text: string; upgradeUrl: string | n
   if (/feature_required/.test(raw)) {
     const what =
       feature === "team_machines"
-        ? "Team machines need the Teams plan."
+        ? "Team computers need the Teams plan."
         : feature === "team_roles"
           ? "Admin roles need the Teams plan."
           : feature === "device_approval"

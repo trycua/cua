@@ -42,12 +42,9 @@
     "EmbeddedPermissionMode",
     "EndSessionInput",
     "EndSessionOutput",
-    "EscalateSessionInput",
-    "EscalationReason",
     "GetCursorPositionInput",
     "GetDesktopStateInput",
     "GetScreenSizeInput",
-    "GetSessionStateInput",
     "HotkeyInput",
     "ImageContent",
     "MacOsPermissionStatus",
@@ -87,6 +84,7 @@
     "embedded.d.ts": [
       "EmbeddedCuaDriverHost",
       "EmbeddedDriverConnection",
+      "EmbeddedDriverDiagnostics",
       "EmbeddedPermissionMode"
     ],
     "electron.d.ts": [

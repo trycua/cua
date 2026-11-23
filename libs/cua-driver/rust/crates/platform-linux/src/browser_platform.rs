@@ -1,12 +1,17 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cua_driver_core::browser::managed_policy::policy_forces_extensions;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
@@ -19,8 +24,8 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
-    loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
+    is_firefox, loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
 };
 
 pub struct LinuxBrowserPlatform {
@@ -182,11 +187,13 @@ fn isolated_browser_candidates() -> Vec<PathBuf> {
     .collect()
 }
 
-fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
-    if !executable.is_absolute() {
+/// Whether `path` and every directory above it are root-owned, not group- or
+/// world-writable, and not symlinks, so only root can have put it there.
+fn root_owned_path(path: &std::path::Path) -> bool {
+    if !path.is_absolute() {
         return false;
     }
-    let mut current = Some(executable);
+    let mut current = Some(path);
     while let Some(path) = current {
         let Ok(metadata) = std::fs::symlink_metadata(path) else {
             return false;
@@ -197,8 +204,61 @@ fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
         }
         current = path.parent();
     }
-    std::fs::metadata(executable)
-        .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
+    true
+}
+
+fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
+    root_owned_path(executable)
+        && std::fs::metadata(executable)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
+}
+
+/// The mandatory policy directories Chromium reads for `executable`'s
+/// product on Linux. Chromium builds read `/etc/chromium`, except Ubuntu's
+/// `chromium-browser` packaging, which reads only its own directory.
+fn managed_policy_dirs(executable: &std::path::Path) -> &'static [&'static str] {
+    match browser_product(&executable.to_string_lossy()) {
+        BrowserProduct::GoogleChrome => &["/etc/opt/chrome/policies/managed"],
+        BrowserProduct::Chromium
+            if executable
+                .file_name()
+                .is_some_and(|name| name == "chromium-browser") =>
+        {
+            &["/etc/chromium-browser/policies/managed"]
+        }
+        BrowserProduct::Chromium => &["/etc/chromium/policies/managed"],
+        BrowserProduct::MicrosoftEdge => &["/etc/opt/edge/policies/managed"],
+        BrowserProduct::Brave => &["/etc/brave/policies/managed"],
+        _ => &[],
+    }
+}
+
+/// The first `*.json` policy file in `dirs` that `trusted` accepts and that
+/// forces extensions. Unreadable or malformed files are skipped, as Chromium
+/// skips them.
+fn managed_extension_policy_file<'a>(
+    dirs: impl IntoIterator<Item = &'a std::path::Path>,
+    trusted: impl Fn(&std::path::Path) -> bool,
+) -> Option<PathBuf> {
+    dirs.into_iter().find_map(|dir| {
+        let mut files = std::fs::read_dir(dir)
+            .ok()?
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .collect::<Vec<_>>();
+        files.sort();
+        files.into_iter().find(|file| {
+            trusted(file)
+                && std::fs::metadata(file).is_ok_and(|metadata| metadata.is_file())
+                && std::fs::read(file)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                    .is_some_and(|policy| policy_forces_extensions(&policy))
+        })
+    })
 }
 
 fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
@@ -337,15 +397,33 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     Ok(listeners)
 }
 
-fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+/// Chromium resolves its default profile under the browser's own
+/// `$XDG_CONFIG_HOME`, used verbatim even when relative, falling back to
+/// `$HOME/.config`, so read both from the browser process's environment. The
+/// driver runs as the same user, so its `$HOME` stands in when the browser's
+/// environment cannot be read. A relative result is resolved by the caller.
+fn default_user_data_dir(product: BrowserProduct, environ: &[u8]) -> Option<PathBuf> {
     let relative = match product {
-        BrowserProduct::GoogleChrome => ".config/google-chrome",
-        BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
-        BrowserProduct::Chromium => ".config/chromium",
+        BrowserProduct::GoogleChrome => "google-chrome",
+        BrowserProduct::MicrosoftEdge => "microsoft-edge",
+        BrowserProduct::Chromium => "chromium",
+        BrowserProduct::Brave => "BraveSoftware/Brave-Browser",
         _ => return None,
     };
-    Some(home.join(relative))
+    let var = |name: &[u8]| {
+        environ
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(name)?.strip_prefix(b"="))
+            .filter(|value| !value.is_empty())
+            .map(|value| PathBuf::from(std::ffi::OsStr::from_bytes(value)))
+    };
+    let config_home = match var(b"XDG_CONFIG_HOME") {
+        Some(path) => path,
+        None => var(b"HOME")
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))?
+            .join(".config"),
+    };
+    Some(config_home.join(relative))
 }
 
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
@@ -374,7 +452,7 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     }
     directories.sort();
     directories.dedup();
-    match directories.as_slice() {
+    let path = match directories.as_slice() {
         [] => {
             let Some(executable) = std::fs::read_link(format!("/proc/{pid}/exe"))
                 .ok()
@@ -382,23 +460,30 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             else {
                 return Ok(None);
             };
-            Ok(default_user_data_dir(browser_product(&executable)))
+            let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+            let Some(path) = default_user_data_dir(browser_product(&executable), &environ) else {
+                return Ok(None);
+            };
+            path
         }
-        [path] if path.is_absolute() => Ok(Some(path.clone())),
-        [path] => {
-            let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
-                BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserBindingStale,
-                    format!("browser process {pid} working directory is unavailable"),
-                )
-            })?;
-            Ok(Some(cwd.join(path)))
+        [path] => path.clone(),
+        _ => {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "browser process has multiple distinct --user-data-dir arguments",
+            ))
         }
-        _ => Err(BrowserRefusal::new(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "browser process has multiple distinct --user-data-dir arguments",
-        )),
+    };
+    if path.is_absolute() {
+        return Ok(Some(path));
     }
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} working directory is unavailable"),
+        )
+    })?;
+    Ok(Some(cwd.join(path)))
 }
 
 fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
@@ -478,6 +563,12 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no root-owned, non-writable system Chromium executable is available for isolated launch",
         ))
+    }
+
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        let dirs = managed_policy_dirs(std::path::Path::new(executable));
+        managed_extension_policy_file(dirs.iter().map(std::path::Path::new), root_owned_path)
+            .map(|file| file.display().to_string())
     }
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
@@ -561,18 +652,20 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        let (process, executable) = tokio::task::spawn_blocking(move || {
+        let (process, executable, electron_app) = tokio::task::spawn_blocking(move || {
             let process = crate::proc_fs::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32);
-            let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
-                .ok()
-                .map(|path| path.to_string_lossy().into_owned());
-            (process, executable)
+            let executable = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+            let electron_app = executable.as_deref().is_some_and(is_electron_app_layout);
+            let executable = executable.map(|path| path.to_string_lossy().into_owned());
+            (process, executable, electron_app)
         })
         .await
         .ok()
-        .and_then(|(process, executable)| process.map(|process| (process, executable)))
+        .and_then(|(process, executable, electron_app)| {
+            process.map(|process| (process, executable, electron_app))
+        })
         .ok_or_else(|| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
@@ -582,9 +675,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let identity = executable
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| process.name.clone());
-        let chromium = is_chromium(&identity);
+        let chromium = electron_app || is_chromium(&identity);
         let gecko = is_firefox(&identity);
-        let product_kind = browser_product(&identity);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(&identity)
+        };
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -616,10 +713,10 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             if crate::wayland::hyprland::is_session() {
-                let window = tokio::task::spawn_blocking(move || {
-                    crate::wayland::hyprland::window_for_address(window_id)
+                let (window, bounds) = tokio::task::spawn_blocking(move || {
+                    crate::wayland::hyprland::browser_window(window_id)
                 })
                 .await
                 .ok()
@@ -636,22 +733,26 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                         "Hyprland browser window does not match the requested pid and full address",
                     ));
                 }
+                // Without its output the rect stays in layout coordinates,
+                // which Chromium does not share, so it binds read-only.
+                let geometry_exact = bounds.is_some();
+                let [x, y, width, height] = bounds.unwrap_or([
+                    f64::from(window.x),
+                    f64::from(window.y),
+                    f64::from(window.width),
+                    f64::from(window.height),
+                ]);
                 return Ok(NativeWindowInfo {
                     pid,
                     window_id,
                     title: window.title,
-                    bounds: Rect::new(
-                        f64::from(window.x),
-                        f64::from(window.y),
-                        f64::from(window.width),
-                        f64::from(window.height),
-                    ),
-                    geometry_exact: true,
+                    bounds: Rect::new(x, y, width, height),
+                    geometry_exact,
                     ownership: NativeOwnershipProof {
                         method: NativeOwnershipMethod::WindowServerOwner,
                         owner_pid: pid,
                         detail: Some(
-                            "authenticated Hyprland IPC pid, full address, and mapped window rect"
+                            "authenticated Hyprland IPC pid, full address, and mapped window rect on its output"
                                 .to_owned(),
                         ),
                     },
@@ -764,7 +865,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             if crate::wayland::hyprland::is_session() {
                 let windows = tokio::task::spawn_blocking(crate::wayland::hyprland::list_windows)
                     .await
@@ -1235,6 +1336,24 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })
     }
 
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let Ok(pid) = u32::try_from(pid) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || crate::browser_consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
+    }
+
     async fn handle_existing_profile_consent(
         &self,
         request: BrowserConsentRequest,
@@ -1288,6 +1407,36 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_user_data_dir_follows_the_browser_process_config_home() {
+        let brave = browser_product("/opt/brave.com/brave/brave");
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0LANG=C\0"),
+            Some(PathBuf::from(
+                "/home/ana/.config/BraveSoftware/Brave-Browser"
+            ))
+        );
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0XDG_CONFIG_HOME=/srv/cfg\0"),
+            Some(PathBuf::from("/srv/cfg/BraveSoftware/Brave-Browser"))
+        );
+        assert_eq!(
+            default_user_data_dir(
+                BrowserProduct::GoogleChrome,
+                b"XDG_CONFIG_HOME=\0HOME=/home/ana\0"
+            ),
+            Some(PathBuf::from("/home/ana/.config/google-chrome"))
+        );
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0XDG_CONFIG_HOME=cfg\0"),
+            Some(PathBuf::from("cfg/BraveSoftware/Brave-Browser"))
+        );
+        assert_eq!(
+            default_user_data_dir(BrowserProduct::Vivaldi, b"HOME=/home/ana\0"),
+            None
+        );
+    }
 
     #[test]
     fn x11_identity_and_cardinality_precede_compositor_selection() {
@@ -1431,6 +1580,78 @@ mod tests {
                 "/opt/microsoft/msedge/msedge",
             ]
             .map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn managed_policy_dirs_follow_the_launched_product() {
+        for (executable, dirs) in [
+            (
+                "/opt/google/chrome/google-chrome",
+                &["/etc/opt/chrome/policies/managed"][..],
+            ),
+            (
+                "/usr/lib/chromium/chromium",
+                &["/etc/chromium/policies/managed"][..],
+            ),
+            (
+                "/usr/lib/chromium-browser/chromium-browser",
+                &["/etc/chromium-browser/policies/managed"][..],
+            ),
+            (
+                "/opt/microsoft/msedge/msedge",
+                &["/etc/opt/edge/policies/managed"][..],
+            ),
+            (
+                "/opt/brave.com/brave/brave",
+                &["/etc/brave/policies/managed"][..],
+            ),
+            ("/usr/lib/firefox/firefox", &[][..]),
+        ] {
+            assert_eq!(
+                managed_policy_dirs(std::path::Path::new(executable)),
+                dirs,
+                "{executable}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_trusted_policy_file_that_forces_extensions_counts() {
+        let root = tempfile::tempdir().expect("temporary policy directory");
+        let dir = root.path();
+        std::fs::write(
+            dir.join("languages.json"),
+            r#"{"ForcedLanguages": ["en-US"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("broken.json"), "{").unwrap();
+        std::fs::write(
+            dir.join("extensions.txt"),
+            r#"{"ExtensionInstallForcelist": ["ddkjiahejlhfcafbddmgiahcphecmpfh"]}"#,
+        )
+        .unwrap();
+        assert_eq!(managed_extension_policy_file([dir], |_| true), None);
+
+        let forced = dir.join("test.json");
+        std::fs::write(
+            &forced,
+            r#"{"ExtensionInstallForcelist": ["ddkjiahejlhfcafbddmgiahcphecmpfh;https://clients2.google.com/service/update2/crx"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            managed_extension_policy_file([dir], |_| true),
+            Some(forced.clone())
+        );
+        // A file the user could have written is not admin policy.
+        assert_eq!(managed_extension_policy_file([dir], root_owned_path), None);
+        assert_eq!(
+            managed_extension_policy_file([dir], |file| file != forced.as_path()),
+            None
+        );
+        assert_eq!(
+            managed_extension_policy_file([dir.join("missing").as_path(), dir], |_| true),
+            Some(forced)
         );
     }
 

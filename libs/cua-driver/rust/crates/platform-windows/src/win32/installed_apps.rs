@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows installed-app enumeration.
 //!
 //! Two sources:
@@ -15,7 +18,6 @@
 //!    Application.Id.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -277,7 +279,7 @@ where
     let Some(permit) = gate.try_acquire() else {
         return Err(UwpScanDeadlineError::Busy);
     };
-    let timed_out = permit.timeout_flag();
+    let deadline = permit.deadline();
 
     let (tx, rx) = mpsc::channel();
     let spawn = thread::Builder::new()
@@ -308,13 +310,10 @@ where
     match rx.recv_timeout(timeout) {
         Ok(result) => Ok(result),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            timed_out.store(true, Ordering::Release);
-            // Arm the cooldown here as well as when the permit drops. The
-            // worker can return in the narrow interval between `recv_timeout`
-            // expiring and observing `timed_out`; recording it on the caller
-            // side ensures that race cannot immediately launch another package
-            // query.
-            gate.arm_cooldown();
+            // Starts the cooldown even when the worker returned in the
+            // narrow interval after `recv_timeout` expired, so that race
+            // cannot immediately launch another package query.
+            deadline.expire();
             tracing::warn!(
                 target: "installed_apps",
                 "scan_uwp_packages: current-user WinRT query exceeded {}ms; returning Start Menu apps without UWP results. No additional package worker will start until this query returns",
@@ -467,22 +466,60 @@ fn read_uwp_application_id(pkg: &windows::ApplicationModel::Package) -> Option<S
     }
     let manifest = std::path::Path::new(&base).join("AppxManifest.xml");
     let xml = std::fs::read_to_string(manifest).ok()?;
+    first_application_id(&xml)
+}
 
-    // Look for the first <Application ... Id="..."> start tag.
-    let app_pos = xml.find("<Application")?;
-    let tail = &xml[app_pos..];
-    let tag_end = tail.find('>')?;
-    let start_tag = &tail[..tag_end];
-
-    let id_key = "Id=\"";
-    let id_pos = start_tag.find(id_key)? + id_key.len();
-    let rest = &start_tag[id_pos..];
-    let id_end = rest.find('"')?;
-    let app_id = rest[..id_end].trim();
-    if app_id.is_empty() {
-        None
-    } else {
-        Some(app_id.to_owned())
+/// The `Id` of the first `<Application>` element in an AppxManifest. The
+/// enclosing `<Applications>` element shares the prefix and has no `Id`, so
+/// the tag name must end where the prefix does. Comments, CDATA, processing
+/// instructions and declarations are skipped, since only they can hold a `<`
+/// that does not start a tag. Attributes are read in XML syntax: whitespace
+/// around `=`, and either quote.
+fn first_application_id(xml: &str) -> Option<String> {
+    const TAG: &str = "<Application";
+    let mut rest = xml;
+    loop {
+        rest = &rest[rest.find('<')?..];
+        let skip_to = [
+            ("<!--", "-->"),
+            ("<![CDATA[", "]]>"),
+            ("<?", "?>"),
+            ("<!", ">"),
+        ]
+        .into_iter()
+        .find(|(open, _)| rest.starts_with(open));
+        if let Some((open, close)) = skip_to {
+            let body = &rest[open.len()..];
+            rest = &body[body.find(close)? + close.len()..];
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix(TAG) {
+            if after.starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/') {
+                rest = after;
+                break;
+            }
+        }
+        rest = &rest[1..];
+    }
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() || rest.starts_with(['>', '/']) {
+            return None;
+        }
+        let name_end = rest.find(|c: char| c.is_whitespace() || c == '=')?;
+        let name = &rest[..name_end];
+        rest = rest[name_end..]
+            .trim_start()
+            .strip_prefix('=')?
+            .trim_start();
+        let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        rest = &rest[1..];
+        let value_end = rest.find(quote)?;
+        if name == "Id" {
+            let id = rest[..value_end].trim();
+            return (!id.is_empty()).then(|| id.to_owned());
+        }
+        rest = &rest[value_end + 1..];
     }
 }
 
@@ -584,8 +621,43 @@ fn read_install_mtime(pkg: &windows::ApplicationModel::Package) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
+
+    #[test]
+    fn first_application_id_skips_the_applications_wrapper() {
+        let manifest = r#"<Package><Applications>
+            <Application uap10:HostId="Host" Id="Editor" Executable="editor.exe" EntryPoint="Windows.FullTrustApplication">
+            </Application>
+            <Application Id="Viewer" Executable="viewer.exe"/>
+        </Applications></Package>"#;
+        assert_eq!(first_application_id(manifest).as_deref(), Some("Editor"));
+    }
+
+    #[test]
+    fn first_application_id_skips_markup_that_is_not_a_tag() {
+        let manifest = r#"<?xml version="1.0"?><Package><Applications>
+            <!-- <Application Id="OldEditor"/> -->
+            <![CDATA[<Application Id="Data"/>]]>
+            <?pi <Application Id="Instruction"/> ?>
+            <Application Id="Editor"/>
+        </Applications></Package>"#;
+        assert_eq!(first_application_id(manifest).as_deref(), Some("Editor"));
+    }
+
+    #[test]
+    fn first_application_id_reads_any_xml_attribute_spelling() {
+        let manifest = "<Applications><Application Name='a>b' Id = 'Editor'/></Applications>";
+        assert_eq!(first_application_id(manifest).as_deref(), Some("Editor"));
+    }
+
+    #[test]
+    fn first_application_id_is_none_without_an_application_element() {
+        assert_eq!(
+            first_application_id("<Package><Applications/></Package>"),
+            None
+        );
+    }
 
     #[test]
     fn shortcut_environment_target_resolves_without_changing_arguments() {

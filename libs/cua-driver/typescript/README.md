@@ -201,6 +201,18 @@ for its generation, observe unexpected termination with
 Rust host also closes a parent-liveness pipe on normal destruction so the daemon
 cannot remain orphaned after a host crash.
 
+To start the daemon without the agent cursor overlay, create the host with
+`EmbeddedCuaDriverHost.withOptions()` and set `noOverlay: true`; the host then
+passes `--no-overlay` to the `serve` process it owns. The default is `false`.
+
+For startup troubleshooting, set `captureStderr: true` on the same options. After a
+failed start, `lastDiagnostics()` returns the generation-scoped final 65,536
+bytes, exit code, and truncation state; a successful start clears the previous
+diagnostics. Captured text is raw child stderr and can contain application data,
+so do not place secrets in daemon stderr or forward diagnostics to telemetry.
+When `inheritStderr` is also enabled, the host tees output on a bounded
+best-effort path so a blocked terminal cannot stop diagnostic collection.
+
 The npm package installs one optional native package selected for the current
 OS and CPU. It does not bundle the `cua-driver` executable: ship that executable
 outside ASAR, preserve its executable bit, and sign it before signing and

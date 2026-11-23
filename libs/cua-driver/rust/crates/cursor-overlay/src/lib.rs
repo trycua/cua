@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! cursor-overlay — shared types and math for the cua-driver cursor overlay.
 //!
 //! Platform renderers (macOS, Windows, Linux) depend on this crate for:
@@ -14,8 +17,10 @@ pub mod badge_mode;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod cursor_options;
+pub mod cursor_pose;
 pub mod motion;
 pub mod motion_defaults;
+pub mod pose_stream;
 pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
@@ -29,7 +34,7 @@ pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use badge_mode::BadgeMode;
-pub use cursor_options::CursorOptions;
+pub use cursor_options::{CursorOptions, RotateMode};
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
     DEFAULT_FIXED_MS,
@@ -388,6 +393,10 @@ pub enum OverlayCommand {
     ApplyMotion(serde_json::Value),
     /// Pin the overlay above a specific window (by platform window id).
     PinAbove(u64),
+    /// Drop the pin target. A move with no target window sends it, so the
+    /// overlay goes back to the top of the normal band instead of staying
+    /// under whatever covers the window the previous action pinned it to.
+    Unpin,
     /// Begin a best-effort semantic cursor cue.
     BeginAction {
         action: CursorAction,
@@ -406,9 +415,9 @@ pub enum OverlayCommand {
     /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
     /// minimal badge shows it briefly; other badge modes ignore it.
     ShowKeyCombo(Vec<String>),
-    /// Show a focus-highlight rectangle around an AX-targeted element.
-    /// `[x, y, width, height]` in screen coordinates (top-left origin).
-    /// `None` clears the highlight.
+    /// Retired: the cursor draws no action marks, so no platform paints a
+    /// focus highlight any more and this command is ignored. The variant stays
+    /// so existing senders and platform matches keep compiling.
     ShowFocusRect(Option<[f64; 4]>),
 }
 

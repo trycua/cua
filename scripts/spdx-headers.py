@@ -99,10 +99,16 @@ def declared_id(head: str) -> str | None:
     return match.group(1) if match else None
 
 
+# The word "copyright" anywhere, except where it is plainly an identifier
+# (`COPYRIGHT: &str = ...`, `copyright + 1`). Anything else counts as a notice,
+# so a doubtful file is left alone and listed, never stamped.
+NOTICE = re.compile(r"\bcopyright\b(?!\s*(?:[=+;]|:\s*&))", re.I)
+
+
 def foreign_notice(head: str) -> bool:
     """Another party's copyright or license notice (adapted or vendored code)."""
     for line in head.splitlines()[:40]:
-        if re.search(r"\bcopyright\b", line, re.I) and COPYRIGHT_HOLDER not in line:
+        if NOTICE.search(line) and COPYRIGHT_HOLDER not in line:
             return True
         if re.search(r"licensed under", line, re.I):
             return True
@@ -190,7 +196,7 @@ def main() -> int:
             for root in fsl_roots()
             for path in iter_source_files(root, extensions)
             if nearest_license_is_fsl(path, cache)
-            and not str(path.relative_to(REPO)).startswith(HEADER_EXEMPT_DIRS)
+            and not path.relative_to(REPO).as_posix().startswith(HEADER_EXEMPT_DIRS)
         ]
         label = "FSL packages"
     else:
@@ -220,8 +226,8 @@ def main() -> int:
             continue
         if (
             GENERATED_ELSEWHERE.search(path.name)
-            or str(rel).startswith(GENERATED_DIRS)
-            or (args.fsl and foreign_notice(head))
+            or rel.as_posix().startswith(GENERATED_DIRS)
+            or foreign_notice(head)
         ):
             foreign.append(rel)
             continue

@@ -44,11 +44,16 @@ describe("coding app marks", () => {
 
   it("shows VS Code's full-colour mark in both themes", () => {
     const { container } = render(<HarnessMark agent="vscode" name="VS Code (Copilot agent mode)" />);
-    expect([...container.querySelectorAll("img")].map((i) => [i.getAttribute("src"), i.dataset.theme])).toEqual([["/onboarding/marks/mark-vscode.svg", "both"]]);
+    expect([...container.querySelectorAll("img")].map((i) => [i.getAttribute("src"), i.dataset.theme])).toEqual([
+      ["/onboarding/marks/mark-vscode.svg", "both"],
+    ]);
   });
 
   it("gives Codex and Hermes their white marks in dark mode, not a CSS invert", () => {
-    for (const [agent, file] of [["codex", "openai"], ["hermes", "hermes"]] as const) {
+    for (const [agent, file] of [
+      ["codex", "openai"],
+      ["hermes", "hermes"],
+    ] as const) {
       const { container } = render(<HarnessMark agent={agent} name={agent} />);
       const imgs = [...container.querySelectorAll("img")];
       expect(imgs.map((i) => i.getAttribute("src"))).toEqual([`/onboarding/marks/mark-${file}.svg`, `/onboarding/marks/mark-${file}-dark.svg`]);

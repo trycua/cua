@@ -101,7 +101,7 @@ impl EndedCloudArgs {
     }
 }
 
-#[derive(Args, Debug, Default)]
+#[derive(Args, Default)]
 pub struct CreateArgs {
     /// Image: a registry reference (`ghcr.io/org/image:tag`), an alias
     /// (`linux`, `ubuntu`, `windows`, `macos[:tahoe|sequoia]`, `omarchy`).
@@ -133,6 +133,15 @@ pub struct CreateArgs {
     /// Sandbox name (generated when omitted).
     #[arg(long)]
     name: Option<String>,
+    /// Windows images built here (`windows:11`, `windows:2025`, ...): install
+    /// from this ISO instead of downloading Microsoft's evaluation media. The
+    /// first Space of that version builds the image (20 to 40 minutes with
+    /// hardware acceleration) and later ones reuse it.
+    #[arg(long, value_name = "PATH")]
+    iso: Option<PathBuf>,
+    /// With --iso: the SHA-256 the ISO must have.
+    #[arg(long, value_name = "HEX", requires = "iso")]
+    iso_sha256: Option<String>,
     /// Start Chromium in it for the cua-driver browser tools (IMAGE
     /// defaults to `linux`).
     #[arg(long)]
@@ -152,8 +161,9 @@ pub struct CreateArgs {
     #[arg(long)]
     memory: Option<String>,
     /// Guest network: `default` (outbound network, like a Docker container)
-    /// or `none` (no egress; published ports still work). `none` needs a
-    /// local QEMU VM; containers and Lume reject it.
+    /// or `none` (no egress; published ports still work). `none` runs on a
+    /// local QEMU VM, and on a container under the default Secure network
+    /// mode; containers reject it in legacy mode, and Lume rejects it.
     #[arg(long, value_parser = ["default", "none"])]
     network: Option<String>,
     /// Disk size (accepted; the image decides today).
@@ -256,6 +266,51 @@ pub struct CreateArgs {
     forkable: bool,
     #[command(flatten)]
     ended: EndedCloudArgs,
+}
+
+impl std::fmt::Debug for CreateArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateArgs")
+            .field("image", &self.image)
+            .field("on", &self.on)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("tier", &self.tier)
+            .field("name", &self.name)
+            .field("browser", &self.browser)
+            .field("open", &self.open)
+            .field("install", &self.install)
+            .field("cpu", &self.cpu)
+            .field("memory", &self.memory)
+            .field("network", &self.network)
+            .field("disk", &self.disk)
+            .field("ports", &self.ports)
+            .field("wait", &self.wait)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("overlays", &self.overlays)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_secret",
+                &self.registry_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("pool", &self.pool)
+            .field("ttl", &self.ttl)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("image_flag", &self.image_flag)
+            .field("wait_tcp", &self.wait_tcp)
+            .field("wait_http", &self.wait_http)
+            .field("view", &self.view)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("headless", &self.headless)
+            .field("no_spacesd", &self.no_spacesd)
+            .field("gpu", &self.gpu)
+            .field("profile", &self.profile)
+            .field("forkable", &self.forkable)
+            .field("ended", &self.ended)
+            .finish()
+    }
 }
 
 #[derive(Args, Debug)]
@@ -1503,6 +1558,76 @@ pub const MAX_BARE_MEMORY_GB: f64 = 512.0;
 /// Largest memory a sandbox can ask for: 1 TiB.
 pub const MAX_MEMORY_MIB: u64 = 1024 * 1024;
 
+/// For a Windows image built on this computer (`windows:11`): checks and
+/// remembers `--iso` (the daemon that builds reads it back), or says what the
+/// first create will download. `--iso` on any other image is an error.
+fn windows_build_note(
+    resolved: &str,
+    iso: Option<&std::path::Path>,
+    sha256: Option<&str>,
+) -> Result<(), CuaError> {
+    use cua_image::windows::{WindowsArch, build, iso as isomod};
+    let version = build::local_build_target(resolved);
+    let (Some(version), arch) = (version, WindowsArch::host()) else {
+        return match iso {
+            Some(_) => Err(CuaError::InvalidArgument(
+                "--iso applies to the Windows images built on this computer (windows:11, windows:2025, ...)".into(),
+            )),
+            None => Ok(()),
+        };
+    };
+    let invalid = |e: cua_image::ImageError| CuaError::InvalidArgument(e.to_string());
+    version.check_arch(arch).map_err(invalid)?;
+    let layout = build::Layout::default_root();
+    match iso {
+        Some(path) => {
+            isomod::register(&layout.iso_dir(), version, arch, path).map_err(invalid)?;
+            if let Some(want) = sha256 {
+                let got = isomod::sha256_file(path)
+                    .map_err(|e| CuaError::InvalidArgument(format!("{}: {e}", path.display())))?;
+                if !got.eq_ignore_ascii_case(want.trim()) {
+                    return Err(CuaError::InvalidArgument(format!(
+                        "{} has SHA-256 {got}, not {want}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+        None if build::cached_base(&layout, version, arch).is_none() => {
+            use cua_image::windows::table::Media;
+            let (source, licence) = if isomod::registered(&layout.iso_dir(), version, arch)
+                .is_some()
+            {
+                ("from the ISO you gave earlier", String::new())
+            } else {
+                match version.media(arch) {
+                    Media::Evaluation => (
+                        "from Microsoft's evaluation ISO (a download of about 7 GB, kept for next time)",
+                        format!(" It is a {}-day evaluation.", version.eval_days),
+                    ),
+                    Media::Consumer(_) => (
+                        "from the Windows ISO Microsoft offers for download (about 8 GB, checked against Microsoft's published checksum, kept for next time)",
+                        " Windows installs unactivated: it runs, with a watermark and limited personalisation, until you add a licence.".into(),
+                    ),
+                    Media::None => {
+                        return Err(CuaError::InvalidArgument(format!(
+                            "Microsoft publishes no {} ISO for {}: pass your own with --iso <path>",
+                            arch.as_str(),
+                            version.name
+                        )));
+                    }
+                }
+            };
+            eprintln!(
+                "note: {} is built on this computer the first time, {source}: about 20 to 40 minutes with hardware acceleration, then every create is fast.{licence}",
+                version.name
+            );
+        }
+        None => {}
+    }
+    Ok(())
+}
+
 /// Resolves an image alias to (image reference, guest OS). The aliases
 /// `linux`, `windows` and `macos` (optionally `:<version>`, e.g.
 /// `macos:tahoe`) and the bare word `ubuntu` name the canonical images `ghcr.io/trycua/{linux:24.04,
@@ -1752,6 +1877,45 @@ fn generated_name() -> String {
 }
 
 /// `sb create` (and `sb launch`, `compat` keeps its output).
+/// Inside a Space, `sandbox create` reaches only the Space's own children: a refusal there says
+/// what to run instead (a Space makes its child computers with `spaces create`, and they are
+/// then used and deleted like any other).
+fn in_a_space(e: CuaError) -> CuaError {
+    if matches!(e, CuaError::Unsupported(_)) && cua_daemon::client::spawn_channel().is_some() {
+        return CuaError::Unsupported(
+            "inside a Space, make a computer with `cua spaces create IMAGE --name NAME` (it \
+             becomes this Space's child), run things in it with `cua sb exec NAME -- COMMAND`, \
+             and delete it with `cua spaces delete --force NAME`"
+                .into(),
+        );
+    }
+    e
+}
+
+/// Whether this command creates a Windows or macOS computer here: one that
+/// only a long-running runtime (the cua daemon) can keep.
+pub fn creates_vm_here(cmd: &SandboxCmd) -> bool {
+    let SandboxCmd::Create(a) = cmd else {
+        return false;
+    };
+    let Some(image) = a.image.as_deref().or(a.image_flag.as_deref()) else {
+        return false;
+    };
+    if !matches!(a.on, None | Some(On::Local)) {
+        return false;
+    }
+    let Ok((resolved, os)) = resolve_image(image, a.tier.as_deref()) else {
+        return false;
+    };
+    let os = os.or_else(|| cua_image::catalog::catalog_os(&resolved));
+    matches!(os.as_deref(), Some("windows" | "macos"))
+}
+
+/// The refusal for a Windows or macOS computer in a runtime that ends with
+/// this command (`--embedded`): it would be stopped the moment the command
+/// returns.
+pub const EMBEDDED_VM_REFUSED: &str = "A Windows or macOS computer stops when this command ends if no cua daemon holds it. Leave out --embedded: the cua daemon starts by itself and keeps it running.";
+
 async fn create(
     cua: &Arc<Cua>,
     a: CreateArgs,
@@ -1800,6 +1964,18 @@ async fn create(
         }
         if let Some(image) = image {
             let (resolved, os) = resolve_image(&image, a.tier.as_deref())?;
+            if cua.embedded_runtime().is_some()
+                && on == On::Local
+                && matches!(
+                    os.clone()
+                        .or_else(|| cua_image::catalog::catalog_os(&resolved))
+                        .as_deref(),
+                    Some("windows" | "macos")
+                )
+            {
+                return Err(CuaError::InvalidArgument(EMBEDDED_VM_REFUSED.into()));
+            }
+            windows_build_note(&resolved, a.iso.as_deref(), a.iso_sha256.as_deref())?;
             o.image = resolved;
             o.os = os;
         }
@@ -1876,7 +2052,7 @@ async fn create(
             match &steps {
                 Some(steps) => {
                     let steps = steps.clone();
-                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| drop(steps.show(p)))))
                 }
                 None => Box::pin(sandboxes.create(o)),
             };
@@ -1908,7 +2084,7 @@ async fn create(
     {
         eprintln!("{}", util::hint(&kept_message(&info)));
     }
-    let sb = created.map_err(|e| on_backend(e, &label))?;
+    let sb = created.map_err(|e| in_a_space(on_backend(e, &label)))?;
     let i = sb.info();
     if i.location == "direct" {
         save_env_token(&i.name, token.as_deref())?;
@@ -2652,7 +2828,7 @@ pub async fn run(
                         )));
                     }
                     Some(sb) => {
-                        return exec_agentless(&sb, &name, &command.join(" "), json_global, out)
+                        return exec_agentless(&sb, &name, &exec_line(&command), json_global, out)
                             .await;
                     }
                     None => return Err(CuaError::SpacesdNotAvailable(m)),
@@ -2673,7 +2849,7 @@ pub async fn run(
             }
             let o = env
                 .run(shell::with_opts(
-                    shell::command_of(&sh_argv(&image_defaults(&name, command.join(" ")))),
+                    shell::command_of(&guest_argv(&env, &name, exec_line(&command)).await),
                     flags.opts(Some(120_000)),
                 ))
                 .await?;
@@ -2710,11 +2886,14 @@ pub async fn run(
             let name = at.apply(&name)?;
             let env = env_of(cua, &name).await?;
             if !command.is_empty() && !util::interactive() {
-                let line = image_defaults(&name, command.join(" "));
-                return shell::exec(&env, &sh_argv(&line), out).await;
+                let argv = guest_argv(&env, &name, exec_line(&command)).await;
+                return shell::exec(&env, &argv, out).await;
             }
-            let cmd =
-                (!command.is_empty()).then(|| sh_argv(&image_defaults(&name, command.join(" "))));
+            let cmd = if command.is_empty() {
+                None
+            } else {
+                Some(guest_argv(&env, &name, exec_line(&command)).await)
+            };
             return shell::interactive(&env, cmd, cols, rows).await;
         }
         SandboxCmd::Screenshot { name, at, output } => {
@@ -2847,6 +3026,27 @@ where
     }
 }
 
+/// How long finding and dialing a Space may take in all. Longer than
+/// [`RELAY_START_WAIT`], so a Space that is still starting says so first.
+const SPACE_LOOKUP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `lookup` within `budget`, or a timeout that names the Space: a relay
+/// stream that goes silent fails instead of hanging the command.
+async fn within_lookup_deadline<T>(
+    name: &str,
+    budget: std::time::Duration,
+    lookup: impl std::future::Future<Output = Result<T, CuaError>>,
+) -> Result<T, CuaError> {
+    tokio::time::timeout(budget, lookup)
+        .await
+        .unwrap_or_else(|_| {
+            Err(CuaError::Timeout(format!(
+                "{name} did not answer within {}s; check that it is online: cua spaces ls",
+                budget.as_secs()
+            )))
+        })
+}
+
 /// A spacesd client for a named sandbox or a relay Space. Direct sandboxes
 /// use the remembered token (or `CUA_ENV_TOKEN`). A relay Space opens
 /// through the Spaces API; the sandboxes API does not attach those machines.
@@ -2878,19 +3078,23 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
             crate::host::daemon_relay_account(&crate::util::cua_home())
         });
         let spaces = cua.spaces();
-        // NotFound before dial, and the snapshot has the name space() dials with.
-        spaces.resolve(id.clone()).await?;
-        // Right after `cua spaces start` the machine is listed but its
-        // spacesd is not connected yet: wait for it (bounded), then say so.
-        return wait_while_starting(
-            &id,
-            RELAY_START_WAIT,
-            std::time::Duration::from_millis(500),
-            || async { spaces.space(id.clone()).await?.spacesd() },
-        )
+        return within_lookup_deadline(&id, SPACE_LOOKUP_DEADLINE, async {
+            // NotFound before dial, and the snapshot has the name space() dials with.
+            spaces.resolve(id.clone()).await?;
+            // Right after `cua spaces start` the machine is listed but its
+            // spacesd is not connected yet: wait for it (bounded), then say so.
+            wait_while_starting(
+                &id,
+                RELAY_START_WAIT,
+                std::time::Duration::from_millis(500),
+                || async { spaces.space(id.clone()).await?.spacesd() },
+            )
+            .await
+        })
         .await;
     }
-    if let Some(space) = space_for(cua, name).await? {
+    let space = within_lookup_deadline(name, SPACE_LOOKUP_DEADLINE, space_for(cua, name)).await?;
+    if let Some(space) = space {
         return space.spacesd();
     }
     let sbx = cua.sandboxes();
@@ -2925,6 +3129,9 @@ async fn space_for(cua: &Cua, name: &str) -> Result<Option<Arc<cua_sdk::Space>>,
     } else {
         match cua.sandboxes().get(name.to_string()).await {
             Err(CuaError::NotFound(_)) => None,
+            // Inside a Space, the spawn channel serves Spaces and not the
+            // sandbox API: a child is found among the Space's own children.
+            Err(CuaError::Unsupported(_)) if cua_daemon::client::spawn_channel().is_some() => None,
             _ => return Ok(None),
         }
     };
@@ -2954,7 +3161,7 @@ async fn space_for(cua: &Cua, name: &str) -> Result<Option<Arc<cua_sdk::Space>>,
 }
 
 /// The remembered spacesd token of a direct sandbox (saved under its name
-/// and its `direct:<host:port>` ref), or `CUA_ENV_TOKEN`.
+/// and its `direct:<host:port>` ref), `CUA_ENV_TOKEN`, or the local host's token.
 fn direct_token(info: &SandboxInfo) -> Option<String> {
     let tokens = load_tokens();
     [&info.id, &info.name]
@@ -2973,6 +3180,20 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()
                 .filter(|t| !t.is_empty())
+        })
+        .or_else(|| {
+            // The host token belongs only to this machine's configured
+            // listener, never a custom `CUA_HOST_ENV_URL` or another sandbox.
+            if info.name != "host"
+                || info.endpoints.get("env") != Some(&crate::do_cmd::default_host_env_url())
+                || !crate::do_cmd::consent_path().exists()
+            {
+                return None;
+            }
+            std::fs::read_to_string(cua_host::HostPaths::new(&util::cua_home()).env_token())
+                .ok()
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty())
         })
 }
 
@@ -2994,8 +3215,61 @@ pub(crate) async fn sandbox_with_token(
     sbx.connect(info.id).await
 }
 
+/// The shell line for `cua sb exec NAME ARG...`. One argument is a shell
+/// line as typed (`'ls /tmp | wc -l'`). Several are an argv the shell on this
+/// side already split, so a word with spaces or quotes in it (`bash -c 'echo
+/// "a b"'`) is quoted again to arrive whole; shell operators passed as their
+/// own words (`'|'`, `'&&'`) stay operators.
+fn exec_line(args: &[String]) -> String {
+    const OPERATORS: [&str; 9] = ["|", "||", "&", "&&", ";", ">", ">>", "<", "2>&1"];
+    if args.len() < 2 {
+        return args.join(" ");
+    }
+    args.iter()
+        .map(|a| {
+            let needs = a.is_empty()
+                || (!OPERATORS.contains(&a.as_str())
+                    && a.chars()
+                        .any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '\\' | '$' | '`')));
+            if needs {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn sh_argv(line: &str) -> Vec<String> {
     vec!["/bin/sh".into(), "-c".into(), line.into()]
+}
+
+/// Whether the guest of `env` is Windows (no `/bin/sh`: its shell is `cmd.exe`).
+async fn is_windows(env: &cua_sdk::SpacesdClient) -> bool {
+    env.capabilities()
+        .await
+        .is_ok_and(|c| c.os_family.eq_ignore_ascii_case("windows"))
+}
+
+/// The argv that runs `line` in `env`'s guest.
+async fn guest_argv(env: &cua_sdk::SpacesdClient, name: &str, line: String) -> Vec<String> {
+    if is_windows(env).await {
+        windows_argv(&line)
+    } else {
+        sh_argv(&image_defaults(name, line))
+    }
+}
+
+/// `cmd.exe /d /s /c "line"`: `/s` keeps the quotes of the line as typed.
+fn windows_argv(line: &str) -> Vec<String> {
+    vec![
+        "cmd.exe".into(),
+        "/d".into(),
+        "/s".into(),
+        "/c".into(),
+        line.into(),
+    ]
 }
 
 /// suspend / resume / restart by sandbox name.
@@ -3583,11 +3857,18 @@ pub async fn viewer_link(
     files_root: Option<String>,
 ) -> Result<cua_sdk::ViewerLink, CuaError> {
     let sandbox = sandbox_with_token(cua, name).await?;
-    sandbox
+    // The Space's clipboard setting (`cua spaces set --clipboard`), under
+    // Secure Spaces: `off` asks the viewer ticket for no clipboard, and the
+    // page gets the word (`view` only while you're viewing, or `ask`).
+    // Without the experiment the page keeps the clipboard in sync both ways,
+    // as it always did.
+    let clipboard = space_clipboard(cua, name).await;
+    let mut link = sandbox
         .viewer_url(Some(cua_sdk::ViewerOptions {
             ttl_seconds: ttl_secs,
             view_only,
             files_root,
+            clipboard: clipboard.as_deref() != Some("off"),
             ..Default::default()
         }))
         .await
@@ -3596,7 +3877,32 @@ pub async fn viewer_link(
                 "{m}. The viewer needs cua-spacesd in the sandbox; for an image that serves its own display page pass --service NAME"
             )),
             other => other,
-        })
+        })?;
+    match clipboard.as_deref() {
+        Some("ask") => link.url.push_str("&clipboard=ask"),
+        Some("viewing") => link.url.push_str("&clipboard=view"),
+        _ => {}
+    }
+    Ok(link)
+}
+
+/// The clipboard setting of the Space `name` under Secure Spaces (`viewing`,
+/// `ask` or `off`; `viewing` when it cannot be read). `None` without the
+/// experiment: the viewer then syncs as it always did.
+async fn space_clipboard(cua: &Arc<Cua>, name: &str) -> Option<String> {
+    if cua_vmm::network::Mode::from_env() != cua_vmm::network::Mode::Secure {
+        return None;
+    }
+    let local = format!("local:{name}");
+    Some(match cua.spaces().list().await {
+        Ok(all) => all
+            .into_iter()
+            .find(|s| s.id == name || s.id == local || s.name == name)
+            .map(|s| s.clipboard)
+            .filter(|c| matches!(c.as_str(), "ask" | "off"))
+            .unwrap_or_else(|| "viewing".into()),
+        Err(_) => "viewing".into(),
+    })
 }
 
 /// A browser URL for a web service of the sandbox (no credentials): the
@@ -3825,6 +4131,53 @@ mod tests {
                 ..Default::default()
             })
         }
+    }
+
+    #[test]
+    fn exec_keeps_words_with_quotes_and_spaces_whole() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // One argument is a shell line, as before.
+        assert_eq!(exec_line(&v(&["ls /tmp | wc -l"])), "ls /tmp | wc -l");
+        // Plain words and operators pass through.
+        assert_eq!(
+            exec_line(&v(&["ls", "/tmp", "|", "wc", "-l"])),
+            "ls /tmp | wc -l"
+        );
+        // `bash -c '...'` keeps its script as one word, with its quotes.
+        assert_eq!(
+            exec_line(&v(&["bash", "-c", r#"echo "a b" && echo it's"#])),
+            r#"bash -c 'echo "a b" && echo it'\''s'"#
+        );
+        // A backslash path survives.
+        assert_eq!(exec_line(&v(&["cmd", r"C:\x y"])), r"cmd 'C:\x y'");
+        assert_eq!(exec_line(&v(&["echo", ""])), "echo ''");
+    }
+
+    #[test]
+    fn a_windows_guest_runs_the_line_in_cmd_not_sh() {
+        assert_eq!(
+            windows_argv("echo hi & ver"),
+            ["cmd.exe", "/d", "/s", "/c", "echo hi & ver"]
+        );
+        assert_eq!(sh_argv("ls"), ["/bin/sh", "-c", "ls"]);
+    }
+
+    #[test]
+    fn iso_belongs_to_the_windows_images_built_here() {
+        let iso = std::path::Path::new("w.iso");
+        for image in ["ghcr.io/trycua/linux:24.04", "ghcr.io/trycua/windows:2022"] {
+            let e = windows_build_note(image, Some(iso), None)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("windows:11"), "{image}: {e}");
+        }
+        // No --iso on an image that is pulled: nothing to say.
+        assert!(windows_build_note("ghcr.io/trycua/windows:2022", None, None).is_ok());
+        // The alias resolves to the local build the note recognises.
+        let (r, os) = resolve_image("windows:11", None).unwrap();
+        assert_eq!(r, "ghcr.io/trycua/windows:11");
+        assert_eq!(os.as_deref(), Some("windows"));
+        assert!(cua_image::windows::build::local_build_target(&r).is_some());
     }
 
     #[tokio::test]
@@ -4260,7 +4613,11 @@ mod tests {
             r("python:3.12", Some("slim")),
             Err(CuaError::InvalidArgument(_))
         ));
-        let published = |x: &str| cua_image::catalog::find(x).is_none_or(|e| e.published);
+        // Derived on the user's Mac (the developer tools image) counts as available.
+        let published = |x: &str| {
+            cua_image::catalog::find(x)
+                .is_none_or(|e| e.published || e.derived_from.is_some() || e.local_build.is_some())
+        };
         for (got, want, os) in [
             (
                 r("linux", Some("slim")),
@@ -4337,6 +4694,28 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(e, CuaError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn a_space_lookup_that_never_answers_times_out_with_its_name() {
+        let err = within_lookup_deadline::<()>(
+            "relay:a",
+            std::time::Duration::from_millis(20),
+            std::future::pending(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, CuaError::Timeout(_)), "{err:?}");
+        assert!(err.to_string().contains("relay:a did not answer"), "{err}");
+        // An answer within the deadline, error or not, passes through.
+        let e =
+            within_lookup_deadline::<()>("relay:a", std::time::Duration::from_secs(30), async {
+                Err(CuaError::NotFound("gone".into()))
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(e, CuaError::NotFound(_)));
+        assert!(SPACE_LOOKUP_DEADLINE > RELAY_START_WAIT);
     }
 
     #[test]

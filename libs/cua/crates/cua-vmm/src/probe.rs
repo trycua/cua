@@ -420,11 +420,19 @@ fn probe_addr(ep: &Endpoints, probe: &Probe) -> Option<String> {
 }
 
 fn resolve(ep: &Endpoints, guest_port: u16) -> Result<String> {
-    ep.addr(guest_port).ok_or_else(|| {
-        VmmError::invalid(format!(
-            "probe port {guest_port} is not published by this sandbox"
-        ))
-    })
+    ep.addr(guest_port).ok_or_else(|| not_forwarded(guest_port))
+}
+
+/// The error for a readiness port the computer's network carries nothing to.
+/// Said in plain words because it reaches the person, and the agent that
+/// reports it, unchanged.
+pub fn not_forwarded(guest_port: u16) -> VmmError {
+    VmmError::other(format!(
+        "The computer started, but Cua could not reach its agent through its network: nothing \
+         forwards the agent's port {guest_port} from this Mac into it. This is a fault in Cua, \
+         not something to change in your setup. Delete the Space and create it again; if it \
+         happens again, report it."
+    ))
 }
 
 /// Connect, then require the peer to either send data or hold the connection
@@ -524,6 +532,15 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use tokio::net::TcpListener;
+
+    #[test]
+    fn an_unforwarded_probe_port_says_what_failed_in_plain_words() {
+        let err = resolve(&ep(22, 2222), 3211).unwrap_err().to_string();
+        assert!(err.contains("could not reach its agent"), "{err}");
+        assert!(err.contains("3211"), "{err}");
+        assert!(!err.contains("not published"), "{err}");
+        assert!(!err.starts_with("invalid request"), "{err}");
+    }
 
     #[test]
     fn readiness_is_polled_quickly_first_then_backs_off() {

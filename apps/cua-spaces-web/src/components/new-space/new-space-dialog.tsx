@@ -4,7 +4,18 @@
 import { CheckIcon, ChevronRightIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type CreateSpaceArgs, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import {
+  useBridge,
+  useConnectCloud,
+  useNewSpaceWizard,
+  useSpaces,
+  type CreateSpaceArgs,
+  type RuntimeSwitch,
+  type WizardAction,
+  type WizardField,
+  type WizardTile,
+  type WizardView,
+} from "@/bridge";
 import { CliHintBlock, useCliName } from "@/components/cli-hint";
 import { Button } from "@/components/ui/button";
 import { GroupedSection } from "@/components/ui/grouped";
@@ -21,6 +32,9 @@ import { ConnectCloudDialog } from "./connect-cloud-dialog";
 import { ImageField } from "./image-field";
 import { MenuSelect } from "./menu-select";
 import { RuntimeFixRow } from "./runtime-fix";
+import { PRESETS, presetInfo } from "@/components/network/presets";
+import { useNetworkPreview } from "@/components/network/use-network";
+import type { NetworkPreset } from "@/bridge/contracts/network";
 
 /**
  * New Space: System, Resources, Options, Summary, as the native app's sheet.
@@ -31,9 +45,9 @@ export function NewSpaceDialog() {
   const wizard = useNewSpaceWizard();
   const connect = useConnectCloud();
   const { view, send } = wizard;
-  const { defaultLocation, clouds = [], experiments } = wizard.env;
+  const { defaultLocation, clouds = [] } = wizard.env;
   // The default only counts once the clouds it may name have loaded.
-  const defaultKey = [defaultLocation, experiments?.yourCloud, ...clouds.map((c) => c.name)].join(" ");
+  const defaultKey = [defaultLocation, ...clouds.map((c) => c.name)].join(" ");
 
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens, or change when a cloud is connected as default).
@@ -61,6 +75,38 @@ export function NewSpaceDialog() {
       </Dialog>
       {connect.open && !wizard.open ? <ConnectCloudDialog /> : null}
     </>
+  );
+}
+
+/** "Choose Windows ISO…" in the Windows create flow: a disc image the person
+ * already has is used instead of the download from Microsoft (which is
+ * sometimes refused). The file is checked and remembered at once; the
+ * create that follows installs from it. */
+function WindowsIsoRow({ image }: { image: string }) {
+  const { chooseWindowsIso } = useSpaces();
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const choose = () => {
+    setProblem(null);
+    chooseWindowsIso(image).then(
+      (name) => name && setChosen(name),
+      (e: unknown) => setProblem(e instanceof Error ? e.message : String(e)),
+    );
+  };
+  return (
+    <div data-windows-iso="" className="mt-3 px-1 text-xs text-muted-foreground">
+      <p>
+        {chosen ? `Windows installs from ${chosen}.` : "Cua downloads Windows from Microsoft the first time. Already have the disc image?"}{" "}
+        <button type="button" data-windows-iso-choose="" className="text-brand-strong hover:underline" onClick={choose}>
+          {chosen ? "Choose another" : "Choose Windows ISO\u2026"}
+        </button>
+      </p>
+      {problem ? (
+        <p role="alert" data-windows-iso-error="" className="mt-1 text-destructive">
+          {problem}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -106,6 +152,7 @@ function WizardBody({ view: v }: { view: WizardView }) {
         ) : (
           <SummaryStep v={v} />
         )}
+        {!address && v.image.os === "windows" && v.image.local_build && v.plan.placement === "local" ? <WindowsIsoRow image={v.image.ref} /> : null}
         {macosLimit ? (
           <p role="alert" data-macos-limit="" className="mt-3 px-1 text-xs text-destructive">
             {macosLimit}
@@ -177,7 +224,21 @@ function Group({ children, className, ...rest }: { children: ReactNode; classNam
 }
 
 /** A label on the left and its control on the right; `stacked` puts the control under it. */
-function Row({ id, label, htmlFor, children, below, stacked }: { id: string; label: string; htmlFor?: string; children: ReactNode; below?: ReactNode; stacked?: boolean }) {
+function Row({
+  id,
+  label,
+  htmlFor,
+  children,
+  below,
+  stacked,
+}: {
+  id: string;
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+  below?: ReactNode;
+  stacked?: boolean;
+}) {
   return (
     <div data-field={id} className="px-4 py-2.5">
       <div className={cn(stacked ? "space-y-2" : "flex min-h-8 items-center justify-between gap-6")}>
@@ -296,6 +357,7 @@ function SystemStep({ v }: { v: WizardView }) {
               {advanced.map((f) => (
                 <SystemRow key={f.id} field={f} v={v} />
               ))}
+              <NetworkRow />
             </Group>
           ) : null}
         </div>
@@ -358,7 +420,9 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
             items={[
               ...v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group })),
               // Only with the Your cloud experiment (the core offers the field); it opens the connect sheet.
-              ...(v.fields.some((x) => x.id === "connect-cloud") ? [{ value: ADD_CLOUD, label: "Add your cloud account\u2026", detail: "AWS, Google Cloud, Hetzner and others", group: ADD_CLOUD }] : []),
+              ...(v.fields.some((x) => x.id === "connect-cloud")
+                ? [{ value: ADD_CLOUD, label: "Add your cloud account\u2026", detail: "AWS, Google Cloud, Hetzner and others", group: ADD_CLOUD }]
+                : []),
             ]}
             onValueChange={(on) => (on === ADD_CLOUD ? connect.show() : send({ type: "choose-placement", on }))}
           />
@@ -366,11 +430,7 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
       );
     case "kind":
       return (
-        <Row
-          id="kind"
-          label={f.label}
-          below={error}
-        >
+        <Row id="kind" label={f.label} below={error}>
           <Tiles id="kind" label={f.label} tiles={v.kindTiles} onPick={(kind) => send({ type: "choose-kind", kind })} />
         </Row>
       );
@@ -390,6 +450,25 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
     default:
       return null;
   }
+}
+
+/** What the new Space may reach; Internet only by default (the host's
+ * create takes it as `config.network`). */
+function NetworkRow() {
+  const store = useNetworkPreview();
+  if (!store) return null;
+  return (
+    <Row id="network" label="Network">
+      <MenuSelect
+        aria-label="Network"
+        dataName="network"
+        side="top"
+        value={store.wizardPreset}
+        items={PRESETS.map((p) => ({ value: p.id, label: p.title, detail: p.description, group: p.id === "custom" ? "custom" : "preset" }))}
+        onValueChange={(p) => store.setWizardPreset(p as NetworkPreset)}
+      />
+    </Row>
+  );
 }
 
 /* ---- Resources ------------------------------------------------------------- */
@@ -687,7 +766,11 @@ function SummaryRow({ fact }: { fact: { label: string; value: string } }) {
 function SummaryStep({ v }: { v: WizardView }) {
   const { send } = useNewSpaceWizard();
   const plain = v.summary.filter((f) => !SUMMARY_ADVANCED.has(f.label));
-  const technical = v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label));
+  const network = useNetworkPreview();
+  const technical = [
+    ...v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label)),
+    ...(network ? [{ label: "Network", value: presetInfo(network.wizardPreset).short }] : []),
+  ];
   return (
     <>
       <Group data-summary="">

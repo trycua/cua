@@ -32,7 +32,9 @@ use crate::services::diagnose::{DiagnoseState, Diagnoser};
 use crate::services::driver::{DriverServiceImpl, NO_REGISTRY};
 use crate::services::system::SystemServiceImpl;
 use crate::services::teleport::TeleportServiceImpl;
-use crate::services::tunnel::{hotspot_ws, tunnel_ws, TunnelServiceImpl, TunnelState};
+use crate::services::tunnel::{
+    host_ports_ws, hotspot_ws, spawn_ws, tunnel_ws, TunnelServiceImpl, TunnelState,
+};
 use crate::services::volume::{volume_ws, VolumeServiceImpl, VolumeShared};
 
 /// gRPC services implemented by this crate.
@@ -134,6 +136,12 @@ impl ServerBuilder {
 
         // Core services.
         let processes = ProcessManager::new(ctx.clone());
+        // Services this guest keeps running; the ones that start on boot
+        // start now.
+        let services = crate::process::services::ServiceManager::start(
+            processes.clone(),
+            &ctx.config().data_dir,
+        );
         let fs = FsState::new(ctx.clone());
         let tunnel = TunnelState::new(ctx.clone());
         let volume = VolumeShared::new(ctx.clone());
@@ -189,6 +197,10 @@ impl ServerBuilder {
             feature(crate::filesystem::runas::MULTIPART_FEATURE, true, ""),
             feature("tunnel.forward", true, ""),
             feature("hotspot", true, ""),
+            // `TunnelService.StartSpawn`: the guest end of child Spaces.
+            feature(crate::services::tunnel::SPAWN_FEATURE, true, ""),
+            feature(crate::services::tunnel::EXIT_FEATURE, true, ""),
+            feature(crate::services::tunnel::HOST_PORTS_FEATURE, true, ""),
             match crate::services::volume::backend() {
                 Ok(backend) => {
                     let mut f = feature(crate::services::volume::FEATURE, true, "");
@@ -219,6 +231,8 @@ impl ServerBuilder {
         // `StartProcessRequest.request_id` / `epoch`, `GetExecRecord` and
         // `AdvanceEpoch`: idempotent, fenced execs for durable harnesses.
         core_features.push(feature(crate::process::EXEC_LEDGER_FEATURE, true, ""));
+        // `ProcessService.PutService` and the rest: commands kept running.
+        core_features.push(feature(crate::process::services::FEATURE, true, ""));
         let system = SystemServiceImpl::new(ctx.clone(), providers.clone(), core_features)
             .with_diagnose(DiagnoseState::new(ctx.clone(), self.diagnoser));
 
@@ -232,7 +246,11 @@ impl ServerBuilder {
             .expect("valid descriptor set");
 
         let mut routes = tonic::service::Routes::new(system.into_server())
-            .add_service(ProcessServiceImpl::new(processes).into_server())
+            .add_service(
+                ProcessServiceImpl::new(processes)
+                    .with_services(services)
+                    .into_server(),
+            )
             .add_service(FilesystemServiceImpl::new(fs.clone()).into_server())
             .add_service(DriverServiceImpl::new(tools.clone()).into_server())
             .add_service(teleport.into_server())
@@ -350,6 +368,8 @@ impl ServerBuilder {
             Router::new()
                 .route(cua_proto::metadata::TUNNEL_WS_PATH, get(tunnel_ws))
                 .route(cua_proto::metadata::HOTSPOT_WS_PATH, get(hotspot_ws))
+                .route(cua_proto::metadata::SPAWN_WS_PATH, get(spawn_ws))
+                .route(cua_proto::metadata::HOST_PORTS_WS_PATH, get(host_ports_ws))
                 .with_state(tunnel),
         );
         manifest
@@ -358,6 +378,12 @@ impl ServerBuilder {
         manifest
             .http_paths
             .insert(cua_proto::metadata::HOTSPOT_WS_PATH.into());
+        manifest
+            .http_paths
+            .insert(cua_proto::metadata::SPAWN_WS_PATH.into());
+        manifest
+            .http_paths
+            .insert(cua_proto::metadata::HOST_PORTS_WS_PATH.into());
         http = http.merge(
             Router::new()
                 .route(cua_proto::metadata::VOLUME_WS_PATH, get(volume_ws))
@@ -374,7 +400,12 @@ impl ServerBuilder {
                         ctx: ctx.clone(),
                         envelopes: crate::http::mcp_envelope::enabled()
                             .then(|| crate::http::mcp_envelope::Envelopes::new(tools.clone())),
-                        tools,
+                        // Plus this Space's child-Space tools (answered
+                        // through its spawn channel, for its children only).
+                        tools: Arc::new(crate::services::spawn_tools::WithChildTools::new(
+                            tools,
+                            ctx.clone(),
+                        )),
                     }),
             );
             manifest

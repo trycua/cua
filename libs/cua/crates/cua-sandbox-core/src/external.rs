@@ -1447,6 +1447,27 @@ impl LocalRuntime for WithExternal {
         }
     }
 
+    async fn network_events(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<Vec<cua_vmm::egress::NetworkEvent>> {
+        match self.owner(name).await {
+            Some(rt) => rt.network_events(name).await,
+            None => self.inner.network_events(name).await,
+        }
+    }
+
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        match self.owner(name).await {
+            Some(rt) => rt.set_network(name, settings).await,
+            None => self.inner.set_network(name, settings).await,
+        }
+    }
+
     async fn suspend(&self, name: &str) -> RuntimeResult<()> {
         match self.owner(name).await {
             Some(rt) => rt.suspend(name).await,
@@ -1627,6 +1648,13 @@ impl LocalRuntime for WithExternal {
         match self.by_type(runtime_type) {
             Some(rt) => rt.stop_reason(name, runtime_type).await,
             None => self.inner.stop_reason(name, runtime_type).await,
+        }
+    }
+
+    async fn mend(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<LocalInstance>> {
+        match self.by_type(runtime_type) {
+            Some(rt) => rt.mend(name, runtime_type).await,
+            None => self.inner.mend(name, runtime_type).await,
         }
     }
 
@@ -1821,6 +1849,8 @@ mod tests {
             headless: false,
             spacesd: None,
             egress: Default::default(),
+            network: None,
+            tree: None,
             gpu: None,
             probes: vec![],
             ephemeral: false,

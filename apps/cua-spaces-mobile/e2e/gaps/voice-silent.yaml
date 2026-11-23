@@ -1,0 +1,20 @@
+# Dictation with access allowed: a silent press ends with "Didn't hear anything" (the real recognizer, nothing said).
+appId: ai.cua.spaces.mobile
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Sample data. Not your account."
+- tapOn: "Search Spaces, apps or agents"
+- inputText: "design-review"
+- tapOn:
+    text: "Reviewer.*"
+    index: 0
+- assertVisible:
+    id: "composer-mic"
+- takeScreenshot: voice-idle-${NAME}
+- longPressOn:
+    id: "composer-mic"
+- extendedWaitUntil:
+    visible: ".*Try again.*"
+    timeout: 20000
+- takeScreenshot: voice-silent-${NAME}

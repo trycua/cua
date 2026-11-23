@@ -72,6 +72,15 @@ pub struct AssertionClaims {
     /// A thread grant's role on that Space: `viewer` or `shared`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space_role: Option<String>,
+    /// The enrolled device the call came from (relay-verified, from its
+    /// device session). Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev: Option<String>,
+    /// The device class (`mobile`, see [`crate::phone`]); absent for a computer.
+    /// A machine that predates it sees a full caller, which is why the relay
+    /// also limits a phone's calls itself. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dcls: Option<String>,
 }
 
 /// The `role` of a thread grant: an account the machine is not shared with
@@ -627,6 +636,8 @@ mod tests {
             teams: Vec::new(),
             space: None,
             space_role: None,
+            dev: None,
+            dcls: None,
         }
     }
 

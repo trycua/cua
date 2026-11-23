@@ -165,6 +165,11 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.ProcessService/ResizePty",
     "/cua.env.v1.ProcessService/GetExecRecord",
     "/cua.env.v1.ProcessService/AdvanceEpoch",
+    "/cua.env.v1.ProcessService/PutService",
+    "/cua.env.v1.ProcessService/DeleteService",
+    "/cua.env.v1.ProcessService/ListServices",
+    "/cua.env.v1.ProcessService/ControlService",
+    "/cua.env.v1.ProcessService/GetServiceLogs",
     "/cua.env.v1.StreamService/ListTargets",
     "/cua.env.v1.StreamService/OpenMedia",
     "/cua.env.v1.StreamService/SetPreferences",
@@ -192,6 +197,16 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.TunnelService/StartHotspot",
     "/cua.env.v1.TunnelService/StopHotspot",
     "/cua.env.v1.TunnelService/GetHotspotStatus",
+    "/cua.env.v1.TunnelService/StartExit",
+    "/cua.env.v1.TunnelService/StopExit",
+    "/cua.env.v1.TunnelService/StartHostPorts",
+    "/cua.env.v1.TunnelService/StopHostPorts",
+    "/cua.env.v1.TunnelService/StartSpawn",
+    "/cua.env.v1.TunnelService/StopSpawn",
+    "/cua.env.v1.TunnelService/GetSpawnStatus",
+    "/cua.env.v1.TunnelService/PublishShareSlot",
+    "/cua.env.v1.TunnelService/UnpublishShareSlot",
+    "/cua.env.v1.TunnelService/ListShareSlots",
     "/cua.env.v1.WindowsService/ListWindows",
     "/cua.env.v1.WindowsService/GetWindow",
     "/cua.env.v1.WindowsService/ActivateWindow",
@@ -754,6 +769,46 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             )
             .await
         }
+        "/cua.env.v1.ProcessService/PutService" => {
+            unary::<C, pb::PutServiceRequest, pb::PutServiceResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/PutService",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/DeleteService" => {
+            unary::<C, pb::DeleteServiceRequest, pb::DeleteServiceResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/DeleteService",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/ListServices" => {
+            unary::<C, pb::ListServicesRequest, pb::ListServicesResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/ListServices",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/ControlService" => {
+            unary::<C, pb::ControlServiceRequest, pb::ControlServiceResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/ControlService",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/GetServiceLogs" => {
+            unary::<C, pb::GetServiceLogsRequest, pb::GetServiceLogsResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/GetServiceLogs",
+                json,
+            )
+            .await
+        }
         "/cua.env.v1.StreamService/ListTargets" => {
             unary::<C, pb::ListTargetsRequest, pb::ListTargetsResponse>(
                 ch,
@@ -962,10 +1017,90 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             )
             .await
         }
+        "/cua.env.v1.TunnelService/StartExit" => {
+            unary::<C, pb::StartExitRequest, pb::StartExitResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StartExit",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StopExit" => {
+            unary::<C, pb::StopExitRequest, pb::StopExitResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StopExit",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StartHostPorts" => {
+            unary::<C, pb::StartHostPortsRequest, pb::StartHostPortsResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StartHostPorts",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StopHostPorts" => {
+            unary::<C, pb::StopHostPortsRequest, pb::StopHostPortsResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StopHostPorts",
+                json,
+            )
+            .await
+        }
         "/cua.env.v1.TunnelService/GetHotspotStatus" => {
             unary::<C, pb::GetHotspotStatusRequest, pb::GetHotspotStatusResponse>(
                 ch,
                 "/cua.env.v1.TunnelService/GetHotspotStatus",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StartSpawn" => {
+            unary::<C, pb::StartSpawnRequest, pb::StartSpawnResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StartSpawn",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StopSpawn" => {
+            unary::<C, pb::StopSpawnRequest, pb::StopSpawnResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StopSpawn",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/GetSpawnStatus" => {
+            unary::<C, pb::GetSpawnStatusRequest, pb::GetSpawnStatusResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/GetSpawnStatus",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/PublishShareSlot" => {
+            unary::<C, pb::PublishShareSlotRequest, pb::PublishShareSlotResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/PublishShareSlot",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/UnpublishShareSlot" => {
+            unary::<C, pb::UnpublishShareSlotRequest, pb::UnpublishShareSlotResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/UnpublishShareSlot",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/ListShareSlots" => {
+            unary::<C, pb::ListShareSlotsRequest, pb::ListShareSlotsResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/ListShareSlots",
                 json,
             )
             .await

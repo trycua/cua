@@ -1,0 +1,175 @@
+name: "Release: promote to PyPI"
+
+# The only workflow that uploads the Cua Driver (`cua-driver`) and cua SDK
+# (`cua`, `cua-cli`) wheels to PyPI. Every build still publishes its GitHub
+# release, wheels attached, through cd-py-cua-driver.yml / cd-cua-sdk.yml;
+# this promotes one of them. Rule and runbook: docs/pypi-publishing.md.
+#
+#   schedule          Mondays 15:00 UTC: the newest promotable build of each
+#                     component (published, plain X.Y.Z, 24 h old, release
+#                     workflow green, every wheel attached and checksummed).
+#                     Repository variable PYPI_PROMOTE_SCHEDULE=off pauses it.
+#   workflow_dispatch promote now: newest promotable build, or `version`.
+#   release released  a person marks a release non-prerelease (Cua Driver
+#                     releases are published as prereleases): promote it.
+#
+# The job fails when PyPI is more than 14 days behind the newest promotable
+# build (also when the schedule is paused), so PyPI never goes quiet unnoticed.
+# Only trycua/cua uploads; other repositories plan, download and twine-check.
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Component"
+        type: choice
+        options: [all, cua-driver, cua-sdk]
+        default: all
+      version:
+        description: "Exact X.Y.Z to promote (empty: newest promotable build, no age minimum)"
+        type: string
+        default: ""
+      require_green:
+        description: "Require a successful release workflow run for the tag"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Plan, download and check only; upload nothing"
+        type: boolean
+        default: false
+  release:
+    types: [released]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pypi-promote
+  cancel-in-progress: false
+
+env:
+  CANONICAL: ${{ github.repository == 'trycua/cua' }}
+
+jobs:
+  promote:
+    name: promote ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [cua-driver, cua-sdk]
+    steps:
+      - name: Decide whether this component runs
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          COMPONENT: ${{ matrix.component }}
+          INPUT_COMPONENT: ${{ inputs.component }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          SENDER_TYPE: ${{ github.event.sender.type }}
+          SCHEDULE: ${{ vars.PYPI_PROMOTE_SCHEDULE }}
+        run: |
+          run=false; upload=true; version=""; min_age=24
+          case "$COMPONENT" in cua-driver) prefix=cua-driver-rs-v ;; cua-sdk) prefix=cua-sdk-v ;; esac
+          case "$EVENT" in
+            schedule)
+              run=true
+              if [ "$SCHEDULE" = off ]; then
+                upload=false
+                echo "::warning::PYPI_PROMOTE_SCHEDULE=off: weekly promotion paused, checking staleness only"
+              fi ;;
+            workflow_dispatch)
+              if [ "$INPUT_COMPONENT" = all ] || [ "$INPUT_COMPONENT" = "$COMPONENT" ]; then run=true; fi
+              version="$INPUT_VERSION"; min_age=0 ;;
+            release)
+              # Releases our workflows publish (github.token) start no workflow;
+              # this is a person promoting by hand.
+              if [[ "$RELEASE_TAG" == "$prefix"* && "$RELEASE_PRERELEASE" == false && "$SENDER_TYPE" == User ]]; then
+                run=true; version="${RELEASE_TAG#"$prefix"}"
+              fi ;;
+          esac
+          {
+            echo "run=$run"; echo "upload=$upload"; echo "version=$version"; echo "min_age=$min_age"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: steps.scope.outputs.run == 'true'
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Plan
+        id: plan
+        if: steps.scope.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.scope.outputs.version }}
+          MIN_AGE: ${{ steps.scope.outputs.min_age }}
+          REQUIRE_GREEN: ${{ github.event_name != 'workflow_dispatch' || inputs.require_green }}
+        run: |
+          python3 .github/scripts/pypi_promote.py plan --component "${{ matrix.component }}" \
+            --version "$VERSION" --min-age-hours "$MIN_AGE" --require-green "$REQUIRE_GREEN"
+
+      - name: Download and verify the wheels
+        if: steps.plan.outputs.action == 'promote'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          python3 .github/scripts/pypi_promote.py fetch --component "${{ matrix.component }}" --tag "$TAG" --dir dist
+          python3 -m pip install --upgrade twine
+          mapfile -t wheels < dist/upload-order.txt
+          python3 -m twine check --strict "${wheels[@]}"
+
+      - name: Upload to PyPI
+        id: upload
+        if: steps.plan.outputs.action == 'promote' && steps.scope.outputs.upload == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+          TWINE_NON_INTERACTIVE: "1"
+        run: |
+          mapfile -t wheels < dist/upload-order.txt
+          if [ "$CANONICAL" != true ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: checked, not uploaded"
+            exit 0
+          fi
+          # In order: cua-cli before cua, which requires it at the same version.
+          python3 -m twine upload --skip-existing "${wheels[@]}"
+
+      - name: Summary
+        if: always() && steps.scope.outputs.run == 'true'
+        env:
+          ACTION: ${{ steps.plan.outputs.action }}
+          REASON: ${{ steps.plan.outputs.reason }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          PYPI_VERSION: ${{ steps.plan.outputs.pypi_version }}
+          UPLOAD: ${{ steps.scope.outputs.upload }}
+        run: |
+          {
+            echo "### ${{ matrix.component }}"
+            echo "- action: ${ACTION:-error} (${REASON:-plan failed})"
+            echo "- candidate: ${TAG:-none}; PyPI had: ${PYPI_VERSION:-none}; upload enabled: $UPLOAD"
+            echo "- actor: $GITHUB_ACTOR, event: $GITHUB_EVENT_NAME"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail when PyPI has fallen behind
+        # A run that just uploaded has caught PyPI up.
+        if: steps.plan.outputs.stale == 'true' && !(steps.upload.outcome == 'success' && env.CANONICAL == 'true')
+        env:
+          PYPI_VERSION: ${{ steps.plan.outputs.pypi_version }}
+          REASON: ${{ steps.plan.outputs.reason }}
+        run: |
+          echo "::error::PyPI ${{ matrix.component }} is still at $PYPI_VERSION, over 14 days behind the newest GitHub build ($REASON). Promote one (docs/pypi-publishing.md)."
+          exit 1

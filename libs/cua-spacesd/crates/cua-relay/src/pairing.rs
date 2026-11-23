@@ -174,6 +174,7 @@ impl PairingRecord {
             name: self.owner_name.clone(),
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: Vec::new(),
         }
     }
@@ -514,6 +515,10 @@ impl PairingStore {
     }
 }
 
+/// What a phone is told when it asks for a pairing code.
+pub const PHONE_NO_PAIRING: &str =
+    "a phone cannot add a computer: do it from a computer already in your account";
+
 fn error(e: PairingError) -> Response {
     (
         e.status(),
@@ -563,6 +568,19 @@ async fn mint(
         Ok(a) => a,
         Err(r) => return r,
     };
+    // A code adds a computer to the account as proven. A phone adds none: a
+    // computer is added from a computer already in the account (a stolen phone,
+    // on any sign-in, must not be able to plant one).
+    if device.as_deref().is_some_and(|d| relay.devices.is_phone(d)) {
+        relay.devices.audit_throttled(
+            &format!("mobile_denied:{}:pairing", device.as_deref().unwrap_or("")),
+            &who.account,
+            crate::devices::AuditEvent::new("mobile_denied")
+                .device(device.as_deref())
+                .detail("pairing code"),
+        );
+        return error(PairingError::Forbidden(PHONE_NO_PAIRING.into()));
+    }
     // A team code: only the team's owner or an admin adds machines to it.
     if let Some(team) = body
         .team
@@ -659,6 +677,7 @@ mod tests {
             name: None,
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: Vec::new(),
         }
     }

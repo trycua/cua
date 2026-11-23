@@ -19,7 +19,7 @@ dependencies = [
     "rapidfuzz>=3.0.0",
     "beautifulsoup4>=4.12.0",
     "cssselect>=1.2.0",
-    "aiohttp>=3.8.0",
+    "aiohttp>=3.14.4",
     "odfpy>=1.4.1",  # Required by docs.py for ODT file support (check_highlighted_words)
 ]
 

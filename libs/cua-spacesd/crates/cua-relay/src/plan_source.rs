@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 
 use crate::meter::{Assignment, Membership, PlanSource, TeamPlan, DEFAULT_PLAN};
-use crate::org_access::OrgAccess;
+use crate::org_access::{OrgAccess, TOKEN_REFUSED};
 
 /// Default lifetime of a cached plan.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(60);
@@ -462,8 +462,11 @@ impl Inner {
     }
 
     /// [`Self::fetch`], asked again with a short backoff after a transport
-    /// error, a 5xx or a refused service token. The permit is held per try,
-    /// never while waiting, so a retry cannot starve other users' lookups.
+    /// error or a 5xx. A 401 is not retried here: the client already minted
+    /// a new service token and asked again once ([`OrgAccess`]'s
+    /// `send_authed`), so one still refused is a configuration problem. The
+    /// permit is held per try, never while waiting, so a retry cannot
+    /// starve other users' lookups.
     async fn fetch_with_retry(&self, user: &str) -> Result<Assignment, String> {
         let mut wait = FETCH_BACKOFF;
         let mut last = Err("no lookup made".to_owned());
@@ -472,9 +475,11 @@ impl Inner {
                 let _permit = self.permits.acquire().await;
                 self.fetch(user).await
             };
-            // Only a transport error, a 5xx or a refused token is worth asking
-            // again; a 4xx (429, 403) or an unreadable answer is final.
-            let final_answer = matches!(&last, Err(e) if e.starts_with(ANSWERED));
+            // Only a transport error or a 5xx is worth asking again; a 4xx
+            // (429, 403, a refused fresh token) or an unreadable answer is
+            // final.
+            let final_answer = matches!(&last,
+                Err(e) if e.starts_with(ANSWERED) || e.starts_with(TOKEN_REFUSED));
             if last.is_ok() || final_answer || attempt == FETCH_ATTEMPTS || !self.org.has_api() {
                 break;
             }

@@ -41,7 +41,8 @@ export function Onboarding({
   onDone: (mode: OnboardingMode, status?: HostStatus) => void;
 }) {
   const t = useT("onboarding");
-  const view = viewProp ?? onboardingView({ ...initialOnboarding(installerMode ?? null, identity ?? null), step: "mode" });
+  const view =
+    viewProp ?? onboardingView({ ...initialOnboarding(installerMode ?? null, identity ?? null), step: "mode" });
   const [form, setForm] = useState(view.preselectedMode === "host");
   // Choosing only selects; Continue (or Enter) moves on. "Access other
   // machines" is the default so the page always has an enabled way forward.

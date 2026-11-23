@@ -72,7 +72,7 @@ async function urlsAndForward(sb, port) {
 }
 
 e.e2eTest("unified-sandbox-api", "hermetic", "cloud create fails (Cua Cloud has ended) + daemon public URL", async () => {
-  const c = cua.embedded({ stateDir: e.tmpState() })
+  const c = e.embeddedLocal(e.tmpState())
   // A cloud create (command and services) fails before anything is created.
   await e.assertCloudEnded(c, {
     command: ["python", "/srv.py"],

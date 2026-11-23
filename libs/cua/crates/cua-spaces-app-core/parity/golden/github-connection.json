@@ -1,0 +1,173 @@
+{
+  "flow": "github-connection",
+  "frames": [
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [quiet]: No GitHub sign-in found: run gh auth login or paste a token",
+          "<Rescan>"
+        ],
+        "page": [
+          "GitHub: No GitHub sign-in found: run gh auth login or paste a token",
+          "[on] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on github.com. Agents can still ask; the answer is no.",
+          "How Cua signs in",
+          "  No saved token",
+          "  No GH_TOKEN in the Cua daemon's environment",
+          "  gh is not signed in on github.com",
+          "help: Run gh auth login in a terminal, or paste a token, then Rescan.",
+          "<Rescan> <Paste a token> <Done>"
+        ]
+      },
+      "step": "nothing signed in"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [quiet]: No GitHub sign-in found: run gh auth login or paste a token",
+          "<Rescan>"
+        ],
+        "page": [
+          "GitHub: No GitHub sign-in found: run gh auth login or paste a token",
+          "[on] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on github.com. Agents can still ask; the answer is no.",
+          "How Cua signs in",
+          "  No saved token",
+          "  No GH_TOKEN in the Cua daemon's environment",
+          "  gh is not signed in on github.com",
+          "help: Install the GitHub CLI and run gh auth login or paste a token, then Rescan.",
+          "<Rescan> <Paste a token> <Done>"
+        ]
+      },
+      "step": "gh is not installed"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [ok]: Signed in as ada with gh",
+          "ghe.example.com [ok]: Signed in as ada-corp with gh",
+          "<Rescan>"
+        ],
+        "page": [
+          "GitHub: Signed in as ada with gh",
+          "[on] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on github.com. Agents can still ask; the answer is no.",
+          "Account: Which gh account pushes and pull requests use. Without a choice, gh's own account is used.",
+          "  * ada (gh's own account)",
+          "  - bob",
+          "How Cua signs in",
+          "  No saved token",
+          "  No GH_TOKEN in the Cua daemon's environment",
+          "  gh, signed in as ada (In use)",
+          "<Rescan> <Paste a token> <Done>"
+        ]
+      },
+      "step": "gh with two accounts and an Enterprise host"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [ok]: Signed in as ada with gh",
+          "ghe.example.com [ok]: Signed in as ada-corp with gh",
+          "<Rescan>"
+        ],
+        "page": [
+          "ghe.example.com: Signed in as ada-corp with gh",
+          "[on] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on ghe.example.com. Agents can still ask; the answer is no.",
+          "How Cua signs in",
+          "  No GH_TOKEN in the Cua daemon's environment",
+          "  gh, signed in as ada-corp (In use)",
+          "<Rescan> <Done>"
+        ]
+      },
+      "step": "the Enterprise host"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [ok]: Signed in as bob with gh",
+          "  warning: This sign-in can also change GitHub Actions workflows and administer organizations and settings. Pushing and opening pull requests only needs the repo scope: use a narrower token, or sign in to gh again with only that.",
+          "<Rescan>"
+        ],
+        "page": [
+          "GitHub: Signed in as bob with gh",
+          "[on] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on github.com. Agents can still ask; the answer is no.",
+          "Account: Which gh account pushes and pull requests use. Without a choice, gh's own account is used.",
+          "  - ada (gh's own account)",
+          "  * bob",
+          "  <Use gh's own account>",
+          "How Cua signs in",
+          "  gh, signed in as bob (In use)",
+          "<Rescan> <Paste a token> <Done>"
+        ]
+      },
+      "step": "an account chosen, with a scopes warning"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [attention]: The gh account you chose for github.com, bob, is no longer signed in: choose another in Settings, Connections, or run gh auth login",
+          "<Rescan>"
+        ],
+        "page": [
+          "GitHub: The gh account you chose for github.com, bob, is no longer signed in: choose another in Settings, Connections, or run gh auth login",
+          "[on] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on github.com. Agents can still ask; the answer is no.",
+          "How Cua signs in",
+          "  The gh account you chose for github.com, bob, is no longer signed in: choose another in Settings, Connections, or run gh auth login (In use)",
+          "<Rescan> <Paste a token> <Done>"
+        ]
+      },
+      "step": "the chosen account signed out of gh"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [ok]: Signed in as carol with a saved token",
+          "<Rescan>"
+        ],
+        "page": [
+          "GitHub: Signed in as carol with a saved token",
+          "[on] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on github.com. Agents can still ask; the answer is no.",
+          "How Cua signs in",
+          "  A token saved in Settings, Connections (In use)",
+          "  No GH_TOKEN in the Cua daemon's environment",
+          "  gh, signed in as ada",
+          "<Rescan> <Paste a token> <Done>"
+        ]
+      },
+      "step": "a saved token wins over gh"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "GitHub [quiet]: Turned off: Cua will not use GitHub on this host",
+          "<Rescan>"
+        ],
+        "page": [
+          "GitHub: Turned off: Cua will not use GitHub on this host",
+          "[off] Use for pushes and pull requests / Turn off and Cua uses no GitHub sign-in on github.com. Agents can still ask; the answer is no.",
+          "How Cua signs in",
+          "  gh, signed in as ada",
+          "<Rescan> <Paste a token> <Done>"
+        ]
+      },
+      "step": "the host switched off"
+    },
+    {
+      "section": {
+        "lines": [
+          "GitHub / Cua uses this to push a branch and open a pull request after you approve a card. The sign-in stays on this computer; Spaces never get it.",
+          "notice: The GitHub sign-in could not be read: the Cua daemon is not running",
+          "<Rescan>"
+        ],
+        "page": []
+      },
+      "step": "the daemon is not running"
+    }
+  ]
+}

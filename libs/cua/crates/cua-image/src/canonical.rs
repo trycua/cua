@@ -7,17 +7,20 @@
 //! | OS | default | other versions |
 //! |---|---|---|
 //! | Linux | `ghcr.io/trycua/linux:24.04` | `ghcr.io/trycua/linux:<v>` |
-//! | Windows | `ghcr.io/trycua/windows:2022` | `ghcr.io/trycua/windows:<v>` |
+//! | Windows | `ghcr.io/trycua/windows:2022` | `windows:11`, `2025`, `2019`, `10`: built on this computer from an ISO ([`crate::windows`]) |
 //! | macOS | `ghcr.io/trycua/macos:26` (tahoe) | `macos:15` (sequoia), `macos:<v>` |
 //!
 //! Tiers (`<os-version>[-<tier>][-disk]`): no suffix is the full default
 //! (dev tooling), `-slim` the minimum that passes `cua-spacesd doctor
 //! --strict` with every feature (CI and benchmarks use it), on macOS
-//! `-xcode[-X.Y]` adds one pinned Xcode with its iOS simulator runtime, and
+//! `-xcode` (also `dev`) is the macOS Space with developer tools: Xcode, its iOS
+//! simulator runtime and Apple developer tools, built on the user's own Mac from
+//! the full image (Apple's terms: never published), and
 //! on Linux `-docker` is slim plus the Docker engine (a VM: dockerd up at
 //! boot, for Docker Compose stacks; the tier word resolves to
 //! `-docker-disk`).
-//! [`tier_image`] builds them; entries the catalog marks unpublished fail
+//! [`tier_image`] builds them; entries the catalog marks unpublished (and not
+//! derived on the user's machine) fail
 //! with [`ImageError::NotPublished`]. [`omarchy_image`] names the Omarchy
 //! distribution image (`ghcr.io/trycua/omarchy:edge`, an amd64 VM).
 //!
@@ -122,6 +125,8 @@ impl CanonicalOs {
             (Self::Macos, "tahoe") => "26".into(),
             (Self::Macos, "sequoia") => "15".into(),
             (Self::Linux, "noble") => "24.04".into(),
+            // `windows:server-2022`, `windows:win11`, ...: the table's id.
+            (Self::Windows, _) => crate::windows::normalize_version(version),
             _ => version.trim().to_string(),
         }
     }
@@ -145,13 +150,14 @@ pub enum Tier {
 }
 
 impl Tier {
-    /// Parses `slim`, `full` (or empty), `xcode`, `xcode-26.1`, `docker`.
+    /// Parses `slim`, `full` (or empty), `xcode` (or `dev`), `xcode-26.1`, `docker`.
     pub fn parse(tier: &str) -> Result<Self> {
         let t = tier.trim().to_ascii_lowercase();
         match t.as_str() {
             "" | "full" | "default" => Ok(Self::Full),
             "slim" => Ok(Self::Slim),
-            "xcode" => Ok(Self::Xcode(None)),
+            // `dev`: the macOS Space with developer tools, as an agent says it.
+            "xcode" | "dev" => Ok(Self::Xcode(None)),
             "docker" => Ok(Self::Docker),
             _ => match t.strip_prefix("xcode-") {
                 Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit() || b == b'.') => {
@@ -472,6 +478,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_versions_are_aliases() {
+        let none = |_: &str| None;
+        // Built from the tag: the local builds are in no registry, so a
+        // literal reference would be flagged by the docs image gate.
+        let image = |tag: &str| format!("{WINDOWS_REPO}:{tag}");
+        for (word, tag) in [
+            ("windows:11", "11"),
+            ("windows:win11", "11"),
+            ("windows:server-2022", "2022"),
+            ("windows:2025", "2025"),
+        ] {
+            assert_eq!(
+                alias_with(word, &none).map(|(r, _)| r),
+                Some(image(tag)),
+                "{word}"
+            );
+        }
+        // The word resolves without a catalog 404: unpublished local builds pass.
+        let r = resolve_word_with("windows:11", None, &none)
+            .unwrap()
+            .unwrap();
+        assert_eq!((r.0, r.1), (image("11"), CanonicalOs::Windows));
+    }
+
+    #[test]
     fn os_tier_names_are_aliases() {
         let none = |_: &str| None;
         assert_eq!(
@@ -575,6 +606,9 @@ mod tests {
         assert_eq!(t(""), Tier::Full);
         assert_eq!(t("SLIM"), Tier::Slim);
         assert_eq!(t("xcode-26.1").suffix(), "-xcode-26.1");
+        // The macOS Space with developer tools, by the word an agent uses.
+        assert_eq!(t("dev"), Tier::Xcode(None));
+        assert_eq!(t("DEV").suffix(), "-xcode");
         assert!(Tier::parse("xcode-beta").is_err());
         assert!(Tier::parse("tiny").is_err());
         let full = tier_for_with(CanonicalOs::Linux, None, &Tier::Full, &none).unwrap();
@@ -586,10 +620,10 @@ mod tests {
         );
         let slim = tier_for_with(CanonicalOs::Linux, None, &Tier::Slim, &over);
         let xcode = tier_for_with(CanonicalOs::Macos, Some("tahoe"), &t("xcode"), &none);
-        for (got, want) in [
-            (slim, "ghcr.io/trycua/linux:24.04-slim"),
-            (xcode, "ghcr.io/trycua/macos:26-xcode"), // <!-- cua-image-unverified --> not published yet
-        ] {
+        // The macOS Space with developer tools is never published: it is
+        // derived on the user's Mac, so the tier resolves.
+        assert_eq!(xcode.unwrap(), "ghcr.io/trycua/macos:26-xcode"); // <!-- cua-image-unverified --> not published yet
+        for (got, want) in [(slim, "ghcr.io/trycua/linux:24.04-slim")] {
             // Unpublished until CI publishes the tier; then the ref itself.
             match crate::catalog::find(want) {
                 Some(e) if !e.published => assert!(

@@ -34,6 +34,14 @@ public protocol DevicesRunning: AnyObject, Sendable {
     /// The account's relay allowance this month; nil from a relay that
     /// meters nothing.
     func relayUsage() async throws -> AppRelayUsage?
+    /// The account's default Space and the order to try when it is offline
+    /// (`Devices.spaces_settings`).
+    func spacesSettings() async throws -> SpacesSettings
+    /// Replaces them (the whole setting); what the relay saved.
+    func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings
+    /// Where the default Space resolves now, with this Mac as the last
+    /// resort (`Devices.resolve_default_space`). Creates nothing.
+    func resolveDefaultSpace() async throws -> DefaultSpace
 }
 
 /// The SDK's `Devices` for the signed-in session (key in the session's vault,
@@ -51,7 +59,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     /// This Mac on the default relay (`CUA_RELAY_URL`, else relay.cua.ai),
     /// named as Sharing names it ("Dana's MacBook Pro").
     public static func make(auth: CuaSDK.Auth) -> LiveDevices? {
-        (try? auth.devices(relayUrl: nil, name: Foundation.Host.current().localizedName))
+        (try? auth.devices(relayUrl: nil, name: ComputerName.current))
             .map { LiveDevices(inner: $0, auth: auth) }
     }
 
@@ -68,8 +76,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     static func requireEnrolled(_ device: RelayDevice) throws {
         guard device.state == "enrolled" else {
             throw CuaError.Runtime(
-                message: "The relay did not enroll \(device.name) (\(device.id)): it is \(device.state). "
-                    + "Ask that machine for a new code and try again.")
+                message: "Couldn\u{2019}t add \(device.name). Ask that computer for a new code.")
         }
     }
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
@@ -88,6 +95,11 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
         guard let auth else { return nil }
         return try await appRelayUsage(devices: inner, accountToken: try await auth.accessToken(force: false))
     }
+    public func spacesSettings() async throws -> SpacesSettings { try await inner.spacesSettings() }
+    public func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings {
+        try await inner.setSpacesSettings(settings: settings)
+    }
+    public func resolveDefaultSpace() async throws -> DefaultSpace { try await inner.resolveDefaultSpace() }
 }
 
 /// An in-memory account on a relay (fixtures, tests): this Mac enrolled,
@@ -233,6 +245,46 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
     public func relayUsage() async throws -> AppRelayUsage? {
         calls.append("relay-usage")
         return usage
+    }
+
+    /// The account's default Space as the relay keeps it (unset unless set).
+    public var spaces = SpacesSettings(defaultSpace: nil, fallback: [], fallbackOn: true, updatedAt: 0)
+
+    public func spacesSettings() async throws -> SpacesSettings {
+        calls.append("spaces-settings")
+        return spaces
+    }
+
+    public func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings {
+        calls.append("set-spaces-settings:\(settings.defaultSpace ?? "")")
+        spaces = SpacesSettings(defaultSpace: settings.defaultSpace, fallback: settings.fallback,
+                                fallbackOn: settings.fallbackOn, updatedAt: UInt64(Date().timeIntervalSince1970))
+        return spaces
+    }
+
+    /// The relay's resolution over the fixture account's machines: the
+    /// default, the order to try (or every other machine), then this Mac.
+    public func resolveDefaultSpace() async throws -> DefaultSpace {
+        calls.append("resolve-default-space")
+        let machines = current.machines.map { ("relay:\($0.id)", $0.name, $0.online) }
+        var order: [DefaultSpaceStep] = []
+        if let d = spaces.defaultSpace, let m = machines.first(where: { $0.0 == d }) {
+            order.append(DefaultSpaceStep(space: m.0, name: m.1, online: m.2, role: "default"))
+        }
+        if spaces.fallbackOn {
+            let listed = spaces.fallback.isEmpty ? machines.map(\.0) : spaces.fallback
+            for id in listed where id != spaces.defaultSpace {
+                if let m = machines.first(where: { $0.0 == id }) {
+                    order.append(DefaultSpaceStep(space: m.0, name: m.1, online: m.2, role: "fallback"))
+                }
+            }
+        }
+        order.append(DefaultSpaceStep(space: "relay:this-mac", name: "This Mac", online: true, role: "here"))
+        let first = order.first(where: { $0.online && $0.role != "here" })
+        let online = spaces.defaultSpace.map { d in machines.first(where: { $0.0 == d })?.2 ?? false }
+        let reason = first.map { $0.role == "default" ? "default" : (spaces.defaultSpace == nil ? "unset" : "fallback") } ?? "here"
+        return DefaultSpace(space: first?.space, reason: reason, defaultSpace: spaces.defaultSpace,
+                            defaultOnline: online, order: order)
     }
 
     /// A relay allowance by name: `reached` (past it: the notice shows),

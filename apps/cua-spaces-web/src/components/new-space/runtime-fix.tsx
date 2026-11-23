@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 
 /**
- * What the host can do about "no local runtime" (Windows: install or start
- * Docker Desktop), under the reason New Space and onboarding show. Nothing
+ * What the host can do about "no local runtime" (Windows: set up WSL 2), under the reason New Space and onboarding show. Nothing
  * when the host offers no fix.
  */
 export function RuntimeFixRow({ className }: { className?: string }) {

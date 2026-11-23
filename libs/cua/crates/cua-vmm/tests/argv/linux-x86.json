@@ -24,7 +24,7 @@
   "-netdev",
   "user,id=net0,hostfwd=tcp:127.0.0.1:40022-:22,hostfwd=tcp:127.0.0.1:40080-:8080",
   "-device",
-  "virtio-net-pci,netdev=net0",
+  "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56",
   "-device",
   "virtio-rng-pci",
   "-vga",

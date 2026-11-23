@@ -116,8 +116,7 @@ The loop still closes for most questions, and none of this needs a vision model:
 `xprop -root _NET_ACTIVE_WINDOW` proves which window holds focus; and scanning the
 written capture for colour transitions (PIL or equivalent) proves coarse layout.
 What none of them prove is that a specific small control was activated. For that
-use the `cua-perception` extension (see `VISUAL.md`) or an app that exposes a
-usable accessibility tree.
+use an app that exposes a usable accessibility tree.
 
 **Windows without `_NET_WM_PID`.** Tk, many Java/AWT builds, Wine, and legacy
 Xlib/Xt clients do not publish `_NET_WM_PID`. On X11, `list_windows` then asks
@@ -252,8 +251,10 @@ genuine background limitation, and `foreground` is the documented escalation.)
 
 ## Wayland
 
-Set `CUA_DRIVER_RS_ENABLE_WAYLAND=1` to enable native Wayland support. The
-driver selects a backend from compositor capabilities:
+Set `CUA_DRIVER_RS_ENABLE_WAYLAND=1` to enable native Wayland support. It
+must be in the daemon's own environment: an export in an interactive shell
+does not reach a daemon that a user service started. The driver selects a
+backend from compositor capabilities:
 
 - Sway and other wlroots compositors use foreign-toplevel discovery,
   wlr-screencopy, virtual pointer, and virtual keyboard protocols.
@@ -262,15 +263,59 @@ driver selects a backend from compositor capabilities:
   qualification and validation limits below. Do not inherit Sway coverage.
 - GNOME/Mutter uses the bundled WinRects Shell helper for target geometry and
   activation, plus portal/libei for foreground raw input.
-- KDE/KWin uses AT-SPI and portal facilities where available. Target-specific
-  foreground activation remains experimental, so unsafe raw input refuses.
+- KDE/KWin uses AT-SPI and portal facilities where available. Where the
+  operator has enabled it, it also gets exact window geometry, stacking,
+  capture of a covered window, and `bring_to_front`; otherwise window capture
+  returns `surface_identity_unproven`. Raw input at a window refuses with
+  `foreground_unavailable`.
 - The optional `cua-compositor` is a separate nested session enabled
   explicitly for controlled automation. GNOME and KDE never switch into it.
 
+**Desktop `type_text` gives the exact text or a refusal.** A refused text sends
+no key at all and returns `code: "foreground_unavailable"`, `effect: "none"` and
+a detail ending in `nothing was typed`, on libei, niri, wtype and Hyprland alike.
+Enter such text with `set_value`, or `clipboard_write` and then `hotkey ctrl+v`.
+
+- On libei, keys follow the active layout and the lock keys. KWin 6.8 and Mutter
+  report them over libei. When nothing has been reported yet, the driver taps
+  Shift once before its first text, because KWin 6.8 reports only changes. Earlier
+  KWin is asked over D-Bus (`org.kde.keyboard`, through `gdbus`) and
+  `org_kde_kwin_keystate` version 5, which reports the lock keys and whether a
+  modifier key is held.
+- KWin 6.3 to 6.5 offers `org_kde_kwin_keystate` only to a program whose desktop
+  entry lists it in `X-KDE-Wayland-Interfaces`. Without that, or on KWin before
+  6.3, whose version doesn't report modifier keys, typing keys is refused, since
+  a held Shift would change digits as well as letters. A keymap with several
+  layouts is refused when the active one can't be read.
+- Also refused: a character the active layout has only behind Ctrl, Alt or Super
+  or on a key apps drop, while a modifier key is held or latched, and any control
+  character except a line feed, carriage return or tab. A carriage return and
+  line feed pair is one press of Return.
+- On KWin 6.8, a line with no line break goes through `ei_text`, which types
+  characters the layout lacks, unless an X11 app has or may have focus: X11 apps
+  lose those characters, so that text goes as keys or is refused. A compositor
+  with `ei_text` and no keyboard types a line only when no X11 app may have
+  focus, and refuses line breaks. If the driver
+  can't tell, because the X server doesn't answer within 250 ms or `DISPLAY` is
+  unset while an X socket exists, it treats an X11 app as focused.
+- A long text waits as long as it keeps moving. Text with line breaks that needs
+  `ei_text` takes about 100 ms per line. If EIS stops acknowledging for 5 s, the
+  error says how far the text got, so read the field before retrying.
+
 Sway recording works through the wlroots recorder path and is exercised by the
-canonical harness runner. Portal-backed GNOME recording is still an evidence
-gap. Capture and recording availability therefore depend on the compositor,
-installed helpers, and portal grant.
+canonical harness runner. Compositors that expose no wlr-screencopy protocol,
+including KDE/KWin, record through the xdg-desktop-portal ScreenCast: the
+first `start_recording` with `record_video:true` opens the desktop's screen
+share dialog, the granted monitor is remembered through a restore token, and
+frames are encoded with ffmpeg. That route exists only in builds with the
+`portal-capture` feature (the Nix package); other builds report the missing
+feature in `last_error` instead of failing silently. It also needs the
+PipeWire client library (`libpipewire-0.3-0` on Debian and Ubuntu), which the
+driver loads only when that recording starts; without it, that recording
+reports the missing library and every other tool works. Portal-backed GNOME
+recording is still an evidence gap. Capture and recording availability
+therefore depend on the compositor, installed helpers, build features, and
+portal grant.
 
 Standard Wayland has no general client protocol for raw input to an arbitrary
 occluded surface. Background AX actions can still deliver through AT-SPI, and
@@ -286,6 +331,47 @@ before dispatch. If
 the compositor has no target-addressable activation or input backend, the call
 refuses before sending input. Reconstructing coordinates alone does not make
 raw background PX possible on a standard compositor.
+
+### GNOME/Mutter
+
+- **Supported Shell versions.** The WinRects helper supports GNOME Shell 45
+  to 49. On GNOME Shell 50 or newer, keep it disabled. If an older copy is
+  still active, leave disabling it to the user or trusted host before any
+  helper diagnostics.
+- **Shell attestation.** The driver uses the WinRects helper only when its
+  bus owner also owns `org.gnome.Shell` and runs a root-owned `gnome-shell`
+  image that no other user can write.
+- **Helper API and window capture.** Standard window screenshots use the
+  helper's `CaptureWindow` on API 9 or later, which captures the window's own
+  content even when another window covers it. With an older helper, the
+  window image is a crop of the Shell stage and shows whatever covers the
+  window. Shell loads a new helper version only at the next login, so query
+  the running helper's version, not the files on disk:
+  `gdbus call --session --dest org.cua.WinRects --object-path /org/cua/WinRects --method org.cua.WinRects.GetVersion`.
+- **Window scope.** AT-SPI publishes one tree per process and can omit a
+  window the Shell has mapped. Element tokens, pixel hit-tests and element
+  bounds are bound to one exact Shell window only when the driver proves
+  which AT-SPI top-level belongs to it, by geometry correlation or because the
+  helper lists that window as the process's only window. Otherwise
+  `get_window_state` marks the tree `degraded`
+  (`accessibility_window_identity_unproven`) and omits element tokens. Treat
+  any returned element frames as unverified. Using a token invalidated by
+  that read returns `stale_element_token`. A token that
+  still resolves but whose window membership cannot be proved refuses with
+  `window_scope_unproven` before any input, and a background pixel click
+  returns `background_unavailable`. Read that exact window again after its
+  other windows (often a menu or popover) close, or use an authorized
+  foreground pixel click. Without the helper, an application with one AT-SPI
+  top-level can still use the window handle from the AT-SPI window list for
+  semantic reads and actions.
+- **Shell prompts.** Polkit authentication and keyring prompts are drawn by
+  the Shell, not by an application window, so the helper's window list does
+  not include them. While one is open, its input grab blocks ordinary pointer
+  and keyboard delivery to application windows; it does not prove that an
+  AT-SPI action had no effect. When full-display capture is authorized, find
+  the prompt with `get_desktop_state` (pass `screenshot_out_file` to write the
+  PNG to disk). Leave the prompt to the user or trusted host under the
+  [permission-prompt rule](SKILL.md#rules).
 
 ### Hyprland input v3 source candidate
 
@@ -306,14 +392,24 @@ signer. The plugin accepts the trusted desktop account over same-user local
 sockets; this does not sandbox native code running as that user. Application
 qualification is a compatibility check, not authorization.
 
-The initial native qualification scope is Calc from `libreoffice-fresh 26.2.5-3`
-and Inkscape `1.4.4-6`, subject to per-operation native evidence. Before each
-action, Driver matches `/proc/<pid>/exe` to the canonical executable path
-(`/usr/lib/libreoffice/program/soffice.bin` or `/usr/bin/inkscape`), checks the
-exact package name and version in the local pacman database and its executable
-file listing, and rechecks process identity. Unknown or unavailable package
-identity refuses. Package eligibility does not certify every LibreOffice
-application or operation.
+Background input reaches any native Wayland app that binds the agent seats
+(GTK 3 and 4 and Qt 6 apps do). Before each action, Driver checks that the
+compositor reports the target as a native Wayland window of that process;
+XWayland windows refuse with `client_xwayland`. The plugin refuses an app that
+never bound the agent seat with `client_not_bound`: Chromium and Electron bind
+only the user's seat, so use the browser tools for their pages. Qt 6 apps take
+background clicks, scrolls and drags, but refuse keys
+(`client_drops_background_keys`): Qt sends keys only to the window the user has
+active.
+
+An app you have checked yourself can skip that quirk refusal. List its absolute
+executable path, one per line (`#` starts a comment), in
+`$XDG_CONFIG_HOME/cua-driver/hyprland-apps.txt` (`~/.config/cua-driver/` by
+default). Driver matches each entry, symlinks resolved, against the target's
+`/proc/<pid>/exe`. A dispatch admitted this way carries `admission: "user"` and
+says the user qualified the app, not Cua. The list lifts only quirk refusals:
+XWayland, `client_not_bound` (Chromium, Electron) and the plugin's own checks
+still refuse.
 
 The plugin separately binds the exact live native surface and checks geometry,
 desktop availability, and primary-client and other-lane conflicts. Each
@@ -338,7 +434,7 @@ The candidate also adds an explicitly requested foreground route, advertised
 by the plugin as `foreground_target:true`. It binds the exact native top-level
 surface on the compositor thread and intentionally changes primary focus and,
 for pointer actions, cursor position. It does not restore the previous focus or
-cursor. This route has no Calc/Inkscape background package gate. The canonical
+cursor. The canonical
 native harness covers defined GTK3, Electron, and Tauri foreground cases. It refuses
 held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
 bindings, and non-neutral keyboard modifiers. Background refusal never selects
@@ -397,8 +493,8 @@ that names the remedy.
   input refuse; desktop-scope pointer input and capture are not refused.
 - `coordinate_frame:"desktop"` with a window target refuses.
 - Foreground actions activate the target, act, and give focus back to the
-  window that had it. `right_click` and `hotkey` leave the target focused, as
-  on Sway: giving focus back would close the menu they opened. Text and keys
+  window that had it. `right_click` and `set_value` leave the target focused,
+  as on Sway: giving focus back would close the menu they opened. Text and keys
   use niri's own keymap, and focus is checked before every key.
 - `list_windows` gives tiled windows 0x0 bounds, and a tiled window reads
   `is_on_screen:true` only while it is the active window of a shown workspace.
@@ -439,9 +535,10 @@ If a tool call surprises you on Linux:
    anything, and one that arrives sooner waits only for the rest of it.
    Retry once the worker has stopped. A worker that never stops, such as
    one blocked on a compositor or X server that stopped answering, keeps
-   every later desktop action refusing until the driver restarts. An
-   `input_busy` that names a pid is different: text input to that process is
-   already running.
+   every later desktop action refusing until the driver restarts. The
+   refusal's `lane` says which kind it is: `{"kind": "desktop"}` here, and
+   `{"kind": "pid", "pid": N}` when text input to that process is already
+   running.
 
 ## Forbidden vectors
 
@@ -463,7 +560,7 @@ ask the user.
 | Sway/wlroots            | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound                                                                                                                                                  |
 | Hyprland/Omarchy        | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence                             | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and a private agent US keymap; user Caps-to-Ctrl/Super remaps do not alter agent semantics; complete native harness and release acceptance are separate gates |
 | GNOME/Mutter            | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input                                           | Requires the helper and portal grant; portal video parity remains open                                                                                                                                         |
-| KDE/KWin                | AT-SPI and generic discovery where exposed                                                                                     | Target-specific activation and behavioral coverage remain experimental                                                                                                                                         |
+| KDE/KWin                | AT-SPI and generic discovery where exposed; where the operator enabled it, exact window geometry, capture and `bring_to_front` | Raw input at a window refuses with `foreground_unavailable`; otherwise window capture returns `surface_identity_unproven`; video needs a `portal-capture` build and a portal monitor grant                     |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage                         | The complete shared matrix remains experimental; do not infer standard-Wayland support                                                                                                                         |
 
 See [WORKFLOW.md](WORKFLOW.md) for exact targeting and verification and `RECORDING.md` for session

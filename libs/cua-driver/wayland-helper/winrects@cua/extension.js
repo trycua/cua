@@ -995,18 +995,15 @@ export default class WinRectsExtension extends Extension {
   // that client leaves the bus: a daemon that exits, crashes or restarts
   // cannot leave its cursor painted.
   MoveCursorAsync([x, y], invocation) {
-    this._claimCursor(invocation.get_sender());
-    this._moveCursor(x, y);
+    if (this._moveCursor(x, y)) this._claimCursor(invocation.get_sender());
     invocation.return_value(null);
   }
   ClickPulseAsync([x, y], invocation) {
-    this._claimCursor(invocation.get_sender());
-    this._clickPulse(x, y);
+    if (this._clickPulse(x, y)) this._claimCursor(invocation.get_sender());
     invocation.return_value(null);
   }
   PlayCursorPathAsync([trackJson], invocation) {
-    this._claimCursor(invocation.get_sender());
-    this._playCursorPath(trackJson);
+    if (this._playCursorPath(trackJson)) this._claimCursor(invocation.get_sender());
     invocation.return_value(null);
   }
   _claimCursor(sender) {
@@ -1031,7 +1028,7 @@ export default class WinRectsExtension extends Extension {
     this._cursorOwner = null;
   }
   _moveCursor(x, y) {
-    if (!this._cursor) return;
+    if (!this._cursor) return false;
     this._stopPath();
     const revealBadge = !this._cursor.visible;
     this._cursorX = x;
@@ -1045,9 +1042,10 @@ export default class WinRectsExtension extends Extension {
     });
     this._positionBadge(x, y, 480);
     if (revealBadge) this._revealBadge();
+    return true;
   }
   _clickPulse(x, y) {
-    if (!this._cursor) return;
+    if (!this._cursor) return false;
     const revealBadge = !this._cursor.visible;
     // A move still settling onto the click point finishes by itself.
     const end = this._path?.samples[this._path.samples.length - 1];
@@ -1068,6 +1066,7 @@ export default class WinRectsExtension extends Extension {
     this._cursor.show();
     this._cursor.queue_repaint();
     if (revealBadge) this._revealBadge();
+    return true;
   }
   SetCursorColor(fillColor) {
     const match = /^#([0-9a-fA-F]{6})$/.exec(fillColor);
@@ -1089,9 +1088,9 @@ export default class WinRectsExtension extends Extension {
     if (this._cursor) this._cursor.queue_repaint();
   }
   _playCursorPath(trackJson) {
-    if (!this._cursor) return;
+    if (!this._cursor) return false;
     const track = parseCursorPath(trackJson);
-    if (!track) return;
+    if (!track) return false;
     const revealBadge = !this._cursor.visible;
     const now = nowSeconds();
     this._stopPath();
@@ -1125,6 +1124,7 @@ export default class WinRectsExtension extends Extension {
     }
     this._cursor.queue_repaint();
     if (revealBadge) this._revealBadge();
+    return true;
   }
   // Float offset (points) and rotation (radians) painted at `now`.
   _pose(now) {

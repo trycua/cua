@@ -234,6 +234,11 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
   assert.deepEqual(watched(), [':1.7'], 'one watch per owner');
   assert.equal(counts.reply, 2, 'every draw is answered');
 
+  // A malformed track draws nothing, so it does not take the cursor over.
+  drawAs(':1.8', helper, 'PlayCursorPath', '{}');
+  assert.deepEqual(watched(), [':1.7']);
+  assert.equal(counts.reply, 3, 'a refused draw is answered');
+
   // Another client draws: it owns the cursor now, and the old owner leaving
   // does not hide it.
   const stale = [...watches.values()][0];

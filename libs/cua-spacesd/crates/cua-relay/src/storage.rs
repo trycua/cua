@@ -47,6 +47,19 @@ pub const LOW_SPACE_PERCENT: u64 = 20;
 /// The probe's result is reused for this long (a burst of `/readyz` calls
 /// writes once).
 const PROBE_CACHE: Duration = Duration::from_secs(1);
+/// A write probe still not finished after this long means the volume is
+/// not answering: `/readyz` reports it as failing (it is for alerts; the
+/// Kubernetes probes use `/healthz`, which never touches the disk).
+pub const PROBE_STUCK: Duration = Duration::from_secs(5);
+
+/// The last write probe and the one running now, if any. The lock is
+/// never held across disk I/O, so a stalled volume cannot block a reader
+/// (`/readyz`, `/metrics`).
+#[derive(Debug, Default)]
+struct ProbeState {
+    last: Option<(Instant, Result<Duration, String>)>,
+    running_since: Option<Instant>,
+}
 /// At most one error line per store per this interval; the rest are
 /// counted and reported with the next line.
 const LOG_EVERY: Duration = Duration::from_secs(1);
@@ -301,7 +314,9 @@ pub struct Storage {
     temp_files_removed: AtomicU64,
     temp_bytes_removed: AtomicU64,
     pool_refused: Mutex<BTreeMap<&'static str, u64>>,
-    probe: Mutex<Option<(Instant, Result<Duration, String>)>>,
+    probe: Mutex<ProbeState>,
+    /// Test hook: the probe sleeps this many ms before touching the disk.
+    probe_stall_ms: AtomicU64,
     probes_failed: AtomicU64,
     /// What the state writers ([`crate::persist::StateFile`]) report.
     writers: Mutex<BTreeMap<&'static str, WriterStats>>,
@@ -352,7 +367,8 @@ impl Storage {
             temp_files_removed: AtomicU64::new(0),
             temp_bytes_removed: AtomicU64::new(0),
             pool_refused: Mutex::default(),
-            probe: Mutex::new(None),
+            probe: Mutex::new(ProbeState::default()),
+            probe_stall_ms: AtomicU64::new(0),
             probes_failed: AtomicU64::new(0),
             writers: Mutex::default(),
             registered: Registered::default(),
@@ -621,15 +637,31 @@ impl Storage {
     /// Writes, fsyncs and removes a small file in the state directory
     /// (blocking; at most once per second, else the last result).
     /// `Ok(None)`: state is in memory.
+    ///
+    /// Only one probe runs at a time and no lock is held while it does:
+    /// while one is stuck on a stalled volume, other callers return at once
+    /// with the last result, or a failure once it has been stuck for
+    /// [`PROBE_STUCK`].
     pub fn probe(&self) -> Result<Option<Duration>, String> {
         let Some(dir) = &self.dir else {
             return Ok(None);
         };
-        let mut last = self.probe.lock().expect("probe");
-        if let Some((at, r)) = last.as_ref() {
-            if at.elapsed() < PROBE_CACHE {
-                return r.clone().map(Some);
+        {
+            let mut st = self.probe.lock().expect("probe");
+            if let Some((at, r)) = st.last.as_ref() {
+                if at.elapsed() < PROBE_CACHE {
+                    return r.clone().map(Some);
+                }
             }
+            if st.running_since.is_some() {
+                drop(st);
+                return self.probe_now();
+            }
+            st.running_since = Some(Instant::now());
+        }
+        let stall = self.probe_stall_ms.load(Ordering::Relaxed);
+        if stall > 0 {
+            std::thread::sleep(Duration::from_millis(stall));
         }
         let r = probe_dir(dir);
         if let Err(e) = &r {
@@ -641,23 +673,72 @@ impl Storage {
                 "state volume write probe failed"
             );
         }
-        *last = Some((Instant::now(), r.clone()));
+        let mut st = self.probe.lock().expect("probe");
+        st.last = Some((Instant::now(), r.clone()));
+        st.running_since = None;
         r.map(Some)
+    }
+
+    /// The probe's state without touching the disk: the last result, or a
+    /// failure when a probe has been running longer than [`PROBE_STUCK`].
+    pub fn probe_now(&self) -> Result<Option<Duration>, String> {
+        if self.dir.is_none() {
+            return Ok(None);
+        }
+        let st = self.probe.lock().expect("probe");
+        if let Some(since) = st.running_since {
+            if since.elapsed() >= PROBE_STUCK {
+                return Err(format!(
+                    "state volume not answering: write probe running for {}s",
+                    since.elapsed().as_secs()
+                ));
+            }
+        }
+        match &st.last {
+            Some((_, r)) => r.clone().map(Some),
+            None => Ok(Some(Duration::ZERO)),
+        }
+    }
+
+    /// How long the running write probe has been waiting on the disk.
+    fn probe_running_for(&self) -> Option<Duration> {
+        self.probe
+            .lock()
+            .expect("probe")
+            .running_since
+            .map(|t| t.elapsed())
     }
 
     fn last_probe_ok(&self) -> Option<bool> {
         self.probe
             .lock()
             .expect("probe")
+            .last
             .as_ref()
             .map(|(_, r)| r.is_ok())
+    }
+
+    /// Makes the next probes sleep first (a stalled-volume test).
+    #[doc(hidden)]
+    pub fn stall_probe_for_test(&self, d: Duration) {
+        self.probe_stall_ms
+            .store(d.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// The `/readyz` body and whether the state is ready: the probe passed
     /// and no store is failing. Low free space is reported, not failed on
     /// (pool writes are refused before the volume fills).
     pub fn report(&self) -> (bool, Value) {
-        let probe = self.probe();
+        self.report_with(self.probe())
+    }
+
+    /// [`Storage::report`] without waiting for the disk: uses the probe's
+    /// last result (see [`Storage::probe_now`]).
+    pub fn report_nowait(&self) -> (bool, Value) {
+        self.report_with(self.probe_now())
+    }
+
+    fn report_with(&self, probe: Result<Option<Duration>, String>) -> (bool, Value) {
         let now = now_secs();
         let stores: serde_json::Map<String, Value> = {
             let map = self.stores.lock().expect("storage");
@@ -702,6 +783,7 @@ impl Storage {
         let body = json!({
             "ready": ready,
             "persistent": self.dir.is_some(),
+            "probe_running_secs": self.probe_running_for().map(|d| (d.as_secs_f64() * 10.0).round() / 10.0),
             "probe": match &probe {
                 Ok(Some(d)) => json!({"ok": true, "ms": d.as_secs_f64() * 1000.0}),
                 Ok(None) => json!({"ok": true, "skipped": "state is in memory"}),
@@ -728,6 +810,12 @@ impl Storage {
         fn one(out: &mut String, name: &str, kind: &str, help: &str, v: u64) {
             head(out, name, kind, help);
             let _ = writeln!(out, "{name} {v}");
+        }
+        fn one_f(out: &mut String, name: &str, help: &str, v: f64) {
+            let _ = writeln!(
+                out,
+                "# HELP {name} {help}\n# TYPE {name} gauge\n{name} {v:.1}"
+            );
         }
         let now = now_secs();
         let stores = self.stores.lock().expect("storage").clone();
@@ -879,6 +967,12 @@ impl Storage {
                 u64::from(ok),
             );
         }
+        one_f(
+            &mut out,
+            "cua_relay_state_probe_running_seconds",
+            "How long the running write probe of the state volume has waited on the disk (0 when none runs). Alert when it stays above a few seconds: the volume is stalled.",
+            self.probe_running_for().map_or(0.0, |d| d.as_secs_f64()),
+        );
         head(
             &mut out,
             "cua_relay_pool_writes_refused_total",

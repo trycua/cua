@@ -160,6 +160,55 @@ pub(crate) fn refusal_for(
     ))
 }
 
+/// The windows and the frontmost app, read once, against which the points of
+/// one pointer action are checked. A relative motion learns each point only
+/// as it posts it, so it checks every point right before its event.
+pub(crate) struct PointerGuard {
+    tool: &'static str,
+    delivery: DeliveryMode,
+    frontmost: Option<i32>,
+    windows: Vec<crate::windows::WindowInfo>,
+}
+
+impl PointerGuard {
+    /// `None` when the caller passed `delivery_mode:"foreground"`, which
+    /// accepts using the user's pointer anywhere. Blocking: enumerates windows.
+    pub(crate) fn read(tool: &'static str, args: &Value) -> Option<Self> {
+        let delivery = DeliveryMode::from_args(args);
+        if delivery.is_foreground() {
+            return None;
+        }
+        Some(Self {
+            tool,
+            delivery,
+            frontmost: crate::apps::frontmost_pid(),
+            windows: crate::windows::visible_windows(),
+        })
+    }
+
+    /// The refusal for an event at `point` (screen points), or `None` when it
+    /// may proceed.
+    pub(crate) fn refusal_at(&self, point: (f64, f64)) -> Option<ToolResult> {
+        // Over the frontmost app nothing refuses, so only another app's
+        // window needs its bundle id.
+        let under = window_under_point(&self.windows, point.0, point.1)
+            .filter(|window| Some(window.pid) != self.frontmost)
+            .map(|window| WindowUnderPoint {
+                pid: window.pid,
+                window_id: window.window_id,
+                app_name: window.app_name.clone(),
+                bundle_id: crate::apps::bundle_id_for_pid(window.pid).unwrap_or_default(),
+            });
+        refusal_for(
+            self.tool,
+            point,
+            under.as_ref(),
+            self.frontmost,
+            self.delivery,
+        )
+    }
+}
+
 /// Guard a desktop-target pointer action whose events land at `points`
 /// (screen points). Returns the refusal for the first point over a background
 /// app, or `None` when every point may proceed.
@@ -168,26 +217,13 @@ pub(crate) async fn check(
     args: &Value,
     points: Vec<(f64, f64)>,
 ) -> Option<ToolResult> {
-    let delivery = DeliveryMode::from_args(args);
-    if delivery.is_foreground() {
+    if DeliveryMode::from_args(args).is_foreground() {
         return None;
     }
+    let args = args.clone();
     tokio::task::spawn_blocking(move || {
-        let frontmost = crate::apps::frontmost_pid();
-        let windows = crate::windows::visible_windows();
-        points.into_iter().find_map(|point| {
-            // Over the frontmost app nothing refuses, so only another app's
-            // window needs its bundle id.
-            let under = window_under_point(&windows, point.0, point.1)
-                .filter(|window| Some(window.pid) != frontmost)
-                .map(|window| WindowUnderPoint {
-                    pid: window.pid,
-                    window_id: window.window_id,
-                    app_name: window.app_name.clone(),
-                    bundle_id: crate::apps::bundle_id_for_pid(window.pid).unwrap_or_default(),
-                });
-            refusal_for(tool, point, under.as_ref(), frontmost, delivery)
-        })
+        let guard = PointerGuard::read(tool, &args)?;
+        points.into_iter().find_map(|point| guard.refusal_at(point))
     })
     .await
     .ok()

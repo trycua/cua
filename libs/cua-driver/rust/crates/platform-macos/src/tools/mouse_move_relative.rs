@@ -4,11 +4,13 @@
 use async_trait::async_trait;
 use cua_driver_core::{
     action_record::ActionTransport,
-    protocol::ToolResult,
+    protocol::{Content, ToolResult},
     relative_pointer,
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
+
+use super::desktop_pointer_guard::PointerGuard;
 
 // ── mouse_move_relative ──────────────────────────────────────────────────────
 
@@ -42,32 +44,43 @@ impl Tool for MouseMoveRelativeTool {
             Ok(request) => request,
             Err(refusal) => return refusal,
         };
-        let here = match tokio::task::spawn_blocking(crate::input::mouse::pointer_location).await {
-            Ok(Ok(here)) => here,
-            Ok(Err(error)) => return relative_pointer::not_sent(&error),
-            Err(error) => return ToolResult::error(format!("Task error: {error}")),
-        };
         let steps = request.steps();
         let count = steps.len();
-        // Every step posts at the pointer's new location, so each one must be
-        // over the frontmost app or over no window.
-        let points = std::iter::once((here.x, here.y))
-            .chain(steps.iter().scan((here.x, here.y), |at, step| {
-                *at = (at.0 + f64::from(step.dx), at.1 + f64::from(step.dy));
-                Some(*at)
-            }))
-            .collect();
-        if let Some(refusal) =
-            super::desktop_pointer_guard::check(relative_pointer::TOOL_NAME, &args, points).await
-        {
-            return refusal;
-        }
-        match tokio::task::spawn_blocking(move || {
-            relative_pointer::send_steps(&steps, crate::input::mouse::post_relative_motion)
+        let guard_args = args.clone();
+        let sent = tokio::task::spawn_blocking(move || {
+            // Each event posts at the pointer's location plus its delta, so
+            // that location is checked right before the event goes out.
+            let guard = PointerGuard::read(relative_pointer::TOOL_NAME, &guard_args);
+            let mut refusal = None;
+            let sent = relative_pointer::send_steps(&steps, |dx, dy| {
+                crate::input::mouse::post_relative_motion(dx, dy, |at| {
+                    match guard
+                        .as_ref()
+                        .and_then(|guard| guard.refusal_at((at.x, at.y)))
+                    {
+                        Some(refused) => {
+                            let reason = refused
+                                .content
+                                .iter()
+                                .find_map(|content| match content {
+                                    Content::Text { text, .. } => Some(text.clone()),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            refusal = Some(refused);
+                            anyhow::bail!("{reason}")
+                        }
+                        None => Ok(()),
+                    }
+                })
+            });
+            (sent, refusal)
         })
-        .await
-        {
-            Ok(sent) => relative_pointer::outcome(
+        .await;
+        match sent {
+            // Refused before the first event: the guard's own refusal.
+            Ok((Err(incomplete), Some(refusal))) if incomplete.sent_steps == 0 => refusal,
+            Ok((sent, _)) => relative_pointer::outcome(
                 request,
                 count,
                 ActionTransport::MacosCgEventHid,

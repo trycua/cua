@@ -788,6 +788,21 @@ struct EisState {
 #[derive(Default)]
 struct SeatData {
     capabilities: HashMap<String, u64>,
+    /// The seat has announced all its capabilities.
+    done: bool,
+}
+
+/// Every seat has announced its capabilities and none offers a relative
+/// pointer, so no relative pointer device will come.
+fn no_relative_pointer_offered<'a>(seats: impl IntoIterator<Item = &'a SeatData>) -> bool {
+    let mut any = false;
+    for seat in seats {
+        if !seat.done || seat.capabilities.contains_key("ei_pointer") {
+            return false;
+        }
+        any = true;
+    }
+    any
 }
 
 #[derive(Default)]
@@ -890,6 +905,7 @@ impl EisState {
                         data.capabilities.insert(interface, mask);
                     }
                     reis::ei::seat::Event::Done => {
+                        data.done = true;
                         // Bind every input capability the seat advertises
                         // (pointer / pointer_absolute / button / scroll /
                         // keyboard / text). The server then announces
@@ -1044,6 +1060,11 @@ impl EisState {
     /// run before their device exists fail with "no EIS device negotiated yet",
     /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
     fn cmd_ready(&self, cmd: &Cmd) -> bool {
+        if matches!(cmd, Cmd::MoveRelative { .. })
+            && no_relative_pointer_offered(self.seats.values())
+        {
+            return true;
+        }
         if !self.device_is_settled() {
             return false;
         }
@@ -1214,13 +1235,17 @@ impl EisState {
                 let serial = self.last_serial;
                 let pointer =
                     require_device_interface::<reis::ei::Pointer>(&self.devices, &device)?;
+                // Write the motion out inside the admission, so a call that is
+                // over sends nothing later. Only a socket the compositor has
+                // stopped reading can still hold it back.
                 let send = || {
                     pointer.motion_relative(*dx as f32, *dy as f32);
                     device.frame(serial, event_time_us());
+                    self.context.as_ref().map_or(Ok(()), flush_to_eis)
                 };
                 match action {
-                    Some(action) => action.admit(send)?,
-                    None => send(),
+                    Some(action) => action.admit(send)??,
+                    None => send()?,
                 }
             }
             Cmd::Scroll { dx, dy, .. } => {
@@ -2347,6 +2372,24 @@ mod tests {
             ),
             "{events:?}"
         );
+    }
+
+    #[test]
+    fn only_seats_that_finished_without_a_relative_pointer_rule_it_out() {
+        let seat = |done: bool, interfaces: &[&str]| SeatData {
+            capabilities: interfaces.iter().map(|i| (i.to_string(), 1)).collect(),
+            done,
+        };
+        let absolute = seat(true, &["ei_pointer_absolute", "ei_keyboard"]);
+        let keyboard = seat(true, &["ei_keyboard"]);
+        let relative = seat(true, &["ei_pointer"]);
+        let announcing = seat(false, &["ei_keyboard"]);
+
+        assert!(no_relative_pointer_offered([&absolute]));
+        assert!(no_relative_pointer_offered([&absolute, &keyboard]));
+        assert!(!no_relative_pointer_offered([&absolute, &relative]));
+        assert!(!no_relative_pointer_offered([&announcing]));
+        assert!(!no_relative_pointer_offered([]), "no seat yet");
     }
 
     #[test]

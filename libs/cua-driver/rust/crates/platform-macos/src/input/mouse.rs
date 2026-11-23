@@ -321,21 +321,17 @@ fn post_pointer_moved(point: CGPoint) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The current pointer location, in global display points.
-pub fn pointer_location() -> anyhow::Result<CGPoint> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    Ok(CGEvent::new(source)
-        .map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?
-        .location())
-}
-
 /// Post one relative pointer motion through the global HID tap: a
 /// mouse-moved event, or a dragged event while a button is down, at the
 /// current location plus the delta, with the delta fields set. An app that
 /// detached the cursor from the mouse (a game's camera, a page under Pointer
-/// Lock) ignores the location and reads the delta fields.
-pub fn post_relative_motion(dx: i32, dy: i32) -> anyhow::Result<()> {
+/// Lock) ignores the location and reads the delta fields. `admit` sees the
+/// location the event will carry and can refuse it before anything is posted.
+pub fn post_relative_motion(
+    dx: i32,
+    dy: i32,
+    admit: impl FnOnce(CGPoint) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let here = CGEvent::new(source.clone())
@@ -352,6 +348,7 @@ pub fn post_relative_motion(dx: i32, dy: i32) -> anyhow::Result<()> {
     });
     let (event_type, button) = relative_motion_event(held);
     let point = CGPoint::new(here.x + f64::from(dx), here.y + f64::from(dy));
+    admit(point)?;
     let event = CGEvent::new_mouse_event(source, event_type, point, button)
         .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(relative motion) failed"))?;
     event.set_integer_value_field(
@@ -2136,11 +2133,23 @@ mod tests {
     #[test]
     fn relative_motion_posts_one_hid_event_with_a_held_button_as_its_drag() {
         let capture = Capture::start(true);
-        post_relative_motion(240, -30).unwrap();
+        let mut admitted = None;
+        post_relative_motion(240, -30, |at| {
+            admitted = Some(at);
+            Ok(())
+        })
+        .unwrap();
         let posted = capture.posted();
         assert_eq!(posted.len(), 1);
         assert_eq!(posted[0].route, PostRoute::Hid);
+        let at = admitted.expect("the event's location was offered to admit");
+        assert_eq!(capture.locations(), vec![(at.x, at.y)]);
         assert_eq!(capture.warps(), 0, "relative motion never warps the cursor");
+
+        // A refused location posts nothing.
+        let refused = post_relative_motion(1, 1, |_| anyhow::bail!("refused"));
+        assert!(refused.is_err());
+        assert_eq!(capture.posted().len(), 1);
 
         for (held, expected) in [
             (None, "MouseMoved"),

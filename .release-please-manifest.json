@@ -1,6 +1,6 @@
 {
   "libs/cua-driver/rust/crates/cua-perception": "0.2.2",
-  "libs/cua-driver": "0.59.5",
+  "libs/cua-driver": "0.60.0",
   "libs/lume": "0.7.2",
   "libs/python/cua-sandbox": "0.11.18",
   "libs/cua": "0.31.0",

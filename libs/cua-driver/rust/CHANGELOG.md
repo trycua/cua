@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.60.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.5...cua-driver-rs-v0.60.0) (2026-11-23)
+
+
+### Features
+
+* **cua-driver:** end the macOS hover reveal wait at the window's first repaint ([#8592](https://github.com/trycua/cua/issues/8592)) ([495e946](https://github.com/trycua/cua/commit/495e946406c45c6560b51e44e6ee48f427f63fdc))
+
 ## [0.59.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.4...cua-driver-rs-v0.59.5) (2026-11-23)
 
 

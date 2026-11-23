@@ -265,6 +265,15 @@ pub fn recover_orphaned_mpx_devices() {
     input::release_orphaned_master_pairs();
 }
 
+/// Standalone daemon startup recovery: hide the GNOME Shell helper cursor a
+/// previous daemon left painted when it exited.
+#[cfg(target_os = "linux")]
+pub fn recover_orphaned_shell_cursor() {
+    if wayland::is_wayland() {
+        wayland::shell_helper::hide_orphaned_cursor();
+    }
+}
+
 #[cfg(test)]
 mod display_detection_tests {
     use super::detect_wsl;

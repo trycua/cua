@@ -57,6 +57,9 @@ pub const WINDOW_PREVIEW_API_VERSION: u32 = 10;
 /// `SetCursorLook(json)` / `PlayCursorPath(json)`: the helper plays the
 /// shared planner's poses (float, rotation) and paints the shared halo.
 pub const POSE_CURSOR_API_VERSION: u32 = 11;
+/// The helper hides its cursor when the bus client that drew it last leaves
+/// the bus, so an exiting daemon cannot leave it painted.
+pub const OWNED_CURSOR_API_VERSION: u32 = 13;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -806,6 +809,19 @@ pub fn set_session_label(label: &str) {
 /// Hide the agent cursor.
 pub fn hide_cursor() {
     let _ = gdbus_call("HideCursor", &[], operation_deadline(CALL_CAP));
+}
+
+/// Hide a cursor an earlier daemon left painted on a helper older than
+/// [`OWNED_CURSOR_API_VERSION`]. A current helper already hid it when that
+/// daemon left the bus, and may be showing another live client's cursor.
+pub fn hide_orphaned_cursor() {
+    let deadline = operation_deadline(CALL_CAP);
+    let Some((owner, version)) = attested_owner_with_version(deadline) else {
+        return;
+    };
+    if version < OWNED_CURSOR_API_VERSION {
+        let _ = transport::call(&owner, PATH, &format!("{IFACE}.HideCursor"), &[], deadline);
+    }
 }
 
 #[cfg(test)]

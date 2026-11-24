@@ -879,7 +879,8 @@ unsafe fn walk_element(
         enabled,
         selected: attrs.bool(NodeAttr::Selected),
         url: if role_exposes_link_url(&role) {
-            copy_url_attr(element)
+            attrs
+                .url(NodeAttr::Url)
                 .map(|v| v.trim().to_owned())
                 .filter(|v| !v.is_empty())
         } else {

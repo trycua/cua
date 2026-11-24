@@ -34,7 +34,8 @@
 //! tile show only before 27.
 //!
 //! A 1 Hz timer reads a fresh status (from a short-lived helper process,
-//! see `gate::fresh_status`) and feeds it to [`GuideMachine`], which moves
+//! see `gate::fresh_status`) when [`PollSchedule`] says a check is due, and
+//! feeds it to [`GuideMachine`], which moves
 //! to the next step by itself, asks macOS for Screen Recording only once
 //! Accessibility is on, and opens the next pane. When both are on it shows
 //! "All set. Cua Driver can now use this Mac." and closes itself.
@@ -53,7 +54,9 @@ use objc2::{class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use crate::permissions::gate::MissingPermission;
-use crate::permissions::guide::{self, GuideEffect, GuideMachine, GuideStep};
+use crate::permissions::guide::{
+    self, GuideEffect, GuideMachine, GuideStep, PollCadence, PollSchedule,
+};
 use crate::permissions::status::PermissionsStatus;
 
 // ── Public API ──────────────────────────────────────────────────────────
@@ -249,7 +252,9 @@ const PAD: f64 = 24.0;
 const CONTENT_W: f64 = WIN_W - 2.0 * PAD;
 const TILE_H: f64 = 60.0;
 const ICON: f64 = 36.0;
-/// Ticks (1 s each) the finished state stays up before the window closes.
+/// Time between the window's timer ticks.
+const TICK: std::time::Duration = std::time::Duration::from_secs(1);
+/// Ticks the finished state stays up before the window closes.
 const DONE_TICKS: u32 = 2;
 
 /// The step view's rows, top to bottom: the gap above each and the least
@@ -335,6 +340,7 @@ struct Views {
 
 struct Session {
     machine: GuideMachine,
+    schedule: PollSchedule,
     hooks: PanelHooks,
     views: Views,
     app: String,
@@ -554,6 +560,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     SESSION.with(|cell| {
         *cell.borrow_mut() = Some(Session {
             machine,
+            schedule: PollSchedule::new(PollCadence::INTERACTIVE, std::time::Instant::now()),
             hooks,
             views,
             app: app_name,
@@ -638,7 +645,7 @@ unsafe fn schedule_tick(target: *mut AnyObject) -> *mut AnyObject {
     // `runModalForWindow:` runs the loop in NSModalPanelRunLoopMode, which a
     // default-scheduled timer never fires in, so add it to that mode.
     let timer: *mut AnyObject = msg_send![class!(NSTimer),
-        timerWithTimeInterval: 1.0_f64
+        timerWithTimeInterval: TICK.as_secs_f64()
         target: target
         selector: objc2::sel!(pollTick:)
         userInfo: std::ptr::null::<AnyObject>()
@@ -663,8 +670,19 @@ fn tick() {
             finish = session.done_ticks >= DONE_TICKS;
             return;
         }
+        // Ticks land about a second apart, so count a check due within half
+        // a tick as due now.
+        let now = std::time::Instant::now();
+        if session.schedule.wait(now) > TICK / 2 {
+            return;
+        }
         let status = (session.hooks.status)();
-        for effect in session.machine.on_status(status) {
+        session.schedule.checked(now);
+        let effects = session.machine.on_status(status);
+        if !effects.is_empty() {
+            session.schedule.note_activity(now);
+        }
+        for effect in effects {
             match effect {
                 GuideEffect::Show(step) => unsafe {
                     if step == GuideStep::ScreenRecording {
@@ -703,6 +721,7 @@ extern "C" fn on_open_settings(_this: *mut AnyObject, _cmd: Sel, _sender: *mut A
     SESSION.with(|cell| {
         if let Some(session) = cell.borrow_mut().as_mut() {
             if let Some(permission) = session.machine.step().permission() {
+                session.schedule.note_activity(std::time::Instant::now());
                 (session.hooks.open_settings)(permission);
             }
         }

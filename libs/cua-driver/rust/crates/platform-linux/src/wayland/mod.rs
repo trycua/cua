@@ -34,7 +34,6 @@ pub(crate) use niri::AimedPoint;
 pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;
-pub(crate) mod portal_route;
 pub mod portal_screenshot;
 mod primary_seat;
 #[cfg(any(feature = "portal-input", test))]

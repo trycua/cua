@@ -415,26 +415,20 @@ async fn check_wayland_backend() -> CheckEntry {
             );
         }
     };
-    let frontend_exports = if portal_input_enabled() {
+    let probe = if portal_input_enabled() {
         tokio::task::spawn_blocking(probe_portal_remote_desktop)
             .await
             .ok()
             .and_then(|r| r.ok())
     } else {
-        Some(false)
+        None
     };
-    let remote_desktop_portal_reachable = frontend_exports.unwrap_or(false);
-    let (route_problem, route_note) = if portal_input_enabled() {
-        tokio::task::spawn_blocking(move || probe_remote_desktop_route(frontend_exports))
-            .await
-            .unwrap_or_default()
-    } else {
-        (None, None)
-    };
-    let remote_desktop = match route_problem {
-        Some((message, hint)) => RemoteDesktopPortal::Misrouted { message, hint },
-        None if remote_desktop_portal_reachable => RemoteDesktopPortal::Reachable,
-        None => RemoteDesktopPortal::Unreachable,
+    let remote_desktop = match probe {
+        Some(RemoteDesktopProbe::Exported { devices }) => match devices.and_then(missing_devices) {
+            Some((message, hint)) => RemoteDesktopPortal::NoInputDevices { message, hint },
+            None => RemoteDesktopPortal::Reachable,
+        },
+        Some(RemoteDesktopProbe::NotExported) | None => RemoteDesktopPortal::Unreachable,
     };
     let mut entry = classify_wayland_backend(
         &snap,
@@ -442,9 +436,6 @@ async fn check_wayland_backend() -> CheckEntry {
         &remote_desktop,
         target_activation_available(),
     );
-    if let Some(note) = route_note {
-        entry.message = format!("{} {note}", entry.message);
-    }
     if let Some(note) = tokio::task::spawn_blocking(compositor_note)
         .await
         .ok()
@@ -460,12 +451,59 @@ async fn check_wayland_backend() -> CheckEntry {
 enum RemoteDesktopPortal {
     Unreachable,
     Reachable,
-    /// The backend xdg-desktop-portal routes RemoteDesktop to cannot take
-    /// input calls, or the config disables it (#3638).
-    Misrouted {
+    /// The frontend exports RemoteDesktop, but the backend it routes to
+    /// offers no keyboard or pointer (#3638).
+    NoInputDevices {
         message: String,
         hint: String,
     },
+}
+
+/// The frontend's RemoteDesktop, as doctor sees it.
+#[cfg_attr(
+    not(all(target_os = "linux", feature = "portal-input")),
+    allow(dead_code)
+)]
+enum RemoteDesktopProbe {
+    NotExported,
+    /// `devices` is `AvailableDeviceTypes` (keyboard 1, pointer 2,
+    /// touchscreen 4), when it could be read.
+    Exported {
+        devices: Option<u32>,
+    },
+}
+
+/// `(message, hint)` when `AvailableDeviceTypes` lacks a keyboard or a
+/// pointer. The frontend copies this property from the backend it routes
+/// RemoteDesktop to, so it is 0 when that backend does not export
+/// `org.freedesktop.impl.portal.RemoteDesktop`, as `xdg-desktop-portal-kde`
+/// does not in a GNOME session.
+fn missing_devices(devices: u32) -> Option<(String, String)> {
+    let missing: Vec<&str> = [(1, "keyboard"), (2, "pointer")]
+        .into_iter()
+        .filter(|(bit, _)| devices & bit == 0)
+        .map(|(_, name)| name)
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some((
+        format!(
+            "The RemoteDesktop portal is reachable, but the backend xdg-desktop-portal \
+             routes it to offers no {} (AvailableDeviceTypes is {devices}), so clicks \
+             and key presses cannot be delivered. This happens when another desktop's \
+             backend serves RemoteDesktop, such as xdg-desktop-portal-kde in a GNOME \
+             session, which does not export org.freedesktop.impl.portal.RemoteDesktop \
+             there.",
+            missing.join(" or ")
+        ),
+        "Pin your desktop's backend: in ~/.config/xdg-desktop-portal/<desktop>-portals.conf \
+         (for example gnome-portals.conf), under `[preferred]`, set \
+         `org.freedesktop.impl.portal.RemoteDesktop=<backend>` (for example gnome). Keep \
+         the file readable, then restart xdg-desktop-portal (`systemctl --user restart \
+         xdg-desktop-portal`) or log out and back in."
+            .to_owned(),
+    ))
 }
 
 fn classify_wayland_backend(
@@ -491,7 +529,7 @@ fn classify_wayland_backend(
         );
     }
     if !snap.virtual_pointer {
-        if let RemoteDesktopPortal::Misrouted { message, hint } = remote_desktop {
+        if let RemoteDesktopPortal::NoInputDevices { message, hint } = remote_desktop {
             return CheckEntry::fail(
                 NAME_WAYLAND_BACKEND,
                 format!("No wlroots virtual-pointer advertised ({msg}). {message}"),
@@ -727,7 +765,7 @@ fn probe_portal_screenshot() -> anyhow::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
+fn probe_portal_remote_desktop() -> anyhow::Result<RemoteDesktopProbe> {
     #[cfg(feature = "portal-input")]
     {
         use ashpd::desktop::remote_desktop::RemoteDesktop;
@@ -742,31 +780,29 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
         rt.block_on(async {
             let probe = tokio::time::timeout(crate::wayland::portal::PROBE_TIMEOUT, async {
                 let connection = crate::wayland::portal::fresh_session_connection().await?;
-                RemoteDesktop::with_connection(connection)
+                let portal = RemoteDesktop::with_connection(connection)
                     .await
-                    .map_err(anyhow::Error::from)
+                    .map_err(anyhow::Error::from)?;
+                Ok::<_, anyhow::Error>(portal.available_device_types().await.ok().map(|d| d.bits()))
             })
             .await;
 
             match probe {
                 Err(_) => Err(anyhow::anyhow!("portal RemoteDesktop probe timed out")),
-                Ok(Ok(_)) => Ok(true),
-                // The frontend runs but does not export RemoteDesktop.
-                Ok(Err(e))
-                    if matches!(
-                        e.downcast_ref::<ashpd::Error>(),
-                        Some(ashpd::Error::PortalNotFound(_))
-                    ) =>
-                {
-                    Ok(false)
-                }
+                Ok(Ok(devices)) => Ok(RemoteDesktopProbe::Exported { devices }),
                 Ok(Err(e)) => {
                     let msg = format!("{e}");
-                    if msg.contains("ServiceUnknown")
+                    // The frontend runs but does not export RemoteDesktop.
+                    let not_found = matches!(
+                        e.downcast_ref::<ashpd::Error>(),
+                        Some(ashpd::Error::PortalNotFound(_))
+                    );
+                    if not_found
+                        || msg.contains("ServiceUnknown")
                         || msg.contains("NameHasNoOwner")
                         || msg.contains("NotFound")
                     {
-                        Ok(false)
+                        Ok(RemoteDesktopProbe::NotExported)
                     } else {
                         Err(anyhow::anyhow!("portal RemoteDesktop probe failed: {e}"))
                     }
@@ -776,31 +812,13 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
     }
     #[cfg(not(feature = "portal-input"))]
     {
-        Ok(false)
+        Ok(RemoteDesktopProbe::NotExported)
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
-    Ok(false)
-}
-
-/// `(message, hint)` when the backend xdg-desktop-portal routes
-/// RemoteDesktop to cannot take input calls, and a note when the config on
-/// disk may not be what the running portal uses.
-#[cfg(target_os = "linux")]
-fn probe_remote_desktop_route(
-    frontend_exports: Option<bool>,
-) -> (Option<(String, String)>, Option<String>) {
-    let diagnosis = crate::wayland::portal_route::probe(frontend_exports);
-    (diagnosis.problem(), diagnosis.note())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn probe_remote_desktop_route(
-    _frontend_exports: Option<bool>,
-) -> (Option<(String, String)>, Option<String>) {
-    (None, None)
+fn probe_portal_remote_desktop() -> anyhow::Result<RemoteDesktopProbe> {
+    Ok(RemoteDesktopProbe::NotExported)
 }
 
 /// Stub of `wayland::WaylandManagers` so off-Linux builds compile. Always
@@ -1010,7 +1028,7 @@ mod tests {
     }
 
     #[test]
-    fn wayland_backend_fails_when_the_remote_desktop_portal_is_misrouted() {
+    fn wayland_backend_fails_when_the_portal_backend_offers_no_input_devices() {
         let snap = WaylandManagers {
             foreign_toplevel: false,
             screencopy: false,
@@ -1019,20 +1037,40 @@ mod tests {
             virtual_pointer: false,
             wl_shm: true,
         };
-        let misrouted = RemoteDesktopPortal::Misrouted {
-            message: "routed to kde".into(),
-            hint: "pin gnome".into(),
-        };
-
-        let entry = classify_wayland_backend(&snap, true, &misrouted, true);
+        let (message, hint) = missing_devices(0).unwrap();
+        let entry = classify_wayland_backend(
+            &snap,
+            true,
+            &RemoteDesktopPortal::NoInputDevices {
+                message: message.clone(),
+                hint: hint.clone(),
+            },
+            true,
+        );
 
         assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(entry.message.ends_with(&message), "{}", entry.message);
         assert!(
-            entry.message.ends_with("routed to kde"),
-            "{}",
-            entry.message
+            message.contains("offers no keyboard or pointer (AvailableDeviceTypes is 0)")
+                && message.contains("xdg-desktop-portal-kde in a GNOME session"),
+            "{message}"
         );
-        assert_eq!(entry.hint.as_deref(), Some("pin gnome"));
+        assert_eq!(entry.hint.as_deref(), Some(hint.as_str()));
+        assert!(
+            hint.contains("org.freedesktop.impl.portal.RemoteDesktop=<backend>"),
+            "{hint}"
+        );
+    }
+
+    #[test]
+    fn available_device_types_need_a_keyboard_and_a_pointer() {
+        assert!(missing_devices(1 | 2).is_none());
+        assert!(missing_devices(1 | 2 | 4).is_none());
+        assert!(missing_devices(1).unwrap().0.contains("offers no pointer"));
+        assert!(missing_devices(2 | 4)
+            .unwrap()
+            .0
+            .contains("offers no keyboard"));
     }
 
     #[tokio::test]

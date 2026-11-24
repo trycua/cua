@@ -767,11 +767,240 @@ pub fn gather_background_facts(
     }
 }
 
+/// One AX-visible window or sheet of the application, as
+/// [`related_window_facts`] reads it.
+struct AxSurface {
+    ids: AxWindowId,
+    /// The window or sheet a sheet is attached to; a window's own id.
+    parent: u32,
+    /// `AXSheet` role, or `AXModal` true on a window.
+    modal: bool,
+}
+
+/// Turn the application's AX surfaces into facts about the windows other than
+/// `requested`. A sheet is owned by its parent window; a window is unowned:
+/// AppKit exposes no owner for a child window, so an `AXModal` window counts
+/// as application-modal, which `NSApp.runModal` windows are.
+fn related_windows(
+    pid: i32,
+    requested: u32,
+    surfaces: &[AxSurface],
+    focused: Option<AxWindowId>,
+) -> Vec<cua_driver_core::window_inspection::RelatedWindowFacts> {
+    use cua_driver_core::window_inspection::{RelatedWindowFacts, WindowOwnership};
+    let requested_surface = surfaces
+        .iter()
+        .find(|surface| surface.ids.own == requested && surface.parent != requested);
+    surfaces
+        .iter()
+        .filter(|surface| surface.ids.own != requested)
+        .map(|surface| RelatedWindowFacts {
+            pid: i64::from(pid),
+            window_id: u64::from(surface.ids.own),
+            owner: if requested_surface
+                .is_some_and(|requested| attached_to(requested, surface.ids.own, surfaces))
+            {
+                WindowOwnership::Ancestor
+            } else if surface.parent == surface.ids.own {
+                WindowOwnership::Unowned
+            } else if attached_to(surface, requested, surfaces) {
+                WindowOwnership::Target
+            } else {
+                WindowOwnership::OtherWindow
+            },
+            modal: surface.modal,
+            focused: focused.is_some_and(|focused| focused.own == surface.ids.own),
+        })
+        .collect()
+}
+
+/// Whether `surface` is attached to `requested`, directly or through the
+/// sheets it sits on: a sheet on a sheet blocks that sheet too.
+fn attached_to(surface: &AxSurface, requested: u32, surfaces: &[AxSurface]) -> bool {
+    let mut parent = surface.parent;
+    for _ in 0..=MAX_SHEET_NESTING {
+        if parent == requested {
+            return true;
+        }
+        match surfaces.iter().find(|other| other.ids.own == parent) {
+            Some(other) if other.parent != other.ids.own => parent = other.parent,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Read which of `pid`'s windows and sheets could block or supersede
+/// `window_id`, for `get_window_state`'s `interaction_context`. `None` when a
+/// read that could hide a blocker fails: `AXWindows` itself (an app in a
+/// modal run loop can stall AX briefly), a window's `AXModal` or its
+/// children, or the id of a window that reports itself modal. The caller then
+/// reports the relation as unobservable instead of claiming nothing is
+/// there. Blocking.
+pub fn interaction_facts(
+    pid: i32,
+    window_id: u32,
+) -> cua_driver_core::window_inspection::InteractionFacts {
+    use super::bindings::{
+        copy_ax_windows_or_error, copy_element_attr_or_error, AXUIElementSetMessagingTimeout,
+    };
+    // SAFETY: the application element and every copied window and sheet are
+    // released before return.
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(app, INTERACTION_AX_TIMEOUT_S);
+        let windows = copy_ax_windows_or_error(app);
+        // No focused window is an answer; a read that failed, or a focused
+        // window that cannot be named, is not.
+        let focused = copy_element_attr_or_error(app, "AXFocusedWindow").map(|window| {
+            window.map(|window| {
+                let ids = owning_window_id(window);
+                CFRelease(window as CFTypeRef);
+                ids
+            })
+        });
+        CFRelease(app as CFTypeRef);
+        let windows = windows.ok()?;
+        let focused = match focused {
+            Ok(Some(None)) | Err(_) => {
+                for window in windows {
+                    CFRelease(window as CFTypeRef);
+                }
+                return None;
+            }
+            Ok(Some(ids)) => ids,
+            Ok(None) => None,
+        };
+        let mut surfaces = Some(Vec::new());
+        for window in &windows {
+            if let Some(list) = surfaces.as_mut() {
+                if !read_surfaces(*window, list) {
+                    surfaces = None;
+                }
+            }
+        }
+        for window in windows {
+            CFRelease(window as CFTypeRef);
+        }
+        Some(related_windows(pid, window_id, &surfaces?, focused))
+    }
+}
+
+/// Append `window` and the sheets attached to it to `surfaces`. `false` when
+/// a read failed in a way that could hide a blocker.
+///
+/// # Safety
+///
+/// `window` must be a valid AX window element.
+unsafe fn read_surfaces(window: AXUIElementRef, surfaces: &mut Vec<AxSurface>) -> bool {
+    use super::bindings::{
+        copy_children_checked, copy_string_attr_or_error, kAXErrorNoValue,
+        AXUIElementCopyAttributeValue, AXUIElementSetMessagingTimeout,
+    };
+    use core_foundation::{base::TCFType, boolean::CFBoolean, string::CFString};
+    AXUIElementSetMessagingTimeout(window, INTERACTION_AX_TIMEOUT_S);
+    // AXModal: absent (unsupported or no value) is not modal; any other
+    // failure, or a value that is not a boolean, leaves the window's
+    // modality unknown.
+    let attr = CFString::new("AXModal");
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(window, attr.as_concrete_TypeRef(), &mut value);
+    let modal = match err {
+        super::bindings::kAXErrorSuccess if !value.is_null() => {
+            let boolean = core_foundation::base::CFGetTypeID(value) == CFBoolean::type_id();
+            let modal = boolean && bool::from(CFBoolean::wrap_under_get_rule(value as _));
+            CFRelease(value);
+            if !boolean {
+                return false;
+            }
+            modal
+        }
+        super::bindings::kAXErrorSuccess
+        | super::bindings::kAXErrorAttributeUnsupported
+        | super::bindings::kAXErrorNoValue => false,
+        _ => return false,
+    };
+    match ax_get_window_id(window) {
+        Some(own) => surfaces.push(AxSurface {
+            ids: AxWindowId::window(own),
+            parent: own,
+            modal,
+        }),
+        // A modal window that cannot be named cannot be reported.
+        None if modal => return false,
+        None => {}
+    }
+    // Sheets, and sheets on sheets, to the same bound as attached_sheets,
+    // each beside the id of the window or sheet it is attached to.
+    let mut parents = vec![(window, ax_get_window_id(window))];
+    let mut owned = Vec::new();
+    let mut complete = true;
+    for _ in 0..MAX_SHEET_NESTING {
+        let mut next = Vec::new();
+        for (parent, parent_id) in &parents {
+            match copy_children_checked(*parent) {
+                Ok(children) => {
+                    for child in children {
+                        // A role that could not be read may be a sheet's.
+                        match copy_string_attr_or_error(child, "AXRole") {
+                            Ok(Some(role)) if role == "AXSheet" => next.push((child, *parent_id)),
+                            Ok(_) => CFRelease(child as CFTypeRef),
+                            Err(_) => {
+                                complete = false;
+                                CFRelease(child as CFTypeRef);
+                            }
+                        }
+                    }
+                }
+                // A window or sheet with no children answers no value.
+                Err(err) if err == kAXErrorNoValue => {}
+                Err(_) => complete = false,
+            }
+        }
+        owned.extend(next.iter().map(|(sheet, _)| *sheet));
+        if next.is_empty() || !complete {
+            break;
+        }
+        let mut level = Vec::new();
+        for (sheet, parent_id) in next {
+            // A sheet that answers only to its parent's id cannot be told
+            // apart from the parent, nor addressed by `next_call`.
+            match (owning_window_id(sheet), parent_id) {
+                (Some(ids), Some(parent)) if ids.own != ids.root && ids.own != parent => {
+                    surfaces.push(AxSurface {
+                        ids,
+                        parent,
+                        modal: true,
+                    });
+                    level.push((sheet, Some(ids.own)));
+                }
+                _ => complete = false,
+            }
+        }
+        if !complete {
+            break;
+        }
+        parents = level;
+    }
+    for element in owned {
+        CFRelease(element as CFTypeRef);
+    }
+    complete
+}
+
+/// Bound on each AX read of [`interaction_facts`]: it runs on every window
+/// snapshot, and a busy app must not stall it.
+const INTERACTION_AX_TIMEOUT_S: f32 = 0.25;
+
 #[cfg(test)]
 mod tests {
     use super::{
-        count_competing_keyboard_destinations, detached_menu, parentless_menu,
-        resolve_owning_window, subtree_contains, AxWindowId, AxWindowRecord, WindowServerRow,
+        count_competing_keyboard_destinations, detached_menu, parentless_menu, related_windows,
+        resolve_owning_window, subtree_contains, AxSurface, AxWindowId, AxWindowRecord,
+        WindowServerRow,
     };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
@@ -1213,5 +1442,123 @@ mod tests {
             count_competing_keyboard_destinations(42, 10, rows, &records, true),
             0
         );
+    }
+
+    #[test]
+    fn related_windows_name_sheets_on_the_target_and_app_modal_windows() {
+        use cua_driver_core::window_inspection::{
+            interaction_context, RelatedWindowFacts, WindowOwnership,
+        };
+        let target = 10;
+        let surfaces = [
+            AxSurface {
+                ids: AxWindowId::window(target),
+                parent: target,
+                modal: false,
+            },
+            // A sheet on the target.
+            AxSurface {
+                ids: AxWindowId {
+                    own: 11,
+                    root: target,
+                },
+                parent: target,
+                modal: true,
+            },
+            // A sheet on a sibling window.
+            AxSurface {
+                ids: AxWindowId { own: 21, root: 20 },
+                parent: 20,
+                modal: true,
+            },
+            AxSurface {
+                ids: AxWindowId::window(20),
+                parent: 20,
+                modal: false,
+            },
+        ];
+        let related = related_windows(
+            42,
+            target,
+            &surfaces,
+            Some(AxWindowId {
+                own: 11,
+                root: target,
+            }),
+        );
+        assert_eq!(
+            related,
+            vec![
+                RelatedWindowFacts {
+                    pid: 42,
+                    window_id: 11,
+                    owner: WindowOwnership::Target,
+                    modal: true,
+                    focused: true,
+                },
+                RelatedWindowFacts {
+                    pid: 42,
+                    window_id: 21,
+                    owner: WindowOwnership::OtherWindow,
+                    modal: true,
+                    focused: false,
+                },
+                RelatedWindowFacts {
+                    pid: 42,
+                    window_id: 20,
+                    owner: WindowOwnership::Unowned,
+                    modal: false,
+                    focused: false,
+                },
+            ]
+        );
+        let context = interaction_context(&Some(related));
+        assert_eq!(context["status"], "blocked");
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 11);
+        assert_eq!(context["related_surfaces"].as_array().unwrap().len(), 1);
+
+        // Asked about the sibling, the target's sheet is someone else's.
+        let sibling = related_windows(42, 20, &surfaces, None);
+        let context = interaction_context(&Some(sibling));
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 21);
+        assert_eq!(context["related_surfaces"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_sheet_on_a_sheet_blocks_that_sheet() {
+        use cua_driver_core::window_inspection::{interaction_context, WindowOwnership};
+        let surfaces = [
+            AxSurface {
+                ids: AxWindowId::window(10),
+                parent: 10,
+                modal: false,
+            },
+            // Sheet A on the window, and sheet B on sheet A.
+            AxSurface {
+                ids: AxWindowId { own: 11, root: 10 },
+                parent: 10,
+                modal: true,
+            },
+            AxSurface {
+                ids: AxWindowId { own: 12, root: 10 },
+                parent: 11,
+                modal: true,
+            },
+        ];
+        let on_a = related_windows(42, 11, &surfaces, None);
+        let owners: Vec<_> = on_a.iter().map(|w| (w.window_id, w.owner)).collect();
+        assert_eq!(
+            owners,
+            vec![
+                (10, WindowOwnership::Ancestor),
+                (12, WindowOwnership::Target)
+            ]
+        );
+        let context = interaction_context(&Some(on_a));
+        assert_eq!(context["status"], "blocked");
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 12);
+        // From the window, both sheets are its own.
+        let on_window = related_windows(42, 10, &surfaces, None);
+        assert!(on_window.iter().all(|w| w.owner == WindowOwnership::Target));
     }
 }

@@ -356,6 +356,89 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
     })
 }
 
+/// The facts behind `get_window_state`'s `interaction_context` for `pid`'s
+/// window `target`: every top-level window, of any process, with its
+/// `GW_OWNER` chain, resolved by `related_by_owner_chain` (a dialog can run
+/// in another process). What blocks the target comes from
+/// `block_disabled_target`, with the target's UI thread as its evidence. `None` when the windows cannot be enumerated,
+/// the blocker cannot be established, or a modal or focused window has no
+/// title to address it by. Blocking.
+pub(crate) fn interaction_facts(
+    pid: u32,
+    target: u64,
+) -> cua_driver_core::window_inspection::InteractionFacts {
+    use cua_driver_core::window_inspection::{
+        block_disabled_target, keep_addressable, related_by_owner_chain, ListedWindow,
+    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let foreground = unsafe { GetForegroundWindow() }.0 as usize as u64;
+    let enabled = |hwnd: u64| unsafe { IsWindowEnabled(HWND(hwnd as *mut _)) }.as_bool();
+    // Titled or not: an untitled dialog is as modal as a titled one.
+    let listed: Vec<ListedWindow> = top_level_windows()?
+        .into_iter()
+        .map(|(hwnd, viewable)| ListedWindow {
+            window_id: hwnd,
+            pid: window_pid(hwnd),
+            owner: window_owner(hwnd),
+            modal: false,
+            viewable,
+        })
+        .collect();
+    let related = related_by_owner_chain(target, pid, &listed, Some(foreground), |hwnd| {
+        Some((window_owner(hwnd), window_pid(hwnd)))
+    })?;
+    let target_thread = window_thread(target)?;
+    let related = block_disabled_target(related, enabled(target), enabled, |hwnd| {
+        window_thread(hwnd) == Some(target_thread)
+    })?;
+    // get_window_state addresses titled windows only.
+    keep_addressable(related, |hwnd| window_info_by_handle(hwnd).is_some())
+}
+
+/// `GW_OWNER` of a top-level window.
+fn window_owner(hwnd: u64) -> Option<u64> {
+    unsafe { GetWindow(HWND(hwnd as *mut _), GW_OWNER) }
+        .ok()
+        .filter(|owner| !owner.0.is_null())
+        .map(|owner| owner.0 as usize as u64)
+}
+
+/// The process that created a window; `None` when the window is gone.
+fn window_pid(hwnd: u64) -> Option<u32> {
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut pid)) };
+    (pid != 0).then_some(pid)
+}
+
+/// The UI thread that created a window; `None` when the window is gone.
+fn window_thread(hwnd: u64) -> Option<u32> {
+    let thread = unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), None) };
+    (thread != 0).then_some(thread)
+}
+
+/// Every top-level HWND, in z-order, beside whether it is visible and not
+/// minimized. Unlike [`list_windows_via_win32`], untitled and other
+/// processes' windows are kept. `None` when the enumeration failed, which
+/// could leave a blocker out.
+fn top_level_windows() -> Option<Vec<(u64, bool)>> {
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let windows = &mut *(lparam.0 as *mut Vec<(u64, bool)>);
+        let viewable = IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool();
+        windows.push((hwnd.0 as usize as u64, viewable));
+        TRUE
+    }
+    let mut windows: Vec<(u64, bool)> = Vec::new();
+    unsafe {
+        EnumWindows(
+            Some(collect),
+            LPARAM(&mut windows as *mut Vec<(u64, bool)> as isize),
+        )
+    }
+    .ok()?;
+    Some(windows)
+}
+
 pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     let mut windows = enumerate_via_enum_windows();
     if let Some(pid) = filter_pid {

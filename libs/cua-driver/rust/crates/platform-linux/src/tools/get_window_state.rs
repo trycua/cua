@@ -223,7 +223,9 @@ fn build_element_entry(
     Some(entry)
 }
 
-fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
+/// `observe_relations` also reads the owner chain, modality and focus of
+/// each window for `interaction_context`; a display-only read skips them.
+fn window_overlays(pid: u32, xid: u64, observe_relations: bool) -> WindowOverlays {
     let mut out = WindowOverlays {
         window_rect: crate::x11::window_info(xid).map(|w| (w.x, w.y, w.width, w.height)),
         ..Default::default()
@@ -233,6 +235,11 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
             .is_some_and(|target| rects_intersect(rect, target))
     };
     let mut covers = false;
+    // An unreadable window set hides any blocker: it stays unobservable
+    // rather than reading as "nothing related".
+    if observe_relations {
+        out.related = crate::x11::interaction_facts(pid, xid);
+    }
     for window in crate::x11::list_windows(Some(pid)) {
         if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
             continue;
@@ -385,7 +392,16 @@ impl Tool for GetWindowStateTool {
                 {window_id, bounds, title}`); pass that window_id here to walk the \
                 popup's own AT-SPI toplevel so its menu items get element indices \
                 (then click them by element_token). Omitting window_id while a popup \
-                of this pid is open walks that popup.".into(),
+                of this pid is open walks that popup.\n\n\
+                INTERACTION CONTEXT: structuredContent.interaction_context says whether this \
+                window still receives input. `status` `blocked` (a modal dialog: \
+                `related_surfaces[].relation` `modal_child` or `blocks_target`) or `superseded` \
+                (a dialog it owns holds focus: `supersedes_target`) comes with `next_call`, the \
+                get_window_state call for that surface; act there instead of retrying this \
+                window. `none_observed` covers the app's own windows only (`scope`); \
+                `focus_elsewhere` names another focused window. `unobservable` means the window \
+                set could not be read (always on Wayland, which exposes no window set): after a \
+                verified ineffective action, inspect with get_desktop_state.".into(),
             input_schema: cua_driver_core::window_state_view::extend_input_schema(json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Process ID that owns the window."},
@@ -662,7 +678,7 @@ impl Tool for GetWindowStateTool {
             let overlays = if crate::wayland::is_wayland() {
                 WindowOverlays::default()
             } else {
-                window_overlays(pid, xid)
+                window_overlays(pid, xid, !display_only)
             };
             let screenshot = if should_capture {
                 // A screenshot-only read with a size cap (a live preview) asks
@@ -1106,6 +1122,12 @@ impl Tool for GetWindowStateTool {
                 }
                 if overlays.covers_window {
                     structured["screenshot_composited"] = json!(true);
+                }
+                if !display_only {
+                    cua_driver_core::window_inspection::mark_interaction_context(
+                        &mut structured,
+                        &overlays.related,
+                    );
                 }
                 if let Some(note) = overlays.follow_up(pid) {
                     structured["follow_up"] = json!(note);

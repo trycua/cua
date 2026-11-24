@@ -3,7 +3,10 @@
 import importlib.util
 import io
 import os
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -211,3 +214,35 @@ def test_keyboard_interrupt_handling(monkeypatch: pytest.MonkeyPatch) -> None:
 
     exit_code = wrapper.run_cua_driver(["mcp"])
     assert exit_code == 130
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no exec")
+def test_cli_entry_signals_reach_the_binary(tmp_path: Path) -> None:
+    """A supervisor that SIGTERMs the CLI's pid stops the binary, not only Python."""
+    pid_file = tmp_path / "binary.pid"
+    binary = tmp_path / "cua-driver"
+    binary.write_text('#!/bin/sh\necho $$ > "$1"\nexec sleep 30\n')
+    binary.chmod(0o755)
+    wrapper_path = Path(__file__).resolve().parents[1] / "src/cua_driver/wrapper.py"
+    entry = (
+        "import importlib.util, pathlib, sys\n"
+        f"spec = importlib.util.spec_from_file_location('wrapper', {str(wrapper_path)!r})\n"
+        "wrapper = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(wrapper)\n"
+        f"wrapper.get_binary_path = lambda: pathlib.Path({str(binary)!r})\n"
+        f"sys.exit(wrapper.exec_cua_driver([{str(pid_file)!r}]))\n"
+    )
+    cli = subprocess.Popen([sys.executable, "-c", entry])
+    try:
+        deadline = time.monotonic() + 10
+        while not pid_file.exists() or not pid_file.read_text().strip():
+            assert cli.poll() is None, "the CLI exited before starting the binary"
+            assert time.monotonic() < deadline, "the binary never started"
+            time.sleep(0.05)
+        assert int(pid_file.read_text()) == cli.pid
+
+        cli.send_signal(signal.SIGTERM)
+        assert cli.wait(10) == -signal.SIGTERM
+    finally:
+        cli.kill()
+        cli.wait()

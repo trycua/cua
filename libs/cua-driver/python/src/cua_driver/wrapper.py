@@ -52,6 +52,34 @@ def get_binary_path() -> Path:
     return binary_path
 
 
+def _binary_env() -> dict[str, str]:
+    # Let the binary's consent-aware first-run registration distinguish a
+    # bundled Python installation from an installer-script installation. Do
+    # not overwrite an explicit bounded channel inherited from `update` or a
+    # test harness. The Rust binary owns validation, consent, identity, and
+    # per-version deduplication.
+    env = os.environ.copy()
+    env.setdefault("CUA_DRIVER_INSTALL_CHANNEL", "python_package")
+    return env
+
+
+def exec_cua_driver(args: Optional[list[str]] = None) -> int:
+    """Become cua-driver on POSIX, so signals sent to this pid reach the binary."""
+    if sys.platform == "win32":
+        return run_cua_driver(args)
+    if args is None:
+        args = sys.argv[1:]
+
+    binary_path = get_binary_path()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        os.execve(binary_path, [str(binary_path), *args], _binary_env())
+    except OSError as e:
+        print(f"Error executing cua-driver: {e}", file=sys.stderr)
+        return 1
+
+
 def run_cua_driver(args: Optional[list[str]] = None) -> int:
     """Execute cua-driver binary with stdio passthrough.
 
@@ -66,14 +94,7 @@ def run_cua_driver(args: Optional[list[str]] = None) -> int:
         args = sys.argv[1:]
 
     binary_path = get_binary_path()
-
-    # Let the binary's consent-aware first-run registration distinguish a
-    # bundled Python installation from an installer-script installation. Do
-    # not overwrite an explicit bounded channel inherited from `update` or a
-    # test harness. The Rust binary owns validation, consent, identity, and
-    # per-version deduplication.
-    child_env = os.environ.copy()
-    child_env.setdefault("CUA_DRIVER_INSTALL_CHANNEL", "python_package")
+    child_env = _binary_env()
 
     try:
         # Run with direct stdio inheritance - no buffering, no capturing

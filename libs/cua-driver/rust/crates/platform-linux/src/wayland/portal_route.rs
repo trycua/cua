@@ -394,46 +394,70 @@ pub(crate) fn resolve(
 /// `XDG_CURRENT_DESKTOP` and locale. Doctor reads the running frontend's
 /// environment, since a shell or launcher can override these.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct PortalEnv(Vec<(String, String)>);
+pub(crate) struct PortalEnv {
+    vars: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The frontend's working directory, which relative search paths
+    /// resolve against.
+    cwd: Option<PathBuf>,
+}
 
 impl PortalEnv {
     /// Parse `/proc/<pid>/environ`.
-    pub(crate) fn from_environ(environ: &[u8]) -> Self {
-        Self(
-            environ
-                .split(|&b| b == 0)
-                .filter_map(|entry| {
-                    let entry = std::str::from_utf8(entry).ok()?;
-                    let (name, value) = entry.split_once('=')?;
-                    Some((name.to_owned(), value.to_owned()))
-                })
-                .collect(),
-        )
+    pub(crate) fn from_environ(environ: &[u8], cwd: Option<PathBuf>) -> Self {
+        let vars = environ
+            .split(|&b| b == 0)
+            .filter_map(|entry| {
+                let at = entry.iter().position(|&b| b == b'=')?;
+                Some((entry[..at].to_vec(), entry[at + 1..].to_vec()))
+            })
+            .collect();
+        Self { vars, cwd }
+    }
+
+    /// A set variable, even when empty, as `g_getenv` returns it.
+    fn raw(&self, name: &str) -> Option<&[u8]> {
+        self.vars
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name.as_bytes())
+            .map(|(_, v)| v.as_slice())
     }
 
     fn get(&self, name: &str) -> Option<&str> {
-        self.0
-            .iter()
-            .rev()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.as_str())
+        self.raw(name)
             .filter(|v| !v.is_empty())
+            .and_then(|v| std::str::from_utf8(v).ok())
     }
 
+    fn path(&self, bytes: &[u8]) -> PathBuf {
+        use std::os::unix::ffi::OsStrExt;
+        let path = Path::new(std::ffi::OsStr::from_bytes(bytes));
+        match &self.cwd {
+            Some(cwd) if path.is_relative() => cwd.join(path),
+            _ => path.to_owned(),
+        }
+    }
+
+    /// A `:`-separated search list as `g_strsplit` splits it, empty entries
+    /// included.
     fn dirs(&self, var: &str, default: &str) -> Vec<PathBuf> {
-        self.get(var)
-            .unwrap_or(default)
-            .split(':')
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .collect()
+        let value = self
+            .raw(var)
+            .filter(|v| !v.is_empty())
+            .unwrap_or(default.as_bytes());
+        value.split(|&b| b == b':').map(|d| self.path(d)).collect()
     }
 
     fn home_dir(&self, var: &str, under_home: &str) -> Option<PathBuf> {
-        self.get(var).map(PathBuf::from).or_else(|| {
-            self.get("HOME")
-                .map(|home| Path::new(home).join(under_home))
-        })
+        if let Some(dir) = self.raw(var).filter(|v| !v.is_empty()) {
+            return Some(self.path(dir));
+        }
+        let home = match self.raw("HOME").filter(|v| !v.is_empty()) {
+            Some(home) => self.path(home),
+            // GLib falls back to the passwd entry, the same user as doctor.
+            None => dirs::home_dir()?,
+        };
+        Some(home.join(under_home))
     }
 
     /// `g_get_user_config_dir`.
@@ -459,8 +483,8 @@ impl PortalEnv {
     /// XDG_CONFIG_DIRS, /etc, XDG_DATA_HOME, XDG_DATA_DIRS, /usr/share.
     /// `XDG_DESKTOP_PORTAL_DIR` replaces them all.
     pub(crate) fn conf_dirs(&self) -> Vec<PathBuf> {
-        if let Some(dir) = self.get("XDG_DESKTOP_PORTAL_DIR") {
-            return vec![PathBuf::from(dir)];
+        if let Some(dir) = self.raw("XDG_DESKTOP_PORTAL_DIR") {
+            return vec![self.path(dir)];
         }
         let mut roots = Vec::new();
         roots.extend(self.config_home());
@@ -474,8 +498,8 @@ impl PortalEnv {
     }
 
     pub(crate) fn portal_file_dirs(&self) -> Vec<PathBuf> {
-        if let Some(dir) = self.get("XDG_DESKTOP_PORTAL_DIR") {
-            return vec![PathBuf::from(dir)];
+        if let Some(dir) = self.raw("XDG_DESKTOP_PORTAL_DIR") {
+            return vec![self.path(dir)];
         }
         self.data_roots()
             .into_iter()
@@ -670,10 +694,36 @@ fn changed_since(paths: &[PathBuf], started: SystemTime) -> Vec<PathBuf> {
         .iter()
         .filter(|path| {
             std::fs::metadata(path).is_ok_and(after)
-                || std::fs::symlink_metadata(path).is_ok_and(after)
+                || traversed_symlinks(path)
+                    .iter()
+                    .any(|link| std::fs::symlink_metadata(link).is_ok_and(after))
         })
         .cloned()
         .collect()
+}
+
+/// Every symlink crossed while resolving `path`: its own components and,
+/// recursively, those in each link's target. Repointing one changes the
+/// times of neither the path nor its target.
+fn traversed_symlinks(path: &Path) -> Vec<PathBuf> {
+    let mut links = Vec::new();
+    let mut pending = vec![path.to_owned()];
+    while let Some(path) = pending.pop() {
+        let mut prefix = PathBuf::new();
+        for component in path.components() {
+            prefix.push(component);
+            let Ok(target) = std::fs::read_link(&prefix) else {
+                continue;
+            };
+            // 40 is the kernel's limit on symlinks in one lookup.
+            if links.contains(&prefix) || links.len() >= 40 {
+                continue;
+            }
+            links.push(prefix.clone());
+            pending.push(prefix.parent().unwrap_or(Path::new("/")).join(target));
+        }
+    }
+    links
 }
 
 /// The `.portal` files in `dirs`.
@@ -705,9 +755,10 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
         })
     });
     let environ = pid.and_then(|pid| std::fs::read(format!("/proc/{pid}/environ")).ok());
+    let cwd = pid.and_then(|pid| std::fs::read_link(format!("/proc/{pid}/cwd")).ok());
     let env = environ
         .as_deref()
-        .map(PortalEnv::from_environ)
+        .map(|environ| PortalEnv::from_environ(environ, cwd))
         .unwrap_or_default();
     let aliases = std::fs::read_to_string("/usr/share/locale/locale.alias").unwrap_or_default();
     let languages = env.languages(&aliases);
@@ -1715,6 +1766,7 @@ mod tests {
         let env = PortalEnv::from_environ(
             b"HOME=/home/u\0XDG_CURRENT_DESKTOP=ubuntu:GNOME\0XDG_CONFIG_DIRS=/etc/xdg/a:/etc/xdg/b\0\
               XDG_DATA_HOME=\0LANGUAGE=german\0LANG=en_US.UTF-8\0",
+            None,
         );
         assert_eq!(env.desktops(), ["ubuntu", "gnome"]);
         assert_eq!(
@@ -1735,9 +1787,28 @@ mod tests {
             env.languages("german\tde_DE.ISO-8859-1\n"),
             ["de_DE.ISO-8859-1", "de_DE", "de.ISO-8859-1", "de", "C"]
         );
-        let overridden = PortalEnv::from_environ(b"XDG_DESKTOP_PORTAL_DIR=/opt/x\0");
+        let overridden = PortalEnv::from_environ(b"XDG_DESKTOP_PORTAL_DIR=/opt/x\0", None);
         assert_eq!(overridden.conf_dirs(), [PathBuf::from("/opt/x")]);
         assert_eq!(overridden.portal_file_dirs(), [PathBuf::from("/opt/x")]);
+        // `g_getenv` returns an empty value, and the frontend uses it: the
+        // working directory.
+        let empty = PortalEnv::from_environ(b"XDG_DESKTOP_PORTAL_DIR=\0", Some("/run/x".into()));
+        assert_eq!(empty.conf_dirs(), [PathBuf::from("/run/x")]);
+        // Empty and relative search entries resolve against the frontend's
+        // working directory; non-UTF-8 paths are kept.
+        let relative = PortalEnv::from_environ(
+            b"HOME=/home/u\0XDG_CONFIG_DIRS=rel::/etc/\xff\0",
+            Some("/run/x".into()),
+        );
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(
+            relative.conf_dirs()[1..4],
+            [
+                PathBuf::from("/run/x/rel/xdg-desktop-portal"),
+                PathBuf::from("/run/x/xdg-desktop-portal"),
+                Path::new(std::ffi::OsStr::from_bytes(b"/etc/\xff")).join("xdg-desktop-portal"),
+            ]
+        );
     }
 
     #[test]
@@ -1758,6 +1829,28 @@ mod tests {
         assert_eq!(
             changed_since(std::slice::from_ref(&link), started),
             vec![link]
+        );
+    }
+
+    #[test]
+    fn a_repointed_symlink_above_the_path_counts_as_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        for tree in ["old", "new"] {
+            std::fs::create_dir_all(dir.path().join(tree).join("xdg-desktop-portal")).unwrap();
+        }
+        let current = dir.path().join("current");
+        std::os::unix::fs::symlink("old", &current).unwrap();
+        let watched = current.join("xdg-desktop-portal");
+        std::thread::sleep(Duration::from_millis(20));
+        let started = SystemTime::now();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(changed_since(std::slice::from_ref(&watched), started).is_empty());
+        let next = dir.path().join("next");
+        std::os::unix::fs::symlink("new", &next).unwrap();
+        std::fs::rename(&next, &current).unwrap();
+        assert_eq!(
+            changed_since(std::slice::from_ref(&watched), started),
+            vec![watched]
         );
     }
 

@@ -95,6 +95,7 @@ struct Focus {
 auto focusState() { return &focus; }
 }
 namespace Pointer { struct Manager { void warpTo(Vector2D) {} } pointer; auto mgr() { return &pointer; } }
+void warp_pointer(Vector2D position) { Pointer::mgr()->warpTo(position); }
 struct Client {
     InputRoute route = InputRoute::primary_foreground;
     bool dead = false, foreground_attempted = false;

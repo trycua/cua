@@ -994,6 +994,93 @@ struct InputQueueAttachment {
     own_thread: u32,
     target_thread: u32,
     serviced: std::cell::Cell<u32>,
+    /// Records the messages other threads send this thread while attached,
+    /// so a stall names them.
+    sent_log: Option<SentMessageLog>,
+}
+
+thread_local! {
+    /// (message, receiving window class) -> count, filled by
+    /// [`record_sent_message`] while a [`SentMessageLog`] is installed.
+    static SENT_MESSAGES: std::cell::RefCell<std::collections::BTreeMap<(u32, String), u32>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+unsafe extern "system" fn record_sent_message(
+    code: i32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, CWPSTRUCT};
+    // HC_ACTION is 0; wParam is zero when another thread sent the message.
+    if code == 0 && wparam.0 == 0 && lparam.0 != 0 {
+        let cwp = &*(lparam.0 as *const CWPSTRUCT);
+        let class = class_name(cwp.hwnd).unwrap_or_else(|| format!("{:?}", cwp.hwnd.0));
+        SENT_MESSAGES.with(|log| {
+            *log.borrow_mut().entry((cwp.message, class)).or_default() += 1;
+        });
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// A `WH_CALLWNDPROC` hook on the calling thread only (no DLL, no other
+/// process): it observes the sent messages this thread dispatches.
+struct SentMessageLog(windows::Win32::UI::WindowsAndMessaging::HHOOK);
+
+impl SentMessageLog {
+    fn install() -> Option<Self> {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_CALLWNDPROC};
+        SENT_MESSAGES.with(|log| log.borrow_mut().clear());
+        unsafe {
+            SetWindowsHookExW(
+                WH_CALLWNDPROC,
+                Some(record_sent_message),
+                None,
+                GetCurrentThreadId(),
+            )
+        }
+        .ok()
+        .map(Self)
+    }
+
+    /// The most frequent sent messages, as `0xMSG to Class xN`.
+    fn summary() -> String {
+        SENT_MESSAGES.with(|log| {
+            let log = log.borrow();
+            let mut entries: Vec<_> = log.iter().collect();
+            entries.sort_by(|a, b| b.1.cmp(a.1));
+            entries
+                .iter()
+                .take(4)
+                .map(|((message, class), count)| format!("0x{message:04x} to {class} x{count}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+    }
+}
+
+impl Drop for SentMessageLog {
+    fn drop(&mut self) {
+        let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(self.0) };
+    }
+}
+
+/// The calling thread's COM apartment, for stall evidence.
+fn own_apartment() -> &'static str {
+    use windows::Win32::System::Com::{
+        CoGetApartmentType, APTTYPE, APTTYPEQUALIFIER, APTTYPE_MAINSTA, APTTYPE_MTA, APTTYPE_NA,
+        APTTYPE_STA,
+    };
+    let mut kind = APTTYPE(0);
+    let mut qualifier = APTTYPEQUALIFIER(0);
+    match unsafe { CoGetApartmentType(&mut kind, &mut qualifier) } {
+        Err(_) => "none",
+        Ok(()) if kind == APTTYPE_STA || kind == APTTYPE_MAINSTA => "STA",
+        Ok(()) if kind == APTTYPE_MTA => "MTA",
+        Ok(()) if kind == APTTYPE_NA => "NA",
+        Ok(()) => "other",
+    }
 }
 
 impl InputQueueAttachment {
@@ -1006,10 +1093,11 @@ impl InputQueueAttachment {
         }
         unsafe { AttachThreadInput(own_thread, target_thread, true) }
             .as_bool()
-            .then_some(Self {
+            .then(|| Self {
                 own_thread,
                 target_thread,
                 serviced: std::cell::Cell::new(0),
+                sent_log: SentMessageLog::install(),
             })
     }
 
@@ -1059,9 +1147,15 @@ impl InputQueueAttachment {
         }
         .0 != 0;
         let (active, focus) = gui_thread_active_and_focus(target).unwrap_or_default();
+        let sent = if self.sent_log.is_some() {
+            SentMessageLog::summary()
+        } else {
+            "not recorded".to_owned()
+        };
         format!(
-            "Driver thread answered {} sent-message batch(es) while attached; target thread {} \
-             WM_NULL within 200 ms; its queue's active HWND {:?}, focus HWND {:?}.",
+            "Driver thread ({apartment}) answered {} sent-message batch(es) while attached \
+             [{sent}]; target thread {} WM_NULL within 200 ms; its queue's active HWND {:?}, \
+             focus HWND {:?}, caption {}.",
             self.serviced.get(),
             if responsive {
                 "answered"
@@ -1069,7 +1163,13 @@ impl InputQueueAttachment {
                 "did not answer"
             },
             active.0,
-            focus.0
+            focus.0,
+            if caption_active(target) {
+                "active"
+            } else {
+                "inactive"
+            },
+            apartment = own_apartment(),
         )
     }
 
@@ -1126,8 +1226,20 @@ impl InputQueueAttachment {
     }
 }
 
+/// Whether `hwnd`'s frame is drawn active: set when its thread handles
+/// `WM_NCACTIVATE(TRUE)` for a foreground activation.
+fn caption_active(hwnd: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowInfo, WINDOWINFO};
+    let mut info = WINDOWINFO {
+        cbSize: std::mem::size_of::<WINDOWINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowInfo(hwnd, &mut info) }.is_ok() && info.dwWindowStatus & 1 != 0
+}
+
 impl Drop for InputQueueAttachment {
     fn drop(&mut self) {
+        self.sent_log = None;
         use windows::Win32::System::Threading::AttachThreadInput;
         let _ = unsafe { AttachThreadInput(self.own_thread, self.target_thread, false) };
     }
@@ -1909,9 +2021,9 @@ mod busy_target_activation_tests {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetActiveWindow, SetFocus};
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-        GetWindowInfo, PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage, MSG,
-        WINDOWINFO, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW,
-        WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+        PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage, MSG,
+        WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+        WS_VISIBLE,
     };
 
     const WM_BUSY: u32 = WM_APP + 1;
@@ -2051,14 +2163,6 @@ mod busy_target_activation_tests {
                 let _ = DestroyWindow(self.hwnd);
             }
         }
-    }
-
-    fn caption_active(hwnd: HWND) -> bool {
-        let mut info = WINDOWINFO {
-            cbSize: std::mem::size_of::<WINDOWINFO>() as u32,
-            ..Default::default()
-        };
-        unsafe { GetWindowInfo(hwnd, &mut info) }.is_ok() && info.dwWindowStatus & 1 != 0
     }
 
     fn state(label: &str, hwnd: HWND) {

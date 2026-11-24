@@ -744,7 +744,7 @@ fn menu_route_result(
         (focused, result.content.first_mut())
     {
         text.push_str(&format!(
-            " Before the menu lookup, {focused} took the keyboard focus, and it keeps it."
+            " Before the menu command, the call wrote the keyboard focus to {focused}."
         ));
     }
     if let Some(structured) = result.structured_content.as_mut() {
@@ -849,7 +849,7 @@ mod tests {
             text(menu_route_result(unavailable(), false, Some("element [3]")).expect("refused"));
         assert!(
             focused.ends_with(
-                " Before the menu lookup, element [3] took the keyboard focus, and it keeps it."
+                " Before the menu command, the call wrote the keyboard focus to element [3]."
             ),
             "{focused}"
         );

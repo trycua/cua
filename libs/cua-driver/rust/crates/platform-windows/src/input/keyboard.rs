@@ -978,13 +978,19 @@ enum UnitRead {
 /// the duration of one foreground input transaction; detaches on drop.
 ///
 /// Attaching makes this thread part of the target's input processing: the
-/// two threads share one input queue and its activation and focus state, so
-/// the target can need this thread to answer a cross-thread sent message
-/// before its own input moves on. A thread that holds the attachment and
-/// waits without servicing sent messages can therefore freeze the target it
-/// waits on, and the target reads nothing until the attachment is dropped.
-/// Every wait below goes through [`Self::idle`], which services sent messages
-/// (never posted or input messages, which belong to the target).
+/// two threads share one input queue, and Windows processes that queue in
+/// order. Anything it queues for this thread (a sent message, or an event
+/// for this thread in the shared queue) sits ahead of the target's keys
+/// until this thread retrieves it. A thread that
+/// holds the attachment and only answers sent messages therefore freezes the
+/// target it waits on: the target stays responsive to sent messages but
+/// reads no input until the attachment is dropped (release gate run
+/// 45363565804). Every wait below goes through [`Self::idle`], which pumps
+/// this thread's own queue completely, as `AttachThreadInput` requires of
+/// every attached thread. Windows only returns this thread's own messages
+/// there; input routed to the target's windows stays with the target. Input
+/// routed to this thread instead (it owns no window, so it should never get
+/// any) is counted in `misrouted_input` and never reported as read.
 ///
 /// Attach only once the target thread has processed its activation
 /// ([`thread_activation_processed`]): a pending activation in the shared
@@ -994,6 +1000,11 @@ struct InputQueueAttachment {
     own_thread: u32,
     target_thread: u32,
     serviced: std::cell::Cell<u32>,
+    /// Messages this thread retrieved from its own queue, from just before
+    /// attaching.
+    pumped: std::cell::Cell<u32>,
+    /// Input messages Windows routed to this thread instead of the target.
+    misrouted_input: std::cell::Cell<u32>,
     /// Records the messages other threads send this thread while attached,
     /// so a stall names them.
     sent_log: Option<SentMessageLog>,
@@ -1007,6 +1018,36 @@ struct InputQueueAttachment {
 fn own_queue_status() -> u32 {
     use windows::Win32::UI::WindowsAndMessaging::{GetQueueStatus, QS_ALLINPUT};
     unsafe { GetQueueStatus(QS_ALLINPUT) }
+}
+
+/// Retrieve and dispatch every message Windows has for the calling thread,
+/// bounded per call. `PeekMessage` with no filter also delivers sent
+/// messages and processes the events queued for this thread; it never
+/// returns input that belongs to another thread's window. Input it does
+/// return was routed to this thread, is not dispatched (this thread has no
+/// window that wants it), and is counted in `misrouted_input`.
+fn pump_own_queue(pumped: &std::cell::Cell<u32>, misrouted_input: &std::cell::Cell<u32>) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, PeekMessageW, MSG, PM_REMOVE, WM_INPUT, WM_KEYFIRST, WM_KEYLAST,
+        WM_MOUSEFIRST, WM_MOUSELAST,
+    };
+    for _ in 0..64 {
+        let mut msg = MSG::default();
+        if !unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+            return;
+        }
+        pumped.set(pumped.get().saturating_add(1));
+        let input = (WM_KEYFIRST..=WM_KEYLAST).contains(&msg.message)
+            || (WM_MOUSEFIRST..=WM_MOUSELAST).contains(&msg.message)
+            || msg.message == WM_INPUT;
+        if input {
+            misrouted_input.set(misrouted_input.get().saturating_add(1));
+            continue;
+        }
+        unsafe {
+            DispatchMessageW(&msg);
+        }
+    }
 }
 
 thread_local! {
@@ -1101,6 +1142,11 @@ impl InputQueueAttachment {
         if target_thread == 0 || target_thread == own_thread {
             return None;
         }
+        // Retrieve what is already queued for this thread (this thread just
+        // shared the previous foreground thread's queue for the handoff in
+        // `force_foreground_attached`) before it joins the target's queue.
+        let pumped = std::cell::Cell::new(0);
+        pump_own_queue(&pumped, &std::cell::Cell::new(0));
         let before = own_queue_status();
         unsafe { AttachThreadInput(own_thread, target_thread, true) }
             .as_bool()
@@ -1108,31 +1154,36 @@ impl InputQueueAttachment {
                 own_thread,
                 target_thread,
                 serviced: std::cell::Cell::new(0),
+                pumped,
+                misrouted_input: std::cell::Cell::new(0),
                 sent_log: SentMessageLog::install(),
                 queue_before: before,
                 queue_attached: own_queue_status(),
             })
     }
 
-    /// Dispatch any messages other threads have sent to this thread, without
-    /// removing posted or input messages. `PM_QS_SENDMESSAGE` restricts the
-    /// peek to sent messages, so keyboard input in the shared queue stays for
-    /// the target thread.
-    fn service_sent_messages(&self) {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetQueueStatus, PeekMessageW, MSG, PM_NOREMOVE, PM_QS_SENDMESSAGE, QS_SENDMESSAGE,
-        };
+    /// Pump this thread's own share of the attached queue: sent messages,
+    /// queued events and posted messages. Counts the steps that found a sent
+    /// message waiting.
+    fn pump(&self) {
+        use windows::Win32::UI::WindowsAndMessaging::{GetQueueStatus, QS_SENDMESSAGE};
         let pending = unsafe { GetQueueStatus(QS_SENDMESSAGE) } >> 16 & QS_SENDMESSAGE.0;
         if pending != 0 {
             self.serviced.set(self.serviced.get().saturating_add(1));
-            let mut msg = MSG::default();
-            let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE) };
         }
+        pump_own_queue(&self.pumped, &self.misrouted_input);
     }
 
-    /// One bounded wait step while attached: answer sent messages first.
+    /// Whether the target read the inserted sentinel: its toggle bit in the
+    /// shared key state flipped, and no input went to this thread instead
+    /// (this thread reading the sentinel would flip it too).
+    fn read_by_target(&self, toggled: bool) -> bool {
+        toggled && self.misrouted_input.get() == 0
+    }
+
+    /// One bounded wait step while attached: pump this thread's queue first.
     fn idle(&self, step: Duration) {
-        self.service_sent_messages();
+        self.pump();
         if step.is_zero() {
             std::thread::yield_now();
         } else {
@@ -1166,11 +1217,14 @@ impl InputQueueAttachment {
             "not recorded".to_owned()
         };
         format!(
-            "Driver thread ({apartment}) answered {} sent-message batch(es) while attached \
-             [{sent}]; target thread {} WM_NULL within 200 ms; its queue's active HWND {:?}, \
+            "Driver thread ({apartment}) answered {} sent-message batch(es) [{sent}] and \
+             retrieved {} message(s) of its own ({} of them input meant for the target) while \
+             attached; target thread {} WM_NULL within 200 ms; its queue's active HWND {:?}, \
              focus HWND {:?}, caption {}; driver queue status 0x{:08x} before attach, \
              0x{:08x} attached, 0x{:08x} now.",
             self.serviced.get(),
+            self.pumped.get(),
+            self.misrouted_input.get(),
             if responsive {
                 "answered"
             } else {
@@ -1207,7 +1261,7 @@ impl InputQueueAttachment {
         }
         let deadline = Instant::now() + timeout;
         loop {
-            if toggled() != before {
+            if self.read_by_target(toggled() != before) {
                 return true;
             }
             if Instant::now() >= deadline {
@@ -1232,7 +1286,7 @@ impl InputQueueAttachment {
         let deadline = Instant::now() + timeout;
         loop {
             let state = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) };
-            if (state & 1) != before && state >= 0 {
+            if self.read_by_target((state & 1) != before && state >= 0) {
                 return UnitRead::Read;
             }
             if Instant::now() >= deadline {
@@ -1981,6 +2035,111 @@ mod attached_wait_services_sent_messages {
     }
 }
 
+/// While attached, the driver thread must take everything Windows queues for
+/// it, not only sent messages: whatever it leaves sits in the shared queue
+/// ahead of the target's input (release gate run 45363565804: the target
+/// answered WM_NULL yet read none of the 16 inserted units until the driver
+/// detached). Input it is handed instead of the target never counts as read.
+#[cfg(test)]
+mod attached_wait_pumps_own_queue {
+    use super::*;
+    use std::sync::mpsc;
+    use windows::core::w;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, DispatchMessageW, PeekMessageW, PostThreadMessageW, MSG,
+        PM_NOREMOVE, PM_REMOVE, WINDOW_EX_STYLE, WM_APP, WS_POPUP,
+    };
+
+    fn popup() -> HWND {
+        unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .expect("create popup")
+        }
+    }
+
+    /// A pumping target thread with one window, alive until `stop` is sent.
+    fn target_thread() -> (HWND, mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        let (hwnd_tx, hwnd_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let join = std::thread::spawn(move || unsafe {
+            let hwnd = popup();
+            hwnd_tx.send(hwnd.0 as isize).expect("send hwnd");
+            while stop_rx.try_recv().is_err() {
+                let mut msg = MSG::default();
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    DispatchMessageW(&msg);
+                }
+                sleep(Duration::from_millis(5));
+            }
+            let _ = DestroyWindow(hwnd);
+        });
+        let hwnd = HWND(hwnd_rx.recv().expect("target hwnd") as *mut _);
+        (hwnd, stop_tx, join)
+    }
+
+    #[test]
+    fn attached_wait_retrieves_a_message_posted_to_the_driver_thread() {
+        let (target, stop, join) = target_thread();
+        let attachment = InputQueueAttachment::attach(target).expect("attach input queues");
+        let before = attachment.pumped.get();
+        unsafe { PostThreadMessageW(GetCurrentThreadId(), WM_APP + 7, WPARAM(0), LPARAM(0)) }
+            .expect("post to the driver thread");
+        attachment.idle(Duration::ZERO);
+        let mut msg = MSG::default();
+        let left =
+            unsafe { PeekMessageW(&mut msg, None, WM_APP + 7, WM_APP + 7, PM_NOREMOVE) }.as_bool();
+        let pumped = attachment.pumped.get() - before;
+        drop(attachment);
+        let _ = stop.send(());
+        join.join().expect("target thread");
+        assert!(
+            !left,
+            "the attached wait left a message queued for the driver thread"
+        );
+        assert!(pumped >= 1, "the attached wait retrieved nothing");
+    }
+
+    #[test]
+    fn input_handed_to_the_driver_thread_is_never_read_by_the_target() {
+        let (target, stop, join) = target_thread();
+        let own = popup();
+        let attachment = InputQueueAttachment::attach(target).expect("attach input queues");
+        assert!(attachment.read_by_target(true));
+        unsafe { PostMessageW(Some(own), WM_KEYDOWN, WPARAM(0x41), LPARAM(1)) }
+            .expect("post a key to the driver thread's window");
+        attachment.idle(Duration::ZERO);
+        let misrouted = attachment.misrouted_input.get();
+        let read = attachment.read_by_target(true);
+        drop(attachment);
+        unsafe {
+            let _ = DestroyWindow(own);
+        }
+        let _ = stop.send(());
+        join.join().expect("target thread");
+        assert_eq!(misrouted, 1);
+        assert!(
+            !read,
+            "a sentinel toggle cannot prove the target read input"
+        );
+    }
+}
+
 #[cfg(test)]
 mod thread_activation_tests {
     use super::*;
@@ -2035,7 +2194,7 @@ mod busy_target_activation_tests {
     use windows::Win32::Foundation::LRESULT;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetActiveWindow, SetFocus};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage, MSG,
@@ -2314,71 +2473,6 @@ mod busy_target_activation_tests {
         drop(target);
         result.expect("foreground text delivery");
         assert_eq!(typed, "abc");
-    }
-
-    /// Diagnostic only: what the attached driver thread sees while the
-    /// target's activation is pending.
-    #[test]
-    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
-    fn probe_attached_queue_with_pending_activation() {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetQueueStatus, PeekMessageW, PM_NOREMOVE, QS_ALLINPUT,
-        };
-        let target = UiThread::spawn(100);
-        let other = UiThread::spawn(500);
-        bring_forward(target.hwnd);
-        assert!(wait_caption(target.hwnd, true), "target never activated");
-        bring_forward(other.hwnd);
-        assert!(wait_caption(target.hwnd, false), "target never deactivated");
-        target.block();
-        TYPED.lock().unwrap().clear();
-        let _ = unsafe { crate::input::force_foreground_assisted(target.hwnd) };
-        state("probe: fg set, target busy", target.hwnd);
-        let attachment = InputQueueAttachment::attach(target.hwnd).expect("attach");
-        state("probe: attached, target busy", target.hwnd);
-        target.unblock();
-        sleep(Duration::from_millis(200));
-        state("probe: attached, target released 200ms", target.hwnd);
-        let events = batch_events(&text_units("ab"));
-        let before = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
-        let sent = unsafe { SendInput(&events, std::mem::size_of::<INPUT>() as i32) };
-        eprintln!("[busy-target] probe: sent {sent} of {}", events.len());
-        let started = Instant::now();
-        let mut last = String::new();
-        while started.elapsed() < Duration::from_millis(1500) {
-            let status = unsafe { GetQueueStatus(QS_ALLINPUT) };
-            let mut msg = MSG::default();
-            let peeked = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) }.as_bool();
-            let key = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) };
-            let line = format!(
-                "status=0x{status:08x} peeked={peeked} msg=0x{:04x} hwnd={:?} wparam=0x{:x} \
-                 sentinel_toggled={} typed={:?} caption_active={}",
-                if peeked { msg.message } else { 0 },
-                msg.hwnd.0,
-                msg.wParam.0,
-                (key & 1) != before,
-                String::from_utf16_lossy(&TYPED.lock().unwrap()),
-                caption_active(target.hwnd),
-            );
-            if line != last {
-                eprintln!("[busy-target] probe +{:?}: {line}", started.elapsed());
-                last = line;
-            }
-            attachment.idle(Duration::from_millis(5));
-        }
-        eprintln!(
-            "[busy-target] probe: serviced {} sent-message batches",
-            attachment.serviced.get()
-        );
-        drop(attachment);
-        sleep(Duration::from_millis(300));
-        state("probe: detached 300ms", target.hwnd);
-        eprintln!(
-            "[busy-target] probe: typed after detach {:?}",
-            String::from_utf16_lossy(&TYPED.lock().unwrap())
-        );
-        drop(other);
-        drop(target);
     }
 
     #[test]

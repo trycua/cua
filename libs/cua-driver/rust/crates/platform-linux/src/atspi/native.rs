@@ -2157,6 +2157,18 @@ async fn collect_visited_bounded_opts<'a>(
         });
     }
 
+    // A scoped snapshot shows only its window, and the walk visits that window
+    // first, so a stop or an unexpanded container in a sibling window leaves
+    // nothing the snapshot shows unwalked.
+    if let Some(scope) = scoped_frame {
+        huge_containers
+            .retain(|(_, at)| visited.get(*at).is_some_and(|v| v.frame_ordinal == scope));
+        truncation = truncation_in_scope(
+            truncation,
+            scope,
+            stack.iter().map(|(_, _, _, frame_ordinal)| *frame_ordinal),
+        );
+    }
     if truncation.is_none() && !huge_containers.is_empty() {
         for (count, at) in &huge_containers {
             dlog!(
@@ -2181,6 +2193,42 @@ async fn collect_visited_bounded_opts<'a>(
         scoped_frame,
         truncation,
     }))
+}
+
+/// The truncation a walk scoped to window `scope` reports: none once no pending
+/// node belongs to that window, since the walk exhausts it before any other.
+fn truncation_in_scope(
+    truncation: Option<&'static str>,
+    scope: usize,
+    mut pending_frames: impl Iterator<Item = usize>,
+) -> Option<&'static str> {
+    truncation.filter(|_| pending_frames.any(|frame| frame == scope))
+}
+
+#[cfg(test)]
+mod truncation_in_scope_tests {
+    use super::truncation_in_scope;
+
+    #[test]
+    fn a_budget_spent_in_a_sibling_window_does_not_truncate_the_scoped_one() {
+        assert_eq!(
+            truncation_in_scope(Some("node_budget"), 1, [0, 0, 2].into_iter()),
+            None
+        );
+        assert_eq!(
+            truncation_in_scope(Some("timeout"), 1, std::iter::empty()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_stop_inside_the_scoped_window_still_truncates_it() {
+        assert_eq!(
+            truncation_in_scope(Some("node_budget"), 1, [0, 1].into_iter()),
+            Some("node_budget")
+        );
+        assert_eq!(truncation_in_scope(None, 1, [1].into_iter()), None);
+    }
 }
 
 /// Roles whose Description / LABELLED_BY are worth a round-trip even when

@@ -759,7 +759,14 @@ async fn run_serve(
     pid_file: Option<&PidFile>,
 ) -> anyhow::Result<()> {
     let socket_lock = claim_socket(socket_path)?;
-    serve_claimed_socket(sdk, socket_path, pid_file, socket_lock).await
+    serve_claimed_socket(
+        sdk,
+        socket_path,
+        pid_file,
+        socket_lock,
+        std::future::pending(),
+    )
+    .await
 }
 
 /// Resolve once an update has replaced the executable this daemon runs.
@@ -885,6 +892,60 @@ async fn wait_for_parent_stdin_eof() {
             Ok(_) => {}
         }
     }
+}
+
+/// Resolve on SIGTERM, SIGINT or SIGHUP. A signal the launcher left ignored
+/// (`nohup`, a background job) stays ignored.
+#[cfg(unix)]
+fn termination_signal() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut signals = Vec::new();
+    for kind in [
+        SignalKind::terminate(),
+        SignalKind::interrupt(),
+        SignalKind::hangup(),
+    ] {
+        if !signal_is_ignored(kind.as_raw_value()) {
+            signals.push(signal(kind)?);
+        }
+    }
+    Ok(std::future::poll_fn(move |cx| {
+        if signals
+            .iter_mut()
+            .any(|signal| signal.poll_recv(cx).is_ready())
+        {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    }))
+}
+
+#[cfg(unix)]
+fn signal_is_ignored(signal: libc::c_int) -> bool {
+    let mut action = std::mem::MaybeUninit::<libc::sigaction>::uninit();
+    unsafe {
+        libc::sigaction(signal, std::ptr::null(), action.as_mut_ptr()) == 0
+            && action.assume_init().sa_sigaction == libc::SIG_IGN
+    }
+}
+
+/// Resolve on Ctrl+C or Ctrl+Break from the daemon's console.
+#[cfg(target_os = "windows")]
+fn termination_signal() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let mut interrupt = tokio::signal::windows::ctrl_c()?;
+    let mut ctrl_break = tokio::signal::windows::ctrl_break()?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = ctrl_break.recv() => {}
+        }
+    })
+}
+
+#[cfg(not(any(unix, target_os = "windows")))]
+fn termination_signal() -> std::io::Result<std::future::Pending<()>> {
+    Ok(std::future::pending())
 }
 
 #[cfg(unix)]
@@ -1110,7 +1171,7 @@ mod peer_authentication_tests {
 
 /// Serve on a socket path [`claim_socket`] reserved. Binds `socket_path`,
 /// writes `pid_file`, accepts connections, and serves requests until
-/// `{"method":"shutdown"}`.
+/// `{"method":"shutdown"}` or `termination` resolves.
 ///
 /// This is `async` and must be called from a tokio runtime.
 #[cfg(unix)]
@@ -1120,6 +1181,7 @@ async fn serve_claimed_socket(
     pid_file: Option<&PidFile>,
     // Held until return so a racing launch cannot unlink this daemon's socket.
     socket_lock: Option<std::fs::File>,
+    termination: impl std::future::Future<Output = ()>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
@@ -1189,6 +1251,7 @@ async fn serve_claimed_socket(
         std::future::pending::<()>().await;
     };
     tokio::pin!(executable_replaced);
+    tokio::pin!(termination);
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
     // direct embedded applications and daemon-backed clients behave alike.
@@ -1204,7 +1267,15 @@ async fn serve_claimed_socket(
     loop {
         tokio::select! {
             result = listener.accept() => {
-                let (stream, _) = result?;
+                // Accept errors (EMFILE, ENFILE, ECONNABORTED) are transient.
+                let stream = match result {
+                    Ok((stream, _)) => stream,
+                    Err(error) => {
+                        tracing::warn!("accept on {socket_path} failed: {error}; retrying");
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
                 reap_finished_connections(&mut connection_tasks);
                 if let Err(error) = authenticate_unix_peer(&stream) {
                     tracing::warn!("service connection rejected before request parsing: {error}");
@@ -1599,6 +1670,10 @@ async fn serve_claimed_socket(
                 );
                 break;
             }
+            _ = &mut termination => {
+                eprintln!("Cua Driver daemon received a termination signal; shutting down.");
+                break;
+            }
         }
     }
 
@@ -1876,6 +1951,7 @@ async fn serve_claimed_socket(
     socket_path: &str,
     pid_file: Option<&PidFile>,
     socket_lock: Option<std::fs::File>,
+    termination: impl std::future::Future<Output = ()>,
 ) -> anyhow::Result<()> {
     use std::os::windows::io::AsRawHandle as _;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -1922,6 +1998,7 @@ async fn serve_claimed_socket(
         }
     };
     tokio::pin!(parent_liveness);
+    tokio::pin!(termination);
 
     // Idle-session and recording maintenance is owned by the SDK runtime.
     if let Some(port) = crate::mcp_http::configured_port()? {
@@ -1959,6 +2036,10 @@ async fn serve_claimed_socket(
                 }
                 _ = &mut parent_liveness => {
                     eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                    break;
+                }
+                _ = &mut termination => {
+                    eprintln!("Cua Driver daemon received a termination signal; shutting down.");
                     break;
                 }
             }
@@ -2380,6 +2461,10 @@ async fn serve_claimed_socket(
                 eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
                 break;
             }
+            _ = &mut termination => {
+                eprintln!("Cua Driver daemon received a termination signal; shutting down.");
+                break;
+            }
         }
     }
 
@@ -2518,6 +2603,7 @@ async fn serve_claimed_socket(
     _socket_path: &str,
     _pid_file: Option<&PidFile>,
     _socket_lock: Option<std::fs::File>,
+    _termination: impl std::future::Future<Output = ()>,
 ) -> anyhow::Result<()> {
     anyhow::bail!("cua-driver serve is not supported on this platform");
 }
@@ -2641,12 +2727,11 @@ pub fn run_serve_cmd(
             std::process::exit(1);
         }
     };
-    let result = rt.block_on(serve_claimed_socket(
-        sdk,
-        &socket_path,
-        Some(&pid_file),
-        socket_lock,
-    ));
+    let result = rt.block_on(async {
+        let termination = termination_signal()
+            .map_err(|error| anyhow::anyhow!("watch termination signals: {error}"))?;
+        serve_claimed_socket(sdk, &socket_path, Some(&pid_file), socket_lock, termination).await
+    });
     rt.shutdown_timeout(std::time::Duration::from_secs(30));
     cua_driver_core::session_authorization::release_configured_registry_for_shutdown();
     cua_driver_core::session::release_process_state_for_shutdown();
@@ -3330,7 +3415,7 @@ mod presence_tests {
         assert!(!stop.is_finished(), "stop gave up on a starting daemon");
         let server = tokio::spawn({
             let socket = socket.clone();
-            async move { serve_claimed_socket(sdk, &socket, None, lock).await }
+            async move { serve_claimed_socket(sdk, &socket, None, lock, std::future::pending()).await }
         });
 
         assert_eq!(stop.await.unwrap().unwrap(), StopOutcome::Stopped);

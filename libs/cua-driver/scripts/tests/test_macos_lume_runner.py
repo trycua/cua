@@ -27,6 +27,7 @@ SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-
 HARNESS_GUIDE = REPO_ROOT / "libs/cua-driver/docs/test-harnesses-guide.md"
 RUNNER_GUIDE = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/README.md"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
+APPKIT_CELLS = REPO_ROOT / "scripts/ci/macos/appkit-cells.tsv"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
     REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
@@ -969,6 +970,36 @@ def test_retry_attempts_default_to_one() -> None:
     assert fields["attempts"] == "1"
 
 
+def test_appkit_single_cell_is_routed_to_the_native_lane() -> None:
+    fields = _parse(
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable", "--retry-only"]
+    )
+    assert fields["status"] == "0"
+    assert fields["harness"] == "appkit"
+    assert fields["lane"] == "native"
+    assert fields["attempts"] == "1"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable"],
+        [
+            "--retry-cell", "macos-appkit-ax-tree-ax-not-applicable",
+            "--retry-only", "--retry-harness", "swiftui",
+        ],
+        [
+            "--retry-cell", "macos-swiftui-left-click-ax-background",
+            "--retry-only", "--retry-harness", "appkit",
+        ],
+    ],
+)
+def test_appkit_selection_cannot_change_harness_or_retry_a_full_matrix(
+    args: list[str],
+) -> None:
+    assert _parse(args)["status"] == "2"
+
+
 def test_swiftui_retry_is_routed_to_the_native_lane() -> None:
     fields = _parse(
         [
@@ -1005,10 +1036,13 @@ def test_swiftui_retry_cell_and_harness_must_agree(args: list[str]) -> None:
 
 APPKIT_CELLS = REPO_ROOT / "scripts/ci/macos/appkit-cells.tsv"
 APPKIT_TESTS = REPO_ROOT / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/harness_appkit_test.rs"
-APPKIT_SNAPSHOT_PUBLICATION = (
-    REPO_ROOT
-    / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/support/appkit_snapshot_publication.rs"
-)
+APPKIT_SUPPORT = REPO_ROOT / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/support"
+# Each `mod` of harness_appkit_test.rs that holds ignored AppKit tests, by module name.
+APPKIT_MODULES = {
+    "snapshot_publication": APPKIT_SUPPORT / "appkit_snapshot_publication.rs",
+    "native_geometry": APPKIT_SUPPORT / "appkit_native_geometry.rs",
+    "pixel_focus_latency": APPKIT_SUPPORT / "appkit_pixel_focus_latency.rs",
+}
 
 
 def _appkit_rows() -> list[list[str]]:
@@ -1030,7 +1064,9 @@ def test_appkit_manifest_registers_every_ignored_appkit_test_once() -> None:
     assert len(set(cells)) == len(cells)
     assert len(set(tests)) == len(tests)
     expected = _ignored_tests(APPKIT_TESTS) | {
-        f"snapshot_publication::{name}" for name in _ignored_tests(APPKIT_SNAPSHOT_PUBLICATION)
+        f"{module}::{name}"
+        for module, source in APPKIT_MODULES.items()
+        for name in _ignored_tests(source)
     }
     assert set(tests) == expected
 

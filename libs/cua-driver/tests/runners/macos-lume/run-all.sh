@@ -25,8 +25,6 @@ SCREEN_CAPTURE_CLIENT="com.trycua.driver.local"
 # A run-owned Cargo namespace keeps a certification build off the seed image's
 # and any other commit's target state without deleting a shared cache.
 CARGO_TARGET_ROOT="${CUA_E2E_CARGO_TARGET_ROOT:-${HOME}/Library/Caches/cua-driver-e2e/cargo-target}"
-# Shared web-action retries use the shared lane. The supported native SwiftUI
-# cells are routed to the native lane after argument validation.
 RETRY_INTERNAL_LANE=shared
 RETRY_ATTEMPTS_LIMIT=3
 # How long to wait for a daemon mode transition, in one-second polls.

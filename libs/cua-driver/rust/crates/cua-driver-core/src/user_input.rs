@@ -230,6 +230,11 @@ impl UserInputLog {
 
     /// Take up to `limit` recorded inputs into the log.
     fn take_inputs(&self, state: &mut LogState, limit: usize) {
+        // Read the loss first: while it is nonzero, record only drops, so the
+        // queue cannot refill behind it, and once the queue is empty every
+        // input it held came before these losses. Losses recorded after this
+        // load stay counted for the next take.
+        let lost = self.dropped.load(Ordering::Acquire);
         let mut emptied = false;
         for _ in 0..limit {
             let Ok((input, time_ms)) = state.inputs.try_recv() else {
@@ -238,15 +243,12 @@ impl UserInputLog {
             };
             state.apply(input, time_ms, self.capacity);
         }
-        // Once the queue is empty, the dropped inputs, which came after all
-        // of it, take sequence numbers and count as lost history, so a reader
-        // whose cursor is before them gets history_lost.
-        if emptied {
-            let dropped = self.dropped.swap(0, Ordering::AcqRel);
-            if dropped > 0 {
-                state.last_seq += dropped;
-                state.evicted_through = state.last_seq;
-            }
+        // The lost inputs take sequence numbers and count as lost history, so
+        // a reader whose cursor is before them gets history_lost.
+        if emptied && lost > 0 {
+            self.dropped.fetch_sub(lost, Ordering::AcqRel);
+            state.last_seq += lost;
+            state.evicted_through = state.last_seq;
         }
     }
 

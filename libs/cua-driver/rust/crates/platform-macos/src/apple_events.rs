@@ -445,23 +445,25 @@ pub(crate) fn save_result(
 ) -> Result<(), ScriptRefusal> {
     let answer = match result {
         Err(refusal) if refusal.code == "automation_timeout" => {
-            if before != AutomationPermission::NeedsConsent
-                || !matches!(
-                    after(),
-                    AutomationPermission::NeedsConsent | AutomationPermission::Denied
-                )
-            {
-                return Err(ScriptRefusal {
+            let after = (before == AutomationPermission::NeedsConsent).then(after);
+            return Err(match after {
+                Some(AutomationPermission::NeedsConsent) => ScriptRefusal {
+                    code: "automation_consent_pending",
+                    reason: format!(
+                        "Cua Driver still has no Automation permission for {app_name} (a macOS \
+                         consent prompt may be waiting for the user), so no save reached it"
+                    ),
+                },
+                Some(AutomationPermission::Denied) => ScriptRefusal {
+                    code: "automation_consent_declined",
+                    reason: format!(
+                        "the user declined Automation for {app_name}, so no save reached it"
+                    ),
+                },
+                _ => ScriptRefusal {
                     code: refusal.code,
                     reason: format!("{app_name} did not answer within 30 s"),
-                });
-            }
-            return Err(ScriptRefusal {
-                code: "automation_consent_pending",
-                reason: format!(
-                    "Cua Driver still has no Automation permission for {app_name} (a macOS \
-                     consent prompt may be waiting for the user), so no save reached it"
-                ),
+                },
             });
         }
         result => result?,

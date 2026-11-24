@@ -1315,6 +1315,20 @@ mod tests {
                 assert!(!reply.contains("prompt may be waiting"), "{case}: {reply}");
             }
         }
+        let declined = text(&timed_out(NeedsConsent, Denied));
+        assert!(
+            declined.contains("the user declined Automation for TextEdit"),
+            "{declined}"
+        );
+        assert!(
+            !declined.contains("still has no Automation permission"),
+            "{declined}"
+        );
+        let pending = text(&timed_out(NeedsConsent, NeedsConsent));
+        assert!(
+            pending.contains("consent prompt may be waiting"),
+            "{pending}"
+        );
     }
 
     #[test]

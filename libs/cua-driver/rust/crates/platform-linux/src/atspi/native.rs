@@ -4829,6 +4829,15 @@ async fn live_accessible<'a>(
 /// exists so the caller can fall back to resolving the index afresh, except
 /// for [`InputMayHaveLanded`]: the action was sent and must not be repeated.
 pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)> {
+    perform_action_ref_guarded(object_ref, || Ok(()))
+}
+
+/// Exact-object action with an invocation guard checked immediately before
+/// dispatch, after the potentially slow accessibility identity/proxy reads.
+pub(crate) fn perform_action_ref_guarded(
+    object_ref: &ObjectRef,
+    before_dispatch: impl Fn() -> Result<()>,
+) -> Result<(String, bool, bool)> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -4851,6 +4860,7 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)
             // folded into `rejected`/`suspected_noop` (which would claim the
             // toolkit declined it) nor silently reported as a plain success.
             let mut unacknowledged = false;
+            before_dispatch()?;
             let rejected = match do_action(&ap, chosen as i32).await? {
                 Some(accepted) => !accepted,
                 // The request was delivered; a GTK item whose action opens a
@@ -4977,6 +4987,61 @@ pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
             }
         },
         || Err(anyhow!("element_enabled (cached element) timed out")),
+    )
+}
+
+/// Whether a snapshot-cached tab currently carries `Selected` (or `Checked`,
+/// matching the walk's tab `selected` field): one `GetState` round-trip, no
+/// tree re-walk. Unlike [`element_showing_ref`], a missing state set is an
+/// error: callers use this as proof before acting on the selected tab.
+pub fn element_selected_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => {
+                    Ok(state.contains(State::Selected) || state.contains(State::Checked))
+                }
+                Some(Err(error)) => Err(anyhow!("cached element exposed no state set: {error}")),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_selected (cached element) timed out")),
+    )
+}
+
+/// The Document "URI" a snapshot-cached document reports right now, or
+/// `None` when it reports an empty one: no tree re-walk. A navigation
+/// either changes it or retires the object, and a failed read errors.
+pub fn document_uri_ref(object_ref: &ObjectRef) -> Result<Option<String>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let proxies = match call(acc.proxies()).await {
+                Some(Ok(proxies)) => proxies,
+                Some(Err(error)) => {
+                    return Err(anyhow!("cached document exposed no interfaces: {error}"))
+                }
+                None => return Err(anyhow!("cached element did not answer in time")),
+            };
+            let document = match call(proxies.document()).await {
+                Some(Ok(document)) => document,
+                Some(Err(error)) => {
+                    return Err(anyhow!("cached element is not a document: {error}"))
+                }
+                None => return Err(anyhow!("cached element did not answer in time")),
+            };
+            match call(document.get_attribute_value("URI")).await {
+                Some(Ok(uri)) => Ok(Some(uri).filter(|uri| !uri.trim().is_empty())),
+                Some(Err(error)) => Err(anyhow!("cached document URI unreadable: {error}")),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("document_uri (cached element) timed out")),
     )
 }
 

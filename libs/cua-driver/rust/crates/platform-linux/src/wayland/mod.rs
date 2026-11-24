@@ -22,6 +22,7 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+pub(crate) mod input_quiet;
 pub mod kwin_access;
 pub mod kwin_capture;
 pub mod kwin_helper;

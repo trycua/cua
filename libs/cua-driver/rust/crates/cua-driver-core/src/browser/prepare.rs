@@ -134,8 +134,9 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
 }
 
 /// How long the driver itself looks for the exact browser-owned prompt and
-/// presses its Allow action.
-const AUTOMATIC_CONSENT_BOUND: Duration = Duration::from_secs(4);
+/// presses its Allow action. Linux scales its own attempt from observed
+/// accessibility walk time inside this bound.
+const AUTOMATIC_CONSENT_BOUND: Duration = super::EXISTING_PROFILE_CONSENT_TIMEOUT;
 
 /// How long an attach the person can see keeps the browser's pending
 /// connection open for them to answer a prompt the driver did not answer.
@@ -280,6 +281,33 @@ where
             })?,
     };
     Ok((result, true))
+}
+
+/// A platform consent focus guard whose capture and restoration may do
+/// blocking compositor IPC; both stay off the async executor, including the
+/// implicit drop on an early return or cancellation.
+struct ConsentFocus(Option<Box<dyn Send>>);
+
+impl ConsentFocus {
+    async fn settle(mut self) {
+        if let Some(guard) = self.0.take() {
+            let _ = tokio::task::spawn_blocking(move || drop(guard)).await;
+        }
+    }
+}
+
+impl Drop for ConsentFocus {
+    fn drop(&mut self) {
+        let Some(guard) = self.0.take() else {
+            return;
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(move || drop(guard));
+            }
+            Err(_) => drop(guard),
+        }
+    }
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
@@ -1680,6 +1708,21 @@ impl BrowserEngine {
             ));
         }
 
+        // Any contact with the endpoint, from discovery's probe to the claim,
+        // can raise a browser-owned consent prompt that the compositor
+        // focuses. Capture the person's focus before the first contact; the
+        // platform hands it back once consent settles below. Wrap inside the
+        // worker: if this future is cancelled after capture completes, the
+        // abandoned output still drops off the executor.
+        let consent_focus = {
+            let platform = Arc::clone(&self.platform);
+            tokio::task::spawn_blocking(move || {
+                ConsentFocus(platform.existing_profile_consent_focus_guard(pid, window_id))
+            })
+            .await
+            .unwrap_or(ConsentFocus(None))
+        };
+
         let classification = self.platform.classify_browser(pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
             return Err(unsupported_engine_refusal(
@@ -1695,6 +1738,9 @@ impl BrowserEngine {
             pid,
             window_id,
             browser: classification.product_kind,
+            fingerprint: fingerprint.clone(),
+            session: request.session.clone(),
+            transport_session: request.transport_session.clone(),
         };
         let mut pending_setup = None;
         let mut endpoint = self
@@ -1951,6 +1997,7 @@ impl BrowserEngine {
                     return Err(rollback_pending_setup(pending_setup, error).await);
                 }
             };
+        consent_focus.settle().await;
         let displayed_consent_prompt = displayed_consent_prompt || fresh_consent_prompt;
         if let Err(_final_claim_error) = claimed {
             self.revoke_existing_profile_grant(
@@ -2023,6 +2070,37 @@ impl BrowserEngine {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn consent_focus_guard_drops_off_the_async_executor() {
+        struct Probe(std::sync::mpsc::Sender<std::thread::ThreadId>);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+        let executor = std::thread::current().id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(super::ConsentFocus(Some(Box::new(Probe(tx.clone())))));
+        let dropped_on = tokio::task::spawn_blocking(move || rx.recv().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(dropped_on, executor);
+
+        // A completed worker output abandoned by a cancelled caller.
+        let (tx2, rx2) = std::sync::mpsc::channel();
+        let worker =
+            tokio::task::spawn_blocking(move || super::ConsentFocus(Some(Box::new(Probe(tx2)))));
+        while !worker.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        drop(worker);
+        let dropped_on = tokio::task::spawn_blocking(move || rx2.recv().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(dropped_on, executor);
+        drop(tx);
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -2162,13 +2240,13 @@ mod tests {
         .await
         .expect_err("background attempts do not wait for a person");
         assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRequired);
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < AUTOMATIC_CONSENT_BOUND + Duration::from_secs(1));
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_closed_pending_connection_while_waiting_for_a_person_is_a_decline() {
         let mut claim = Box::pin(async {
-            tokio::time::sleep(Duration::from_secs(9)).await;
+            tokio::time::sleep(AUTOMATIC_CONSENT_BOUND + Duration::from_secs(5)).await;
             Err::<u8, _>(anyhow::anyhow!("handshake rejected"))
         });
         let error = claim_with_optional_consent(
@@ -2243,7 +2321,10 @@ mod tests {
                     if outcome >= 2 {
                         // Model Linux's non-cancellable native action worker.
                         tokio::task::spawn_blocking(|| {
-                            std::thread::sleep(Duration::from_millis(4100));
+                            std::thread::sleep(
+                                super::super::EXISTING_PROFILE_CONSENT_TIMEOUT
+                                    + Duration::from_millis(100),
+                            );
                         })
                         .await
                         .unwrap();
@@ -2321,7 +2402,10 @@ mod tests {
                 action
                     .perform(|| {
                         tokio::task::spawn_blocking(move || {
-                            std::thread::sleep(Duration::from_millis(4100));
+                            std::thread::sleep(
+                                super::super::EXISTING_PROFILE_CONSENT_TIMEOUT
+                                    + Duration::from_millis(100),
+                            );
                             assert!(!dropped_during_worker.load(Ordering::SeqCst));
                             finished.store(true, Ordering::SeqCst);
                         })

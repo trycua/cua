@@ -27,6 +27,7 @@ pub mod exact_target;
 pub mod launch;
 pub(crate) mod main_thread;
 pub mod reveal_scroll;
+pub mod scope_diagnostics;
 pub mod snapshot;
 pub mod tree;
 pub(crate) mod web_effect;

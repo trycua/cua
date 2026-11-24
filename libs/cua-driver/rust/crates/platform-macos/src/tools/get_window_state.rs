@@ -38,7 +38,7 @@ fn def() -> &'static ToolDef {
             \n\
             A new snapshot of the same (pid, window_id) replaces this session's previous one and stales its tokens (`invalidated_snapshot_ids`); another session's read leaves them valid. `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
-            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
+            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. With `verbose:true`, an `ax_window_unresolved` read adds `ax_diagnostics`: a separate read-only probe that keeps the native AX results the decision drops (AXChildren/AXWindows errors and counts, each top-level item's pid, role and window-id conversion, AXFocusedWindow, and the driver build). `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -880,6 +880,18 @@ impl Tool for GetWindowStateTool {
                                reach a same-process sibling window. Re-snapshot after the \
                                app settles, or act with delivery_mode:\"foreground\"."
                 });
+                if view.verbose {
+                    let probe = tokio::task::spawn_blocking(move || {
+                        crate::ax::scope_diagnostics::probe(pid, window_id)
+                    })
+                    .await;
+                    if let Ok(diagnostics) = probe {
+                        let mut diagnostics = serde_json::json!(diagnostics);
+                        diagnostics["build"] =
+                            serde_json::json!(cua_driver_core::build_info::current());
+                        structured["ax_diagnostics"] = diagnostics;
+                    }
+                }
             }
         }
         // Additive read-only `background_input` capability section (macOS

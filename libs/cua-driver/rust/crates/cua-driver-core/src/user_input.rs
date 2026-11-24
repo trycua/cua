@@ -170,10 +170,11 @@ impl LogState {
     fn apply(&mut self, input: ObservedInput, time_ms: u64, capacity: usize) {
         self.last_seq += 1;
         let seq = self.last_seq;
-        let read_through = self.read_through;
+        // A run never folds across a read or across inputs lost after it.
+        let fold_after = self.read_through.max(self.evicted_through);
         if input.kind == InputKind::MouseMove {
             if let Some(tail) = self.events.back_mut() {
-                let same_run = tail.seq > read_through
+                let same_run = tail.seq > fold_after
                     && tail.input.kind == InputKind::MouseMove
                     && tail.input.source == input.source
                     && tail.input.pid == input.pid
@@ -356,10 +357,10 @@ impl Tool for UserInputEventsTool {
                 watching: it returns a `cursor` and no events. Pass that cursor as `since` on \
                 the next call to get every input since, and a new cursor. Each event has \
                 `kind` (mouse_move, mouse_down, mouse_up, wheel, key_down, key_up), `source` \
-                (`hardware` for a physical device, `driver` for this driver's own input, \
-                `injected` for other injected input, including the driver's pen and touch \
-                background input, which Windows cannot tag; the driver's own cursor \
-                placements raise no event), screen `x`/`y` for mouse input, \
+                (`hardware` for a physical device, `driver` for this driver's own mouse \
+                input, `injected` for other injected input, including the driver's keys and \
+                its pen and touch background input, which carry no tag; the driver's \
+                cursor placements raise no event), screen `x`/`y` for mouse input, \
                 and the `pid` and `window_id` of the window the input went to: for mouse \
                 input the window holding mouse capture, or else the one under the pointer \
                 (the foreground window for the wheel when Windows routes it by focus); for \
@@ -579,6 +580,24 @@ mod tests {
         drop(held);
         log.record(key(InputSource::Hardware), 12);
         assert!(log.read(Some(cursor)).unwrap().history_lost);
+    }
+
+    #[test]
+    fn moves_on_either_side_of_lost_inputs_do_not_fold() {
+        let log = UserInputLog::with_epoch(1, 1);
+        log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 1), 10);
+        let held = log.state.lock().unwrap();
+        log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 2), 11);
+        log.record(key(InputSource::Hardware), 12);
+        drop(held);
+        log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 3), 13);
+        log.record(mouse(InputKind::MouseMove, InputSource::Hardware, 1, 4), 14);
+        let events = log.state.lock().unwrap().events.clone();
+        let last = events.back().unwrap();
+        assert_eq!(
+            (last.input.x, last.count, last.first_time_ms),
+            (Some(4), 1, 14)
+        );
     }
 
     #[test]

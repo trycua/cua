@@ -1383,6 +1383,25 @@ fn cgevent_type_verified(
         // AppKit can install another first responder during the settle.
         confirm_key_focus()?;
     }
+    // AppKit edits an addressed NSTextField through a field editor, and some
+    // apps re-create the edited row, so the pointer resolved before typing can
+    // keep its pre-edit value while the text lands. The window's focused
+    // element is read alongside it, from a baseline taken just before the keys.
+    let focus_in_window = || match (element_ptr_and_idx, window_id) {
+        (Some(_), Some(_)) => read_axvalue_bound(pid, None, window_id),
+        _ => None,
+    };
+    let focus_before = focus_in_window();
+    let progress = || {
+        best_progress(
+            typed_progress(
+                before,
+                read_axvalue_bound(pid, element_ptr_and_idx, window_id).as_deref(),
+                text,
+            ),
+            || focused_progress(focus_before.as_deref(), focus_in_window().as_deref(), text),
+        )
+    };
     let sent = send(text, delay_ms)?;
     if let Some(wid) = exact_keys_window.filter(|_| sent < text.chars().count()) {
         return Err(crate::input::skylight::sibling_focus_refusal(
@@ -1399,13 +1418,9 @@ fn cgevent_type_verified(
     // visible instead of treating any growth as success. If the deadline
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-    let outcome = await_typed_delivery(
-        before,
-        text,
-        deadline,
-        || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
-        || target_in_web_area(pid, element_ptr_and_idx, window_id),
-    );
+    let outcome = await_typed_delivery(text, deadline, progress, || {
+        target_in_web_area(pid, element_ptr_and_idx, window_id)
+    });
     // A batched send that a native field only partly took (an app that reads
     // just the first character of a multi-character event) is finished one
     // paced key at a time from where it stopped. Web content and terminals never
@@ -1431,13 +1446,7 @@ fn cgevent_type_verified(
                 ));
             }
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-            return Ok(await_typed_delivery(
-                before,
-                text,
-                deadline,
-                || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
-                || false,
-            ));
+            return Ok(await_typed_delivery(text, deadline, progress, || false));
         }
     }
     Ok(reported(outcome, is_terminal_target))
@@ -1473,19 +1482,45 @@ fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: u
         .is_some_and(|added| added.chars().eq(text.chars().take(done)))
 }
 
+/// The read-back of the window's focused element is evidence only once it
+/// changed from its value just before the keys: a field that already held the
+/// text proves nothing about this delivery.
+fn focused_progress(before: Option<&str>, after: Option<&str>, text: &str) -> TypedProgress {
+    match after {
+        Some(_) if before.is_some() && after != before => typed_progress(before, after, text),
+        _ => TypedProgress::Unverifiable,
+    }
+}
+
+/// The addressed element's progress, unless the window's focused element shows
+/// more of the text landed.
+fn best_progress(
+    addressed: TypedProgress,
+    focused: impl FnOnce() -> TypedProgress,
+) -> TypedProgress {
+    use TypedProgress::*;
+    if addressed == Complete {
+        return Complete;
+    }
+    match (addressed, focused()) {
+        (_, Complete) => Complete,
+        (Partial(a), Partial(f)) => Partial(a.max(f)),
+        (Unchanged | Unverifiable, Partial(f)) => Partial(f),
+        _ => addressed,
+    }
+}
+
 fn await_typed_delivery(
-    before: Option<&str>,
     text: &str,
     deadline: std::time::Instant,
-    mut read_value: impl FnMut() -> Option<String>,
+    mut progress: impl FnMut() -> TypedProgress,
     is_web: impl FnOnce() -> bool,
 ) -> (bool, Option<usize>) {
     let mut best_partial = None;
     let started = std::time::Instant::now();
     let mut deadline = deadline;
     loop {
-        let after = read_value();
-        match typed_progress(before, after.as_deref(), text) {
+        match progress() {
             TypedProgress::Complete => return (true, Some(text.chars().count())),
             TypedProgress::Partial(delivered) => {
                 best_partial =
@@ -2604,6 +2639,14 @@ mod tests {
         }
     }
 
+    fn read_back<'a>(
+        before: Option<&'a str>,
+        text: &'a str,
+        mut read: impl FnMut() -> Option<String> + 'a,
+    ) -> impl FnMut() -> TypedProgress + 'a {
+        move || typed_progress(before, read().as_deref(), text)
+    }
+
     #[test]
     fn typed_progress_classifies_readback() {
         use TypedProgress::*;
@@ -2644,13 +2687,12 @@ mod tests {
         ]);
         let mut reads = 0;
         let delivery = await_typed_delivery(
-            Some(""),
             text,
             std::time::Instant::now() + std::time::Duration::from_secs(1),
-            || {
+            read_back(Some(""), text, || {
                 reads += 1;
                 values.pop_front().flatten()
-            },
+            }),
             || false,
         );
         assert_eq!(delivery, (true, Some(text.chars().count())));
@@ -2660,10 +2702,9 @@ mod tests {
     #[test]
     fn drained_prefix_reports_the_delivered_character_count() {
         let delivery = await_typed_delivery(
-            Some(""),
             "BEGIN-payload-END",
             std::time::Instant::now(),
-            || Some("BEGIN".to_owned()),
+            read_back(Some(""), "BEGIN-payload-END", || Some("BEGIN".to_owned())),
             || false,
         );
         assert_eq!(delivery, (false, Some(5)));
@@ -2673,14 +2714,75 @@ mod tests {
     fn zero_progress_stops_polling_after_the_give_up_window() {
         let started = std::time::Instant::now();
         let outcome = await_typed_delivery(
-            Some("abc"),
             "xyz",
             started + DELIVERY_DRAIN_TIMEOUT,
-            || Some("abc".to_string()),
+            read_back(Some("abc"), "xyz", || Some("abc".to_string())),
             || false,
         );
         assert_eq!(outcome, (false, Some(0)));
         assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
+    }
+
+    #[test]
+    fn a_replaced_element_is_confirmed_by_the_windows_focused_field() {
+        use TypedProgress::*;
+        let text = "555-1234";
+        // Contacts: the addressed row keeps its pre-edit value while the field
+        // editor that took the keys holds the whole text.
+        let delivery = await_typed_delivery(
+            text,
+            std::time::Instant::now(),
+            || {
+                best_progress(typed_progress(Some(""), Some(""), text), || {
+                    focused_progress(Some(""), Some(text), text)
+                })
+            },
+            || false,
+        );
+        assert_eq!(delivery, (true, Some(text.chars().count())));
+        for (addressed, focused, expected) in [
+            (Unchanged, Partial(3), Partial(3)),
+            (Unverifiable, Partial(3), Partial(3)),
+            (Partial(5), Partial(3), Partial(5)),
+            (Partial(2), Unchanged, Partial(2)),
+            (Unchanged, Unverifiable, Unchanged),
+            (Unverifiable, Unchanged, Unverifiable),
+        ] {
+            assert_eq!(
+                best_progress(addressed, || focused),
+                expected,
+                "addressed={addressed:?} focused={focused:?}"
+            );
+        }
+        assert_eq!(
+            best_progress(Complete, || panic!(
+                "a confirmed field needs no second read"
+            )),
+            Complete
+        );
+    }
+
+    #[test]
+    fn the_focused_field_counts_only_once_it_changed() {
+        use TypedProgress::*;
+        // A focused field that already held the text proves nothing.
+        assert_eq!(
+            focused_progress(Some("555-1234"), Some("555-1234"), "555-1234"),
+            Unverifiable
+        );
+        assert_eq!(
+            focused_progress(None, Some("555-1234"), "555-1234"),
+            Unverifiable
+        );
+        assert_eq!(focused_progress(Some(""), None, "555-1234"), Unverifiable);
+        assert_eq!(
+            focused_progress(Some("x"), Some("x555"), "555-1234"),
+            Partial(3)
+        );
+        assert_eq!(
+            focused_progress(Some("x"), Some("x555-1234"), "555-1234"),
+            Complete
+        );
     }
 
     #[test]
@@ -2710,10 +2812,9 @@ mod tests {
     fn a_first_character_per_event_read_back_is_not_retyped() {
         let text = "abcdefghijklmnopq";
         let outcome = await_typed_delivery(
-            Some(""),
             text,
             std::time::Instant::now(),
-            || Some("aq".to_owned()),
+            read_back(Some(""), text, || Some("aq".to_owned())),
             || false,
         );
         assert_eq!(outcome, (false, Some(2)));
@@ -2754,10 +2855,9 @@ mod tests {
             ("$ ", "$ \nfile-a  file-b", "a long command line"),
         ] {
             let outcome = await_typed_delivery(
-                Some(before),
                 text,
                 std::time::Instant::now(),
-                || Some(after.to_owned()),
+                read_back(Some(before), text, || Some(after.to_owned())),
                 || false,
             );
             assert_eq!(
@@ -2778,10 +2878,9 @@ mod tests {
         for web in [true, false] {
             assert_eq!(
                 await_typed_delivery(
-                    Some(""),
                     "hello",
                     std::time::Instant::now(),
-                    || Some(String::new()),
+                    read_back(Some(""), "hello", || Some(String::new())),
                     || web,
                 ),
                 (false, if web { None } else { Some(0) }),
@@ -2794,10 +2893,9 @@ mod tests {
         for complete in [true, false] {
             let mut reads = 0;
             let result = await_typed_delivery(
-                Some(""),
                 "hello",
                 std::time::Instant::now() + std::time::Duration::from_millis(30),
-                || {
+                read_back(Some(""), "hello", || {
                     reads += 1;
                     Some(
                         if reads == 1 {
@@ -2809,7 +2907,7 @@ mod tests {
                         }
                         .to_owned(),
                     )
-                },
+                }),
                 || panic!("positive progress must not probe ancestry"),
             );
             assert!(reads >= 2);
@@ -2828,10 +2926,9 @@ mod tests {
     fn delivery_unreadable_does_not_probe_ancestry() {
         assert_eq!(
             await_typed_delivery(
-                Some(""),
                 "hello",
                 std::time::Instant::now(),
-                || None,
+                read_back(Some(""), "hello", || None),
                 || panic!("unreadable values must not probe ancestry"),
             ),
             (false, None),

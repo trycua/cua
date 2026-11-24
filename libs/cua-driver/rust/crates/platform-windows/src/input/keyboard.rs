@@ -2292,9 +2292,14 @@ mod busy_target_activation_tests {
         TYPED.lock().unwrap().clear();
         let hwnd = target.hwnd.0 as usize as u64;
         let started = Instant::now();
-        let result = send_text_synthesized(hwnd, "abc");
-        state("previous busy, after typing", target.hwnd);
+        let typing = std::thread::spawn(move || send_text_synthesized(hwnd, "abc"));
+        while started.elapsed() < Duration::from_millis(300) {
+            state("previous busy, typing", target.hwnd);
+            sleep(Duration::from_millis(50));
+        }
         other.unblock();
+        let result = typing.join().expect("typing thread");
+        state("previous busy, after typing", target.hwnd);
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline && TYPED.lock().unwrap().len() < 3 {
             sleep(Duration::from_millis(10));

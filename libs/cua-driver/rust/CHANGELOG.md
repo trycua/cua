@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.3...cua-driver-rs-v0.61.4) (2026-11-24)
+
+
+### Bug Fixes
+
+* **hyprland-plugin:** stop Hyprland refocus passes from cancelling foreground typing ([#8660](https://github.com/trycua/cua/issues/8660)) ([40152f7](https://github.com/trycua/cua/commit/40152f79323bf46fcae2afe9fbaede7d08792dbb))
+
 ## [0.61.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.2...cua-driver-rs-v0.61.3) (2026-11-24)
 
 

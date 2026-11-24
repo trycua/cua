@@ -2383,10 +2383,12 @@ mod session_badge_and_action_tests {
             false,
         );
         move_to(&mut core, 300.0, 240.0);
+        // A verbose badge would name the cursor from the moment it is revealed.
         settle_without_text(&mut core);
         assert!(core.is_revealed(), "the cursor still shows");
         assert_eq!(core.session_badge_alpha(), 0.0, "no initial reveal");
         assert!(shown(&core).is_none(), "no empty pill");
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
         assert!(!core.session_badge_needs_frame_tick());
         assert!(!core.session_badge_needs_hover_poll());
         assert!(!core.update_session_badge_hover(Some(core.pos)));

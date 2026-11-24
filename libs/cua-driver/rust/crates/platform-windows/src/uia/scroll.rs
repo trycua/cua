@@ -40,14 +40,12 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use windows::core::Interface;
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationScrollItemPattern,
-    IUIAutomationScrollPattern, ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement,
-    ScrollAmount_NoAmount, ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement,
-    UIA_ScrollItemPatternId, UIA_ScrollPatternId,
+    IUIAutomationElement, IUIAutomationScrollItemPattern, IUIAutomationScrollPattern,
+    ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
+    ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, UIA_ScrollItemPatternId,
+    UIA_ScrollPatternId,
 };
 
 /// Return UIA's live IsOffscreen state for a retained element pointer.
@@ -196,8 +194,7 @@ unsafe fn scroll_ancestors_into_view(
 ) -> Option<(i32, i32)> {
     // COM is already initialized by `scroll_into_view_and_recenter` (this fn's
     // only caller), so no redundant `CoInitializeEx` here.
-    let automation: IUIAutomation =
-        CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+    let automation = super::new_automation().ok()?;
     let walker = automation.ControlViewWalker().ok()?;
 
     // Collect every vertically-scrollable ancestor. Nested controls are common:

@@ -62,8 +62,7 @@ impl Tool for DebugWindowInfoTool {
             use windows::core::BOOL;
             use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, TRUE};
             use windows::Win32::System::Com::{
-                CoCreateInstance, CoInitializeEx, CoUninitialize,
-                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+                CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
             };
             use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
             use windows::Win32::System::Threading::{
@@ -72,7 +71,6 @@ impl Tool for DebugWindowInfoTool {
                 PROCESS_QUERY_LIMITED_INFORMATION,
             };
             use windows::Win32::UI::Accessibility::{
-                CUIAutomation, IUIAutomation,
                 UIA_InvokePatternId, UIA_TextPatternId, UIA_TogglePatternId,
                 UIA_ValuePatternId, UIA_LegacyIAccessiblePatternId,
                 UIA_SelectionItemPatternId, UIA_ExpandCollapsePatternId,
@@ -150,9 +148,7 @@ impl Tool for DebugWindowInfoTool {
             // ── Init UIA (best-effort; non-fatal if it fails)
             let mut focused_info: Option<serde_json::Value> = None;
             let coinit_ok = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
-            if let Ok(uia) = unsafe {
-                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-            } {
+            if let Ok(uia) = unsafe { crate::uia::new_automation() } {
                 if let Ok(focused) = unsafe { uia.GetFocusedElement() } {
                     // Patterns we care about for input routing
                     let pattern_ids = [

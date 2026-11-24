@@ -304,6 +304,11 @@ unsafe fn ensure_com() -> Result<(), String> {
     com_init_result(CoInitializeEx(None, COINIT_MULTITHREADED))
 }
 
+/// Create a UIA client. Every UIA client in the driver comes from here.
+pub(crate) unsafe fn new_automation() -> windows::core::Result<IUIAutomation> {
+    CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+}
+
 fn com_init_result(hr: HRESULT) -> Result<(), String> {
     if hr.is_ok() || hr == RPC_E_CHANGED_MODE {
         Ok(())
@@ -329,17 +334,16 @@ unsafe fn walk_tree_unsafe(
         };
     }
 
-    let automation: IUIAutomation =
-        match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
-            Ok(a) => a,
-            Err(e) => {
-                return UiaTreeResult {
-                    tree_markdown: format!("UIA init failed: {e}"),
-                    nodes: Vec::new(),
-                    elements_complete: false,
-                }
+    let automation: IUIAutomation = match new_automation() {
+        Ok(a) => a,
+        Err(e) => {
+            return UiaTreeResult {
+                tree_markdown: format!("UIA init failed: {e}"),
+                nodes: Vec::new(),
+                elements_complete: false,
             }
-        };
+        }
+    };
 
     // Build a cache request that fetches everything we need in ONE bulk RPC.
     let (cache_req, mut cache_request_complete) = match node_cache_request(&automation) {
@@ -757,9 +761,7 @@ unsafe fn node_cache_request(
 pub fn walk_native_tree(hwnd: u64) -> Result<Vec<UiaNode>, String> {
     unsafe {
         ensure_com()?;
-        let automation: IUIAutomation =
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-                .map_err(|e| format!("UIA init failed: {e}"))?;
+        let automation = new_automation().map_err(|e| format!("UIA init failed: {e}"))?;
         let (cache_req, _) = node_cache_request(&automation)
             .map_err(|e| format!("CreateCacheRequest failed: {e}"))?;
         let _ = cache_req.SetTreeScope(TreeScope(TreeScope_Element.0 | TreeScope_Children.0));
@@ -1294,8 +1296,7 @@ mod tests {
                 RPC_E_CHANGED_MODE
             );
             assert_eq!(ensure_com(), Ok(()));
-            let automation: windows::core::Result<IUIAutomation> =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER);
+            let automation = new_automation();
             assert!(automation.is_ok());
             drop(automation);
             CoUninitialize();

@@ -21,18 +21,15 @@ use cua_driver_core::single_flight::SingleFlight;
 use anyhow::{bail, Context};
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 use windows::Win32::System::Variant::VT_BSTR;
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-    IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
-    UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-    UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListItemControlTypeId,
-    UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId,
-    UIA_TabItemControlTypeId, UIA_TogglePatternId, UIA_TreeItemControlTypeId, UIA_CONTROLTYPE_ID,
-    UIA_PROPERTY_ID,
+    IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationTogglePattern,
+    TreeScope_Children, TreeScope_Subtree, UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId,
+    UIA_CheckBoxControlTypeId, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
+    UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId,
+    UIA_SplitButtonControlTypeId, UIA_TabItemControlTypeId, UIA_TogglePatternId,
+    UIA_TreeItemControlTypeId, UIA_CONTROLTYPE_ID, UIA_PROPERTY_ID,
 };
 
 /// HRESULT for "COM already initialized in another mode on this thread."
@@ -188,7 +185,7 @@ impl Drop for ComInit {
 
 /// Build an IUIAutomation instance after COM is initialized.
 fn get_uia() -> Option<IUIAutomation> {
-    match unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) } {
+    match unsafe { super::new_automation() } {
         Ok(a) => Some(a),
         Err(e) => {
             tracing::warn!(target: "uia_windows_enum", "CoCreateInstance(CUIAutomation) failed: {e}");

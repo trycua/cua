@@ -149,7 +149,8 @@ pub struct UserInputLog {
     /// them. Sending never blocks; an input that finds it full is dropped
     /// and counted in `dropped`.
     inputs: mpsc::SyncSender<(ObservedInput, u64)>,
-    /// Inputs dropped since `state` last took the channel in.
+    /// Inputs dropped and not yet marked as lost. While it is nonzero every
+    /// new input is dropped too, so all queued inputs come before the loss.
     dropped: AtomicU64,
 }
 
@@ -229,27 +230,39 @@ impl UserInputLog {
 
     /// Take up to `limit` recorded inputs into the log.
     fn take_inputs(&self, state: &mut LogState, limit: usize) {
+        let mut emptied = false;
         for _ in 0..limit {
             let Ok((input, time_ms)) = state.inputs.try_recv() else {
+                emptied = true;
                 break;
             };
             state.apply(input, time_ms, self.capacity);
         }
-        // Dropped inputs take sequence numbers and count as lost history, so
-        // a reader whose cursor is before them gets history_lost.
-        let dropped = self.dropped.swap(0, Ordering::AcqRel);
-        if dropped > 0 {
-            state.last_seq += dropped;
-            state.evicted_through = state.last_seq;
+        // Once the queue is empty, the dropped inputs, which came after all
+        // of it, take sequence numbers and count as lost history, so a reader
+        // whose cursor is before them gets history_lost.
+        if emptied {
+            let dropped = self.dropped.swap(0, Ordering::AcqRel);
+            if dropped > 0 {
+                state.last_seq += dropped;
+                state.evicted_through = state.last_seq;
+            }
         }
     }
 
     /// Record an input observed at `time_ms`. This never waits: the input
     /// goes into a channel, and when no read holds the log, up to
     /// [`RECORD_DRAIN_LIMIT`] queued inputs are taken in; a read takes in up to
-    /// the log's capacity, which the queue holds at most. A platform hook can call it directly.
+    /// the log's capacity, which the queue holds at most. A platform hook can
+    /// call it directly.
     pub fn record(&self, input: ObservedInput, time_ms: u64) {
-        if let Err(mpsc::TrySendError::Full(_)) = self.inputs.try_send((input, time_ms)) {
+        let dropping = self.dropped.load(Ordering::Acquire) > 0;
+        if dropping
+            || matches!(
+                self.inputs.try_send((input, time_ms)),
+                Err(mpsc::TrySendError::Full(_))
+            )
+        {
             self.dropped.fetch_add(1, Ordering::AcqRel);
         }
         let mut state = match self.state.try_lock() {
@@ -267,7 +280,7 @@ impl UserInputLog {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.take_inputs(&mut state, self.capacity);
+        self.take_inputs(&mut state, self.capacity + 1);
         let cursor = Cursor {
             epoch: self.epoch,
             seq: state.last_seq,
@@ -598,6 +611,35 @@ mod tests {
             (last.input.x, last.count, last.first_time_ms),
             (Some(4), 1, 14)
         );
+    }
+
+    #[test]
+    fn queued_inputs_come_before_the_loss_they_preceded() {
+        let log = UserInputLog::with_epoch(128, 1);
+        let cursor = start(&log);
+        let held = log.state.lock().unwrap();
+        for time_ms in 1..=128 {
+            log.record(
+                mouse(InputKind::MouseMove, InputSource::Hardware, 1, 1),
+                time_ms,
+            );
+        }
+        log.record(
+            mouse(InputKind::MouseMove, InputSource::Hardware, 1, 2),
+            200,
+        );
+        drop(held);
+        log.record(
+            mouse(InputKind::MouseMove, InputSource::Hardware, 1, 3),
+            300,
+        );
+        let read = log.read(Some(cursor)).unwrap();
+        assert!(read.history_lost);
+        let state = log.state.lock().unwrap();
+        assert!(state
+            .events
+            .iter()
+            .all(|event| event.time_ms <= 128 && event.seq < state.evicted_through));
     }
 
     #[test]

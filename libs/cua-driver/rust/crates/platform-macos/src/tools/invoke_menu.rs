@@ -1261,13 +1261,15 @@ mod tests {
     #[test]
     fn a_save_that_timed_out_at_the_consent_prompt_is_refused_as_unavailable() {
         use crate::apple_events::{save_result, AutomationPermission, ScriptRefusal};
-        let timed_out = |permission: AutomationPermission| {
+        use AutomationPermission::{Denied, Granted, NeedsConsent, Unknown};
+        let timed_out = |before: AutomationPermission, after: AutomationPermission| {
             let refusal = save_result(
                 Err(ScriptRefusal {
                     code: "automation_timeout",
                     reason: "no answer".into(),
                 }),
-                || permission,
+                before,
+                || after,
                 "TextEdit",
                 std::path::Path::new("/tmp/a.txt"),
             )
@@ -1283,19 +1285,29 @@ mod tests {
             cua_driver_core::protocol::Content::Text { text, .. } => text.clone(),
             _ => panic!("a text reply"),
         };
-        for pending in [
-            AutomationPermission::NeedsConsent,
-            AutomationPermission::Unknown(-50),
+        for (before, after, refused) in [
+            (NeedsConsent, NeedsConsent, true),
+            (NeedsConsent, Denied, true),
+            (Granted, Unknown(-50), false),
+            (Granted, Denied, false),
+            (NeedsConsent, Granted, false),
         ] {
-            let refused = timed_out(pending);
-            assert!(text(&refused).contains("invoke_menu does not activate a background app"));
-            let data = refused.structured_content.expect("structured refusal");
-            assert_eq!(data["code"], "background_unavailable");
+            let result = timed_out(before, after);
+            let reply = text(&result);
+            let data = result.structured_content.expect("structured result");
+            let case = format!("{before:?} then {after:?}");
+            assert_eq!(
+                reply.contains("invoke_menu does not activate a background app"),
+                refused,
+                "{case}"
+            );
+            let code = if refused {
+                "background_unavailable"
+            } else {
+                "save_indeterminate"
+            };
+            assert_eq!(data["code"], code, "{case}");
         }
-        let granted = timed_out(AutomationPermission::Granted);
-        assert!(!text(&granted).contains("invoke_menu does not activate a background app"));
-        let data = granted.structured_content.expect("structured result");
-        assert_eq!(data["code"], "save_indeterminate");
     }
 
     #[test]

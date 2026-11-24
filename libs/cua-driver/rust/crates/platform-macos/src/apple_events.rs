@@ -411,7 +411,13 @@ pub fn save_document(
     app_name: &str,
     path: &Path,
 ) -> Result<SavedDocument, ScriptRefusal> {
-    ensure_permitted(bundle_id, app_name)?;
+    let permission = automation_permission(bundle_id);
+    check_permission(
+        permission,
+        REFUSE_UNGRANTED_AUTOMATION.load(Ordering::Acquire),
+        bundle_id,
+        app_name,
+    )?;
     let before = modified_time(path);
     let path_text = path.to_string_lossy();
     let result = run_script(
@@ -419,20 +425,32 @@ pub fn save_document(
         &[&path_text, bundle_id],
         Duration::from_secs(30),
     );
-    save_result(result, || automation_permission(bundle_id), app_name, path)?;
+    save_result(
+        result,
+        permission,
+        || automation_permission(bundle_id),
+        app_name,
+        path,
+    )?;
     let file_written = wait_for_new_mtime(path, before, Duration::from_millis(1500));
     Ok(SavedDocument { file_written })
 }
 
 pub(crate) fn save_result(
     result: Result<String, ScriptRefusal>,
-    permission: impl FnOnce() -> AutomationPermission,
+    before: AutomationPermission,
+    after: impl FnOnce() -> AutomationPermission,
     app_name: &str,
     path: &Path,
 ) -> Result<(), ScriptRefusal> {
     let answer = match result {
         Err(refusal) if refusal.code == "automation_timeout" => {
-            if permission() == AutomationPermission::Granted {
+            if before == AutomationPermission::Granted
+                || !matches!(
+                    after(),
+                    AutomationPermission::NeedsConsent | AutomationPermission::Denied
+                )
+            {
                 return Err(refusal);
             }
             return Err(ScriptRefusal {
@@ -519,12 +537,13 @@ mod tests {
     fn a_save_whose_modified_flag_cannot_be_read_is_unconfirmed() {
         assert!(SAVE_DOCUMENT_SCRIPT.contains("on error\n\t\t\t\t\treturn \"saved-unread\""));
         let path = Path::new("/tmp/a.txt");
-        let granted = || AutomationPermission::Granted;
-        let unread = save_result(Ok("saved-unread".into()), granted, "TextEdit", path)
+        let granted = AutomationPermission::Granted;
+        let after = || AutomationPermission::Granted;
+        let unread = save_result(Ok("saved-unread".into()), granted, after, "TextEdit", path)
             .expect_err("an unread flag does not confirm the save");
         assert_eq!(unread.code, "save_unconfirmed");
         assert_eq!(
-            save_result(Ok("false".into()), granted, "TextEdit", path),
+            save_result(Ok("false".into()), granted, after, "TextEdit", path),
             Ok(())
         );
         let failed = ScriptRefusal {
@@ -532,7 +551,7 @@ mod tests {
             reason: "the save raised".into(),
         };
         assert_eq!(
-            save_result(Err(failed.clone()), granted, "TextEdit", path),
+            save_result(Err(failed.clone()), granted, after, "TextEdit", path),
             Err(failed)
         );
     }

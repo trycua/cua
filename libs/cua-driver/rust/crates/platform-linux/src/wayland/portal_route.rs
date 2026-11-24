@@ -200,8 +200,12 @@ impl Diagnosis {
 
 /// Parse a `.portal` file's `[portal]` group. `name` is the file stem.
 /// `None` when the frontend would reject the file.
-pub(crate) fn parse_portal_file(name: &str, text: impl AsRef<[u8]>) -> Option<PortalFile> {
-    let groups = parse_key_file(text.as_ref())?;
+pub(crate) fn parse_portal_file(
+    name: &str,
+    text: impl AsRef<[u8]>,
+    languages: &[String],
+) -> Option<PortalFile> {
+    let groups = parse_key_file(text.as_ref(), languages)?;
     let group = key_file_group(&groups, "portal").unwrap_or_default();
     let get = |key: &str| {
         group
@@ -231,8 +235,12 @@ pub(crate) fn parse_portal_file(name: &str, text: impl AsRef<[u8]>) -> Option<Po
 /// move on to the next one: GLib rejects it, it has no `[preferred]` group,
 /// or a value is not a valid list. An empty `[preferred]` group still ends
 /// the search.
-pub(crate) fn parse_conf(path: &Path, text: impl AsRef<[u8]>) -> Option<PortalConf> {
-    let groups = parse_key_file(text.as_ref())?;
+pub(crate) fn parse_conf(
+    path: &Path,
+    text: impl AsRef<[u8]>,
+    languages: &[String],
+) -> Option<PortalConf> {
+    let groups = parse_key_file(text.as_ref(), languages)?;
     let group = key_file_group(&groups, "preferred")?;
     let mut conf = PortalConf {
         path: path.to_owned(),
@@ -382,9 +390,116 @@ pub(crate) fn resolve(
     }
 }
 
-/// Valid, lowercased `XDG_CURRENT_DESKTOP` entries, as the frontend uses them.
-pub(crate) fn current_desktops() -> Vec<String> {
-    parse_desktops(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+/// The environment xdg-desktop-portal routes by: its XDG directories,
+/// `XDG_CURRENT_DESKTOP` and locale. Doctor reads the running frontend's
+/// environment, since a shell or launcher can override these.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PortalEnv(Vec<(String, String)>);
+
+impl PortalEnv {
+    /// Parse `/proc/<pid>/environ`.
+    pub(crate) fn from_environ(environ: &[u8]) -> Self {
+        Self(
+            environ
+                .split(|&b| b == 0)
+                .filter_map(|entry| {
+                    let entry = std::str::from_utf8(entry).ok()?;
+                    let (name, value) = entry.split_once('=')?;
+                    Some((name.to_owned(), value.to_owned()))
+                })
+                .collect(),
+        )
+    }
+
+    fn get(&self, name: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .filter(|v| !v.is_empty())
+    }
+
+    fn dirs(&self, var: &str, default: &str) -> Vec<PathBuf> {
+        self.get(var)
+            .unwrap_or(default)
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .collect()
+    }
+
+    fn home_dir(&self, var: &str, under_home: &str) -> Option<PathBuf> {
+        self.get(var).map(PathBuf::from).or_else(|| {
+            self.get("HOME")
+                .map(|home| Path::new(home).join(under_home))
+        })
+    }
+
+    /// `g_get_user_config_dir`.
+    fn config_home(&self) -> Option<PathBuf> {
+        self.home_dir("XDG_CONFIG_HOME", ".config")
+    }
+
+    fn data_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        roots.extend(self.home_dir("XDG_DATA_HOME", ".local/share"));
+        roots.extend(self.dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
+        roots.push(PathBuf::from("/usr/share"));
+        roots
+    }
+
+    /// Valid, lowercased `XDG_CURRENT_DESKTOP` entries, as the frontend
+    /// uses them.
+    pub(crate) fn desktops(&self) -> Vec<String> {
+        parse_desktops(self.get("XDG_CURRENT_DESKTOP").unwrap_or_default())
+    }
+
+    /// Config directories in the frontend's order: XDG_CONFIG_HOME,
+    /// XDG_CONFIG_DIRS, /etc, XDG_DATA_HOME, XDG_DATA_DIRS, /usr/share.
+    /// `XDG_DESKTOP_PORTAL_DIR` replaces them all.
+    pub(crate) fn conf_dirs(&self) -> Vec<PathBuf> {
+        if let Some(dir) = self.get("XDG_DESKTOP_PORTAL_DIR") {
+            return vec![PathBuf::from(dir)];
+        }
+        let mut roots = Vec::new();
+        roots.extend(self.config_home());
+        roots.extend(self.dirs("XDG_CONFIG_DIRS", "/etc/xdg"));
+        roots.push(PathBuf::from("/etc"));
+        roots.extend(self.data_roots());
+        roots
+            .into_iter()
+            .map(|r| r.join("xdg-desktop-portal"))
+            .collect()
+    }
+
+    pub(crate) fn portal_file_dirs(&self) -> Vec<PathBuf> {
+        if let Some(dir) = self.get("XDG_DESKTOP_PORTAL_DIR") {
+            return vec![PathBuf::from(dir)];
+        }
+        self.data_roots()
+            .into_iter()
+            .map(|r| r.join("xdg-desktop-portal").join("portals"))
+            .collect()
+    }
+
+    /// `g_get_language_names`: the first of `LANGUAGE`, `LC_ALL`,
+    /// `LC_MESSAGES` and `LANG` that is set, each entry resolved through
+    /// `aliases` (the text of `locale.alias`) and expanded to its variants,
+    /// then `C`.
+    pub(crate) fn languages(&self, aliases: &str) -> Vec<String> {
+        let value = ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .find_map(|var| self.get(var))
+            .unwrap_or("C");
+        let aliases = parse_aliases(aliases);
+        let mut names: Vec<String> = value
+            .split(':')
+            .flat_map(|lang| locale_variants(&unalias_lang(&aliases, lang)))
+            .collect();
+        names.push("C".to_owned());
+        names
+    }
 }
 
 fn parse_desktops(value: &str) -> Vec<String> {
@@ -414,12 +529,12 @@ pub(crate) fn conf_candidates(dirs: &[PathBuf], desktops: &[String]) -> Vec<Path
 
 /// The first candidate that can be read and has a `[preferred]` key. Files
 /// that exist but cannot be read are skipped, as the frontend skips them.
-pub(crate) fn read_conf(candidates: &[PathBuf]) -> ConfSearch {
+pub(crate) fn read_conf(candidates: &[PathBuf], languages: &[String]) -> ConfSearch {
     let mut search = ConfSearch::default();
     for path in candidates {
         match std::fs::read(path) {
             Ok(text) => {
-                if let Some(conf) = parse_conf(path, &text) {
+                if let Some(conf) = parse_conf(path, &text, languages) {
                     search.active = Some(conf);
                     return search;
                 }
@@ -432,7 +547,7 @@ pub(crate) fn read_conf(candidates: &[PathBuf]) -> ConfSearch {
 }
 
 /// Installed `.portal` files; the first directory wins for a name.
-pub(crate) fn read_portal_files(dirs: &[PathBuf]) -> Vec<PortalFile> {
+pub(crate) fn read_portal_files(dirs: &[PathBuf], languages: &[String]) -> Vec<PortalFile> {
     let mut out: Vec<PortalFile> = Vec::new();
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -451,64 +566,13 @@ pub(crate) fn read_portal_files(dirs: &[PathBuf]) -> Vec<PortalFile> {
             }
             if let Some(file) = std::fs::read(&path)
                 .ok()
-                .and_then(|text| parse_portal_file(name, &text))
+                .and_then(|text| parse_portal_file(name, &text, languages))
             {
                 out.push(file);
             }
         }
     }
     out
-}
-
-fn env_dirs(var: &str, default: &str) -> Vec<PathBuf> {
-    let value = std::env::var(var).ok().filter(|v| !v.is_empty());
-    value
-        .as_deref()
-        .unwrap_or(default)
-        .split(':')
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .collect()
-}
-
-fn data_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    roots.extend(dirs::data_dir());
-    roots.extend(env_dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
-    roots.push(PathBuf::from("/usr/share"));
-    roots
-}
-
-/// `XDG_DESKTOP_PORTAL_DIR` replaces every config and `.portal` directory.
-fn portal_dir_override() -> Option<PathBuf> {
-    std::env::var_os("XDG_DESKTOP_PORTAL_DIR").map(PathBuf::from)
-}
-
-/// Config directories in the frontend's order: XDG_CONFIG_HOME,
-/// XDG_CONFIG_DIRS, /etc, XDG_DATA_HOME, XDG_DATA_DIRS, /usr/share.
-pub(crate) fn conf_dirs() -> Vec<PathBuf> {
-    if let Some(dir) = portal_dir_override() {
-        return vec![dir];
-    }
-    let mut roots = Vec::new();
-    roots.extend(dirs::config_dir());
-    roots.extend(env_dirs("XDG_CONFIG_DIRS", "/etc/xdg"));
-    roots.push(PathBuf::from("/etc"));
-    roots.extend(data_roots());
-    roots
-        .into_iter()
-        .map(|r| r.join("xdg-desktop-portal"))
-        .collect()
-}
-
-pub(crate) fn portal_file_dirs() -> Vec<PathBuf> {
-    if let Some(dir) = portal_dir_override() {
-        return vec![dir];
-    }
-    data_roots()
-        .into_iter()
-        .map(|r| r.join("xdg-desktop-portal").join("portals"))
-        .collect()
 }
 
 /// Introspect the backend's portal object for `interface`.
@@ -567,41 +631,46 @@ fn xml_declares_interface(xml: &str, interface: &str) -> bool {
         })
 }
 
-/// When the process that owns `org.freedesktop.portal.Desktop` started.
-async fn frontend_started(connection: &zbus::Connection) -> Option<SystemTime> {
+/// The process that owns `org.freedesktop.portal.Desktop`.
+async fn frontend_pid(connection: &zbus::Connection) -> Option<u32> {
     let proxy = zbus::fdo::DBusProxy::new(connection).await.ok()?;
     let name = zbus::names::BusName::try_from("org.freedesktop.portal.Desktop").ok()?;
-    let pid = proxy.get_connection_unix_process_id(name).await.ok()?;
+    proxy.get_connection_unix_process_id(name).await.ok()
+}
+
+/// When `pid` started, from its start time and `/proc/uptime`, which has
+/// sub-second precision where the boot time does not.
+fn process_started(pid: u32) -> Option<SystemTime> {
     let ticks = crate::proc_fs::process_instance_id(pid)?;
     // SAFETY: sysconf has no preconditions.
     let per_second = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok()?;
-    let boot: u64 = std::fs::read_to_string("/proc/stat")
+    let uptime: f64 = std::fs::read_to_string("/proc/uptime")
         .ok()?
-        .lines()
-        .find_map(|l| l.strip_prefix("btime "))?
-        .trim()
+        .split_ascii_whitespace()
+        .next()?
         .parse()
         .ok()?;
-    let since_boot = Duration::from_secs_f64(ticks as f64 / per_second.max(1) as f64);
-    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(boot) + since_boot)
+    let ago = uptime - ticks as f64 / per_second.max(1) as f64;
+    SystemTime::now().checked_sub(Duration::from_secs_f64(ago.max(0.0)))
 }
 
-/// Existing candidates modified after `started`.
 /// Existing paths modified or renamed after `started`. The change time
-/// counts too: a rename or a `chmod` changes it but not the modification
-/// time.
+/// counts too, since a rename or a `chmod` changes it but not the
+/// modification time, and so do a symlink's own times, since repointing it
+/// changes neither on its target.
 fn changed_since(paths: &[PathBuf], started: SystemTime) -> Vec<PathBuf> {
     use std::os::unix::fs::MetadataExt;
+    let after = |m: std::fs::Metadata| {
+        let changed = u64::try_from(m.ctime()).ok().map(|secs| {
+            SystemTime::UNIX_EPOCH + Duration::new(secs, u32::try_from(m.ctime_nsec()).unwrap_or(0))
+        });
+        m.modified().is_ok_and(|t| t > started) || changed.is_some_and(|t| t > started)
+    };
     paths
         .iter()
         .filter(|path| {
-            std::fs::metadata(path).is_ok_and(|m| {
-                let changed = u64::try_from(m.ctime()).ok().map(|secs| {
-                    SystemTime::UNIX_EPOCH
-                        + Duration::new(secs, u32::try_from(m.ctime_nsec()).unwrap_or(0))
-                });
-                m.modified().is_ok_and(|t| t > started) || changed.is_some_and(|t| t > started)
-            })
+            std::fs::metadata(path).is_ok_and(after)
+                || std::fs::symlink_metadata(path).is_ok_and(after)
         })
         .cloned()
         .collect()
@@ -616,29 +685,48 @@ fn portal_file_paths(dirs: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Read the config and `.portal` files, then introspect the chosen backend.
-/// `frontend_exports` is whether the running frontend exports RemoteDesktop,
-/// when known.
+/// Read the config and `.portal` files the running frontend would, then
+/// introspect the chosen backend. `frontend_exports` is whether the running
+/// frontend exports RemoteDesktop, when known.
 pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
-    let desktops = current_desktops();
-    let dirs = conf_dirs();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok();
+    let pid = rt.as_ref().and_then(|rt| {
+        rt.block_on(async {
+            tokio::time::timeout(super::portal::PROBE_TIMEOUT, async {
+                let connection = super::portal::fresh_session_connection().await.ok()?;
+                frontend_pid(&connection).await
+            })
+            .await
+            .ok()
+            .flatten()
+        })
+    });
+    let environ = pid.and_then(|pid| std::fs::read(format!("/proc/{pid}/environ")).ok());
+    let env = environ
+        .as_deref()
+        .map(PortalEnv::from_environ)
+        .unwrap_or_default();
+    let aliases = std::fs::read_to_string("/usr/share/locale/locale.alias").unwrap_or_default();
+    let languages = env.languages(&aliases);
+    let desktops = env.desktops();
+    let dirs = env.conf_dirs();
     let candidates = conf_candidates(&dirs, &desktops);
-    let search = read_conf(&candidates);
-    let portal_dirs = portal_file_dirs();
-    let mut portals = read_portal_files(&portal_dirs);
+    let search = read_conf(&candidates, &languages);
+    let portal_dirs = env.portal_file_dirs();
+    let mut portals = read_portal_files(&portal_dirs, &languages);
     sort_portals(&mut portals, &desktops);
     let pin_name = match desktops.first() {
         Some(desktop) => format!("{desktop}-portals.conf"),
         None => "portals.conf".to_owned(),
     };
-    let pin_file = dirs::config_dir()
+    let pin_file = env
+        .config_home()
         .unwrap_or_else(|| PathBuf::from("~/.config"))
         .join("xdg-desktop-portal")
         .join(pin_name);
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok();
     let mut diagnosis = resolve(
         &search,
         &portals,
@@ -657,18 +745,12 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
             })
         },
     );
-    let started = rt.as_ref().and_then(|rt| {
-        rt.block_on(async {
-            tokio::time::timeout(super::portal::PROBE_TIMEOUT, async {
-                let connection = super::portal::fresh_session_connection().await.ok()?;
-                frontend_started(&connection).await
-            })
-            .await
-            .ok()
-            .flatten()
-        })
-    });
-    if let Some(started) = started {
+    // Without the frontend's environment the prediction may use other
+    // directories or desktops than the frontend does.
+    if environ.is_none() {
+        diagnosis.route = Route::Unknown;
+    }
+    if let Some(started) = pid.and_then(process_started) {
         // A directory's time changes when a file in it is added, renamed or
         // removed.
         let portal_files = portal_file_paths(&portal_dirs);
@@ -691,7 +773,7 @@ type KeyFileGroups = Vec<(String, Vec<(String, Option<String>)>)>;
 /// merged, a repeated key's last value kept, locale keys (`Key[de]`) left
 /// out, and the value's leading (not trailing) whitespace dropped. `None`
 /// when GLib rejects the file.
-fn parse_key_file(text: &[u8]) -> Option<KeyFileGroups> {
+fn parse_key_file(text: &[u8], languages: &[String]) -> Option<KeyFileGroups> {
     let mut groups: KeyFileGroups = Vec::new();
     let mut current = None;
     let lines: Vec<&[u8]> = text.split(|&b| b == b'\n').collect();
@@ -749,7 +831,7 @@ fn parse_key_file(text: &[u8]) -> Option<KeyFileGroups> {
             .ok()
             .map(str::to_owned);
         let (_, pairs) = &mut groups[current?];
-        match key_kind(&key)? {
+        match key_kind(&key, languages)? {
             KeyKind::Plain => {}
             KeyKind::Localized => continue,
         }
@@ -771,88 +853,73 @@ fn parse_key_file(text: &[u8]) -> Option<KeyFileGroups> {
 
 enum KeyKind {
     Plain,
-    /// `Key[locale]` for a locale not in [`language_names`], which
+    /// `Key[locale]` for a locale not in the current languages, which
     /// `g_key_file_get_keys` leaves out.
     Localized,
 }
 
-/// `g_get_language_names`: the first of `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`
-/// and `LANG` that is set, each entry with its variants, then `C`.
-fn language_names() -> &'static [String] {
-    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    NAMES.get_or_init(|| {
-        let value = ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"]
-            .iter()
-            .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
-            .unwrap_or_default();
-        let aliases = std::fs::read_to_string("/usr/share/locale/locale.alias").unwrap_or_default();
-        let mut names: Vec<String> = value
-            .split(':')
-            .map(|lang| unalias_lang(&aliases, lang))
-            .flat_map(|lang| locale_variants(&lang))
-            .collect();
-        names.push("C".to_owned());
-        names
-    })
+/// `locale.alias` as GLib's `read_aliases` reads it: the first column ends
+/// at a space, tab or `:`, the second at a space or tab, and the first entry
+/// for a name wins.
+fn parse_aliases(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_matches(|c: char| c.is_ascii_whitespace());
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(at) = line.find([' ', '\t', ':']) else {
+            continue;
+        };
+        let (name, rest) = (&line[..at], line[at + 1..].trim_start_matches([' ', '\t']));
+        let Some(target) = rest.split([' ', '\t']).next().filter(|t| !t.is_empty()) else {
+            continue;
+        };
+        if !out.iter().any(|(n, _)| n == name) {
+            out.push((name.to_owned(), target.to_owned()));
+        }
+    }
+    out
 }
 
-/// GLib's `unalias_lang`: follow `locale.alias` entries (`german` becomes
+/// GLib's `unalias_lang`: follow aliases (`german` becomes
 /// `de_DE.ISO-8859-1`), at most 31 times.
-fn unalias_lang(aliases: &str, lang: &str) -> String {
-    let lookup = |name: &str| {
-        aliases
-            .lines()
-            .filter(|line| !line.starts_with('#'))
-            .find_map(|line| {
-                let mut fields = line.split_ascii_whitespace();
-                (fields.next() == Some(name))
-                    .then(|| fields.next())
-                    .flatten()
-            })
-            .map(str::to_owned)
-    };
+fn unalias_lang(aliases: &[(String, String)], lang: &str) -> String {
     let mut lang = lang.to_owned();
     for _ in 0..31 {
-        match lookup(&lang) {
-            Some(next) if next != lang => lang = next,
+        match aliases.iter().find(|(name, _)| *name == lang) {
+            Some((_, target)) if *target != lang => lang = target.clone(),
             _ => break,
         }
     }
     lang
 }
 
-/// `g_get_locale_variants`: `lang[_TERRITORY][.CODESET][@MODIFIER]` with
-/// every combination of the optional parts.
+/// `g_get_locale_variants`: split `lang_TERRITORY.CODESET@MODIFIER` as
+/// GLib's `explode_locale` does (`_` first, then `.` after it, then `@`
+/// after that) and return every combination of the optional parts.
 fn locale_variants(locale: &str) -> Vec<String> {
-    let (rest, modifier) = match locale.split_once('@') {
-        Some((rest, m)) => (rest, Some(m)),
-        None => (locale, None),
-    };
-    let (rest, codeset) = match rest.split_once('.') {
-        Some((rest, c)) => (rest, Some(c)),
-        None => (rest, None),
-    };
-    let (lang, territory) = match rest.split_once('_') {
-        Some((lang, t)) => (lang, Some(t)),
-        None => (rest, None),
-    };
-    if lang.is_empty() {
-        return Vec::new();
-    }
+    let uscore = locale.find('_');
+    let dot = locale[uscore.unwrap_or(0)..]
+        .find('.')
+        .map(|i| i + uscore.unwrap_or(0));
+    let at_from = dot.or(uscore).unwrap_or(0);
+    let at = locale[at_from..].find('@').map(|i| i + at_from);
+    let end = locale.len();
+    let modifier = at.map(|a| &locale[a..]);
+    let codeset = dot.map(|d| &locale[d..at.unwrap_or(end)]);
+    let territory = uscore.map(|u| &locale[u..dot.or(at).unwrap_or(end)]);
+    let language = &locale[..uscore.or(dot).or(at).unwrap_or(end)];
     let mut out = Vec::new();
     for t in territory.into_iter().map(Some).chain([None]) {
         for c in codeset.into_iter().map(Some).chain([None]) {
             for m in modifier.into_iter().map(Some).chain([None]) {
-                let mut name = lang.to_owned();
-                if let Some(t) = t {
-                    name = format!("{name}_{t}");
-                }
-                if let Some(c) = c {
-                    name = format!("{name}.{c}");
-                }
-                if let Some(m) = m {
-                    name = format!("{name}@{m}");
-                }
+                let name = format!(
+                    "{language}{}{}{}",
+                    t.unwrap_or(""),
+                    c.unwrap_or(""),
+                    m.unwrap_or("")
+                );
                 if !out.contains(&name) {
                     out.push(name);
                 }
@@ -863,7 +930,7 @@ fn locale_variants(locale: &str) -> Vec<String> {
 }
 
 /// `g_key_file_is_key_name`: `None` for a key GLib rejects the file over.
-fn key_kind(key: &str) -> Option<KeyKind> {
+fn key_kind(key: &str, languages: &[String]) -> Option<KeyKind> {
     let (name, locale) = match key.split_once('[') {
         Some((name, rest)) => (name, Some(rest.strip_suffix(']')?)),
         None => (key, None),
@@ -882,7 +949,7 @@ fn key_kind(key: &str) -> Option<KeyKind> {
         }
         // GLib lists `Key[]`, and keys for the current locales, as keys of
         // their own.
-        Some(locale) if locale.is_empty() || language_names().iter().any(|n| n == locale) => {
+        Some(locale) if locale.is_empty() || languages.iter().any(|n| n == locale) => {
             Some(KeyKind::Plain)
         }
         Some(_) => Some(KeyKind::Localized),
@@ -965,6 +1032,22 @@ fn parse_list(value: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
 
+    fn c() -> Vec<String> {
+        vec!["C".to_owned()]
+    }
+
+    fn parse_conf_c(path: &Path, text: impl AsRef<[u8]>) -> Option<PortalConf> {
+        parse_conf(path, text, &c())
+    }
+
+    fn parse_portal_file_c(name: &str, text: impl AsRef<[u8]>) -> Option<PortalFile> {
+        parse_portal_file(name, text, &c())
+    }
+
+    fn read_conf_c(candidates: &[PathBuf]) -> ConfSearch {
+        read_conf(candidates, &c())
+    }
+
     const GNOME_PORTAL: &str = "[portal]\n\
         DBusName=org.freedesktop.impl.portal.desktop.gnome\n\
         Interfaces=org.freedesktop.impl.portal.Screenshot;org.freedesktop.impl.portal.RemoteDesktop;\n\
@@ -986,9 +1069,9 @@ mod tests {
 
     fn portals(desktops: &[String]) -> Vec<PortalFile> {
         let mut portals = vec![
-            parse_portal_file("kde", KDE_PORTAL).unwrap(),
-            parse_portal_file("gtk", GTK_PORTAL).unwrap(),
-            parse_portal_file("gnome", GNOME_PORTAL).unwrap(),
+            parse_portal_file_c("kde", KDE_PORTAL).unwrap(),
+            parse_portal_file_c("gtk", GTK_PORTAL).unwrap(),
+            parse_portal_file_c("gnome", GNOME_PORTAL).unwrap(),
         ];
         sort_portals(&mut portals, desktops);
         portals
@@ -996,7 +1079,7 @@ mod tests {
 
     fn conf(text: &str) -> ConfSearch {
         ConfSearch {
-            active: parse_conf(Path::new(CONF_PATH), text),
+            active: parse_conf_c(Path::new(CONF_PATH), text),
             unreadable: Vec::new(),
         }
     }
@@ -1188,7 +1271,7 @@ mod tests {
         assert!(diagnose(&working).problem().is_none());
 
         let broken = ConfSearch {
-            active: parse_conf(
+            active: parse_conf_c(
                 Path::new("/etc/xdg/xdg-desktop-portal/portals.conf"),
                 "[preferred]\ndefault=kde\n",
             ),
@@ -1246,7 +1329,7 @@ mod tests {
         std::fs::write(&no_group, "# nothing\n[other]\na=b\n").unwrap();
         std::fs::write(&empty_group, "[preferred]\n").unwrap();
         std::fs::write(&lower, "[preferred]\ndefault=none\n").unwrap();
-        let search = read_conf(&[missing, no_group, empty_group.clone(), lower]);
+        let search = read_conf_c(&[missing, no_group, empty_group.clone(), lower]);
         assert!(search.unreadable.is_empty());
         // An empty `[preferred]` group is a config: the frontend stops there.
         assert_eq!(
@@ -1268,7 +1351,7 @@ mod tests {
         std::fs::create_dir(&unreadable).unwrap();
         let used = dir.path().join("portals.conf");
         std::fs::write(&used, "[preferred]\ndefault=gnome\n").unwrap();
-        let search = read_conf(&[unreadable.clone(), used.clone()]);
+        let search = read_conf_c(&[unreadable.clone(), used.clone()]);
         assert_eq!(search.unreadable.len(), 1);
         assert_eq!(search.unreadable[0].0, unreadable);
         assert_eq!(search.active.map(|c| c.path), Some(used));
@@ -1277,7 +1360,7 @@ mod tests {
     #[test]
     fn conf_values_are_read_as_glib_reads_them() {
         let path = Path::new(CONF_PATH);
-        let defaults = |text: &str| parse_conf(path, text).and_then(|c| c.default);
+        let defaults = |text: &str| parse_conf_c(path, text).and_then(|c| c.default);
         // The last of a repeated key wins.
         assert_eq!(
             defaults("[preferred]\ndefault=none\ndefault=gnome\n"),
@@ -1300,7 +1383,7 @@ mod tests {
             defaults("[preferred]\ndefault=x\n[other]\na=b\n[preferred]\ndefault=kde\n"),
             Some(vec!["kde".to_owned()])
         );
-        let locale = parse_conf(
+        let locale = parse_conf_c(
             path,
             "[preferred]\ndefault=gnome\nkey[de_DE.UTF-8@euro]=x\ndefault[en]=none\n",
         )
@@ -1322,7 +1405,7 @@ mod tests {
             defaults("[a\u{85}b]\nEncoding=utf-8\n[preferred]\nEncoding=ISO\ndefault=kde\n"),
             Some(vec!["kde".to_owned()])
         );
-        let empty_locale = parse_conf(path, "[preferred]\nk[]=x\n").unwrap();
+        let empty_locale = parse_conf_c(path, "[preferred]\nk[]=x\n").unwrap();
         assert_eq!(
             empty_locale.interfaces,
             [("k[]".to_owned(), vec!["x".to_owned()])]
@@ -1353,14 +1436,14 @@ mod tests {
             "[preferred]\nEncoding=ISO-8859-1\ndefault=none\n",
             "[pre\x7fferred]\ndefault=none\n",
         ] {
-            assert_eq!(parse_conf(Path::new(CONF_PATH), text), None, "{text:?}");
+            assert_eq!(parse_conf_c(Path::new(CONF_PATH), text), None, "{text:?}");
         }
         let dir = tempfile::tempdir().unwrap();
         let rejected = dir.path().join("gnome-portals.conf");
         let used = dir.path().join("portals.conf");
         std::fs::write(&rejected, "[preferred]\ndefault=none\nstray\n").unwrap();
         std::fs::write(&used, "[preferred]\ndefault=gnome\n").unwrap();
-        let search = read_conf(&[rejected, used.clone()]);
+        let search = read_conf_c(&[rejected, used.clone()]);
         assert_eq!(search.active.map(|c| c.path), Some(used));
     }
 
@@ -1388,7 +1471,7 @@ mod tests {
 
     #[test]
     fn portal_files_are_registered_as_the_frontend_registers_them() {
-        let bad_use_in = parse_portal_file(
+        let bad_use_in = parse_portal_file_c(
             "kde",
             "[portal]\nDBusName=org.freedesktop.impl.portal.desktop.kde\n\
              Interfaces=org.freedesktop.impl.portal.RemoteDesktop;\nUseIn=KDE;\\q\n",
@@ -1401,7 +1484,7 @@ mod tests {
             "[portal]\nDBusName=org.freedesktop.impl.portal.desktop.x\n\
              Interfaces=org.freedesktop.portal.RemoteDesktop;\n",
         ] {
-            assert_eq!(parse_portal_file("x", text), None, "{text:?}");
+            assert_eq!(parse_portal_file_c("x", text), None, "{text:?}");
         }
     }
 
@@ -1540,7 +1623,7 @@ mod tests {
     #[test]
     fn portal_files_need_valid_bus_and_interface_names() {
         let file = |dbus_name: &str, interfaces: &str| {
-            parse_portal_file(
+            parse_portal_file_c(
                 "x",
                 format!("[portal]\nDBusName={dbus_name}\nInterfaces={interfaces}\n"),
             )
@@ -1573,20 +1656,20 @@ mod tests {
     #[test]
     fn conf_bytes_are_read_as_glib_reads_them() {
         let path = Path::new(CONF_PATH);
-        let defaults = |text: &[u8]| parse_conf(path, text).and_then(|c| c.default);
+        let defaults = |text: &[u8]| parse_conf_c(path, text).and_then(|c| c.default);
         // Invalid UTF-8 in a comment or in another group is fine.
         assert_eq!(
             defaults(b"# \xff\n[preferred]\ndefault=gnome\n[o]\nk=\xff\n"),
             Some(vec!["gnome".to_owned()])
         );
         // In a [preferred] value the frontend cannot read it and skips the file.
-        assert_eq!(parse_conf(path, b"[preferred]\ndefault=\xff\n"), None);
+        assert_eq!(parse_conf_c(path, b"[preferred]\ndefault=\xff\n"), None);
         // A line ends at its first NUL.
         assert_eq!(
             defaults(b"[preferred]\ndefault=none\x00x\n\x00[x]\n"),
             Some(vec!["none".to_owned()])
         );
-        assert_eq!(parse_conf(path, b"[preferred]\nde\x00fault=none\n"), None);
+        assert_eq!(parse_conf_c(path, b"[preferred]\nde\x00fault=none\n"), None);
     }
 
     #[test]
@@ -1608,12 +1691,74 @@ mod tests {
         assert_eq!(variants, expected);
         assert_eq!(locale_variants("C.UTF-8"), ["C.UTF-8", "C"]);
         let aliases = "# comment\ngerman\t\tde_DE.ISO-8859-1\nbokmal nb_NO.ISO-8859-1\n";
-        assert_eq!(unalias_lang(aliases, "german"), "de_DE.ISO-8859-1");
-        assert_eq!(unalias_lang(aliases, "de_DE"), "de_DE");
-        assert!(language_names().iter().any(|n| n == "C"));
+        let aliases = parse_aliases(&format!(
+            "{aliases}german: en_US\nfrancais:fr_FR.ISO-8859-1\n"
+        ));
+        assert_eq!(unalias_lang(&aliases, "german"), "de_DE.ISO-8859-1");
+        assert_eq!(unalias_lang(&aliases, "francais"), "fr_FR.ISO-8859-1");
+        assert_eq!(unalias_lang(&aliases, "de_DE"), "de_DE");
+        // As `g_get_locale_variants`: `_` splits first, so `.x` is the language.
+        assert_eq!(locale_variants("de.x_y"), ["de.x_y", "de.x"]);
+        assert_eq!(locale_variants("@euro"), ["@euro", ""]);
+        assert_eq!(locale_variants("x@a.b"), ["x@a.b", "x@a"]);
+        let mut odd = locale_variants("a_b@c.d");
+        odd.sort();
+        assert_eq!(odd, ["a", "a.d", "a_b@c", "a_b@c.d"]);
+        assert_eq!(PortalEnv::default().languages(""), ["C", "C"]);
         // `Key[C]` is always one of the keys GLib lists.
-        let conf = parse_conf(Path::new(CONF_PATH), "[preferred]\nk[C]=x\n").unwrap();
+        let conf = parse_conf_c(Path::new(CONF_PATH), "[preferred]\nk[C]=x\n").unwrap();
         assert_eq!(conf.interfaces, [("k[C]".to_owned(), vec!["x".to_owned()])]);
+    }
+
+    #[test]
+    fn the_frontends_environment_sets_the_directories_desktops_and_languages() {
+        let env = PortalEnv::from_environ(
+            b"HOME=/home/u\0XDG_CURRENT_DESKTOP=ubuntu:GNOME\0XDG_CONFIG_DIRS=/etc/xdg/a:/etc/xdg/b\0\
+              XDG_DATA_HOME=\0LANGUAGE=german\0LANG=en_US.UTF-8\0",
+        );
+        assert_eq!(env.desktops(), ["ubuntu", "gnome"]);
+        assert_eq!(
+            env.conf_dirs(),
+            [
+                "/home/u/.config",
+                "/etc/xdg/a",
+                "/etc/xdg/b",
+                "/etc",
+                "/home/u/.local/share",
+                "/usr/local/share",
+                "/usr/share",
+                "/usr/share",
+            ]
+            .map(|d| PathBuf::from(d).join("xdg-desktop-portal"))
+        );
+        assert_eq!(
+            env.languages("german\tde_DE.ISO-8859-1\n"),
+            ["de_DE.ISO-8859-1", "de_DE", "de.ISO-8859-1", "de", "C"]
+        );
+        let overridden = PortalEnv::from_environ(b"XDG_DESKTOP_PORTAL_DIR=/opt/x\0");
+        assert_eq!(overridden.conf_dirs(), [PathBuf::from("/opt/x")]);
+        assert_eq!(overridden.portal_file_dirs(), [PathBuf::from("/opt/x")]);
+    }
+
+    #[test]
+    fn a_repointed_symlink_counts_as_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::create_dir(&new).unwrap();
+        let link = dir.path().join("xdg-desktop-portal");
+        std::os::unix::fs::symlink(&old, &link).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        let started = SystemTime::now();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(changed_since(std::slice::from_ref(&link), started).is_empty());
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&old, &link).unwrap();
+        assert_eq!(
+            changed_since(std::slice::from_ref(&link), started),
+            vec![link]
+        );
     }
 
     #[test]

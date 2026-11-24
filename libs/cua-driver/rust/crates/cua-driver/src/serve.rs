@@ -894,6 +894,15 @@ async fn wait_for_parent_stdin_eof() {
     }
 }
 
+/// Log a failed accept, then pause: accept errors (EMFILE, ENFILE, ECONNABORTED) are transient.
+pub(crate) async fn back_off_after_accept_error(
+    listener: impl std::fmt::Display,
+    error: std::io::Error,
+) {
+    tracing::warn!("accept on {listener} failed: {error}; retrying");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+}
+
 /// Resolve on SIGTERM, SIGINT or SIGHUP. A signal the launcher left ignored
 /// (`nohup`, a background job) stays ignored.
 #[cfg(unix)]
@@ -1267,12 +1276,10 @@ async fn serve_claimed_socket(
     loop {
         tokio::select! {
             result = listener.accept() => {
-                // Accept errors (EMFILE, ENFILE, ECONNABORTED) are transient.
                 let stream = match result {
                     Ok((stream, _)) => stream,
                     Err(error) => {
-                        tracing::warn!("accept on {socket_path} failed: {error}; retrying");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        back_off_after_accept_error(socket_path, error).await;
                         continue;
                     }
                 };

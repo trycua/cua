@@ -7,6 +7,8 @@
 #![cfg(unix)]
 
 use cua_driver_testkit::{socket_tempdir, spawn_in_job};
+use std::io::{Read as _, Write as _};
+use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
@@ -107,6 +109,19 @@ fn answers_status(home: &Path, socket: &Path) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+fn answers_http(port: u16) -> bool {
+    let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    let mut response = Vec::new();
+    stream.set_read_timeout(Some(BOUND)).is_ok()
+        && stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .is_ok()
+        && stream.read_to_end(&mut response).is_ok()
+        && response.starts_with(b"HTTP/1.1 ")
+}
+
 fn limit_descriptors(command: &mut Command, limit: libc::rlim_t) {
     let limit = libc::rlimit {
         rlim_cur: limit,
@@ -124,12 +139,17 @@ fn limit_descriptors(command: &mut Command, limit: libc::rlim_t) {
 }
 
 #[test]
-fn exhausted_descriptors_do_not_stop_the_daemon() {
+fn exhausted_descriptors_do_not_stop_the_daemon_or_its_http_listener() {
     const DESCRIPTOR_LIMIT: libc::rlim_t = 128;
     let home = socket_tempdir().unwrap();
     let socket = home.path().join("d.sock");
+    let http_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .unwrap()
+        .port();
     let mut daemon = serve(home.path(), &socket, &home.path().join("d.pid"), |serve| {
-        limit_descriptors(serve, DESCRIPTOR_LIMIT)
+        limit_descriptors(serve, DESCRIPTOR_LIMIT);
+        serve.env("CUA_DRIVER_ENVELOPE_HTTP_PORT", http_port.to_string());
     });
 
     // As many connections as descriptors: accept fails with EMFILE while the
@@ -146,6 +166,9 @@ fn exhausted_descriptors_do_not_stop_the_daemon() {
             }
         }
     }
+    let http_connections: Vec<_> = (0..8)
+        .map(|_| TcpStream::connect(("127.0.0.1", http_port)).expect("connect to the HTTP port"))
+        .collect();
     std::thread::sleep(Duration::from_secs(1));
     assert_eq!(
         daemon.exit_status(),
@@ -153,12 +176,13 @@ fn exhausted_descriptors_do_not_stop_the_daemon() {
         "the daemon exited while descriptors ran out"
     );
     drop(connections);
+    drop(http_connections);
 
     let deadline = Instant::now() + BOUND;
-    while !answers_status(home.path(), &socket) {
+    while !(answers_status(home.path(), &socket) && answers_http(http_port)) {
         assert!(
             Instant::now() < deadline,
-            "the daemon stopped answering after descriptors ran out"
+            "the daemon or its HTTP listener stopped answering after descriptors ran out"
         );
         std::thread::sleep(Duration::from_millis(50));
     }

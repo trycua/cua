@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/trycua/cua/compare/lume-v0.8.0...lume-v0.9.0) (2026-11-24)
+
+
+### Features
+
+* **lume:** optional guest time service over virtio-vsock ([#8546](https://github.com/trycua/cua/issues/8546)) ([f7a7a2f](https://github.com/trycua/cua/commit/f7a7a2f1d7f0915f5d2e63c5164f42bd547de580))
+
 ## [0.8.0](https://github.com/trycua/cua/compare/lume-v0.7.2...lume-v0.8.0) (2026-11-23)
 
 

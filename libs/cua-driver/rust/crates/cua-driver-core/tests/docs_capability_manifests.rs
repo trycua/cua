@@ -90,6 +90,13 @@ fn manifest_fences(text: &str) -> Vec<(usize, String)> {
 
 #[test]
 fn documented_capability_manifests_load_in_bounded_mode() {
+    // The docs examples use Unix absolute paths (`/usr/bin/...`, `/data/...`),
+    // which are not absolute on Windows, so the loader rejects them there.
+    // Linux CI runs this check. See trycua/cua#8652.
+    if cfg!(windows) {
+        return;
+    }
+
     let docs = repo_root().join("docs/content/docs/cua-driver");
     // Nix tests the filtered Rust source, which excludes the docs tree.
     if !docs.is_dir() {

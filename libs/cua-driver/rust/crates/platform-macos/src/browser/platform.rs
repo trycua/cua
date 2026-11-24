@@ -759,7 +759,7 @@ async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
     Ok((started.trim().to_owned(), executable.trim().to_owned()))
 }
 
-fn parse_loopback_lsof_ports(text: &str) -> Vec<u16> {
+pub(super) fn parse_loopback_lsof_ports(text: &str) -> Vec<u16> {
     let mut ports = text
         .lines()
         .filter_map(|line| line.trim().strip_prefix('n'))
@@ -777,7 +777,7 @@ fn parse_loopback_lsof_ports(text: &str) -> Vec<u16> {
 }
 
 async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
-    let output = tokio::process::Command::new("lsof")
+    let output = tokio::process::Command::new(super::lsof_program())
         .args([
             "-a",
             // Numeric addresses: never block on DNS while enumerating listeners.

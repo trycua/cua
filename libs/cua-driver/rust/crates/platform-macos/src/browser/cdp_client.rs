@@ -578,7 +578,7 @@ fn parse_cdp_result(obj: &serde_json::Value) -> anyhow::Result<String> {
 
 /// Return TCP listening ports for a process via `lsof`.
 pub(super) async fn listening_ports(pid: i32) -> Vec<u16> {
-    let out = tokio::process::Command::new("lsof")
+    let out = tokio::process::Command::new(super::lsof_program())
         .args([
             // `-a` ANDs the selection criteria together — without it, lsof
             // ORs `-p` with `-iTCP -sTCP:LISTEN`, returning every listening
@@ -591,6 +591,8 @@ pub(super) async fn listening_ports(pid: i32) -> Vec<u16> {
             "-Fn",
             "-P",
         ])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .output()
         .await;
 
@@ -850,5 +852,19 @@ mod tests {
             .is_err());
         server.await.unwrap();
         assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn listening_ports_reports_bound_loopback_listener() {
+        if !std::path::Path::new(crate::browser::MACOS_LSOF_PATH).is_file() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        let ports = super::listening_ports(std::process::id() as i32).await;
+        assert!(
+            ports.contains(&port),
+            "expected bound port {port} in {ports:?}"
+        );
     }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.2...cua-driver-rs-v0.61.3) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep the Windows agent cursor overlay in its z-slot while idle ([#8642](https://github.com/trycua/cua/issues/8642)) ([c8fcf63](https://github.com/trycua/cua/commit/c8fcf6376ba8d0d1700d5bd2139aeea3d59741b3)), closes [#8566](https://github.com/trycua/cua/issues/8566)
+
 ## [0.61.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.1...cua-driver-rs-v0.61.2) (2026-11-24)
 
 

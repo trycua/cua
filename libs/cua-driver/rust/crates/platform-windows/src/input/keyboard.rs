@@ -1908,8 +1908,8 @@ mod busy_target_activation_tests {
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-        GetWindowInfo, PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage,
-        MSG, WINDOWINFO, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW,
+        GetWindowInfo, PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage, MSG,
+        WINDOWINFO, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW,
         WS_OVERLAPPEDWINDOW, WS_VISIBLE,
     };
 

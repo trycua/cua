@@ -130,7 +130,8 @@ pub struct AtspiTreeResult {
     /// is valid, but elements after the cut are simply absent.
     pub truncated: bool,
     /// Machine-readable reason when `truncated`: `timeout`, `node_budget`,
-    /// `app_unresponsive`, `app_lookup_timeout`, `huge_container`.
+    /// `app_unresponsive`, `app_lookup_timeout`, `huge_container`,
+    /// `children_unread`.
     pub truncation_reason: Option<String>,
     /// Nodes fully visited by the native walk (0 for the fallback tree).
     pub nodes_visited: usize,

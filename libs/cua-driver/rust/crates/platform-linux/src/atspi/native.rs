@@ -605,7 +605,7 @@ pub struct ObjectRef {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Truncation {
     /// Machine-readable reason: `timeout`, `node_budget`, `app_unresponsive`,
-    /// `app_lookup_timeout`.
+    /// `app_lookup_timeout`, `huge_container`, `children_unread`.
     pub reason: &'static str,
     /// Nodes fully visited before the walk stopped.
     pub visited: usize,
@@ -2204,14 +2204,18 @@ async fn collect_visited_bounded_opts<'a>(
 
 /// The truncation a walk scoped to window `scope` reports: none once that
 /// window's children were all read and no pending node belongs to it, since
-/// the walk exhausts it before any other.
+/// the walk exhausts it before any other; `children_unread` when the walk
+/// stopped for no other reason but missed some of that window's children.
 fn truncation_in_scope(
     truncation: Option<&'static str>,
     scope: usize,
     scope_children_unread: bool,
     mut pending_frames: impl Iterator<Item = usize>,
 ) -> Option<&'static str> {
-    truncation.filter(|_| scope_children_unread || pending_frames.any(|frame| frame == scope))
+    if scope_children_unread {
+        return truncation.or(Some("children_unread"));
+    }
+    truncation.filter(|_| pending_frames.any(|frame| frame == scope))
 }
 
 #[cfg(test)]
@@ -2244,6 +2248,10 @@ mod truncation_in_scope_tests {
         assert_eq!(
             truncation_in_scope(Some("timeout"), 1, true, [0, 2].into_iter()),
             Some("timeout")
+        );
+        assert_eq!(
+            truncation_in_scope(None, 1, true, std::iter::empty()),
+            Some("children_unread")
         );
     }
 }

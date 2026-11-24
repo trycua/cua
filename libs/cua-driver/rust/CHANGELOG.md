@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.62.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.4...cua-driver-rs-v0.62.0) (2026-11-24)
+
+
+### Features
+
+* **cua-driver:** expose link url in get_window_state elements ([#8674](https://github.com/trycua/cua/issues/8674)) ([dbbb4f9](https://github.com/trycua/cua/commit/dbbb4f9b4c64dea3c8fdb7ff7e23548011aaa5b7))
+
+
+### Bug Fixes
+
+* **cua-driver:** map DIP element frames onto X11 window screenshots ([#8373](https://github.com/trycua/cua/issues/8373)) ([a898f21](https://github.com/trycua/cua/commit/a898f21ba53a78ddcdef3f95e0f2c17b595a08d7))
+* **cua-driver:** refuse page query_dom selectors the macOS AX fallback cannot apply ([#7801](https://github.com/trycua/cua/issues/7801)) ([17846fe](https://github.com/trycua/cua/commit/17846fe4d9ca1f1c97107bf80afc42227a56d050))
+
 ## [0.61.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.3...cua-driver-rs-v0.61.4) (2026-11-24)
 
 

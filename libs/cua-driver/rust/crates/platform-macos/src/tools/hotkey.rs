@@ -388,6 +388,11 @@ impl Tool for HotkeyTool {
                         }
                         _ => None,
                     };
+                    let focused = match (element_index, focus_xy) {
+                        (Some(index), _) => Some(format!("element [{index}]")),
+                        (None, Some((x, y))) => Some(format!("the element at ({x:.0}, {y:.0})")),
+                        (None, None) => None,
+                    };
                     if let Some((x, y)) = focus_xy {
                         let lease = match super::gate_background_window_action(
                             pid,
@@ -447,7 +452,7 @@ impl Tool for HotkeyTool {
                         })
                         .await
                         .unwrap_or(false);
-                    if let Some(result) = menu_route_result(menu_result, vcl) {
+                    if let Some(result) = menu_route_result(menu_result, vcl, focused.as_deref()) {
                         return result;
                     }
                 }
@@ -724,12 +729,23 @@ fn menu_allows_key_fallback(result: &ToolResult) -> bool {
 
 /// The result of a background hotkey whose menu route answered `result`, or
 /// `None` when the combo goes out as keys.
-fn menu_route_result(mut result: ToolResult, vcl: bool) -> Option<ToolResult> {
+fn menu_route_result(
+    mut result: ToolResult,
+    vcl: bool,
+    focused: Option<&str>,
+) -> Option<ToolResult> {
     if !menu_allows_key_fallback(&result) {
         return Some(result);
     }
     if vcl {
         return None;
+    }
+    if let (Some(focused), Some(cua_driver_core::protocol::Content::Text { text, .. })) =
+        (focused, result.content.first_mut())
+    {
+        text.push_str(&format!(
+            " Before the menu lookup, {focused} took the keyboard focus, and it keeps it."
+        ));
     }
     if let Some(structured) = result.structured_content.as_mut() {
         structured["escalation"] = serde_json::json!({
@@ -802,20 +818,43 @@ mod tests {
                 "effect": "refused",
             }))
         };
-        let refused = menu_route_result(unavailable(), false).expect("a native app refuses");
+        let refused = menu_route_result(unavailable(), false, None).expect("a native app refuses");
         assert_eq!(refused.is_error, Some(true));
         let structured = refused.structured_content.expect("structured refusal");
         assert_eq!(structured["code"], "background_unavailable");
         assert_eq!(structured["effect"], "refused");
         assert_eq!(structured["escalation"]["recommended"], "foreground");
         assert!(
-            menu_route_result(unavailable(), true).is_none(),
+            menu_route_result(unavailable(), true, None).is_none(),
             "LibreOffice takes the shortcut as keys"
         );
         let unbound = ToolResult::error("refused")
             .with_structured(serde_json::json!({ "code": "window_not_key" }));
-        assert!(menu_route_result(unbound, true).is_some());
-        assert!(menu_route_result(ToolResult::text("done"), true).is_some());
+        assert!(menu_route_result(unbound, true, None).is_some());
+        assert!(menu_route_result(ToolResult::text("done"), true, None).is_some());
+    }
+
+    #[test]
+    fn a_disabled_menu_refusal_names_the_element_the_call_focused() {
+        let text = |result: ToolResult| match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text.clone(),
+            _ => panic!("a text reply"),
+        };
+        let unavailable = || {
+            ToolResult::error("disabled").with_structured(serde_json::json!({
+                "code": "background_unavailable",
+            }))
+        };
+        let focused =
+            text(menu_route_result(unavailable(), false, Some("element [3]")).expect("refused"));
+        assert!(
+            focused.ends_with(
+                " Before the menu lookup, element [3] took the keyboard focus, and it keeps it."
+            ),
+            "{focused}"
+        );
+        let unfocused = text(menu_route_result(unavailable(), false, None).expect("refused"));
+        assert_eq!(unfocused, "disabled");
     }
 
     #[test]

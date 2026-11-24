@@ -2043,15 +2043,23 @@ mod busy_target_activation_tests {
 
     fn state(label: &str, hwnd: HWND) {
         let (active, focus) = gui_thread_active_and_focus(hwnd).unwrap_or_default();
+        let mut fg_info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let _ = unsafe { GetGUIThreadInfo(0, &mut fg_info) };
         eprintln!(
             "[busy-target] {label}: fg={:?} target={:?} queue_active={:?} queue_focus={:?} \
-             caption_active={} activation_processed={}",
+             caption_active={} activation_processed={} fg_thread_active={:?} \
+             fg_thread_focus={:?}",
             unsafe { GetForegroundWindow() }.0,
             hwnd.0,
             active.0,
             focus.0,
             caption_active(hwnd),
             thread_activation_processed(hwnd),
+            fg_info.hwndActive.0,
+            fg_info.hwndFocus.0,
         );
     }
 

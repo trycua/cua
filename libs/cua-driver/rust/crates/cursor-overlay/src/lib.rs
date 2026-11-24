@@ -412,6 +412,9 @@ pub enum OverlayCommand {
     },
     /// Set the sanitized public label shown beneath this cursor.
     SetSessionLabel(String),
+    /// Show or hide the session label text in this cursor's badge. The
+    /// label, the cursor and the delivery/target chips are unaffected.
+    SetSessionLabelVisible(bool),
     /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
     /// minimal badge shows it briefly; other badge modes ignore it.
     ShowKeyCombo(Vec<String>),

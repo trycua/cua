@@ -174,6 +174,9 @@ pub struct RenderStateCore {
     pub pinned_wid: Option<u64>,
     /// Sanitized caller-facing label painted below the cursor.
     pub session_label: Option<String>,
+    /// Whether the badge may paint [`Self::session_label`]. Hiding it keeps
+    /// the label itself, the cursor and the delivery/target chips.
+    pub show_session_label: bool,
     /// Elapsed time since the session label was revealed with the cursor.
     pub session_badge_secs: f64,
     /// Whether the user's hardware pointer is currently over this synthetic
@@ -257,6 +260,7 @@ impl RenderStateCore {
             pinned_wid: None,
             pinned_target_off_workspace: false,
             session_label: None,
+            show_session_label: true,
             session_badge_secs: SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS,
             session_badge_hovered: false,
             badge_modifiers: None,
@@ -563,6 +567,13 @@ impl RenderStateCore {
         }
     }
 
+    /// The session label the badge may paint: `None` while it is hidden.
+    fn shown_session_label(&self) -> Option<&str> {
+        self.session_label
+            .as_deref()
+            .filter(|_| self.show_session_label)
+    }
+
     /// The badge mode this cursor paints with now.
     pub fn badge_mode(&self) -> BadgeMode {
         self.badge_mode_override
@@ -571,7 +582,7 @@ impl RenderStateCore {
 
     /// Opacity of the session name.
     pub fn session_badge_alpha(&self) -> f32 {
-        if self.session_label.is_none() {
+        if self.shown_session_label().is_none() {
             return 0.0;
         }
         match self.badge_mode() {
@@ -641,7 +652,7 @@ impl RenderStateCore {
         let acting = self.visual.resolved_action != CursorAction::Idle;
         match self.badge_mode() {
             BadgeMode::Verbose => {
-                (self.session_label.is_some()
+                (self.shown_session_label().is_some()
                     && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS)
                     || self.badge_modifier_fade_secs.is_some()
                     || self.key_chip.is_some()
@@ -657,7 +668,7 @@ impl RenderStateCore {
     /// Where the minimal badge's session name is heading: shown at rest while
     /// another agent cursor is on screen, hidden otherwise.
     fn minimal_name_target(&self) -> f32 {
-        if self.session_label.is_some() && self.peer_cursors_visible && !self.is_moving() {
+        if self.shown_session_label().is_some() && self.peer_cursors_visible && !self.is_moving() {
             1.0
         } else {
             0.0
@@ -695,7 +706,7 @@ impl RenderStateCore {
                     }
                     None => {
                         let (delivery, target) = self.badge_modifiers.unwrap_or((None, None));
-                        input.label = self.session_label.as_deref();
+                        input.label = self.shown_session_label();
                         input.delivery = delivery;
                         input.target = target;
                         input.label_alpha = self.session_badge_alpha();
@@ -704,7 +715,7 @@ impl RenderStateCore {
                 }
             }
             BadgeMode::Minimal => {
-                input.label = self.session_label.as_deref();
+                input.label = self.shown_session_label();
                 input.label_alpha = self.session_badge_alpha();
             }
         }
@@ -716,7 +727,9 @@ impl RenderStateCore {
     /// from [`Self::session_badge_needs_frame_tick`]: a faded badge needs hover
     /// hit-testing, not continuous 60 fps repainting.
     pub fn session_badge_needs_hover_poll(&self) -> bool {
-        self.badge_mode() != BadgeMode::Off && self.session_label.is_some() && self.is_revealed()
+        self.badge_mode() != BadgeMode::Off
+            && self.shown_session_label().is_some()
+            && self.is_revealed()
     }
 
     /// Update hover state from a platform-native hardware pointer sample.
@@ -1142,6 +1155,17 @@ impl RenderStateCore {
                 if session_label != self.session_label {
                     self.session_label = session_label;
                     self.session_badge_secs = 0.0;
+                }
+                true
+            }
+            OverlayCommand::SetSessionLabelVisible(show) => {
+                if show != self.show_session_label {
+                    self.show_session_label = show;
+                    // Showing it again replays the initial reveal.
+                    self.session_badge_secs = 0.0;
+                    if !show {
+                        self.session_badge_hovered = false;
+                    }
                 }
                 true
             }
@@ -2345,6 +2369,72 @@ mod session_badge_and_action_tests {
         assert_eq!(core.session_badge_secs, elapsed);
         core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
         assert!(!core.session_badge_needs_frame_tick());
+    }
+
+    #[test]
+    fn hidden_session_label_keeps_the_cursor_and_its_chips() {
+        let mut core = verbose_core();
+        core.motion.idle_hide_ms = 0.0;
+        // Applied before the label or the first reveal, as start_session does.
+        core.apply_command_base(OverlayCommand::SetSessionLabelVisible(false), false, false);
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        move_to(&mut core, 300.0, 240.0);
+        settle_without_text(&mut core);
+        assert!(core.is_revealed(), "the cursor still shows");
+        assert_eq!(core.session_badge_alpha(), 0.0, "no initial reveal");
+        assert!(shown(&core).is_none(), "no empty pill");
+        assert!(!core.session_badge_needs_frame_tick());
+        assert!(!core.session_badge_needs_hover_poll());
+        assert!(!core.update_session_badge_hover(Some(core.pos)));
+        assert_eq!(core.session_badge_alpha(), 0.0, "no hover reveal");
+
+        // Delivery and target chips paint on their own pill.
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Text,
+                delivery: Some(DeliveryModifier::Background),
+                target: Some(TargetModifier::Ax),
+            },
+            false,
+            false,
+        );
+        core.tick_motion(FRAME);
+        let layout = shown(&core).expect("the chips paint");
+        assert!(layout.label.is_none());
+        assert!(layout.delivery_chip.is_some() && layout.target_chip.is_some());
+        assert!(layout.pill_alpha > 0.0);
+
+        // Peers, metadata refreshes and theme changes keep it hidden.
+        core.peer_cursors_visible = true;
+        core.badge_mode_override = Some(BadgeMode::Minimal);
+        core.tick_motion(MINIMAL_NAME_FADE_SECS + FRAME);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+        core.badge_mode_override = Some(BadgeMode::Verbose);
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Writing".into()),
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::SetTheme {
+                theme_id: crate::DEFAULT_THEME_ID.into(),
+                reduced_motion: crate::ReducedMotion::Auto,
+            },
+            false,
+            false,
+        );
+        assert!(!core.show_session_label);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+        assert_eq!(core.session_label.as_deref(), Some("Writing"), "label kept");
+
+        // Showing it again replays the initial reveal.
+        core.apply_command_base(OverlayCommand::SetSessionLabelVisible(true), false, false);
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        assert!(core.session_badge_needs_hover_poll());
     }
 
     #[test]

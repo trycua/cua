@@ -161,21 +161,33 @@ impl Diagnosis {
 }
 
 /// Parse a `.portal` file's `[portal]` group. `name` is the file stem.
+/// `None` when the frontend would reject the file.
 pub(crate) fn parse_portal_file(name: &str, text: &str) -> Option<PortalFile> {
-    let group = key_file_group(text, "portal");
-    let get = |key: &str| group.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+    let groups = parse_key_file(text)?;
+    let group = key_file_group(&groups, "portal");
+    let get = |key: &str| {
+        group
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    };
     Some(PortalFile {
         name: name.to_owned(),
-        dbus_name: get("DBusName")?,
-        interfaces: split_list(&get("Interfaces")?),
-        use_in: split_list(&get("UseIn").unwrap_or_default()),
+        dbus_name: get("DBusName")?.to_owned(),
+        interfaces: parse_list(get("Interfaces")?)?,
+        use_in: match get("UseIn") {
+            Some(value) => parse_list(value)?,
+            None => Vec::new(),
+        },
     })
 }
 
-/// Parse `portals.conf`. `None` when `[preferred]` has no keys: the frontend
-/// then moves on to the next file.
+/// Parse `portals.conf`. `None` when the frontend would skip the file and
+/// move on to the next one: GLib rejects it, `[preferred]` has no keys, or a
+/// value is not a valid list.
 pub(crate) fn parse_conf(path: &Path, text: &str) -> Option<PortalConf> {
-    let group = key_file_group(text, "preferred");
+    let groups = parse_key_file(text)?;
+    let group = key_file_group(&groups, "preferred");
     if group.is_empty() {
         return None;
     }
@@ -185,10 +197,11 @@ pub(crate) fn parse_conf(path: &Path, text: &str) -> Option<PortalConf> {
         default: None,
     };
     for (key, value) in group {
+        let list = parse_list(value)?;
         if key == "default" {
-            conf.default.get_or_insert_with(|| split_list(&value));
+            conf.default = Some(list);
         } else {
-            conf.interfaces.push((key, split_list(&value)));
+            conf.interfaces.push((key.clone(), list));
         }
     }
     Some(conf)
@@ -287,22 +300,19 @@ pub(crate) fn resolve(
         Choice::Backend(p) => Some(p.name.as_str()),
         _ => None,
     };
-    let route = if portals.is_empty() {
-        Route::Unknown
-    } else {
-        match choice {
-            Choice::Vetoed => Route::Vetoed,
-            Choice::None => Route::NoBackend,
-            Choice::Backend(p) => match exports(p) {
-                Some(true) => Route::Served {
-                    backend: p.name.clone(),
-                },
-                Some(false) => Route::NotExported {
-                    backend: p.name.clone(),
-                },
-                None => Route::Unknown,
+    let route = match choice {
+        Choice::Vetoed => Route::Vetoed,
+        Choice::None if portals.is_empty() => Route::Unknown,
+        Choice::None => Route::NoBackend,
+        Choice::Backend(p) => match exports(p) {
+            Some(true) => Route::Served {
+                backend: p.name.clone(),
             },
-        }
+            Some(false) => Route::NotExported {
+                backend: p.name.clone(),
+            },
+            None => Route::Unknown,
+        },
     };
     Diagnosis {
         route,
@@ -483,36 +493,86 @@ pub(crate) fn probe() -> Diagnosis {
     })
 }
 
-fn split_list(value: &str) -> Vec<String> {
-    value
-        .split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
+type KeyFileGroups = Vec<(String, Vec<(String, String)>)>;
 
-/// `key=value` pairs of one `[group]` in a GKeyFile-style file.
-fn key_file_group(text: &str, group: &str) -> Vec<(String, String)> {
-    let header = format!("[{group}]");
-    let mut inside = false;
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
+/// Groups of a key file, parsed as GLib's `GKeyFile` does: comments and
+/// blank lines skipped, repeated groups merged, a repeated key's last value
+/// kept, locale keys (`Key[de]`) left out, and the value's leading (not
+/// trailing) whitespace dropped. `None` when GLib rejects the file.
+fn parse_key_file(text: &str) -> Option<KeyFileGroups> {
+    let mut groups: KeyFileGroups = Vec::new();
+    let mut current = None;
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line).trim_start();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if line.starts_with('[') {
-            inside = line == header;
+        if let Some(rest) = line.strip_prefix('[') {
+            let name = rest.trim_end().strip_suffix(']')?;
+            if name.is_empty() || name.contains(['[', ']']) {
+                return None;
+            }
+            current = Some(match groups.iter().position(|(g, _)| g == name) {
+                Some(at) => at,
+                None => {
+                    groups.push((name.to_owned(), Vec::new()));
+                    groups.len() - 1
+                }
+            });
             continue;
         }
-        if inside {
-            if let Some((k, v)) = line.split_once('=') {
-                out.push((k.trim().to_owned(), v.trim().to_owned()));
-            }
+        let (key, value) = line.split_once('=')?;
+        let key = key.trim_end();
+        if key.is_empty() {
+            return None;
+        }
+        let (_, pairs) = &mut groups[current?];
+        if key.contains('[') {
+            continue;
+        }
+        let value = value.trim_start().to_owned();
+        match pairs.iter_mut().find(|(k, _)| k == key) {
+            Some(pair) => pair.1 = value,
+            None => pairs.push((key.to_owned(), value)),
         }
     }
-    out
+    Some(groups)
+}
+
+fn key_file_group<'a>(groups: &'a KeyFileGroups, name: &str) -> &'a [(String, String)] {
+    groups
+        .iter()
+        .find(|(g, _)| g == name)
+        .map(|(_, pairs)| pairs.as_slice())
+        .unwrap_or_default()
+}
+
+/// A `;`-separated list as `g_key_file_get_string_list` reads it: escapes
+/// decoded, items not trimmed, one trailing empty item dropped. `None` for
+/// an invalid escape.
+fn parse_list(value: &str) -> Option<Vec<String>> {
+    let mut items = vec![String::new()];
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        let item = items.last_mut()?;
+        match c {
+            ';' => items.push(String::new()),
+            '\\' => item.push(match chars.next()? {
+                's' => ' ',
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '\\' => '\\',
+                ';' => ';',
+                _ => return None,
+            }),
+            c => item.push(c),
+        }
+    }
+    if items.last().is_some_and(String::is_empty) {
+        items.pop();
+    }
+    Some(items)
 }
 
 #[cfg(test)]
@@ -818,6 +878,77 @@ mod tests {
         assert_eq!(search.unreadable.len(), 1);
         assert_eq!(search.unreadable[0].0, unreadable);
         assert_eq!(search.active.map(|c| c.path), Some(used));
+    }
+
+    #[test]
+    fn conf_values_are_read_as_glib_reads_them() {
+        let path = Path::new(CONF_PATH);
+        let defaults = |text: &str| parse_conf(path, text).and_then(|c| c.default);
+        // The last of a repeated key wins.
+        assert_eq!(
+            defaults("[preferred]\ndefault=none\ndefault=gnome\n"),
+            Some(vec!["gnome".to_owned()])
+        );
+        // Items keep their whitespace, so ` none ` is not `none`.
+        assert_eq!(
+            defaults("[preferred]\ndefault = gnome; none \n"),
+            Some(vec!["gnome".to_owned(), " none ".to_owned()])
+        );
+        assert_eq!(
+            defaults("  [preferred]  \r\n  default=gnome;;kde;\r\n"),
+            Some(vec!["gnome".to_owned(), String::new(), "kde".to_owned()])
+        );
+        assert_eq!(
+            defaults("[preferred]\ndefault=a\\;b;c\\s\n"),
+            Some(vec!["a;b".to_owned(), "c ".to_owned()])
+        );
+        assert_eq!(
+            defaults("[preferred]\ndefault=x\n[other]\na=b\n[preferred]\ndefault=kde\n"),
+            Some(vec!["kde".to_owned()])
+        );
+        let locale = parse_conf(path, "[preferred]\ndefault=gnome\nkey[de]=x\n").unwrap();
+        assert!(locale.interfaces.is_empty(), "{locale:?}");
+    }
+
+    #[test]
+    fn a_conf_glib_rejects_is_skipped_for_the_next_one() {
+        for text in [
+            "[preferred]\ndefault=none\nstray\n",
+            "default=none\n[preferred]\ndefault=none\n",
+            "[preferred]\n=none\n",
+            "[preferred\ndefault=none\n",
+            "[preferred]x\ndefault=none\n",
+            "[preferred]\ndefault=none;\\\n",
+        ] {
+            assert_eq!(parse_conf(Path::new(CONF_PATH), text), None, "{text:?}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let rejected = dir.path().join("gnome-portals.conf");
+        let used = dir.path().join("portals.conf");
+        std::fs::write(&rejected, "[preferred]\ndefault=none\nstray\n").unwrap();
+        std::fs::write(&used, "[preferred]\ndefault=gnome\n").unwrap();
+        let search = read_conf(&[rejected, used.clone()]);
+        assert_eq!(search.active.map(|c| c.path), Some(used));
+    }
+
+    #[test]
+    fn a_none_veto_is_reported_without_installed_portal_files() {
+        let diagnosis = resolve(
+            &conf("[preferred]\ndefault=none\n"),
+            &[],
+            &gnome(),
+            PathBuf::from(PIN_PATH),
+            mutter,
+        );
+        assert_eq!(diagnosis.route, Route::Vetoed);
+        let empty = resolve(
+            &ConfSearch::default(),
+            &[],
+            &gnome(),
+            PathBuf::from(PIN_PATH),
+            mutter,
+        );
+        assert_eq!(empty.route, Route::Unknown);
     }
 
     #[test]

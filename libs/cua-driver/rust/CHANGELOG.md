@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.61.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.0...cua-driver-rs-v0.61.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** aim element scroll at the part inside the window ([#8142](https://github.com/trycua/cua/issues/8142)) ([6a9370c](https://github.com/trycua/cua/commit/6a9370c37e272038b12c7a127c1714a30b270121))
+* **cua-driver:** honor x,y for background pixel clicks on macOS web content ([#8099](https://github.com/trycua/cua/issues/8099)) ([1342577](https://github.com/trycua/cua/commit/134257785ca712e7c7594691485a4d154235962b))
+* **cua-driver:** refuse GNOME window screenshots from helpers below API 9 ([#8170](https://github.com/trycua/cua/issues/8170)) ([08d0352](https://github.com/trycua/cua/commit/08d0352df6fc0001bfc0e22950755ae049e3bedd))
+* **cua-driver:** refuse macOS type_text keys when the target can't hold keyboard focus ([#8410](https://github.com/trycua/cua/issues/8410)) ([776383a](https://github.com/trycua/cua/commit/776383af61073e136f11e238943c604b5ce49620))
+* **cua-driver:** slow the macOS permission gate's probe processes when nothing changes ([#8512](https://github.com/trycua/cua/issues/8512)) ([8c56dd3](https://github.com/trycua/cua/commit/8c56dd3820f0ec2b7271513783627423b6d905bc)), closes [#3523](https://github.com/trycua/cua/issues/3523)
+* **cua-driver:** wait for Edge's quiet permission indicator instead of one 250 ms look ([#8620](https://github.com/trycua/cua/issues/8620)) ([b18defe](https://github.com/trycua/cua/commit/b18defe259841675ac031d09d463aa78fa2db9b0))
+
 ## [0.61.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.60.0...cua-driver-rs-v0.61.0) (2026-11-23)
 
 

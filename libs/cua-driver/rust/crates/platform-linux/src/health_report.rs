@@ -423,13 +423,7 @@ async fn check_wayland_backend() -> CheckEntry {
     } else {
         None
     };
-    let remote_desktop = match probe {
-        Some(RemoteDesktopProbe::Exported { devices }) => match devices.and_then(missing_devices) {
-            Some((message, hint)) => RemoteDesktopPortal::NoInputDevices { message, hint },
-            None => RemoteDesktopPortal::Reachable,
-        },
-        Some(RemoteDesktopProbe::NotExported) | None => RemoteDesktopPortal::Unreachable,
-    };
+    let remote_desktop = remote_desktop_portal(probe);
     let mut entry = classify_wayland_backend(
         &snap,
         portal_input_enabled(),
@@ -452,7 +446,7 @@ enum RemoteDesktopPortal {
     Unreachable,
     Reachable,
     /// The frontend exports RemoteDesktop, but the backend it routes to
-    /// offers no keyboard or pointer (#3638).
+    /// offers no keyboard or pointer and refuses a session (#3638).
     NoInputDevices {
         message: String,
         hint: String,
@@ -467,17 +461,38 @@ enum RemoteDesktopPortal {
 enum RemoteDesktopProbe {
     NotExported,
     /// `devices` is `AvailableDeviceTypes` (keyboard 1, pointer 2,
-    /// touchscreen 4), when it could be read.
+    /// touchscreen 4), when it could be read. `session_refused` is whether
+    /// a `CreateSession` call, made only when a keyboard or pointer is
+    /// missing, was refused.
     Exported {
         devices: Option<u32>,
+        session_refused: bool,
     },
+}
+
+/// A missing keyboard or pointer counts only when a session was refused
+/// too; anything doctor could not read keeps the earlier verdict.
+fn remote_desktop_portal(probe: Option<RemoteDesktopProbe>) -> RemoteDesktopPortal {
+    match probe {
+        Some(RemoteDesktopProbe::Exported {
+            devices: Some(devices),
+            session_refused: true,
+        }) => match missing_devices(devices) {
+            Some((message, hint)) => RemoteDesktopPortal::NoInputDevices { message, hint },
+            None => RemoteDesktopPortal::Reachable,
+        },
+        Some(RemoteDesktopProbe::Exported { .. }) => RemoteDesktopPortal::Reachable,
+        Some(RemoteDesktopProbe::NotExported) | None => RemoteDesktopPortal::Unreachable,
+    }
 }
 
 /// `(message, hint)` when `AvailableDeviceTypes` lacks a keyboard or a
 /// pointer. The frontend copies this property from the backend it routes
-/// RemoteDesktop to, so it is 0 when that backend does not export
-/// `org.freedesktop.impl.portal.RemoteDesktop`, as `xdg-desktop-portal-kde`
-/// does not in a GNOME session.
+/// RemoteDesktop to when it starts, so it is 0 when that backend does not
+/// export `org.freedesktop.impl.portal.RemoteDesktop`, as
+/// `xdg-desktop-portal-kde` does not in a GNOME session. The frontend does
+/// not refresh it when a backend exports the interface later, so doctor
+/// reports it only once a session through the same route is refused too.
 fn missing_devices(devices: u32) -> Option<(String, String)> {
     let missing: Vec<&str> = [(1, "keyboard"), (2, "pointer")]
         .into_iter()
@@ -490,18 +505,19 @@ fn missing_devices(devices: u32) -> Option<(String, String)> {
     Some((
         format!(
             "The RemoteDesktop portal is reachable, but the backend xdg-desktop-portal \
-             routes it to offers no {} (AvailableDeviceTypes is {devices}), so clicks \
-             and key presses cannot be delivered. This happens when another desktop's \
-             backend serves RemoteDesktop, such as xdg-desktop-portal-kde in a GNOME \
-             session, which does not export org.freedesktop.impl.portal.RemoteDesktop \
-             there.",
+             routes it to offers no {} (AvailableDeviceTypes is {devices}) and refused \
+             to create a session, so clicks and key presses cannot be delivered. One \
+             cause is another desktop's backend serving RemoteDesktop, such as \
+             xdg-desktop-portal-kde in a GNOME session, which does not export \
+             org.freedesktop.impl.portal.RemoteDesktop there.",
             missing.join(" or ")
         ),
-        "Pin your desktop's backend: in ~/.config/xdg-desktop-portal/<desktop>-portals.conf \
-         (for example gnome-portals.conf), under `[preferred]`, set \
-         `org.freedesktop.impl.portal.RemoteDesktop=<backend>` (for example gnome). Keep \
-         the file readable, then restart xdg-desktop-portal (`systemctl --user restart \
-         xdg-desktop-portal`) or log out and back in."
+        "Check which backend serves RemoteDesktop: in the portals.conf xdg-desktop-portal \
+         uses (see portals.conf(5); usually ~/.config/xdg-desktop-portal/portals.conf or \
+         <desktop>-portals.conf), keep its other entries and, under `[preferred]`, set \
+         `org.freedesktop.impl.portal.RemoteDesktop=<backend>` (for example gnome). Then \
+         restart xdg-desktop-portal (`systemctl --user restart xdg-desktop-portal`) or log \
+         out and back in."
             .to_owned(),
     ))
 }
@@ -778,18 +794,48 @@ fn probe_portal_remote_desktop() -> anyhow::Result<RemoteDesktopProbe> {
             })?;
 
         rt.block_on(async {
-            let probe = tokio::time::timeout(crate::wayland::portal::PROBE_TIMEOUT, async {
+            let timeout = crate::wayland::portal::PROBE_TIMEOUT;
+            let probe = tokio::time::timeout(timeout, async {
                 let connection = crate::wayland::portal::fresh_session_connection().await?;
-                let portal = RemoteDesktop::with_connection(connection)
+                RemoteDesktop::with_connection(connection)
                     .await
-                    .map_err(anyhow::Error::from)?;
-                Ok::<_, anyhow::Error>(portal.available_device_types().await.ok().map(|d| d.bits()))
+                    .map_err(anyhow::Error::from)
             })
             .await;
 
             match probe {
                 Err(_) => Err(anyhow::anyhow!("portal RemoteDesktop probe timed out")),
-                Ok(Ok(devices)) => Ok(RemoteDesktopProbe::Exported { devices }),
+                Ok(Ok(portal)) => {
+                    // A read that fails or times out keeps the old verdict.
+                    let devices = tokio::time::timeout(timeout, portal.available_device_types())
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .map(|d| d.bits());
+                    // `$LIBEI_SOCKET` bypasses the portal for input.
+                    let suspect = devices.is_some_and(|d| missing_devices(d).is_some())
+                        && std::env::var_os("LIBEI_SOCKET").is_none();
+                    // A session is created only to see whether the routed
+                    // backend takes it, and closed at once. Creating one
+                    // shows no consent dialog; that comes with Start.
+                    let session_refused = suspect
+                        && tokio::time::timeout(timeout, async {
+                            use ashpd::desktop::CreateSessionOptions;
+                            match portal.create_session(CreateSessionOptions::default()).await {
+                                Ok(session) => {
+                                    let _ = session.close().await;
+                                    false
+                                }
+                                Err(e) => matches!(e, ashpd::Error::Response(_)),
+                            }
+                        })
+                        .await
+                        .unwrap_or(false);
+                    Ok(RemoteDesktopProbe::Exported {
+                        devices,
+                        session_refused,
+                    })
+                }
                 Ok(Err(e)) => {
                     let msg = format!("{e}");
                     // The frontend runs but does not export RemoteDesktop.
@@ -1059,6 +1105,33 @@ mod tests {
         assert!(
             hint.contains("org.freedesktop.impl.portal.RemoteDesktop=<backend>"),
             "{hint}"
+        );
+    }
+
+    #[test]
+    fn missing_devices_fail_only_when_a_session_is_refused_too() {
+        let probe = |devices, session_refused| {
+            remote_desktop_portal(Some(RemoteDesktopProbe::Exported {
+                devices,
+                session_refused,
+            }))
+        };
+        assert!(matches!(
+            probe(Some(0), true),
+            RemoteDesktopPortal::NoInputDevices { .. }
+        ));
+        // A backend that exported RemoteDesktop after the frontend started:
+        // the property stays 0, but the session goes through.
+        assert_eq!(probe(Some(0), false), RemoteDesktopPortal::Reachable);
+        assert_eq!(probe(Some(3), true), RemoteDesktopPortal::Reachable);
+        assert_eq!(probe(None, true), RemoteDesktopPortal::Reachable);
+        assert_eq!(
+            remote_desktop_portal(Some(RemoteDesktopProbe::NotExported)),
+            RemoteDesktopPortal::Unreachable
+        );
+        assert_eq!(
+            remote_desktop_portal(None),
+            RemoteDesktopPortal::Unreachable
         );
     }
 

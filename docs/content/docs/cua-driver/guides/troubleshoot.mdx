@@ -24,7 +24,7 @@ before sharing.
 | Permission granted in System Settings but reported false | Stale grant: [reset it](#reset-stale-macos-permissions). |
 | System Settings names Cua Driver with an old version (for example `CuaDriver-0.34.0`), or `open` starts the wrong copy | Another copy of the app is registered with macOS. See [Extra copies of CuaDriver.app](#extra-copies-of-cuadriverapp). |
 | `libXi.so.6: cannot open shared object file` | `sudo apt install libxi6 at-spi2-core`. |
-| `doctor` says the RemoteDesktop portal backend offers no keyboard or pointer | Another desktop's portal backend (often `xdg-desktop-portal-kde` in a GNOME session) is serving input. Pin yours: in `~/.config/xdg-desktop-portal/<desktop>-portals.conf`, under `[preferred]`, set `org.freedesktop.impl.portal.RemoteDesktop=gnome` (or your desktop's backend). Keep the file readable, then restart `xdg-desktop-portal` or log out and back in. |
+| `doctor` says the RemoteDesktop portal backend offers no keyboard or pointer and refused a session | The portal routes input to a backend that can't take it, often another desktop's (such as `xdg-desktop-portal-kde` in a GNOME session). In the `portals.conf` the portal uses (see `portals.conf(5)`), keep the other entries and set `org.freedesktop.impl.portal.RemoteDesktop=gnome` (or your desktop's backend) under `[preferred]`, then restart `xdg-desktop-portal` or log out and back in. |
 | `doctor` warns AT-SPI is unreachable | `get_window_state` needs the accessibility bus; start the app inside a full desktop session. |
 | Action returned success but nothing changed | Check `effect` and follow `escalation`; see [the action ladder](/cua-driver/concepts/how-cua-driver-works#the-action-ladder). |
 | `stale_element_token` | Call `get_window_state` again and use a fresh `element_token`. The refusal lists the process's current snapshots, so you can tell whether you already hold a newer one. The accessibility route still works. |
@@ -143,8 +143,10 @@ under XWayland (`GDK_BACKEND=x11`, `QT_QPA_PLATFORM=xcb`).
 
 Screenshots can work while clicks and keys time out: the GNOME Remote Desktop
 prompt grants capture and input separately. Approve it with **Allow Remote
-Interaction** on, and check **Remember This Selection** so the grant is saved
-to `~/.config/cua-driver/libei-persistent.token` and reused.
+Interaction** on, and check **Remember This Selection**: when the backend
+returns a restore token, Cua Driver saves it to
+`$XDG_CONFIG_HOME/cua-driver/libei-persistent.token` (`~/.config` by default)
+and reuses the grant.
 
 ### Cinnamon leaves accessibility off
 

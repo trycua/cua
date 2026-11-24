@@ -638,6 +638,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_badge": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_enabled": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -789,6 +794,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_fn_method_cuadriversession_scroll": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_badge": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -1258,6 +1268,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_badge": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_enabled": {
       args: [],
       ret: FfiType.UInt16,
@@ -1409,6 +1424,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_scroll": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_badge": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1889,6 +1909,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_press_key(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_runtime_scope_prefix(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_scroll(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_badge(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_enabled(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_motion(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_set_agent_cursor_theme(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1920,6 +1941,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_press_key(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_scroll(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_badge(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_enabled(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_motion(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_theme(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -2013,6 +2035,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_scroll(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_badge(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_enabled(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_motion(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_set_agent_cursor_theme(): number;
@@ -2044,6 +2067,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_scroll(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_badge(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_enabled(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_motion(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_theme(): number;

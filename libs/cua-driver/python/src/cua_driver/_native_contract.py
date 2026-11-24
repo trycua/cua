@@ -2511,6 +2511,95 @@ class _UniffiFfiConverterTypeClipboardWriteOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.privacy_sensitive, buf)
         _UniffiFfiConverterBoolean.write(value.content_redacted_from_telemetry, buf)
 
+@dataclass
+class CursorBadgeOutput:
+    def __init__(self, *, show_session_label:bool):
+        self.show_session_label = show_session_label
+
+
+
+
+    def __str__(self):
+        return "CursorBadgeOutput(show_session_label={})".format(self.show_session_label)
+    def __eq__(self, other):
+        if self.show_session_label != other.show_session_label:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorBadgeOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorBadgeOutput(
+            show_session_label=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.show_session_label)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.show_session_label, buf)
+
+class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterBoolean.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterBoolean.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterBoolean.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CursorBadgeSelection:
+    """
+    Cursor badge settings for a session, with the fields of `set_agent_cursor_badge` minus
+    `session`.
+"""
+    def __init__(self, *, show_session_label:typing.Optional[bool]):
+        self.show_session_label = show_session_label
+
+
+
+
+    def __str__(self):
+        return "CursorBadgeSelection(show_session_label={})".format(self.show_session_label)
+    def __eq__(self, other):
+        if self.show_session_label != other.show_session_label:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorBadgeSelection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorBadgeSelection(
+            show_session_label=_UniffiFfiConverterOptionalBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.show_session_label)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalBoolean.write(value.show_session_label, buf)
+
 
 
 
@@ -3851,31 +3940,6 @@ class _UniffiFfiConverterTypeElementSelector(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.role, buf)
         _UniffiFfiConverterOptionalString.write(value.label_contains, buf)
 
-class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterBoolean.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterBoolean.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterBoolean.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
 @dataclass
 class ElementPredicate:
     def __init__(self, *, selector:ElementSelector, exists:typing.Optional[bool], value_equals:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool]):
@@ -4054,21 +4118,47 @@ class _UniffiFfiConverterOptionalTypeCursorPointOutput(_UniffiConverterRustBuffe
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeCursorBadgeOutput(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorBadgeOutput.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorBadgeOutput.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorBadgeOutput.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class GetAgentCursorStateOutput:
-    def __init__(self, *, session:str, enabled:bool, position:typing.Optional[CursorPointOutput], theme:CursorThemeOutput, visual_state:CursorVisualOutput, motion:CursorMotionOutput):
+    def __init__(self, *, session:str, enabled:bool, position:typing.Optional[CursorPointOutput], theme:CursorThemeOutput, visual_state:CursorVisualOutput, motion:CursorMotionOutput, badge:typing.Optional[CursorBadgeOutput]):
         self.session = session
         self.enabled = enabled
         self.position = position
         self.theme = theme
         self.visual_state = visual_state
         self.motion = motion
+        self.badge = badge
 
 
 
 
     def __str__(self):
-        return "GetAgentCursorStateOutput(session={}, enabled={}, position={}, theme={}, visual_state={}, motion={})".format(self.session, self.enabled, self.position, self.theme, self.visual_state, self.motion)
+        return "GetAgentCursorStateOutput(session={}, enabled={}, position={}, theme={}, visual_state={}, motion={}, badge={})".format(self.session, self.enabled, self.position, self.theme, self.visual_state, self.motion, self.badge)
     def __eq__(self, other):
         if self.session != other.session:
             return False
@@ -4082,6 +4172,8 @@ class GetAgentCursorStateOutput:
             return False
         if self.motion != other.motion:
             return False
+        if self.badge != other.badge:
+            return False
         return True
 
 class _UniffiFfiConverterTypeGetAgentCursorStateOutput(_UniffiConverterRustBuffer):
@@ -4094,6 +4186,7 @@ class _UniffiFfiConverterTypeGetAgentCursorStateOutput(_UniffiConverterRustBuffe
             theme=_UniffiFfiConverterTypeCursorThemeOutput.read(buf),
             visual_state=_UniffiFfiConverterTypeCursorVisualOutput.read(buf),
             motion=_UniffiFfiConverterTypeCursorMotionOutput.read(buf),
+            badge=_UniffiFfiConverterOptionalTypeCursorBadgeOutput.read(buf),
         )
 
     @staticmethod
@@ -4104,6 +4197,7 @@ class _UniffiFfiConverterTypeGetAgentCursorStateOutput(_UniffiConverterRustBuffe
         _UniffiFfiConverterTypeCursorThemeOutput.check_lower(value.theme)
         _UniffiFfiConverterTypeCursorVisualOutput.check_lower(value.visual_state)
         _UniffiFfiConverterTypeCursorMotionOutput.check_lower(value.motion)
+        _UniffiFfiConverterOptionalTypeCursorBadgeOutput.check_lower(value.badge)
 
     @staticmethod
     def write(value, buf):
@@ -4113,6 +4207,7 @@ class _UniffiFfiConverterTypeGetAgentCursorStateOutput(_UniffiConverterRustBuffe
         _UniffiFfiConverterTypeCursorThemeOutput.write(value.theme, buf)
         _UniffiFfiConverterTypeCursorVisualOutput.write(value.visual_state, buf)
         _UniffiFfiConverterTypeCursorMotionOutput.write(value.motion, buf)
+        _UniffiFfiConverterOptionalTypeCursorBadgeOutput.write(value.badge, buf)
 
 @dataclass
 class GetCursorPositionInput:
@@ -6955,6 +7050,78 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.desktop_unlocked, buf)
 
 @dataclass
+class SetAgentCursorBadgeInput:
+    def __init__(self, *, session:str, show_session_label:bool):
+        self.session = session
+        self.show_session_label = show_session_label
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorBadgeInput(session={}, show_session_label={})".format(self.session, self.show_session_label)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.show_session_label != other.show_session_label:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorBadgeInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorBadgeInput(
+            session=_UniffiFfiConverterString.read(buf),
+            show_session_label=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterBoolean.check_lower(value.show_session_label)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterBoolean.write(value.show_session_label, buf)
+
+@dataclass
+class SetAgentCursorBadgeOutput:
+    def __init__(self, *, session:str, badge:CursorBadgeOutput):
+        self.session = session
+        self.badge = badge
+
+
+
+
+    def __str__(self):
+        return "SetAgentCursorBadgeOutput(session={}, badge={})".format(self.session, self.badge)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.badge != other.badge:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSetAgentCursorBadgeOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SetAgentCursorBadgeOutput(
+            session=_UniffiFfiConverterString.read(buf),
+            badge=_UniffiFfiConverterTypeCursorBadgeOutput.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterTypeCursorBadgeOutput.check_lower(value.badge)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterTypeCursorBadgeOutput.write(value.badge, buf)
+
+@dataclass
 class SetAgentCursorEnabledInput:
     def __init__(self, *, session:str, enabled:bool):
         self.session = session
@@ -7419,19 +7586,45 @@ class _UniffiFfiConverterOptionalTypeCursorMotionSelection(_UniffiConverterRustB
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeCursorBadgeSelection(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorBadgeSelection.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorBadgeSelection.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorBadgeSelection.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class StartSessionInput:
-    def __init__(self, *, session:typing.Optional[str], capture_scope:typing.Optional[CaptureScope], cursor_theme:typing.Optional[CursorThemeSelection], cursor_motion:typing.Optional[CursorMotionSelection]):
+    def __init__(self, *, session:typing.Optional[str], capture_scope:typing.Optional[CaptureScope], cursor_theme:typing.Optional[CursorThemeSelection], cursor_motion:typing.Optional[CursorMotionSelection], cursor_badge:typing.Optional[CursorBadgeSelection]):
         self.session = session
         self.capture_scope = capture_scope
         self.cursor_theme = cursor_theme
         self.cursor_motion = cursor_motion
+        self.cursor_badge = cursor_badge
 
 
 
 
     def __str__(self):
-        return "StartSessionInput(session={}, capture_scope={}, cursor_theme={}, cursor_motion={})".format(self.session, self.capture_scope, self.cursor_theme, self.cursor_motion)
+        return "StartSessionInput(session={}, capture_scope={}, cursor_theme={}, cursor_motion={}, cursor_badge={})".format(self.session, self.capture_scope, self.cursor_theme, self.cursor_motion, self.cursor_badge)
     def __eq__(self, other):
         if self.session != other.session:
             return False
@@ -7440,6 +7633,8 @@ class StartSessionInput:
         if self.cursor_theme != other.cursor_theme:
             return False
         if self.cursor_motion != other.cursor_motion:
+            return False
+        if self.cursor_badge != other.cursor_badge:
             return False
         return True
 
@@ -7451,6 +7646,7 @@ class _UniffiFfiConverterTypeStartSessionInput(_UniffiConverterRustBuffer):
             capture_scope=_UniffiFfiConverterOptionalTypeCaptureScope.read(buf),
             cursor_theme=_UniffiFfiConverterOptionalTypeCursorThemeSelection.read(buf),
             cursor_motion=_UniffiFfiConverterOptionalTypeCursorMotionSelection.read(buf),
+            cursor_badge=_UniffiFfiConverterOptionalTypeCursorBadgeSelection.read(buf),
         )
 
     @staticmethod
@@ -7459,6 +7655,7 @@ class _UniffiFfiConverterTypeStartSessionInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeCaptureScope.check_lower(value.capture_scope)
         _UniffiFfiConverterOptionalTypeCursorThemeSelection.check_lower(value.cursor_theme)
         _UniffiFfiConverterOptionalTypeCursorMotionSelection.check_lower(value.cursor_motion)
+        _UniffiFfiConverterOptionalTypeCursorBadgeSelection.check_lower(value.cursor_badge)
 
     @staticmethod
     def write(value, buf):
@@ -7466,23 +7663,25 @@ class _UniffiFfiConverterTypeStartSessionInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeCaptureScope.write(value.capture_scope, buf)
         _UniffiFfiConverterOptionalTypeCursorThemeSelection.write(value.cursor_theme, buf)
         _UniffiFfiConverterOptionalTypeCursorMotionSelection.write(value.cursor_motion, buf)
+        _UniffiFfiConverterOptionalTypeCursorBadgeSelection.write(value.cursor_badge, buf)
 
 @dataclass
 class StartSessionOutput:
     """
     Successful structured result returned by `start_session`.
 """
-    def __init__(self, *, state:SessionStateOutput, active:bool, revived:bool, cursor_motion:typing.Optional[CursorMotionSelection]):
+    def __init__(self, *, state:SessionStateOutput, active:bool, revived:bool, cursor_motion:typing.Optional[CursorMotionSelection], cursor_badge:typing.Optional[CursorBadgeSelection]):
         self.state = state
         self.active = active
         self.revived = revived
         self.cursor_motion = cursor_motion
+        self.cursor_badge = cursor_badge
 
 
 
 
     def __str__(self):
-        return "StartSessionOutput(state={}, active={}, revived={}, cursor_motion={})".format(self.state, self.active, self.revived, self.cursor_motion)
+        return "StartSessionOutput(state={}, active={}, revived={}, cursor_motion={}, cursor_badge={})".format(self.state, self.active, self.revived, self.cursor_motion, self.cursor_badge)
     def __eq__(self, other):
         if self.state != other.state:
             return False
@@ -7491,6 +7690,8 @@ class StartSessionOutput:
         if self.revived != other.revived:
             return False
         if self.cursor_motion != other.cursor_motion:
+            return False
+        if self.cursor_badge != other.cursor_badge:
             return False
         return True
 
@@ -7502,6 +7703,7 @@ class _UniffiFfiConverterTypeStartSessionOutput(_UniffiConverterRustBuffer):
             active=_UniffiFfiConverterBoolean.read(buf),
             revived=_UniffiFfiConverterBoolean.read(buf),
             cursor_motion=_UniffiFfiConverterOptionalTypeCursorMotionSelection.read(buf),
+            cursor_badge=_UniffiFfiConverterOptionalTypeCursorBadgeSelection.read(buf),
         )
 
     @staticmethod
@@ -7510,6 +7712,7 @@ class _UniffiFfiConverterTypeStartSessionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.active)
         _UniffiFfiConverterBoolean.check_lower(value.revived)
         _UniffiFfiConverterOptionalTypeCursorMotionSelection.check_lower(value.cursor_motion)
+        _UniffiFfiConverterOptionalTypeCursorBadgeSelection.check_lower(value.cursor_badge)
 
     @staticmethod
     def write(value, buf):
@@ -7517,6 +7720,7 @@ class _UniffiFfiConverterTypeStartSessionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.active, buf)
         _UniffiFfiConverterBoolean.write(value.revived, buf)
         _UniffiFfiConverterOptionalTypeCursorMotionSelection.write(value.cursor_motion, buf)
+        _UniffiFfiConverterOptionalTypeCursorBadgeSelection.write(value.cursor_badge, buf)
 
 class _UniffiFfiConverterOptionalTypeBoundsExpectation(_UniffiConverterRustBuffer):
     @classmethod
@@ -8819,6 +9023,8 @@ __all__ = [
     "ClipboardReadOutput",
     "ClipboardWriteInput",
     "ClipboardWriteOutput",
+    "CursorBadgeOutput",
+    "CursorBadgeSelection",
     "CursorMotionEffects",
     "CursorMotionEffectsOutput",
     "CursorMotionOutput",
@@ -8867,6 +9073,8 @@ __all__ = [
     "PressKeyInput",
     "ScrollInput",
     "SessionStateOutput",
+    "SetAgentCursorBadgeInput",
+    "SetAgentCursorBadgeOutput",
     "SetAgentCursorEnabledInput",
     "SetAgentCursorEnabledOutput",
     "SetAgentCursorMotionInput",

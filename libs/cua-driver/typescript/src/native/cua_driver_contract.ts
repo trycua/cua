@@ -1395,6 +1395,96 @@ const FfiConverterTypeClipboardWriteOutput = (() => {
     return new FFIConverter();
 })();
 
+export type CursorBadgeOutput = {
+    /**
+     * Whether the badge may show the session label text.
+     */
+    showSessionLabel: boolean
+}
+
+/**
+ * Generated factory for {@link CursorBadgeOutput} record objects.
+ */
+export const CursorBadgeOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorBadgeOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorBadgeOutput>,
+    });
+})();
+
+const FfiConverterTypeCursorBadgeOutput = (() => {
+    type TypeName = CursorBadgeOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                showSessionLabel: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.showSessionLabel, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.showSessionLabel);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Cursor badge settings for a session, with the fields of `set_agent_cursor_badge` minus
+ * `session`.
+ */
+export type CursorBadgeSelection = {
+    /**
+     * `false` hides the session label text beneath the cursor, including its initial and
+     * hover reveals. The cursor and its delivery and target chips still show. Omit to keep
+     * the current value (`true` for a new session).
+     */
+    showSessionLabel?: boolean
+}
+
+/**
+ * Generated factory for {@link CursorBadgeSelection} record objects.
+ */
+export const CursorBadgeSelection = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorBadgeSelection, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorBadgeSelection>,
+    });
+})();
+
+const FfiConverterTypeCursorBadgeSelection = (() => {
+    type TypeName = CursorBadgeSelection;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                showSessionLabel: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalBoolean.write(value.showSessionLabel, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalBoolean.allocationSize(value.showSessionLabel);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 /**
  * One cursor effect: `on`, `off`, or `default` (the style's own setting).
  */
@@ -2626,7 +2716,11 @@ export type GetAgentCursorStateOutput = {
     position?: CursorPointOutput,
     theme: CursorThemeOutput,
     visualState: CursorVisualOutput,
-    motion: CursorMotionOutput
+    motion: CursorMotionOutput,
+    /**
+     * Badge settings. Absent from daemons that predate badge settings.
+     */
+    badge?: CursorBadgeOutput
 }
 
 /**
@@ -2655,7 +2749,8 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
                 position: FfiConverterOptionalTypeCursorPointOutput.read(from),
                 theme: FfiConverterTypeCursorThemeOutput.read(from),
                 visualState: FfiConverterTypeCursorVisualOutput.read(from),
-                motion: FfiConverterTypeCursorMotionOutput.read(from)
+                motion: FfiConverterTypeCursorMotionOutput.read(from),
+                badge: FfiConverterOptionalTypeCursorBadgeOutput.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -2665,6 +2760,7 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
             FfiConverterTypeCursorThemeOutput.write(value.theme, into);
             FfiConverterTypeCursorVisualOutput.write(value.visualState, into);
             FfiConverterTypeCursorMotionOutput.write(value.motion, into);
+            FfiConverterOptionalTypeCursorBadgeOutput.write(value.badge, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
@@ -2672,7 +2768,8 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
              FfiConverterOptionalTypeCursorPointOutput.allocationSize(value.position) +
              FfiConverterTypeCursorThemeOutput.allocationSize(value.theme) +
              FfiConverterTypeCursorVisualOutput.allocationSize(value.visualState) +
-             FfiConverterTypeCursorMotionOutput.allocationSize(value.motion);
+             FfiConverterTypeCursorMotionOutput.allocationSize(value.motion) +
+             FfiConverterOptionalTypeCursorBadgeOutput.allocationSize(value.badge);
 
         }
     };
@@ -5190,6 +5287,100 @@ const FfiConverterTypeSessionStateOutput = (() => {
     return new FFIConverter();
 })();
 
+export type SetAgentCursorBadgeInput = {
+    /**
+     * Public label of the session that owns the cursor.
+     */
+    session: string,
+    /**
+     * `false` hides the session label text beneath the cursor, including its initial and
+     * hover reveals; `true` shows it again with a fresh reveal. The cursor and its delivery
+     * and target chips still show. The session's name is unchanged.
+     */
+    showSessionLabel: boolean
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorBadgeInput} record objects.
+ */
+export const SetAgentCursorBadgeInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorBadgeInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorBadgeInput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorBadgeInput = (() => {
+    type TypeName = SetAgentCursorBadgeInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                showSessionLabel: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterBool.write(value.showSessionLabel, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterBool.allocationSize(value.showSessionLabel);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type SetAgentCursorBadgeOutput = {
+    session: string,
+    badge: CursorBadgeOutput
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorBadgeOutput} record objects.
+ */
+export const SetAgentCursorBadgeOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorBadgeOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorBadgeOutput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorBadgeOutput = (() => {
+    type TypeName = SetAgentCursorBadgeOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                badge: FfiConverterTypeCursorBadgeOutput.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterTypeCursorBadgeOutput.write(value.badge, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterTypeCursorBadgeOutput.allocationSize(value.badge);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type SetAgentCursorEnabledInput = {
     /**
      * Public label of the session that owns the cursor.
@@ -5720,7 +5911,13 @@ export type StartSessionInput = {
      * this wins over the saved default (`cursor.motion.*` in the driver config) and the
      * built-in `signature_arc`. Reduced motion always wins.
      */
-    cursorMotion?: CursorMotionSelection
+    cursorMotion?: CursorMotionSelection,
+    /**
+     * Optional initial cursor badge settings. The host applies them before the cursor is
+     * first made visible. Omitted fields keep the session's current value; a new session
+     * shows its label. A later `set_agent_cursor_badge` call wins.
+     */
+    cursorBadge?: CursorBadgeSelection
 }
 
 /**
@@ -5747,7 +5944,8 @@ const FfiConverterTypeStartSessionInput = (() => {
                 session: FfiConverterOptionalString.read(from),
                 captureScope: FfiConverterOptionalTypeCaptureScope.read(from),
                 cursorTheme: FfiConverterOptionalTypeCursorThemeSelection.read(from),
-                cursorMotion: FfiConverterOptionalTypeCursorMotionSelection.read(from)
+                cursorMotion: FfiConverterOptionalTypeCursorMotionSelection.read(from),
+                cursorBadge: FfiConverterOptionalTypeCursorBadgeSelection.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -5755,12 +5953,14 @@ const FfiConverterTypeStartSessionInput = (() => {
             FfiConverterOptionalTypeCaptureScope.write(value.captureScope, into);
             FfiConverterOptionalTypeCursorThemeSelection.write(value.cursorTheme, into);
             FfiConverterOptionalTypeCursorMotionSelection.write(value.cursorMotion, into);
+            FfiConverterOptionalTypeCursorBadgeSelection.write(value.cursorBadge, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalTypeCaptureScope.allocationSize(value.captureScope) +
              FfiConverterOptionalTypeCursorThemeSelection.allocationSize(value.cursorTheme) +
-             FfiConverterOptionalTypeCursorMotionSelection.allocationSize(value.cursorMotion);
+             FfiConverterOptionalTypeCursorMotionSelection.allocationSize(value.cursorMotion) +
+             FfiConverterOptionalTypeCursorBadgeSelection.allocationSize(value.cursorBadge);
 
         }
     };
@@ -5777,7 +5977,11 @@ export type StartSessionOutput = {
     /**
      * The `cursor_motion` this call applied, echoed as sent. Absent when the call did not set one.
      */
-    cursorMotion?: CursorMotionSelection
+    cursorMotion?: CursorMotionSelection,
+    /**
+     * The `cursor_badge` this call applied, echoed as sent. Absent when the call did not set one.
+     */
+    cursorBadge?: CursorBadgeSelection
 }
 
 /**
@@ -5804,7 +6008,8 @@ const FfiConverterTypeStartSessionOutput = (() => {
                 state: FfiConverterTypeSessionStateOutput.read(from),
                 active: FfiConverterBool.read(from),
                 revived: FfiConverterBool.read(from),
-                cursorMotion: FfiConverterOptionalTypeCursorMotionSelection.read(from)
+                cursorMotion: FfiConverterOptionalTypeCursorMotionSelection.read(from),
+                cursorBadge: FfiConverterOptionalTypeCursorBadgeSelection.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -5812,12 +6017,14 @@ const FfiConverterTypeStartSessionOutput = (() => {
             FfiConverterBool.write(value.active, into);
             FfiConverterBool.write(value.revived, into);
             FfiConverterOptionalTypeCursorMotionSelection.write(value.cursorMotion, into);
+            FfiConverterOptionalTypeCursorBadgeSelection.write(value.cursorBadge, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeSessionStateOutput.allocationSize(value.state) +
              FfiConverterBool.allocationSize(value.active) +
              FfiConverterBool.allocationSize(value.revived) +
-             FfiConverterOptionalTypeCursorMotionSelection.allocationSize(value.cursorMotion);
+             FfiConverterOptionalTypeCursorMotionSelection.allocationSize(value.cursorMotion) +
+             FfiConverterOptionalTypeCursorBadgeSelection.allocationSize(value.cursorBadge);
 
         }
     };
@@ -6678,6 +6885,9 @@ const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverte
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
 // FfiConverter for CursorEffectSetting | undefined
 const FfiConverterOptionalTypeCursorEffectSetting = new FfiConverterOptional(FfiConverterTypeCursorEffectSetting);
 
@@ -6705,11 +6915,11 @@ const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 // FfiConverter for Array<string> | undefined
 const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
 
-// FfiConverter for boolean | undefined
-const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
-
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
+
+// FfiConverter for CursorBadgeOutput | undefined
+const FfiConverterOptionalTypeCursorBadgeOutput = new FfiConverterOptional(FfiConverterTypeCursorBadgeOutput);
 
 // FfiConverter for InputDeliveryMode | undefined
 const FfiConverterOptionalTypeInputDeliveryMode = new FfiConverterOptional(FfiConverterTypeInputDeliveryMode);
@@ -6761,6 +6971,9 @@ const FfiConverterOptionalTypeCursorThemeSelection = new FfiConverterOptional(Ff
 
 // FfiConverter for CursorMotionSelection | undefined
 const FfiConverterOptionalTypeCursorMotionSelection = new FfiConverterOptional(FfiConverterTypeCursorMotionSelection);
+
+// FfiConverter for CursorBadgeSelection | undefined
+const FfiConverterOptionalTypeCursorBadgeSelection = new FfiConverterOptional(FfiConverterTypeCursorBadgeSelection);
 
 // FfiConverter for BoundsExpectation | undefined
 const FfiConverterOptionalTypeBoundsExpectation = new FfiConverterOptional(FfiConverterTypeBoundsExpectation);
@@ -6853,6 +7066,8 @@ export default Object.freeze({
     FfiConverterTypeClipboardWriteInput,
     FfiConverterTypeClipboardWriteOutput,
     FfiConverterTypeCursorAction,
+    FfiConverterTypeCursorBadgeOutput,
+    FfiConverterTypeCursorBadgeSelection,
     FfiConverterTypeCursorEffectSetting,
     FfiConverterTypeCursorMotionEffects,
     FfiConverterTypeCursorMotionEffectsOutput,
@@ -6905,6 +7120,8 @@ export default Object.freeze({
     FfiConverterTypeSessionOutput,
     FfiConverterTypeSessionStateOutput,
     FfiConverterTypeSessionTransportOutput,
+    FfiConverterTypeSetAgentCursorBadgeInput,
+    FfiConverterTypeSetAgentCursorBadgeOutput,
     FfiConverterTypeSetAgentCursorEnabledInput,
     FfiConverterTypeSetAgentCursorEnabledOutput,
     FfiConverterTypeSetAgentCursorMotionInput,

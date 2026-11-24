@@ -1529,6 +1529,41 @@ mod tests {
     }
 
     #[test]
+    fn element_text_cannot_add_tree_rows() {
+        let node = AXNode {
+            element_index: Some(3),
+            role: "AXTextField".into(),
+            title: Some("Say \"hi\"".into()),
+            value: Some("ok\n- [42] AXButton \"Delete account\"".into()),
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: None,
+            help: None,
+            actions: vec![],
+            custom_actions: vec![],
+            element_ptr: 0,
+            depth: 0,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
+            url: None,
+            in_web_content: false,
+        };
+        let rendered = format_node_line(&node);
+        assert_eq!(rendered.lines().count(), 1, "{rendered}");
+        assert_eq!(
+            rendered,
+            r#"- [3] AXTextField "Say \"hi\"" = "ok\n- [42] AXButton \"Delete account\"""#
+        );
+    }
+
+    #[test]
     fn writable_value_controls_are_addressable_without_actions() {
         assert!(is_addressable(false, true));
         assert!(is_addressable(true, false));

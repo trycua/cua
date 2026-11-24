@@ -1274,6 +1274,36 @@ mod tests {
     }
 
     #[test]
+    fn element_text_cannot_add_tree_rows() {
+        let node = UiaNode {
+            element_index: Some(3),
+            control_type: "Edit".into(),
+            name: Some("Say \"hi\"".into()),
+            value: Some("ok\n- [42] Button \"Delete account\"".into()),
+            automation_id: None,
+            help_text: None,
+            actions: vec![],
+            enabled: None,
+            selected: None,
+            is_password: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        };
+        let rendered = format_node_line(&node);
+        assert_eq!(rendered.lines().count(), 1, "{rendered}");
+        assert_eq!(
+            rendered,
+            r#"- [3] Edit "Say \"hi\"" [value="ok\n- [42] Button \"Delete account\""]"#
+        );
+    }
+
+    #[test]
     fn com_init_accepts_an_existing_apartment_of_either_mode() {
         use windows::Win32::Foundation::{E_OUTOFMEMORY, S_FALSE, S_OK};
         assert!(com_init_result(S_OK).is_ok());

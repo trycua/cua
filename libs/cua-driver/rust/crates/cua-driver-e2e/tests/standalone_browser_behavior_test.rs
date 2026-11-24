@@ -144,6 +144,31 @@ fn standalone_focus_gated_click_html() -> String {
     )
 }
 
+/// The fixture page with every control hidden and a canvas over the lower 60%
+/// of the viewport. The canvas has no accessibility element of its own; it
+/// publishes each pointerdown's viewport point and the window's insets
+/// around the viewport.
+#[cfg(target_os = "macos")]
+fn standalone_canvas_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+<canvas id="pixel-canvas"
+        style="visibility:visible !important;position:fixed;left:0;top:40%;width:100vw;height:60vh"></canvas>
+<span id="canvas-point" data-cua-id="canvas-point">canvas=idle</span>
+<script>
+  let canvasClicks = 0;
+  document.getElementById('pixel-canvas').addEventListener('pointerdown', event => {
+    canvasClicks += 1;
+    document.getElementById('canvas-point').textContent =
+      `canvas=${canvasClicks}:${event.clientX},${event.clientY}` +
+      `@${outerWidth - innerWidth},${outerHeight - innerHeight}`;
+  });
+</script>
+</body>"#,
+    )
+}
+
 fn standalone_reduced_motion_html() -> String {
     standalone_fixture_html().replace(
         "</body>",
@@ -2736,6 +2761,118 @@ fn run_background_web_click_noop(spec: &BrowserSpec) {
             );
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+/// #5484: a background pixel click on web content lands at the requested
+/// point. An accessibility press on the element the point hit-tests to drops
+/// the coordinates, so a canvas saw no click, or one at its centre.
+#[cfg(target_os = "macos")]
+fn run_background_canvas_pixel_click(spec: &BrowserSpec) {
+    let scenario = format!(
+        "macos-{}-standalone-background-canvas-pixel-click",
+        spec.name
+    );
+    let case = CaseSpec::delivered(
+        scenario.clone(),
+        spec.name.clone(),
+        "standalone-chromium",
+        "background_canvas_pixel_click",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::MacosCgEventPid,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_canvas_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "canvas-point", "canvas=idle");
+        let session = format!("standalone-canvas-click-{}", fixture.pid);
+        run_with_background_oracles(&mut fixture, |fixture| {
+            // Click at a fraction of the window screenshot and check the
+            // canvas saw that point, converted to viewport coordinates.
+            let click_at = |fixture: &mut BrowserFixture, nth: usize, fx: f64, fy: f64| {
+                let state = fixture.driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                    }),
+                );
+                assert!(!state.is_error(), "window capture: {}", state.raw);
+                let shot = state.structured();
+                let number = |key: &str| {
+                    shot[key]
+                        .as_f64()
+                        .unwrap_or_else(|| panic!("window capture has no {key}: {}", state.raw))
+                };
+                let scale = number("screenshot_scale");
+                let x = (number("screenshot_width") * fx).round();
+                let y = (number("screenshot_height") * fy).round();
+                let click = fixture.driver.call(
+                    "click",
+                    serde_json::json!({
+                        "session": session,
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "x": x,
+                        "y": y,
+                        "capture_id": shot["capture_id"].as_str().expect("capture_id"),
+                        "delivery_mode": "background",
+                    }),
+                );
+                assert!(!click.is_error(), "canvas click: {}", click.raw);
+                assert_eq!(
+                    click.action_delivery_mode(),
+                    Some("background"),
+                    "{}",
+                    click.raw
+                );
+                let prefix = format!("canvas={nth}:");
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let seen = loop {
+                    let seen = fixture.server.text("canvas-point").unwrap_or_default();
+                    if let Some(seen) = seen.strip_prefix(&prefix) {
+                        break seen.to_owned();
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "the canvas saw no click {nth} ({seen}): {}",
+                        click.raw
+                    );
+                    thread::sleep(Duration::from_millis(50));
+                };
+                let numbers = seen
+                    .split(['@', ','])
+                    .map(|part| part.parse::<f64>().expect("canvas report"))
+                    .collect::<Vec<_>>();
+                let [client_x, client_y, inset_x, inset_y] = numbers[..] else {
+                    panic!("canvas report {seen}");
+                };
+                // The viewport sits at the bottom of the window, centred
+                // across its side borders, so its origin in the window is
+                // (inset_x / 2, inset_y) in points.
+                let (want_x, want_y) = (x / scale - inset_x / 2.0, y / scale - inset_y);
+                assert!(
+                    (client_x - want_x).abs() <= 8.0 && (client_y - want_y).abs() <= 8.0,
+                    "click {nth} at screenshot ({x}, {y}) reached viewport ({client_x}, \
+                     {client_y}), not ({want_x}, {want_y}): {}",
+                    click.raw
+                );
+            };
+            // Two points away from the canvas centre (50%, 70% of the
+            // viewport), where an accessibility press would land.
+            click_at(fixture, 1, 0.25, 0.6);
+            click_at(fixture, 2, 0.75, 0.9);
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });
@@ -5991,6 +6128,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_background_web_click_noop,
     run_background_web_click_noop
+);
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_background_canvas_pixel_click,
+    run_background_canvas_pixel_click
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(

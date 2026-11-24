@@ -3,6 +3,8 @@
 
 //! AXPageReader: extract text and query elements from AX tree markdown strings.
 
+use cua_driver_core::tree_text;
+
 pub struct AXPageReader;
 
 #[derive(Debug, Clone)]
@@ -180,37 +182,26 @@ fn parse_ax_line(line: &str) -> Option<AXElement> {
     let mut pos = after_role;
 
     // Title: starts with `"`.
-    if pos.starts_with('"') {
-        let (t, remaining) = parse_quoted_string(pos);
+    if let Some((t, remaining)) = tree_text::unquote(pos) {
         title = t;
         pos = remaining.trim_start();
     }
 
     // Value: `= "..."`.
-    if let Some(after_eq) = pos.strip_prefix("= ") {
-        let p = after_eq.trim_start();
-        if p.starts_with('"') {
-            let (v, remaining) = parse_quoted_string(p);
-            value = v;
-            pos = remaining.trim_start();
-        } else {
-            pos = after_eq;
-        }
-    } else if let Some(after_eq) = pos.strip_prefix('=') {
-        let p = after_eq.trim_start();
-        if p.starts_with('"') {
-            let (v, remaining) = parse_quoted_string(p);
-            value = v;
-            pos = remaining.trim_start();
-        } else {
-            pos = after_eq;
+    if let Some(after_eq) = pos.strip_prefix('=') {
+        match tree_text::unquote(after_eq.trim_start()) {
+            Some((v, remaining)) => {
+                value = v;
+                pos = remaining.trim_start();
+            }
+            None => pos = after_eq.trim_start(),
         }
     }
 
     // Description: `(...)`.
     if pos.starts_with('(') {
         if let Some(close) = pos.find(')') {
-            description = pos[1..close].to_owned();
+            description = tree_text::unescape(&pos[1..close]);
         }
     }
 
@@ -221,30 +212,6 @@ fn parse_ax_line(line: &str) -> Option<AXElement> {
         description,
         index,
     })
-}
-
-/// Parse a double-quoted string starting at the beginning of `s`.
-/// Returns (content, remainder_after_closing_quote).
-fn parse_quoted_string(s: &str) -> (String, &str) {
-    if !s.starts_with('"') {
-        return (String::new(), s);
-    }
-    let s = &s[1..]; // skip opening quote
-    let mut result = String::new();
-    let mut chars = s.char_indices();
-    loop {
-        match chars.next() {
-            None => return (result, ""),
-            Some((i, '\\')) => match chars.next() {
-                Some((_, c)) => result.push(c),
-                None => return (result, &s[i + 1..]),
-            },
-            Some((i, '"')) => {
-                return (result, &s[i + 1..]);
-            }
-            Some((_, c)) => result.push(c),
-        }
-    }
 }
 
 fn split_first_word(s: &str) -> (&str, &str) {

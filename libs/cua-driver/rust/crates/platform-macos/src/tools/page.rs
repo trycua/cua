@@ -14,6 +14,7 @@
 
 use async_trait::async_trait;
 use cua_driver_core::page::{PageBackend, PageReadResult};
+use cua_driver_core::tree_text;
 use std::{future::Future, sync::Arc};
 
 use super::ToolState;
@@ -262,17 +263,17 @@ fn format_ax_elements(elements: &[crate::browser::ax_page_reader::AXElement]) ->
     for el in elements {
         let index_str = el.index.map(|i| format!("[{i}] ")).unwrap_or_default();
         let title = if !el.title.is_empty() {
-            format!(" \"{}\"", el.title)
+            format!(" \"{}\"", tree_text::escape(&el.title))
         } else {
             String::new()
         };
         let value = if !el.value.is_empty() {
-            format!(" = \"{}\"", el.value)
+            format!(" = \"{}\"", tree_text::escape(&el.value))
         } else {
             String::new()
         };
         let desc = if !el.description.is_empty() {
-            format!(" ({})", el.description)
+            format!(" ({})", tree_text::escape(&el.description))
         } else {
             String::new()
         };

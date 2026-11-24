@@ -19,6 +19,7 @@ use super::bindings::*;
 use super::launch::{is_still_launching, LaunchStep, LaunchWait};
 use super::window_scope::{decide_window_scope, ScopeDecision, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
+use cua_driver_core::tree_text;
 use cua_driver_core::walk_budget::{WalkBudget, WalkOutcome};
 use std::time::Instant;
 
@@ -1144,11 +1145,11 @@ fn format_node_line(node: &AXNode) -> String {
 
     // AXTitle → "title"
     if let Some(t) = &node.title {
-        parts.push_str(&format!(" \"{}\"", t));
+        parts.push_str(&format!(" \"{}\"", tree_text::escape(t)));
     }
     // AXValue → = "value"
     if let Some(v) = &node.value {
-        parts.push_str(&format!(" = \"{}\"", v));
+        parts.push_str(&format!(" = \"{}\"", tree_text::escape(v)));
     }
     // AXDescription → (description) — critical for Calculator digit buttons
     // where AXTitle="" but AXDescription="2". A description that only repeats
@@ -1158,7 +1159,7 @@ fn format_node_line(node: &AXNode) -> String {
         .as_ref()
         .filter(|d| node.title.as_ref() != Some(*d))
     {
-        parts.push_str(&format!(" ({})", d));
+        parts.push_str(&format!(" ({})", tree_text::escape(d)));
     }
 
     // Bracketed metadata block (identifier, help, actions). An unindexed row
@@ -1166,7 +1167,7 @@ fn format_node_line(node: &AXNode) -> String {
     // to show.
     if node.element_index.is_none() {
         if let Some(h) = &node.help {
-            parts.push_str(&format!(" [help=\"{}\"]", h));
+            parts.push_str(&format!(" [help=\"{}\"]", tree_text::escape(h)));
         }
     } else {
         let mut attrs: Vec<String> = Vec::new();
@@ -1175,10 +1176,10 @@ fn format_node_line(node: &AXNode) -> String {
             .as_deref()
             .filter(|id| !id.trim().is_empty())
         {
-            attrs.push(format!("id={}", id));
+            attrs.push(format!("id={}", tree_text::escape(id)));
         }
         if let Some(h) = &node.help {
-            attrs.push(format!("help=\"{}\"", h));
+            attrs.push(format!("help=\"{}\"", tree_text::escape(h)));
         }
         if node.enabled == Some(false) {
             attrs.push("enabled=false".to_owned());

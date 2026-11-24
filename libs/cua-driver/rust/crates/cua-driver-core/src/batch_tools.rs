@@ -22,6 +22,7 @@ use crate::{
     protocol::{Content, ToolResult},
     recording_tools::ReplayRegistrySlot,
     tool::{Tool, ToolDef, ToolRegistry},
+    tree_text,
 };
 
 pub mod locate;
@@ -1596,8 +1597,8 @@ fn row_role_and_label(line: &str) -> Option<(String, String)> {
     let role_end = rest.find(char::is_whitespace)?;
     let role = rest[..role_end].to_owned();
     let rest = rest[role_end..].trim_start();
-    let label = if let Some(quoted) = rest.strip_prefix('"') {
-        quoted[..quoted.find('"')?].to_owned()
+    let label = if rest.starts_with('"') {
+        tree_text::unquote(rest)?.0
     } else {
         let inner = rest.strip_prefix('(')?;
         let mut depth = 1usize;
@@ -1615,7 +1616,7 @@ fn row_role_and_label(line: &str) -> Option<(String, String)> {
                 _ => {}
             }
         }
-        inner[..end?].to_owned()
+        tree_text::unescape(&inner[..end?])
     };
     (!label.trim().is_empty()).then_some((role, label))
 }

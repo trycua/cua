@@ -24,6 +24,7 @@ use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State, StateSet};
 use atspi_connection::AccessibilityConnection;
+use cua_driver_core::tree_text;
 
 use super::{AtspiIdentity, AtspiNode};
 
@@ -2403,11 +2404,11 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> Rendered {
             }
             let attrs = indexed_row_attrs(v.enabled, &v.actions);
             let val_part = match &v.value {
-                Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
+                Some(val) if !val.is_empty() => format!(" value=\"{}\"", tree_text::escape(val)),
                 _ => String::new(),
             };
             let description_shown = (!v.description.is_empty() && v.description != name)
-                .then(|| format!(" (description \"{}\")", v.description));
+                .then(|| format!(" (description \"{}\")", tree_text::escape(&v.description)));
             let collapsed_note = v
                 .collapsed_children
                 .map(|n| format!(" (closed menu, {n} items; click it to open)"))
@@ -2420,6 +2421,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> Rendered {
                 "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [{attrs}]{collapsed_note}{unlabelled_shown}
 ",
                 role = v.role,
+                name = tree_text::escape(&name),
                 desc = description_shown.as_deref().unwrap_or(""),
             ));
             let mut description_parts: Vec<String> = Vec::new();
@@ -2466,7 +2468,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> Rendered {
                 "{indent}- {role} = \"{name}\"
 ",
                 role = v.role,
-                name = v.name,
+                name = tree_text::escape(&v.name),
             ));
             observations.push(cua_driver_contract::WindowObservation {
                 role: v.role.clone(),

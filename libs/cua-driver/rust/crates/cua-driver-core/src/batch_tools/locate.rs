@@ -21,6 +21,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     protocol::{Content, ToolResult},
     tool::ToolRegistry,
+    tree_text,
 };
 
 /// Keys a step may add to an action's arguments to name its target. They are
@@ -1298,13 +1299,10 @@ pub(crate) fn display_rows(read: &Read, spec: &ElementSpec) -> Vec<Value> {
         .filter_map(|rest| {
             let role = rest.split_whitespace().next()?.to_owned();
             let after = rest[role.len()..].trim_start();
-            let quoted = |text: &str| -> Option<String> {
-                let inner = text.strip_prefix('"')?;
-                inner.find('"').map(|end| inner[..end].to_owned())
-            };
+            let quoted = |text: &str| tree_text::unquote(text).map(|(unquoted, _)| unquoted);
             let label = quoted(after).or_else(|| {
                 let open = after.rfind('(')?;
-                after[open + 1..].strip_suffix(')').map(str::to_owned)
+                after[open + 1..].strip_suffix(')').map(tree_text::unescape)
             });
             let value = after.find("= ").and_then(|at| quoted(&after[at + 2..]));
             let folded = fold(rest);

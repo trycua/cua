@@ -23,6 +23,7 @@
 //! (static text) that the structured `elements` array omits.
 
 use crate::protocol::{Content, ToolResult};
+use crate::tree_text;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -802,10 +803,8 @@ fn menu_path_in(markdown: &str, index: u64) -> Option<Vec<String>> {
             .and_then(|r| r.split_once("] ").map(|(_, r)| r))
             .unwrap_or(rest);
         let (role, rest) = rest.split_once(' ').unwrap_or((rest, ""));
-        let label = rest
-            .trim_start()
-            .strip_prefix('"')
-            .and_then(|r| r.split_once('"').map(|(label, _)| label.to_owned()))
+        let label = tree_text::unquote(rest.trim_start())
+            .map(|(label, _)| label)
             .unwrap_or_default();
         Some((role.to_owned(), label))
     };

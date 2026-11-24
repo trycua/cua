@@ -1027,9 +1027,10 @@ fn focused_element_description(
                 .or(node.identifier.as_deref());
             match label {
                 Some(label) => format!(
-                    "[{}] {} \"{label}\"",
+                    "[{}] {} \"{}\"",
                     node.element_index.unwrap_or_default(),
-                    node.role
+                    node.role,
+                    cua_driver_core::tree_text::escape(label)
                 ),
                 None => format!("[{}] {}", node.element_index.unwrap_or_default(), node.role),
             }

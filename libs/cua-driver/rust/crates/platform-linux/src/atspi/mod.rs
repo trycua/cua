@@ -926,7 +926,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
     };
     md.push_str(&format!(
         "- [0] window \"{}\" [actions=[activate]]\n",
-        title
+        cua_driver_core::tree_text::escape(&title)
     ));
     nodes.push(root_node);
 

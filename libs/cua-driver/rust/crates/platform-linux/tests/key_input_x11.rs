@@ -7,6 +7,12 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
+use cua_driver_core::interactive_input::{
+    InteractiveDeliveryMode, InteractiveInputBatch, InteractiveInputEvent, KeyOp, KeyState,
+    Modifier, TargetedDelivery, TargetedInputError,
+};
+use platform_linux::input::interactive::{InteractiveInputConfig, InteractiveInputSession};
+use platform_linux::input::targeted::{self, KeyRequest};
 use platform_linux::input::{
     send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_with_delay,
     send_type_text_xtest, send_type_text_xtest_paced, TypePacing,
@@ -247,6 +253,55 @@ fn xtest_key_taps_have_a_delivered_hold_interval() -> Result<()> {
             assert_eq!(keymap.keys[keycode / 8] & (1 << (keycode % 8)), 0);
         }
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn a_failed_xtest_chord_leaves_no_key_held() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let session = InteractiveInputSession::open(InteractiveInputConfig {
+        window: None,
+        region: Some((0, 0, 200, 100)),
+        delivery_mode: InteractiveDeliveryMode::PersistentForeground,
+    })?;
+    let chord = InteractiveInputBatch {
+        first_sequence: 0,
+        events: vec![InteractiveInputEvent::Key {
+            key: "nokey".into(),
+            state: KeyState::Down,
+            modifiers: vec![Modifier::Control],
+            repeat: false,
+        }],
+    };
+    assert!(session.dispatch(&chord).is_err());
+    drop(session);
+
+    let keymap = conn.query_keymap()?.reply()?;
+    let held: Vec<usize> = (8..256)
+        .filter(|code| keymap.keys[code / 8] & (1 << (code % 8)) != 0)
+        .collect();
+    assert!(held.is_empty(), "keycodes left held: {held:?}");
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn an_xtest_hotkey_with_an_unknown_modifier_sends_nothing() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let result = targeted::keyboard(&KeyRequest {
+        window: None,
+        delivery: TargetedDelivery::Foreground,
+        allow_auto_foreground: true,
+        op: KeyOp::Hotkey(vec!["altgr".into(), "x".into()]),
+    });
+    assert!(
+        matches!(result, Err(TargetedInputError::Unsupported(_))),
+        "{result:?}"
+    );
+    assert!(keyboard_events(&conn, 1).is_err());
     Ok(())
 }
 

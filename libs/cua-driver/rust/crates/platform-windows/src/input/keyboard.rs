@@ -1179,7 +1179,7 @@ impl InputQueueAttachment {
     /// queue's synchronous key state, whose toggle bit flips only when the
     /// target thread reads the sentinel key-down.
     fn wait_for_drain(&self, timeout: Duration) -> bool {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetActiveWindow, SetFocus};
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
         let toggled = || unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
         let before = toggled();
         let sentinel = [sentinel_key_input(false), sentinel_key_input(true)];
@@ -1206,7 +1206,7 @@ impl InputQueueAttachment {
 
     /// Insert `events`, then yield until the sentinel key-up is read or `timeout`.
     fn send_and_await_read(&self, events: &[INPUT], timeout: Duration) -> UnitRead {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetActiveWindow, SetFocus};
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
         let before = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
         let sent = unsafe { SendInput(events, std::mem::size_of::<INPUT>() as i32) };
         if (sent as usize) < events.len() {

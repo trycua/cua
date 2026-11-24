@@ -1892,3 +1892,229 @@ mod thread_activation_tests {
         assert!(!thread_activation_processed(HWND(std::ptr::null_mut())));
     }
 }
+
+/// A target whose UI thread is busy when the driver brings it to the
+/// foreground: the activation stays queued until the thread pumps again.
+/// Foreground text must still reach it once it does (WPF harness, release
+/// gate run 45363565804: 0 of 32 units read while the title bar stayed
+/// inactive, then the window activated the moment the driver detached).
+#[cfg(test)]
+mod busy_target_activation_tests {
+    use super::*;
+    use std::sync::{mpsc, Mutex};
+    use windows::core::w;
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+        GetWindowInfo, PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage,
+        MSG, WINDOWINFO, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW,
+        WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    };
+
+    const WM_BUSY: u32 = WM_APP + 1;
+    static TYPED: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match msg {
+            WM_CHAR => {
+                TYPED.lock().unwrap().push(wparam.0 as u16);
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+
+    fn register() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| unsafe {
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(window_proc),
+                hInstance: GetModuleHandleW(None).expect("module handle").into(),
+                lpszClassName: w!("CuaBusyTargetActivation"),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0, "register window class");
+        });
+    }
+
+    /// A top-level window on its own pumping thread. A posted `WM_BUSY`
+    /// makes the thread stop pumping until `release` is signalled.
+    struct UiThread {
+        hwnd: HWND,
+        thread_id: u32,
+        busy: mpsc::Receiver<()>,
+        release: mpsc::Sender<()>,
+        join: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl UiThread {
+        fn spawn(x: i32) -> Self {
+            register();
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let (busy_tx, busy_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel::<()>();
+            let join = std::thread::spawn(move || unsafe {
+                let hwnd = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("CuaBusyTargetActivation"),
+                    w!("cua busy target"),
+                    WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                    x,
+                    100,
+                    300,
+                    200,
+                    None,
+                    None,
+                    Some(GetModuleHandleW(None).expect("module handle").into()),
+                    None,
+                )
+                .expect("create window");
+                ready_tx
+                    .send((hwnd.0 as isize, GetCurrentThreadId()))
+                    .expect("send hwnd");
+                let mut msg = MSG::default();
+                while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    if msg.hwnd.0.is_null() && msg.message == WM_BUSY {
+                        busy_tx.send(()).expect("busy");
+                        let _ = release_rx.recv();
+                        continue;
+                    }
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            });
+            let (hwnd, thread_id) = ready_rx.recv().expect("window ready");
+            Self {
+                hwnd: HWND(hwnd as *mut _),
+                thread_id,
+                busy: busy_rx,
+                release: release_tx,
+                join: Some(join),
+            }
+        }
+
+        fn block(&self) {
+            unsafe { PostThreadMessageW(self.thread_id, WM_BUSY, WPARAM(0), LPARAM(0)) }
+                .expect("post busy");
+            self.busy
+                .recv_timeout(Duration::from_secs(5))
+                .expect("ui thread blocked");
+        }
+
+        fn unblock(&self) {
+            let _ = self.release.send(());
+        }
+    }
+
+    impl Drop for UiThread {
+        fn drop(&mut self) {
+            self.unblock();
+            unsafe {
+                let _ = PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                let _ = PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
+            unsafe {
+                let _ = DestroyWindow(self.hwnd);
+            }
+        }
+    }
+
+    fn caption_active(hwnd: HWND) -> bool {
+        let mut info = WINDOWINFO {
+            cbSize: std::mem::size_of::<WINDOWINFO>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetWindowInfo(hwnd, &mut info) }.is_ok() && info.dwWindowStatus & 1 != 0
+    }
+
+    fn state(label: &str, hwnd: HWND) {
+        let (active, focus) = gui_thread_active_and_focus(hwnd).unwrap_or_default();
+        eprintln!(
+            "[busy-target] {label}: fg={:?} target={:?} queue_active={:?} queue_focus={:?} \
+             caption_active={} activation_processed={}",
+            unsafe { GetForegroundWindow() }.0,
+            hwnd.0,
+            active.0,
+            focus.0,
+            caption_active(hwnd),
+            thread_activation_processed(hwnd),
+        );
+    }
+
+    fn bring_forward(hwnd: HWND) {
+        let _ = unsafe { crate::input::force_foreground_assisted(hwnd) };
+        assert!(
+            wait_for_exact_foreground(hwnd, Duration::from_secs(2)),
+            "window did not become foreground"
+        );
+    }
+
+    fn wait_caption(hwnd: HWND, active: bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if caption_active(hwnd) == active {
+                return true;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_a_target_busy_when_activated() {
+        let target = UiThread::spawn(100);
+        let other = UiThread::spawn(500);
+
+        // The target has been active before, then lost the foreground: its
+        // queue still remembers an active window.
+        bring_forward(target.hwnd);
+        assert!(wait_caption(target.hwnd, true), "target never activated");
+        state("target active", target.hwnd);
+        bring_forward(other.hwnd);
+        assert!(wait_caption(target.hwnd, false), "target never deactivated");
+        state("target in background", target.hwnd);
+
+        // The target's UI thread is busy when the driver activates it.
+        target.block();
+        TYPED.lock().unwrap().clear();
+        let hwnd = target.hwnd.0 as usize as u64;
+        let typing = std::thread::spawn(move || send_text_synthesized(hwnd, "abc"));
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(300) {
+            state("activation pending", target.hwnd);
+            sleep(Duration::from_millis(50));
+        }
+        target.unblock();
+        let result = typing.join().expect("typing thread");
+        state("after typing", target.hwnd);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && TYPED.lock().unwrap().len() < 3 {
+            sleep(Duration::from_millis(10));
+        }
+        let typed = String::from_utf16_lossy(&TYPED.lock().unwrap());
+        eprintln!(
+            "[busy-target] result={:?} typed={typed:?} after {:?}",
+            result.as_ref().map_err(|e| e.to_string()),
+            started.elapsed()
+        );
+        drop(other);
+        drop(target);
+        result.expect("foreground text delivery");
+        assert_eq!(typed, "abc");
+    }
+}

@@ -533,9 +533,6 @@ fn background_unavailable(reason: String) -> ToolResult {
     structured_refusal("background_unavailable", message)
 }
 
-/// The result of a scripted Save that did not confirm. A failure after the save
-/// event reached the app has an unknown outcome, so it is never refused as
-/// unavailable, which would invite a second save in the foreground.
 fn save_failure(
     preface: &str,
     message: &str,

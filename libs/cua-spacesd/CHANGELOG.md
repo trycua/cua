@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.7](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.6...cua-spacesd-v0.17.7) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** report why a Windows key press stalled, and what the doctor's form read ([#8627](https://github.com/trycua/cua/issues/8627)) ([3151ed0](https://github.com/trycua/cua/commit/3151ed03b798aa88bf22cf5b8e578be6a6352f69))
+
 ## [0.17.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.5...cua-spacesd-v0.17.6) (2026-11-23)
 
 

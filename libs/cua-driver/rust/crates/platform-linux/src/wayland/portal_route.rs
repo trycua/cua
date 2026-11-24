@@ -171,14 +171,19 @@ pub(crate) fn parse_portal_file(name: &str, text: &str) -> Option<PortalFile> {
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.as_str())
     };
+    let interfaces = parse_list(get("Interfaces")?)?;
+    if !interfaces
+        .iter()
+        .all(|i| i.starts_with("org.freedesktop.impl.portal."))
+    {
+        return None;
+    }
     Some(PortalFile {
         name: name.to_owned(),
         dbus_name: get("DBusName")?.to_owned(),
-        interfaces: parse_list(get("Interfaces")?)?,
-        use_in: match get("UseIn") {
-            Some(value) => parse_list(value)?,
-            None => Vec::new(),
-        },
+        interfaces,
+        // The frontend registers a backend whose UseIn it cannot read.
+        use_in: get("UseIn").and_then(parse_list).unwrap_or_default(),
     })
 }
 
@@ -500,17 +505,23 @@ type KeyFileGroups = Vec<(String, Vec<(String, String)>)>;
 fn parse_key_file(text: &str) -> Option<KeyFileGroups> {
     let mut groups: KeyFileGroups = Vec::new();
     let mut current = None;
-    for line in text.split('\n') {
-        let line = line
-            .strip_suffix('\r')
-            .unwrap_or(line)
-            .trim_start_matches(glib_space);
+    let lines: Vec<&str> = text.split('\n').collect();
+    for (at, line) in lines.iter().enumerate() {
+        // One CR before an LF ends the line; a CR anywhere else is content.
+        let line = match line.strip_suffix('\r') {
+            Some(stripped) if at + 1 < lines.len() => stripped,
+            _ => line,
+        };
+        let line = line.trim_start_matches(glib_space);
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         if let Some(rest) = line.strip_prefix('[') {
             let name = rest.trim_end_matches([' ', '\t']).strip_suffix(']')?;
-            if name.is_empty() || name.contains(['[', ']']) || name.contains(char::is_control) {
+            if name.is_empty()
+                || name.contains(['[', ']'])
+                || name.contains(|c: char| c.is_ascii_control())
+            {
                 return None;
             }
             current = Some(match groups.iter().position(|(g, _)| g == name) {
@@ -530,6 +541,9 @@ fn parse_key_file(text: &str) -> Option<KeyFileGroups> {
             KeyKind::Localized => continue,
         }
         let value = value.trim_start_matches(glib_space).to_owned();
+        if current == Some(0) && key == "Encoding" && !value.eq_ignore_ascii_case("UTF-8") {
+            return None;
+        }
         match pairs.iter_mut().find(|(k, _)| k == key) {
             Some(pair) => pair.1 = value,
             None => pairs.push((key.to_owned(), value)),
@@ -949,6 +963,21 @@ mod tests {
         .unwrap();
         assert!(locale.interfaces.is_empty(), "{locale:?}");
         assert_eq!(locale.default, Some(vec!["gnome".to_owned()]));
+        // Only a CR before an LF ends a line.
+        assert_eq!(
+            defaults("[preferred]\r\ndefault=none\r\r\n"),
+            Some(vec!["none\r".to_owned()])
+        );
+        assert_eq!(
+            defaults("[preferred]\ndefault=none\r"),
+            Some(vec!["none\r".to_owned()])
+        );
+        // Encoding is only checked in the first group; non-ASCII control
+        // characters are allowed in group names.
+        assert_eq!(
+            defaults("[a\u{85}b]\nEncoding=utf-8\n[preferred]\nEncoding=ISO\ndefault=kde\n"),
+            Some(vec!["kde".to_owned()])
+        );
         let empty_locale = parse_conf(path, "[preferred]\nk[]=x\n").unwrap();
         assert_eq!(
             empty_locale.interfaces,
@@ -977,6 +1006,8 @@ mod tests {
             "[preferred]\x0c\ndefault=none\n",
             "[preferred]\ndefault=none\nk [de]=x\n",
             "[preferred]\ndefault=none\nk[d e]=x\n",
+            "[preferred]\nEncoding=ISO-8859-1\ndefault=none\n",
+            "[pre\x7fferred]\ndefault=none\n",
         ] {
             assert_eq!(parse_conf(Path::new(CONF_PATH), text), None, "{text:?}");
         }
@@ -1007,6 +1038,25 @@ mod tests {
             mutter,
         );
         assert_eq!(empty.route, Route::Unknown);
+    }
+
+    #[test]
+    fn portal_files_are_registered_as_the_frontend_registers_them() {
+        let bad_use_in = parse_portal_file(
+            "kde",
+            "[portal]\nDBusName=org.freedesktop.impl.portal.desktop.kde\n\
+             Interfaces=org.freedesktop.impl.portal.RemoteDesktop;\nUseIn=KDE;\\q\n",
+        )
+        .unwrap();
+        assert!(bad_use_in.use_in.is_empty(), "{bad_use_in:?}");
+        for text in [
+            "[portal]\nInterfaces=org.freedesktop.impl.portal.RemoteDesktop;\n",
+            "[portal]\nDBusName=org.freedesktop.impl.portal.desktop.x\n",
+            "[portal]\nDBusName=org.freedesktop.impl.portal.desktop.x\n\
+             Interfaces=org.freedesktop.portal.RemoteDesktop;\n",
+        ] {
+            assert_eq!(parse_portal_file("x", text), None, "{text:?}");
+        }
     }
 
     #[test]

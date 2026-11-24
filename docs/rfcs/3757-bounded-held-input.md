@@ -3,7 +3,7 @@ title: Bounded held desktop input
 authors:
   - steipete
 created: 2026-09-11
-last_updated: 2026-09-11
+last_updated: 2026-11-24
 status: review
 discussion: https://github.com/trycua/cua/issues/3757
 rfc_pr: https://github.com/trycua/cua/pull/3759
@@ -56,13 +56,13 @@ barrier succeeded; it does not prove the application acted on the input.
 
 ## Current state
 
-The native [PressKeyInput and HotkeyInput](../libs/cua-driver/rust/crates/cua-driver-contract/src/inputs.rs)
+The native [PressKeyInput and HotkeyInput](../../libs/cua-driver/rust/crates/cua-driver-contract/src/inputs.rs)
 carry no duration. Platform implementations own short press/release sequences;
 Windows foreground delivery can queue both transitions in one `SendInput` call.
 Linux also has legacy background window `mouse_button_down`/`mouse_button_up`
 tools, but these do not provide a bounded, cross-platform keyboard/mouse hold.
 
-[PR #3489](https://github.com/trycua/cua/pull/3489) changes macOS process-level
+[PR #3489](https://github.com/trycua/cua/pull/3489) changed macOS process-level
 keyboard pacing. A pacing override is not a per-operation duration or release
 lifecycle. [RFC #2794](https://github.com/trycua/cua/issues/2794) proposes sequential
 batches and visual observation, and excludes raw held-button operations. This

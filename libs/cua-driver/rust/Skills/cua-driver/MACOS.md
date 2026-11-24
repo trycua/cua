@@ -94,7 +94,7 @@ keeps the item unavailable to a background app it refuses with
 One exception: a disabled Save (the ⌘S item) of a document window is saved
 through the app's scripting interface instead, still in the background, and the
 result says so; TextEdit disables Save whenever it is behind the user's window.
-A Save is verified on disk. A background `hotkey` whose combo is a menu item's
+A Save is verified on disk. A scripted save that reached the app but did not confirm (the app still reports unsaved changes, answered something unexpected, or did not answer in 30 s with Automation granted) returns `save_indeterminate` with `effect: "indeterminate"`: read the document's state (the window's edited mark or the file on disk) before saving again, and do not resend the save in the foreground blindly. A background `hotkey` whose combo is a menu item's
 key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
 background key events never reach an app's menus; no keys are sent. With `x`,`y`
 or an element in web content, the field is focused by a pixel focus click

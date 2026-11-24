@@ -1699,6 +1699,9 @@ async fn collect_visited_bounded_opts<'a>(
     // Containers left unexpanded because their child count exceeded the cap:
     // (child count, position in `visited` of the container).
     let mut huge_containers: Vec<(usize, usize)> = Vec::new();
+    // Set when a node of the scoped window had children the walk could not
+    // read, so that window may be missing nodes nothing left pending.
+    let mut scope_children_unread = false;
     let child_cap = max_elements
         .map(|cap| cap.max(CHILD_ENUMERATION_CAP))
         .unwrap_or(CHILD_ENUMERATION_CAP);
@@ -2102,6 +2105,9 @@ async fn collect_visited_bounded_opts<'a>(
                 Some(Err(error)) => dlog!("  get_children failed: {error:#}"),
                 None => dlog!("  get_children timed out"),
             }
+            if !matches!(children_r, Some(Ok(_))) && scoped_frame == Some(frame_ordinal) {
+                scope_children_unread = true;
+            }
         }
 
         // Only nodes the caller can act on count against `max_elements`, so
@@ -2166,6 +2172,7 @@ async fn collect_visited_bounded_opts<'a>(
         truncation = truncation_in_scope(
             truncation,
             scope,
+            scope_children_unread,
             stack.iter().map(|(_, _, _, frame_ordinal)| *frame_ordinal),
         );
     }
@@ -2195,14 +2202,16 @@ async fn collect_visited_bounded_opts<'a>(
     }))
 }
 
-/// The truncation a walk scoped to window `scope` reports: none once no pending
-/// node belongs to that window, since the walk exhausts it before any other.
+/// The truncation a walk scoped to window `scope` reports: none once that
+/// window's children were all read and no pending node belongs to it, since
+/// the walk exhausts it before any other.
 fn truncation_in_scope(
     truncation: Option<&'static str>,
     scope: usize,
+    scope_children_unread: bool,
     mut pending_frames: impl Iterator<Item = usize>,
 ) -> Option<&'static str> {
-    truncation.filter(|_| pending_frames.any(|frame| frame == scope))
+    truncation.filter(|_| scope_children_unread || pending_frames.any(|frame| frame == scope))
 }
 
 #[cfg(test)]
@@ -2212,11 +2221,11 @@ mod truncation_in_scope_tests {
     #[test]
     fn a_budget_spent_in_a_sibling_window_does_not_truncate_the_scoped_one() {
         assert_eq!(
-            truncation_in_scope(Some("node_budget"), 1, [0, 0, 2].into_iter()),
+            truncation_in_scope(Some("node_budget"), 1, false, [0, 0, 2].into_iter()),
             None
         );
         assert_eq!(
-            truncation_in_scope(Some("timeout"), 1, std::iter::empty()),
+            truncation_in_scope(Some("timeout"), 1, false, std::iter::empty()),
             None
         );
     }
@@ -2224,10 +2233,18 @@ mod truncation_in_scope_tests {
     #[test]
     fn a_stop_inside_the_scoped_window_still_truncates_it() {
         assert_eq!(
-            truncation_in_scope(Some("node_budget"), 1, [0, 1].into_iter()),
+            truncation_in_scope(Some("node_budget"), 1, false, [0, 1].into_iter()),
             Some("node_budget")
         );
-        assert_eq!(truncation_in_scope(None, 1, [1].into_iter()), None);
+        assert_eq!(truncation_in_scope(None, 1, false, [1].into_iter()), None);
+    }
+
+    #[test]
+    fn unread_children_in_the_scoped_window_keep_its_truncation() {
+        assert_eq!(
+            truncation_in_scope(Some("timeout"), 1, true, [0, 2].into_iter()),
+            Some("timeout")
+        );
     }
 }
 

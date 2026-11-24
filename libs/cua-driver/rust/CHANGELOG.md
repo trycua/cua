@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.62.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.62.0...cua-driver-rs-v0.62.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** pump the driver thread's own queue while attached to a Windows target ([#8693](https://github.com/trycua/cua/issues/8693)) ([89d4bf5](https://github.com/trycua/cua/commit/89d4bf53495dda1f243d050d78cdfcb9750892a3))
+
 ## [0.62.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.4...cua-driver-rs-v0.62.0) (2026-11-24)
 
 

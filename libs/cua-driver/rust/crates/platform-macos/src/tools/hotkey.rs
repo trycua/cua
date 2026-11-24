@@ -734,14 +734,15 @@ fn menu_route_result(
     vcl: bool,
     focused: Option<&str>,
 ) -> Option<ToolResult> {
-    if !menu_allows_key_fallback(&result) {
-        return Some(result);
-    }
-    if vcl {
+    let unavailable = menu_allows_key_fallback(&result);
+    if unavailable && vcl {
         return None;
     }
-    if let Some(focused) = focused {
+    if let Some(focused) = focused.filter(|_| result.is_error == Some(true)) {
         note_focus(&mut result, focused);
+    }
+    if !unavailable {
+        return Some(result);
     }
     if let Some(structured) = result.structured_content.as_mut() {
         structured["escalation"] = serde_json::json!({
@@ -872,6 +873,15 @@ mod tests {
         assert_eq!(message, focused, "the text and the refusal message match");
         let unfocused = text(menu_route_result(unavailable(), false, None).expect("refused"));
         assert_eq!(unfocused, "disabled");
+        let consent = ToolResult::error("no consent").with_structured(serde_json::json!({
+            "code": "automation_consent_required",
+        }));
+        let consent = text(menu_route_result(consent, true, Some("element [3]")).expect("refused"));
+        assert!(consent.ends_with(note), "{consent}");
+        let done = text(
+            menu_route_result(ToolResult::text("done"), true, Some("element [3]")).expect("done"),
+        );
+        assert_eq!(done, "done");
     }
 
     #[test]

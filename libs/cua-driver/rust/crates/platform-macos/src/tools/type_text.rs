@@ -1388,11 +1388,11 @@ fn cgevent_type_verified(
     // keep its pre-edit value while the text lands. The window's focused
     // field is read alongside the pointer, from a baseline taken only when it
     // is the addressed element or inside it.
-    let focus_in_window = |addressed: Option<usize>| match (element_ptr_and_idx, window_id) {
-        (Some(_), Some(wid)) => focused_field_in_window(pid, wid, addressed),
+    let focus_in_window = || match (element_ptr_and_idx, window_id) {
+        (Some((ptr, _)), Some(wid)) => focused_field_in_window(pid, wid, ptr),
         _ => None,
     };
-    let focus_before = focus_in_window(element_ptr_and_idx.map(|(ptr, _)| ptr));
+    let focus_before = focus_in_window().filter(|field| field.in_addressed);
     let progress = || {
         best_progress(
             typed_progress(
@@ -1400,7 +1400,7 @@ fn cgevent_type_verified(
                 read_axvalue_bound(pid, element_ptr_and_idx, window_id).as_deref(),
                 text,
             ),
-            || focused_confirms(focus_before.as_ref(), focus_in_window(None).as_ref(), text),
+            || focused_confirms(focus_before.as_ref(), focus_in_window().as_ref(), text),
         )
     };
     let sent = send(text, delay_ms)?;
@@ -1483,10 +1483,13 @@ fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: u
         .is_some_and(|added| added.chars().eq(text.chars().take(done)))
 }
 
-/// The window's focused field: its role and frame identify it across reads,
-/// including a re-created row that takes the same place.
+/// The window's focused field, as read for delivery evidence.
 #[derive(Debug)]
 struct FocusedField {
+    /// It is the addressed element or one of its descendants.
+    in_addressed: bool,
+    /// `AXIdentifier`, which names a row that the app re-created.
+    identifier: Option<String>,
     role: String,
     frame: [f64; 4],
     value: Option<String>,
@@ -1494,27 +1497,20 @@ struct FocusedField {
     selection: Option<(usize, usize)>,
 }
 
-/// Read the window's focused field. With `addressed`, it is read only when it
-/// is that element or one of its descendants.
-fn focused_field_in_window(
-    pid: i32,
-    window_id: u32,
-    addressed: Option<usize>,
-) -> Option<FocusedField> {
+fn focused_field_in_window(pid: i32, window_id: u32, addressed: usize) -> Option<FocusedField> {
     unsafe {
         let element = crate::ax::exact_target::focused_element_in_window(pid, window_id)?;
-        let tied = addressed.is_none_or(|ptr| {
-            crate::fast_path_guard::is_self_or_ancestor(element, ptr as AXUIElementRef)
-        });
+        let in_addressed =
+            crate::fast_path_guard::is_self_or_ancestor(element, addressed as AXUIElementRef);
+        let identifier = copy_string_attr(element, "AXIdentifier");
         let role = copy_string_attr(element, "AXRole");
         let frame = crate::ax::bindings::element_screen_rect(element);
         let value = copy_string_attr(element, "AXValue");
         let selection = selected_range(element);
         CFRelease(element as _);
-        if !tied {
-            return None;
-        }
         Some(FocusedField {
+            in_addressed,
+            identifier,
             role: role?,
             frame: frame?,
             value,
@@ -1523,11 +1519,13 @@ fn focused_field_in_window(
     }
 }
 
-/// Whether the window's focused field proves the whole payload landed: it
-/// keeps the baseline's role and frame, and its value is exactly the baseline
-/// with the payload typed at the baseline's caret or over its selection. A
-/// field that already held the text, an edit away from the caret, or one with
-/// no known caret proves nothing.
+/// Whether the window's focused field proves the whole payload landed. It
+/// must be the same logical field as the baseline: still the addressed
+/// element or inside it, or a re-created row with the baseline's
+/// `AXIdentifier`, in the same role and frame. Its value must be exactly the
+/// baseline with the payload typed at the baseline's caret or over its
+/// selection. A field that already held the text, an edit away from the
+/// caret, or one with no known caret proves nothing.
 fn focused_confirms(
     before: Option<&FocusedField>,
     after: Option<&FocusedField>,
@@ -1539,7 +1537,14 @@ fn focused_confirms(
     let (Some(old), Some(new)) = (before.value.as_deref(), after.value.as_deref()) else {
         return false;
     };
-    before.role == after.role
+    let same_field = after.in_addressed
+        || before
+            .identifier
+            .as_deref()
+            .is_some_and(|id| !id.is_empty() && after.identifier.as_deref() == Some(id));
+    before.in_addressed
+        && same_field
+        && before.role == after.role
         && before.frame == after.frame
         && old != new
         && before
@@ -2781,6 +2786,8 @@ mod tests {
         caret: Option<(usize, usize)>,
     ) -> FocusedField {
         FocusedField {
+            in_addressed: true,
+            identifier: None,
             role: role.to_owned(),
             frame,
             value: Some(value.to_owned()),
@@ -2885,6 +2892,35 @@ mod tests {
             Some(&field("AXTextField", row, text, None)),
             text
         ));
+        // A field outside the addressed element counts only as the same
+        // re-created row, named by the baseline's identifier.
+        let row_named = |id: Option<&str>| FocusedField {
+            identifier: id.map(str::to_owned),
+            ..field("AXTextField", row, "", Some((0, 0)))
+        };
+        let replaced = |id: Option<&str>| FocusedField {
+            in_addressed: false,
+            identifier: id.map(str::to_owned),
+            ..field("AXTextField", row, text, None)
+        };
+        for (before, after, confirmed) in [
+            (None, None, false),
+            (Some("phone"), Some("phone"), true),
+            (Some("phone"), Some("email"), false),
+            (Some("phone"), None, false),
+            (Some(""), Some(""), false),
+        ] {
+            assert_eq!(
+                focused_confirms(Some(&row_named(before)), Some(&replaced(after)), text),
+                confirmed,
+                "before={before:?} after={after:?}"
+            );
+        }
+        let outside = FocusedField {
+            in_addressed: false,
+            ..field("AXTextField", row, "", Some((0, 0)))
+        };
+        assert!(!confirms(outside, text, text));
         let unreadable = FocusedField {
             value: None,
             ..field("AXTextField", row, "", Some((0, 0)))

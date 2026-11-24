@@ -1499,6 +1499,28 @@ fn await_typed_delivery(
 /// measured in Contacts, where the value read microseconds after the write
 /// held "(408) " of "(408) 961-1560" and was complete ~20 ms later. Sampling
 /// once turns that window into a false partial.
+/// The AX rung's verdict on an accepted write, from its first read-back.
+///
+/// Only a partial is drained: an unchanged or unreadable field already
+/// decides the next rung, and draining it would delay every write a web
+/// view ignores by [`UNCHANGED_GIVE_UP`] before its keystrokes go out.
+fn settled_ax_progress(
+    first: TypedProgress,
+    before: Option<&str>,
+    text: &str,
+    read_value: impl FnMut() -> Option<String>,
+) -> TypedProgress {
+    match first {
+        TypedProgress::Partial(_) => await_typed_progress(
+            before,
+            text,
+            std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT,
+            read_value,
+        ),
+        settled => settled,
+    }
+}
+
 fn await_typed_progress(
     before: Option<&str>,
     text: &str,
@@ -1932,24 +1954,22 @@ fn type_text_in_key_window(
         // exceed its transport-safe budget, rejected/unchanged AX writes fail
         // safely and unreadable AX state is reported as indeterminate.
         //
-        // The write is atomic, its effect on the field is not: the same drain
-        // the keystroke rung uses settles the read-back here, so a value the
-        // app is still rebuilding is never reported as a partial insertion.
-        let mut after = None;
-        let ax_progress = if err == kAXErrorSuccess {
-            let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-            Some(await_typed_progress(
+        // The write is atomic, its effect on the field is not: a prefix read
+        // straight after it may be a value the app is still rebuilding, so
+        // that read is settled through the keystroke rung's drain before it
+        // is reported as a partial insertion.
+        let mut after = unsafe { copy_string_attr(element, "AXValue") };
+        let ax_progress = (err == kAXErrorSuccess).then(|| {
+            settled_ax_progress(
+                typed_progress(before.as_deref(), after.as_deref(), ax_text),
                 before.as_deref(),
                 ax_text,
-                deadline,
                 || {
                     after = unsafe { copy_string_attr(element, "AXValue") };
                     after.clone()
                 },
-            ))
-        } else {
-            None
-        };
+            )
+        });
         // AXValue is not renderer evidence in web content. An unchanged or
         // unreadable echo there cannot prove that zero characters landed, so
         // blind retry is unsafe even though no synthesis has run yet.
@@ -2795,6 +2815,32 @@ mod tests {
         );
         assert_eq!(progress, TypedProgress::Unverifiable);
         assert_eq!(reads, 1);
+    }
+
+    /// The Contacts case from #3841: the read straight after the write held a
+    /// prefix and the next one the whole string.
+    #[test]
+    fn an_ax_prefix_the_field_completes_is_not_a_partial_write() {
+        let text = "(408) 961-1560";
+        let first = typed_progress(Some(""), Some("(408) "), text);
+        assert_eq!(first, TypedProgress::Partial(6));
+        let mut reads = 0;
+        let progress = settled_ax_progress(first, Some(""), text, || {
+            reads += 1;
+            Some(text.to_owned())
+        });
+        assert_eq!(progress, TypedProgress::Complete);
+        assert_eq!(reads, 1);
+    }
+
+    #[test]
+    fn an_unchanged_or_unreadable_ax_write_is_not_drained() {
+        for first in [TypedProgress::Unchanged, TypedProgress::Unverifiable] {
+            let progress = settled_ax_progress(first, Some(""), "payload", || {
+                panic!("{first:?} read the field again")
+            });
+            assert_eq!(progress, first);
+        }
     }
 
     #[test]

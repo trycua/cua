@@ -1293,6 +1293,8 @@ mod tests {
             (Granted, Unknown(-50), false),
             (Granted, Denied, false),
             (NeedsConsent, Granted, false),
+            (Unknown(-50), Denied, false),
+            (Unknown(-50), NeedsConsent, false),
         ] {
             let result = timed_out(before, after);
             let reply = text(&result);

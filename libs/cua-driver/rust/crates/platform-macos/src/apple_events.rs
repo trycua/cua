@@ -445,7 +445,7 @@ pub(crate) fn save_result(
 ) -> Result<(), ScriptRefusal> {
     let answer = match result {
         Err(refusal) if refusal.code == "automation_timeout" => {
-            if before == AutomationPermission::Granted
+            if before != AutomationPermission::NeedsConsent
                 || !matches!(
                     after(),
                     AutomationPermission::NeedsConsent | AutomationPermission::Denied

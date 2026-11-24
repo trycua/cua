@@ -424,10 +424,22 @@ async fn check_wayland_backend() -> CheckEntry {
     } else {
         false
     };
+    let remote_desktop = if !remote_desktop_portal_reachable {
+        RemoteDesktopPortal::Unreachable
+    } else {
+        match tokio::task::spawn_blocking(probe_remote_desktop_route)
+            .await
+            .ok()
+            .flatten()
+        {
+            Some((message, hint)) => RemoteDesktopPortal::Misrouted { message, hint },
+            None => RemoteDesktopPortal::Reachable,
+        }
+    };
     let mut entry = classify_wayland_backend(
         &snap,
         portal_input_enabled(),
-        remote_desktop_portal_reachable,
+        &remote_desktop,
         target_activation_available(),
     );
     if let Some(note) = tokio::task::spawn_blocking(compositor_note)
@@ -440,10 +452,23 @@ async fn check_wayland_backend() -> CheckEntry {
     entry
 }
 
+/// What doctor learned about the RemoteDesktop portal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RemoteDesktopPortal {
+    Unreachable,
+    Reachable,
+    /// The frontend answers, but the backend it routes RemoteDesktop to
+    /// cannot take input calls (#3638).
+    Misrouted {
+        message: String,
+        hint: String,
+    },
+}
+
 fn classify_wayland_backend(
     snap: &WaylandManagers,
     portal_libei_enabled: bool,
-    remote_desktop_portal_reachable: bool,
+    remote_desktop: &RemoteDesktopPortal,
     target_activation_available: bool,
 ) -> CheckEntry {
     let msg = format!(
@@ -463,6 +488,14 @@ fn classify_wayland_backend(
         );
     }
     if !snap.virtual_pointer {
+        if let RemoteDesktopPortal::Misrouted { message, hint } = remote_desktop {
+            return CheckEntry::fail(
+                NAME_WAYLAND_BACKEND,
+                format!("No wlroots virtual-pointer advertised ({msg}). {message}"),
+                hint.clone(),
+            );
+        }
+        let remote_desktop_portal_reachable = *remote_desktop == RemoteDesktopPortal::Reachable;
         if remote_desktop_portal_reachable && target_activation_available {
             return CheckEntry::pass(
                 NAME_WAYLAND_BACKEND,
@@ -740,6 +773,19 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
     Ok(false)
 }
 
+/// `(message, hint)` when the backend xdg-desktop-portal routes
+/// RemoteDesktop to cannot take input calls.
+#[cfg(target_os = "linux")]
+fn probe_remote_desktop_route() -> Option<(String, String)> {
+    use crate::wayland::portal_route;
+    portal_route::probe().problem(&portal_route::current_desktops())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_remote_desktop_route() -> Option<(String, String)> {
+    None
+}
+
 /// Stub of `wayland::WaylandManagers` so off-Linux builds compile. Always
 /// reports nothing advertised — non-Linux code paths never call this.
 #[cfg(not(target_os = "linux"))]
@@ -891,7 +937,7 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, true, true);
+        let entry = classify_wayland_backend(&snap, true, &RemoteDesktopPortal::Reachable, true);
 
         assert_eq!(entry.status, CheckStatus::Pass);
         assert!(entry.message.contains("portal/libei"), "{}", entry.message);
@@ -909,7 +955,7 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, false, false);
+        let entry = classify_wayland_backend(&snap, true, &RemoteDesktopPortal::Unreachable, false);
 
         assert_eq!(entry.status, CheckStatus::Fail);
         assert!(entry.message.contains("portal/libei"), "{}", entry.message);
@@ -931,7 +977,7 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, true, false);
+        let entry = classify_wayland_backend(&snap, true, &RemoteDesktopPortal::Reachable, false);
 
         assert_eq!(entry.status, CheckStatus::Fail);
         assert!(
@@ -944,6 +990,32 @@ mod tests {
             "{}",
             entry.message
         );
+    }
+
+    #[test]
+    fn wayland_backend_fails_when_the_remote_desktop_portal_is_misrouted() {
+        let snap = WaylandManagers {
+            foreign_toplevel: false,
+            screencopy: false,
+            ext_image_copy_capture: false,
+            ext_output_image_capture_source: false,
+            virtual_pointer: false,
+            wl_shm: true,
+        };
+        let misrouted = RemoteDesktopPortal::Misrouted {
+            message: "routed to kde".into(),
+            hint: "pin gnome".into(),
+        };
+
+        let entry = classify_wayland_backend(&snap, true, &misrouted, true);
+
+        assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(
+            entry.message.ends_with("routed to kde"),
+            "{}",
+            entry.message
+        );
+        assert_eq!(entry.hint.as_deref(), Some("pin gnome"));
     }
 
     #[tokio::test]

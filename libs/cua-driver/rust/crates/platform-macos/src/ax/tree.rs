@@ -1638,6 +1638,20 @@ mod tests {
             assert_eq!(identity.subrole.as_deref(), Some("raw AXSubrole"));
         }
     }
+
+    #[test]
+    fn link_url_is_read_only_for_links() {
+        assert!(role_exposes_link_url("AXLink"));
+        for role in [
+            "AXWebArea",
+            "AXButton",
+            "AXStaticText",
+            "AXImage",
+            "AXTextField",
+        ] {
+            assert!(!role_exposes_link_url(role), "{role}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1715,19 +1729,5 @@ mod lean_row_tests {
         assert_eq!(lines.len(), 4);
         assert_eq!(echo_text_of("- AXStaticText = \"x\""), Some("x"));
         assert_eq!(echo_text_of("- [2] AXStaticText = \"\""), None);
-    }
-
-    #[test]
-    fn link_url_is_read_only_for_links() {
-        assert!(role_exposes_link_url("AXLink"));
-        for role in [
-            "AXWebArea",
-            "AXButton",
-            "AXStaticText",
-            "AXImage",
-            "AXTextField",
-        ] {
-            assert!(!role_exposes_link_url(role), "{role}");
-        }
     }
 }

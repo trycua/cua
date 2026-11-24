@@ -1079,7 +1079,7 @@ impl InputQueueAttachment {
     /// queue's synchronous key state, whose toggle bit flips only when the
     /// target thread reads the sentinel key-down.
     fn wait_for_drain(&self, timeout: Duration) -> bool {
-        use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetActiveWindow, SetFocus};
         let toggled = || unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
         let before = toggled();
         let sentinel = [sentinel_key_input(false), sentinel_key_input(true)];
@@ -1106,7 +1106,7 @@ impl InputQueueAttachment {
 
     /// Insert `events`, then yield until the sentinel key-up is read or `timeout`.
     fn send_and_await_read(&self, events: &[INPUT], timeout: Duration) -> UnitRead {
-        use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetActiveWindow, SetFocus};
         let before = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
         let sent = unsafe { SendInput(events, std::mem::size_of::<INPUT>() as i32) };
         if (sent as usize) < events.len() {
@@ -1906,7 +1906,7 @@ mod busy_target_activation_tests {
     use windows::Win32::Foundation::LRESULT;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetActiveWindow, SetFocus};
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         GetWindowInfo, PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage, MSG,
@@ -1915,6 +1915,7 @@ mod busy_target_activation_tests {
     };
 
     const WM_BUSY: u32 = WM_APP + 1;
+    const WM_SELF_ACTIVATE: u32 = WM_APP + 2;
     static TYPED: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 
     unsafe extern "system" fn window_proc(
@@ -1986,6 +1987,16 @@ mod busy_target_activation_tests {
                     .expect("send hwnd");
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    if msg.hwnd.0.is_null() && msg.message == WM_SELF_ACTIVATE {
+                        // What a UI framework does when it activates its own
+                        // window from the background: Windows refuses the
+                        // foreground but activates the window in its queue.
+                        let _ = SetForegroundWindow(hwnd);
+                        let _ = SetActiveWindow(hwnd);
+                        let _ = SetFocus(Some(hwnd));
+                        busy_tx.send(()).expect("self-activated");
+                        continue;
+                    }
                     if msg.hwnd.0.is_null() && msg.message == WM_BUSY {
                         busy_tx.send(()).expect("busy");
                         let _ = release_rx.recv();
@@ -2011,6 +2022,14 @@ mod busy_target_activation_tests {
             self.busy
                 .recv_timeout(Duration::from_secs(5))
                 .expect("ui thread blocked");
+        }
+
+        fn activate_itself(&self) {
+            unsafe { PostThreadMessageW(self.thread_id, WM_SELF_ACTIVATE, WPARAM(0), LPARAM(0)) }
+                .expect("post self-activate");
+            self.busy
+                .recv_timeout(Duration::from_secs(5))
+                .expect("ui thread self-activated");
         }
 
         fn unblock(&self) {
@@ -2081,6 +2100,50 @@ mod busy_target_activation_tests {
             sleep(Duration::from_millis(10));
         }
         false
+    }
+
+    /// A target that activated itself while in the background (as WPF does
+    /// on `Window.Activate`) has an active and focused window in its own
+    /// queue before the driver brings it forward, so that queue state does
+    /// not prove the foreground activation was processed.
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_a_target_that_activated_itself_in_the_background() {
+        let target = UiThread::spawn(100);
+        let other = UiThread::spawn(500);
+        bring_forward(target.hwnd);
+        assert!(wait_caption(target.hwnd, true), "target never activated");
+        bring_forward(other.hwnd);
+        assert!(wait_caption(target.hwnd, false), "target never deactivated");
+        target.activate_itself();
+        state("target self-activated in background", target.hwnd);
+
+        target.block();
+        TYPED.lock().unwrap().clear();
+        let hwnd = target.hwnd.0 as usize as u64;
+        let typing = std::thread::spawn(move || send_text_synthesized(hwnd, "abc"));
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(300) {
+            state("self-activated, activation pending", target.hwnd);
+            sleep(Duration::from_millis(50));
+        }
+        target.unblock();
+        let result = typing.join().expect("typing thread");
+        state("self-activated, after typing", target.hwnd);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && TYPED.lock().unwrap().len() < 3 {
+            sleep(Duration::from_millis(10));
+        }
+        let typed = String::from_utf16_lossy(&TYPED.lock().unwrap());
+        eprintln!(
+            "[busy-target] self-activated result={:?} typed={typed:?} after {:?}",
+            result.as_ref().map_err(|e| e.to_string()),
+            started.elapsed()
+        );
+        drop(other);
+        drop(target);
+        result.expect("foreground text delivery");
+        assert_eq!(typed, "abc");
     }
 
     /// Diagnostic only: what the attached driver thread sees while the

@@ -1,0 +1,22 @@
+id = "novita"
+name = "Novita AI"
+icon = "novita"
+tier = "more"
+rank = 160
+kind = "hosted"
+aliases = ["novitaai"]
+wire = "openai-chat"
+base_url = "https://api.novita.ai/openai/v1"
+base_url_env = "NOVITA_BASE_URL"
+default_model = "moonshotai/kimi-k2.5"
+hermes_id = "novita"
+key_help = "Create a key at novita.ai."
+placeholder = "sk_…"
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "NOVITA_API_KEY"
+
+[delivery]
+hermes = ["NOVITA_API_KEY"]

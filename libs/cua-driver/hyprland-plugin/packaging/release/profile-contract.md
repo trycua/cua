@@ -95,3 +95,56 @@ The downstream implementation remains
 [omacom/omarchy-pkgs#346](https://github.com/omacom/omarchy-pkgs/pull/346).
 This document records the selected contract, not completed package or native
 validation.
+
+## Measuring a new channel candidate
+
+From the release tooling directory, `profile_measure.py measure` measures an
+installed Linux x86_64 environment. Supply the independently reviewed source
+revision, Driver version, archive and manifest digests; the helper does not
+select a source or trust digests from an unreviewed archive. Its output is a
+candidate for review, never a compatibility or certification declaration.
+
+```sh
+python3 profile_measure.py measure --profile-id omarchy-edge-YYYYMMDD \
+  --kit-version KIT_VERSION --package-release PACKAGE_RELEASE \
+  --revision SOURCE_REVISION --driver-version DRIVER_VERSION \
+  --archive SOURCE_ARCHIVE --archive-sha256 REVIEWED_ARCHIVE_SHA256 \
+  --manifest-sha256 REVIEWED_MANIFEST_SHA256 --cxx /usr/bin/g++ \
+  --output candidate-profile.json
+python3 profile_measure.py reuse --reviewed reviewed-profile.json \
+  --candidate candidate-profile.json
+```
+
+The comparison reports `profile-unchanged`, `relabel-rebuild`, or `rebuild`.
+Run `measure` on the target host immediately before comparing it; `reuse` is
+only an offline data comparison, not a host check. It exits 3 for a required
+rebuild, 2 for invalid CLI usage, and 1 for validation errors.
+Even `profile-unchanged` compares only profile data: separately verify unchanged
+tooling, kit, module and package bytes and the applicable qualification evidence.
+The JSON always reports `qualification_verified: false`. A changed package
+release or profile label requires rebuilding and affected lifecycle evidence;
+changed source, compiler, headers, compositor or runtime inputs require a new
+reviewed profile and affected native qualification. A matching Hyprland version
+string alone is insufficient after an Arch package rebuild.
+
+## One kit tooling, one profile per channel
+
+Omarchy edge ships Hyprland `0.57.x` while stable and rc stay on `0.56.2`
+(CUA-4078). The plugin source detects the input internals of the installed
+headers instead of pinning a Hyprland version, so one source and one kit
+tooling serve both. Only the reviewed profile differs: each channel has its own
+`profiles/omarchy-<channel>-<date>.json` that names that channel's exact
+Hyprland package, headers, compiler and ABI runtime. Schema 2 profiles accept
+header versions `0.56.2` and `0.57.2`; any other version needs a reviewed
+change to `SUPPORTED_HYPRLAND_HEADERS` in `profile_verify.py` and a requalified
+build first.
+
+`ci-hyprland-plugin-kit.yml` builds the kit for each channel in an Arch
+container on that channel's own mirrors, runs `lifecycle.py`, loads the
+packaged module into a headless Hyprland and runs the background input smoke
+(type and click into a window that does not hold focus). Its job summary
+states whether the committed profile still describes the channel
+(`profile-unchanged`) or the channel moved (`rebuild`); the daily
+requalification (`nightly-hyprland-plugin-requalify.yml`) opens or refreshes the
+`hyprland-requalify` issue when a channel's packaged plugin stops installing
+or a build fails, so the next Hyprland bump is caught before users hit it.

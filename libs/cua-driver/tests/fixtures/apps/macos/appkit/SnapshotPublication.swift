@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 import AppKit
 
 final class SnapshotPublicationFixture: NSObject {
@@ -9,6 +12,9 @@ final class SnapshotPublicationFixture: NSObject {
     private var timer: Timer?
     private var generation = 0
     private var checkpoint = false
+    private var sheet: NSWindow?
+    private var sheetClosed = false
+    private var relabeled = false
     private var originalClicks = 0
     private var replacementClicks = 0
 
@@ -46,6 +52,15 @@ final class SnapshotPublicationFixture: NSObject {
         original.frame = NSRect(x: 20, y: 630, width: 200, height: 36)
         original.setAccessibilityIdentifier("snapshot-original")
         content.addSubview(original)
+        let menu = NSMenu()
+        let root = NSMenuItem(title: "Fixture", action: nil, keyEquivalent: "")
+        let commands = NSMenu(title: "Fixture")
+        let increment = NSMenuItem(title: "Increment original", action: #selector(clickOriginal), keyEquivalent: "")
+        increment.target = self
+        commands.addItem(increment)
+        root.submenu = commands
+        menu.addItem(root)
+        NSApplication.shared.mainMenu = menu
     }
 
     func show() {
@@ -63,6 +78,26 @@ final class SnapshotPublicationFixture: NSObject {
             publish()
             return
         }
+        if command == "sheet" && sheet == nil && !sheetClosed {
+            let modal = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            modal.isReleasedWhenClosed = false
+            let close = NSButton(title: "Close sheet", target: self, action: #selector(closeSheet))
+            close.frame = NSRect(x: 30, y: 30, width: 180, height: 32)
+            close.setAccessibilityIdentifier("snapshot-sheet-close")
+            modal.contentView!.addSubview(close)
+            sheet = modal
+            window.beginSheet(modal)
+            publish()
+            return
+        }
+        if command == "relabel" && !relabeled {
+            original.title = "Changed action"
+            relabeled = true
+            window.displayIfNeeded()
+            publish()
+            return
+        }
         guard generation == 0 && command == "replace" else { return }
         original.removeFromSuperview()
         let button = NSButton(title: "Replacement", target: self, action: #selector(clickReplacement))
@@ -72,6 +107,15 @@ final class SnapshotPublicationFixture: NSObject {
         replacement = button
         generation = 1
         window.displayIfNeeded()
+        publish()
+    }
+
+    @objc private func closeSheet() {
+        guard let modal = sheet else { return }
+        window.endSheet(modal)
+        modal.orderOut(nil)
+        sheet = nil
+        sheetClosed = true
         publish()
     }
 
@@ -92,6 +136,9 @@ final class SnapshotPublicationFixture: NSObject {
                 "window_id": window.windowNumber,
                 "generation": generation,
                 "checkpoint": checkpoint,
+                "sheet_open": sheet != nil,
+                "sheet_closed": sheetClosed,
+                "relabeled": relabeled,
                 "original_clicks": originalClicks,
                 "replacement_clicks": replacementClicks,
             ])

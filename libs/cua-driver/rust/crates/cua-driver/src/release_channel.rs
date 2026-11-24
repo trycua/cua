@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Persistent stable/nightly update-channel preference.
 
 use std::fmt;
@@ -8,7 +11,9 @@ pub const FILE_NAME: &str = "release-channel";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ReleaseChannel {
+    #[default]
     Stable,
     Nightly,
 }
@@ -50,12 +55,6 @@ fn is_canonical_nightly_prerelease(value: &str) -> bool {
         && !run.starts_with('0')
 }
 
-impl Default for ReleaseChannel {
-    fn default() -> Self {
-        Self::Stable
-    }
-}
-
 impl fmt::Display for ReleaseChannel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -93,8 +92,8 @@ fn selected_at(path: &std::path::Path) -> Result<ReleaseChannel, String> {
 }
 
 pub fn set(channel: ReleaseChannel) -> Result<(), String> {
-    if crate::updater::is_pacman_managed() {
-        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+    if let Some(owner) = crate::updater::update_owner() {
+        return Err(owner.guidance());
     }
     let path = state_path()?;
     set_at(&path, channel)
@@ -110,13 +109,13 @@ fn set_at(path: &std::path::Path, channel: ReleaseChannel) -> Result<(), String>
     let temporary = parent.join(format!(".{FILE_NAME}.tmp-{}", std::process::id()));
     std::fs::write(&temporary, format!("{}\n", channel.as_str()))
         .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
-    if let Err(error) = std::fs::rename(&temporary, &path) {
+    if let Err(error) = std::fs::rename(&temporary, path) {
         // std::fs::rename cannot replace an existing destination on Windows.
         // Keep partial contents out of the canonical path on all platforms.
         if path.exists() {
-            std::fs::remove_file(&path)
+            std::fs::remove_file(path)
                 .map_err(|remove| format!("cannot replace {}: {remove}", path.display()))?;
-            std::fs::rename(&temporary, &path)
+            std::fs::rename(&temporary, path)
                 .map_err(|move_error| format!("cannot replace {}: {move_error}", path.display()))?;
         } else {
             return Err(format!("cannot persist {}: {error}", path.display()));
@@ -126,11 +125,11 @@ fn set_at(path: &std::path::Path, channel: ReleaseChannel) -> Result<(), String>
 }
 
 pub fn state_path() -> Result<PathBuf, String> {
-    if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME") {
+    if let Some(home) = crate::env_vars::var_os("CUA_DRIVER_RS_HOME") {
         return Ok(PathBuf::from(home).join(FILE_NAME));
     }
-    let root = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    let root = crate::env_vars::var_os("HOME")
+        .or_else(|| crate::env_vars::var_os("USERPROFILE"))
         .ok_or_else(|| "neither HOME nor USERPROFILE is set".to_owned())?;
     Ok(PathBuf::from(root)
         .join(crate::bundle::user_home_subdirectory())

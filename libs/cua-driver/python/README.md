@@ -11,11 +11,8 @@ This package is for client applications importing Cua Driver as an SDK:
 from cua_driver import CuaDriver
 ```
 
-It does not contain a Python MCP protocol implementation. The optional
-`cua_driver.fleet` module forwards service bytes to the shared Rust typed-MCP
-client. See [the candidate Fleet connection guide](../docs/shared-fleet-mcp-client.md)
-for prerequisites, ownership, and release limits. Agents already have runtime-neutral
-MCP clients and should configure the bundled server directly:
+It does not contain a Python MCP protocol implementation. Agents already have
+runtime-neutral MCP clients and should configure the bundled server directly:
 
 ```text
 cua-driver mcp
@@ -28,7 +25,7 @@ agent SDK.
 
 ## Installation
 
-Install and usage docs live at https://cua.ai/docs/how-to-guides/driver/install
+Install and usage docs live at https://cua.ai/docs/cua-driver/quickstart
 and https://cua.ai/docs/reference/cua-driver/mcp-tools.
 
 The wheel contains generated UniFFI bindings, a platform-specific Rust SDK
@@ -52,7 +49,9 @@ from cua_driver import (
 async def main() -> None:
     driver = CuaDriver.create()
     await driver.start_session(
-        StartSessionInput(session="demo", capture_scope=None, cursor_theme=None)
+        StartSessionInput(
+            session="demo", capture_scope=None, cursor_theme=None, cursor_motion=None
+        )
     )
     try:
         await driver.set_agent_cursor_theme(
@@ -111,7 +110,7 @@ change. An unsupported background route must not trigger an automatic foreground
 retry. Refresh stale tokens from the same exact window.
 
 See the [migration guide](../docs/native-window-sdk-migration.md) for input and
-return-type changes, and the [complete Python and TypeScript examples](https://cua.ai/docs/how-to-guides/driver/use-sdk-in-process)
+return-type changes, and the [complete Python and TypeScript examples](https://cua.ai/docs/cua-driver/guides/use-the-sdk)
 for discovery, token selection, verification, and shutdown.
 
 ## Authorization integrations
@@ -128,7 +127,7 @@ content-free action, refusal, grant, and session events. The observer cannot
 change authorization or tool results. Use
 `create_configured_with_host_integrations` when the application needs both.
 
-See the [SDK reference](https://cua.ai/docs/reference/cua-driver/sdk-reference)
+See the [SDK reference](https://cua.ai/docs/cua-driver/guides/use-the-sdk#constructors)
 for complete examples and the callback trust rules.
 
 `CuaDriver.connect(socket_path)` remains available while existing applications
@@ -178,6 +177,18 @@ new connection. `wait_for_exit(connection.generation)` observes unexpected
 termination. Dropping the host closes its parent-liveness pipe and kills the
 child as a fallback, but orderly applications should still await `stop()`.
 
+To start the daemon without the agent cursor overlay, construct the host with
+`EmbeddedCuaDriverHost.with_options()` and set `no_overlay=True`; the host then
+passes `--no-overlay` to the `serve` process it owns. The default is `False`.
+
+For startup troubleshooting, set `capture_stderr=True` on the same options. After a
+failed start, `last_diagnostics()` returns the generation-scoped final 65,536
+bytes, exit code, and truncation state; a successful start clears the previous
+diagnostics. Captured text is raw child stderr and can contain application data,
+so do not place secrets in daemon stderr or forward diagnostics to telemetry.
+When `inherit_stderr` is also enabled, the host tees output on a bounded
+best-effort path so a blocked terminal cannot stop diagnostic collection.
+
 ## Binary wrapper
 
 The package also exposes the bundled executable:
@@ -200,4 +211,4 @@ exit_code = run_cua_driver(["mcp"])
 
 ## License
 
-MIT License — see [LICENSE](https://github.com/trycua/cua/blob/main/LICENSE.md).
+MIT License: see [LICENSE](https://github.com/trycua/cua/blob/main/LICENSE.md).

@@ -1,0 +1,11 @@
+{
+  "comment": "Measured with bench.sh (cua CLI + daemon, cua-vz) on an M2 Max Mac Studio (96 GB, macOS 26.6.2), image ghcr.io/trycua/linux:24.04-slim, 2 vCPU / 2 GB Spaces, 256 MiB written to the source's tmpfs before the checkpoint; the mean of two runs (2026-10-20). check.py fails when a p50 is more than `factor` times these, or memory per fork grows past `factor` times per_fork_mib. A fork's memory is its own (no sharing between forks): about its configured RAM right after the restore.",
+  "factor": 1.5,
+  "p50_ms": {
+    "checkpoint": 650,
+    "restore": 610,
+    "fork_running": 1160,
+    "fanout": 1460
+  },
+  "per_fork_mib": 1620
+}

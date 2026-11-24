@@ -1,0 +1,2047 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Root-token authentication, short-lived tickets and the gRPC auth layer.
+//!
+//! - The **root token** (`CUA_ENV_TOKEN`, `/run/cua/env-token`, or
+//!   `SystemService.Init`) authenticates every gRPC call and `/mcp` via
+//!   `authorization: Bearer <token>`. Compared in constant time.
+//! - **Tickets** are HMAC-SHA256-signed, scope-bound, expiring strings minted
+//!   by an authenticated RPC (`Forward`, `StartHotspot`, `OpenMedia`, ...)
+//!   and accepted by the side-channel sockets (`/tunnel`, `/hotspot`,
+//!   `/media`) in the `ticket` query parameter or as a WebSocket subprotocol
+//!   `cua.ticket.<ticket>`. They never reveal the root token.
+//! - **Signed file URLs** (`/files`) use their own HMAC over method, path and
+//!   expiry (see `http::files`).
+//!
+//! Every HMAC key is derived from the root token (or, with no token, from a
+//! random per-boot secret), so rotating the token revokes every outstanding
+//! ticket and URL.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, RwLock};
+use std::task::{Context as TaskContext, Poll};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use base64::Engine as _;
+use cua_proto::env::v1::Principal;
+use hmac::{Hmac, Mac};
+use http::{Request, Response};
+use prost::Message as _;
+use sha2::Sha256;
+use tower::{Layer, Service};
+
+use crate::util::{constant_time_eq, random_id};
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Longest ticket lifetime the server mints.
+pub const MAX_TICKET_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// WebSocket subprotocol prefix carrying a ticket: `cua.ticket.<ticket>`.
+pub const TICKET_SUBPROTOCOL_PREFIX: &str = "cua.ticket.";
+
+/// What a ticket may open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TicketScope {
+    /// The media WebSocket / QUIC session (`/media`).
+    Media,
+    /// TCP forwarding (`/tunnel`).
+    Tunnel,
+    /// Reverse-SOCKS egress (`/hotspot`).
+    Hotspot,
+    /// The Cua Volume mount's client socket (`/volume`).
+    Volume,
+    /// The host's end of the spawn channel (`/spawn`).
+    Spawn,
+    /// The host's end of the published host ports (`/hostports`).
+    HostPorts,
+    /// File transfer side channels.
+    Files,
+    /// The web viewer's scoped bearer (`SystemService.CreateViewerTicket`).
+    Viewer,
+}
+
+impl TicketScope {
+    /// Stable wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Media => "media",
+            Self::Tunnel => "tunnel",
+            Self::Hotspot => "hotspot",
+            Self::Volume => "volume",
+            Self::Spawn => "spawn",
+            Self::HostPorts => "hostports",
+            Self::Files => "files",
+            Self::Viewer => "viewer",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "media" => Self::Media,
+            "tunnel" => Self::Tunnel,
+            "hotspot" => Self::Hotspot,
+            "volume" => Self::Volume,
+            "spawn" => Self::Spawn,
+            "hostports" => Self::HostPorts,
+            "files" => Self::Files,
+            "viewer" => Self::Viewer,
+            _ => return None,
+        })
+    }
+}
+
+/// Verified contents of a ticket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TicketClaims {
+    /// Scope the ticket was minted for.
+    pub scope: TicketScope,
+    /// Resource id the ticket is bound to (forward id, hotspot id, media
+    /// session id, ...).
+    pub resource: String,
+    /// `Principal.id` of the minting caller (may be empty).
+    pub principal_id: String,
+    /// Expiry.
+    pub expires_at: SystemTime,
+}
+
+/// What a viewer ticket allows, carried in the ticket's resource field.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct ViewerGrant {
+    /// Highest `SessionPolicy` (as its proto number) media may open with.
+    #[serde(rename = "p")]
+    pub policy: i32,
+    /// `ComputerService.GetClipboard` / `SetClipboard`.
+    #[serde(rename = "c", default)]
+    pub clipboard: bool,
+    /// Absolute guest directory for `FilesystemService`, if any.
+    #[serde(rename = "f", default, skip_serializing_if = "Option::is_none")]
+    pub files_root: Option<String>,
+    /// Microphone uplink.
+    #[serde(rename = "u", default)]
+    pub audio_uplink: bool,
+    /// Principal id (already `viewer:`-prefixed).
+    #[serde(rename = "i", default)]
+    pub principal_id: String,
+    /// Principal display name.
+    #[serde(rename = "n", default)]
+    pub display_name: String,
+    /// Minted by a phone's call: it goes on only while this computer still
+    /// answers phones and shares its desktop (see `PhoneGuardBody`).
+    #[serde(rename = "m", default, skip_serializing_if = "std::ops::Not::not")]
+    pub phone: bool,
+    /// When the ticket this grant came from ends (set when it is read, never
+    /// part of the ticket): a media session a phone opens with it ends then too.
+    #[serde(skip)]
+    pub expires_at: Option<SystemTime>,
+}
+
+impl ViewerGrant {
+    /// The principal a viewer ticket acts as.
+    pub fn principal(&self) -> Principal {
+        Principal {
+            id: self.principal_id.clone(),
+            display_name: self.display_name.clone(),
+            color: String::new(),
+            kind: cua_proto::env::v1::PrincipalKind::Human as i32,
+        }
+    }
+
+    /// Clamps a requested `SessionPolicy` to the grant (view-only <
+    /// background-only < allow-activation).
+    pub fn clamp_policy(&self, requested: i32) -> i32 {
+        requested.min(self.policy)
+    }
+}
+
+/// Why a ticket was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TicketError {
+    /// Not a ticket at all.
+    Malformed,
+    /// Signature mismatch (tampered, or the token rotated).
+    BadSignature,
+    /// Past its expiry.
+    Expired,
+    /// Minted for a different scope.
+    WrongScope,
+}
+
+impl std::fmt::Display for TicketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Malformed => "malformed ticket",
+            Self::BadSignature => "invalid ticket signature",
+            Self::Expired => "ticket expired",
+            Self::WrongScope => "ticket not valid for this endpoint",
+        })
+    }
+}
+
+impl std::error::Error for TicketError {}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TicketPayload {
+    s: String,
+    r: String,
+    #[serde(default)]
+    p: String,
+    e: u64,
+    n: String,
+    /// The minting call's relay assertion `iat`, when relayed (the relay
+    /// refuses a ticket from before a revoke of `p`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    a: Option<u64>,
+    /// The enrolled device whose call minted it (the relay refuses the ticket
+    /// once that device is revoked or no longer enrolled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    d: Option<String>,
+}
+
+/// What an external credential authorized.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalGrant {
+    /// Who.
+    pub principal: Principal,
+    /// A view-only share: presence and a view-only stream
+    /// ([`SHARED_VIEWER_GRPC_METHODS`]), nothing else.
+    pub view_only: bool,
+    /// The machine does not share its desktop (host setting
+    /// `share_desktop` off): only [`HOST_ONLY_GRPC_METHODS`] answer, and
+    /// no plain HTTP route does.
+    pub host_only: bool,
+    /// The relay-verified account behind the call, for services that act
+    /// for it (`HostSpacesService`).
+    pub account: Option<RelayCaller>,
+}
+
+/// The relay-verified account of a call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RelayCaller {
+    /// Account id (the assertion's `acct`).
+    pub account: String,
+    /// Verified email, when the relay shares it.
+    pub email: Option<String>,
+    /// Display name.
+    pub name: Option<String>,
+    /// `owner` or `shared` (an editor).
+    pub role: String,
+    /// The relay assertion's `iat` (seconds, relay clock). Tickets minted
+    /// for the call carry it, so the relay can refuse one that predates a
+    /// revoke of this account.
+    pub issued_at: u64,
+    /// Teams (or organizations) the relay admitted the account through;
+    /// empty for the owner and a direct share. Share links to a team check
+    /// these.
+    pub teams: Vec<String>,
+    /// A thread grant: the one Space this machine provides (its relay
+    /// machine id) whose thread the account may reach, because that Space
+    /// is shared with it; `role` is its role on that Space. Such a caller
+    /// reaches [`THREAD_GRANT_GRPC_METHODS`] only.
+    pub space: Option<String>,
+    /// The caller is a phone (the relay says so, from its enrolled device):
+    /// it reaches what a Space is ([`cua_relay::phone::PHONE_GRPC_METHODS`],
+    /// and the pointer and keyboard of a desktop this computer shares, when
+    /// the account's role may touch it) and nothing of the computer
+    /// underneath. Never a plain HTTP route.
+    pub phone: Option<PhoneCaller>,
+    /// The enrolled device the relay verified behind the call (a computer's or
+    /// a phone's). Audit lines name it and tickets minted by the call are
+    /// bound to it.
+    pub device: Option<String>,
+}
+
+/// A phone behind a relayed call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PhoneCaller {
+    /// Its enrolled device id (the relay verified the device session).
+    pub device: String,
+}
+
+/// What a machine does with a call from a phone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhoneVerdict {
+    /// On the phone's list: looking at a Space or its screen.
+    Look,
+    /// The pointer or the keyboard. Whether the desktop is shared, and
+    /// whether the role may touch it, is decided before this is asked (the
+    /// same rule as for every app).
+    Touch,
+    /// Not for a phone at all.
+    Refuse,
+}
+
+/// The one rule for phones, applied to every gRPC `path`.
+pub fn phone_verdict(path: &str) -> PhoneVerdict {
+    if cua_relay::phone::PHONE_GRPC_METHODS.contains(&path) {
+        PhoneVerdict::Look
+    } else if cua_relay::phone::PHONE_CONTROL_GRPC_METHODS.contains(&path) {
+        PhoneVerdict::Touch
+    } else {
+        PhoneVerdict::Refuse
+    }
+}
+
+/// Whether `path` is about a desktop (its picture or its input), which only
+/// a computer that shares its desktop answers.
+pub fn desktop_path(path: &str) -> bool {
+    path.starts_with("/cua.env.v1.StreamService/")
+        || path.starts_with("/cua.env.v1.ComputerService/")
+}
+
+/// The only calls a relayed caller may make on a machine that does not
+/// share its desktop (it only provides Spaces): the capabilities probe and
+/// `HostSpacesService`. Everything else, including every plain HTTP route,
+/// is refused with `PermissionDenied`.
+pub const HOST_ONLY_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.HostSpacesService/GetHostSpaces",
+    "/cua.env.v1.HostSpacesService/CreateHostSpace",
+    "/cua.env.v1.HostSpacesService/DeleteHostSpace",
+    "/cua.env.v1.HostSpacesService/CancelHostSpace",
+    "/cua.env.v1.HostSpacesService/SetHostSpacePower",
+    "/cua.env.v1.HostSpacesService/SetHostWarm",
+    "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+    "/cua.env.v1.HostSpacesService/SetHostSpaceEgress",
+    "/cua.env.v1.HostJobsService/RunHostJobs",
+    "/cua.env.v1.HostJobsService/GetHostJob",
+    "/cua.env.v1.HostJobsService/ListHostJobs",
+    "/cua.env.v1.HostJobsService/CancelHostJob",
+    "/cua.env.v1.HostSnapshotsService/ListHostSnapshots",
+    "/cua.env.v1.HostSnapshotsService/ExportHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/PullHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/PublishHostSnapshot",
+    // A Space this host provides routed (reached through the host, with no
+    // relay machine of its own): the forward is checked to be to that
+    // Space's loopback port ([`crate::host_spaces::routed_port_allowed`]).
+    "/cua.env.v1.TunnelService/Forward",
+    "/cua.env.v1.TunnelService/CloseForward",
+    "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
+    "/cua.env.v1.HostSpacesService/DiagnoseHost",
+    // The threads of the Spaces this host provides (the daemon checks who
+    // may read and write).
+    "/cua.env.v1.HostThreadService/CallThreadTool",
+];
+
+impl ExternalGrant {
+    /// Full access as `principal`.
+    pub fn full(principal: Principal) -> Self {
+        Self {
+            principal,
+            view_only: false,
+            host_only: false,
+            account: None,
+        }
+    }
+
+    /// The viewer grant a view-only share acts under: view-only media, no
+    /// clipboard, no files, no microphone.
+    pub fn viewer_grant(&self) -> ViewerGrant {
+        ViewerGrant {
+            policy: cua_proto::env::v1::SessionPolicy::ViewOnly as i32,
+            clipboard: false,
+            files_root: None,
+            audio_uplink: false,
+            principal_id: self.principal.id.clone(),
+            display_name: self.principal.display_name.clone(),
+            phone: false,
+            expires_at: None,
+        }
+    }
+}
+
+/// `ErrorInfo.metadata["kind"]` of a refused Space thread grant, as the
+/// relay types its own (`cua_relay::server::THREAD_GRANT_REFUSED`).
+pub const THREAD_GRANT_REFUSED: &str = "thread_grant_refused";
+
+/// How the reasons this machine refuses a thread grant with begin
+/// ([`crate::relay_account`]), so the refusal is typed.
+pub const THREAD_GRANT_REASON_PREFIX: &str = "Space thread grant: ";
+
+/// The only calls a thread grant may make ([`RelayCaller::space`]): the
+/// capability probe and the Space's thread, nothing else of this machine.
+pub const THREAD_GRANT_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.HostThreadService/CallThreadTool",
+];
+
+/// The only calls a view-only share (a relay account the owner shared the
+/// Space with to watch) may make: capabilities, the view-only stream, and
+/// presence with its own cursor. Anything else is refused with
+/// `PermissionDenied` ("view-only share: ... cannot call ...").
+pub const SHARED_VIEWER_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.StreamService/ListTargets",
+    "/cua.env.v1.StreamService/OpenMedia",
+    "/cua.env.v1.StreamService/SetPreferences",
+    "/cua.env.v1.StreamService/RequestKeyframe",
+    "/cua.env.v1.StreamService/CloseMedia",
+    "/cua.env.v1.ComputerService/ListDisplays",
+    "/cua.env.v1.PresenceService/Join",
+    "/cua.env.v1.PresenceService/UpdateCursor",
+    "/cua.env.v1.PresenceService/Leave",
+    // A Space thread on a host that provides Spaces: forwarded to its cua
+    // daemon as role `viewer`, which lets a viewer read and nothing else.
+    "/cua.env.v1.HostThreadService/CallThreadTool",
+];
+
+/// A credential other than the root token, verified by the embedding
+/// binary: `cua-spacesd join` in account mode accepts relay-signed
+/// principal assertions this way.
+pub trait ExternalAuthenticator: Send + Sync {
+    /// `None`: the request carries no such credential (fall back to the
+    /// token). `Some(Ok(grant))`: authorized as `grant.principal`, view-only
+    /// when `grant.view_only`. `Some(Err(reason))`: presented but refused.
+    fn authenticate(&self, headers: &http::HeaderMap) -> Option<Result<ExternalGrant, String>>;
+
+    /// The cua daemon's share gateway socket while the host policy turns
+    /// shares on (`/share/*`), else `None`. `Err` when the policy cannot be
+    /// read or the machine stopped sharing (fail closed).
+    fn share_gateway(&self) -> Result<Option<std::path::PathBuf>, String> {
+        Ok(None)
+    }
+
+    /// A phone made a call it may never make (logged, rate limited).
+    fn phone_refused(&self, _caller: &RelayCaller, _path: &str) {}
+
+    /// A phone made a call on its list (logged, rate limited): it looked
+    /// (`Scope::View`) or touched a desktop shared as a Space (`Scope::Control`).
+    fn phone_used(&self, _caller: &RelayCaller, _scope: crate::phone_control::Scope) {}
+
+    /// Whether a phone's call that is still running (a picture of the screen
+    /// that streams) may go on. Asked about once a second; `Err(why)` ends it.
+    /// The default lets it go on.
+    fn phone_still_allowed(&self, _caller: &RelayCaller, _path: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Holds the root token and derives every HMAC key.
+pub struct Auth {
+    token: RwLock<Option<Arc<str>>>,
+    /// Keys tickets while no token is configured. From the OS randomness;
+    /// replaced by [`Auth::renew_boot_secret`] when the guest becomes a new
+    /// machine (a memory snapshot would otherwise share it with every
+    /// clone).
+    boot_secret: RwLock<[u8; 32]>,
+    external: RwLock<Option<Arc<dyn ExternalAuthenticator>>>,
+    access_log: RwLock<Option<Arc<crate::access_log::AccessLog>>>,
+}
+
+impl Auth {
+    /// Creates the store with an optional initial token (empty → none).
+    pub fn new(token: Option<String>) -> Self {
+        Self {
+            token: RwLock::new(token.filter(|t| !t.is_empty()).map(Arc::from)),
+            boot_secret: RwLock::new(crate::identity::fresh_secret(b"boot-secret", &[])),
+            external: RwLock::new(None),
+            access_log: RwLock::new(None),
+        }
+    }
+
+    /// Replaces the per-boot ticket secret (this guest became a new
+    /// machine). Tickets minted without a token stop validating.
+    pub fn renew_boot_secret(&self, extra: &[u8]) {
+        *self.boot_secret.write().expect("boot secret lock") =
+            crate::identity::fresh_secret(b"boot-secret", extra);
+    }
+
+    /// Records every authorized remote access in `log` from now on.
+    pub fn set_access_log(&self, log: Arc<crate::access_log::AccessLog>) {
+        *self.access_log.write().expect("access log lock") = Some(log);
+    }
+
+    /// Records an access (`via`: `relay`, `viewer`, `token`), when an access
+    /// log is configured.
+    pub fn record_access(&self, via: &str, who: &str, what: &str) {
+        let log = self.access_log.read().expect("access log lock").clone();
+        if let Some(log) = log {
+            log.record(via, who, what);
+        }
+    }
+
+    /// Records an authorized gRPC call to `path` ([`call_what`]); a
+    /// screenshot is left to its handler ([`record_screenshot`]), which
+    /// knows whether it is a thumbnail. `owner`: the caller is the
+    /// machine's owner (the token, or the owner's relay account).
+    pub fn record_call(
+        &self,
+        extensions: &mut http::Extensions,
+        via: &str,
+        who: &str,
+        path: &str,
+        owner: bool,
+    ) {
+        if path == SCREENSHOT_METHOD {
+            let log = self.access_log.read().expect("access log lock").clone();
+            if let Some(log) = log {
+                extensions.insert(PendingAccess {
+                    log,
+                    via: via.into(),
+                    who: who.into(),
+                    owner,
+                });
+            }
+            return;
+        }
+        self.record_access(via, who, &call_what(path));
+    }
+
+    /// Records the access `headers` were authorized with for `what`: the
+    /// relay-asserted identity, else the token (with any client-claimed
+    /// name marked as claimed). Nothing without a token (a loopback server
+    /// that trusts every local caller).
+    pub fn record_headers(&self, headers: &http::HeaderMap, what: &str) {
+        match self.authenticate_external(headers) {
+            Some(Ok(g)) if g.view_only => self.record_access(
+                via_of(&g.principal),
+                &principal_label(&g.principal),
+                &format!("refused {what} (view-only share)"),
+            ),
+            Some(Ok(g)) => {
+                self.record_access(via_of(&g.principal), &principal_label(&g.principal), what)
+            }
+            Some(Err(_)) => {}
+            None if self.has_token() => {
+                self.record_access("token", &token_label(principal_from_headers(headers)), what)
+            }
+            None => {}
+        }
+    }
+
+    /// Installs an external authenticator consulted before the token.
+    pub fn set_external(&self, external: Arc<dyn ExternalAuthenticator>) {
+        *self.external.write().expect("external lock") = Some(external);
+    }
+
+    /// Removes the external authenticator (a relay was detached).
+    pub fn clear_external(&self) {
+        *self.external.write().expect("external lock") = None;
+    }
+
+    /// The share gateway socket the external authenticator's host policy
+    /// names (`shares` on), if any.
+    pub fn share_gateway(&self) -> Result<Option<std::path::PathBuf>, String> {
+        match self.external.read().expect("external lock").clone() {
+            Some(external) => external.share_gateway(),
+            None => Ok(None),
+        }
+    }
+
+    /// Runs the external authenticator, if any.
+    pub fn authenticate_external(
+        &self,
+        headers: &http::HeaderMap,
+    ) -> Option<Result<ExternalGrant, String>> {
+        let external = self.external.read().expect("external lock").clone()?;
+        external.authenticate(headers)
+    }
+
+    /// The current token.
+    pub fn token(&self) -> Option<Arc<str>> {
+        self.token.read().expect("token lock").clone()
+    }
+
+    /// True once a token is configured.
+    pub fn has_token(&self) -> bool {
+        self.token.read().expect("token lock").is_some()
+    }
+
+    /// Installs or rotates the token. Returns true if it changed.
+    pub fn set_token(&self, token: &str) -> bool {
+        if token.is_empty() {
+            return false;
+        }
+        let mut guard = self.token.write().expect("token lock");
+        if guard.as_deref() == Some(token) {
+            return false;
+        }
+        *guard = Some(Arc::from(token));
+        true
+    }
+
+    /// Removes the token (await-token-file revocation). Returns true if one
+    /// was configured.
+    pub fn clear_token(&self) -> bool {
+        self.token.write().expect("token lock").take().is_some()
+    }
+
+    /// Installs `token` only if none is configured yet (the first bootstrap
+    /// `Init` wins atomically). Returns false when a token already exists or
+    /// `token` is empty.
+    pub fn claim_token(&self, token: &str) -> bool {
+        if token.is_empty() {
+            return false;
+        }
+        let mut guard = self.token.write().expect("token lock");
+        if guard.is_some() {
+            return false;
+        }
+        *guard = Some(Arc::from(token));
+        true
+    }
+
+    /// Checks `authorization: Bearer <token>`. Always true with no token.
+    pub fn check_authorization(&self, header: Option<&str>) -> bool {
+        let Some(expected) = self.token() else {
+            return true;
+        };
+        let Some(presented) = header.and_then(parse_bearer) else {
+            return false;
+        };
+        constant_time_eq(presented.as_bytes(), expected.as_bytes())
+    }
+
+    /// Checks the token in `authorization` **or** `x-cua-env-authorization`
+    /// (a gateway in front of the daemon may consume and strip
+    /// `authorization`, so the SDK sends the env token in the alternate header
+    /// when it goes through one).
+    /// Always true with no token.
+    pub fn check_headers(&self, headers: &http::HeaderMap) -> bool {
+        match self.authenticate_external(headers) {
+            // A view-only share reaches no plain HTTP route (`/mcp`, exec
+            // sockets): it watches through tickets its gRPC calls mint. A
+            // machine that does not share its desktop serves none to any
+            // relayed caller.
+            Some(Ok(grant)) => {
+                return !grant.view_only
+                    && !grant.host_only
+                    && grant.account.as_ref().is_none_or(|a| a.phone.is_none())
+            }
+            Some(Err(_)) => return false,
+            None => {}
+        }
+        if !self.has_token() {
+            return true;
+        }
+        [
+            http::header::AUTHORIZATION.as_str(),
+            cua_proto::metadata::ENV_AUTHORIZATION,
+        ]
+        .iter()
+        .flat_map(|name| headers.get_all(*name))
+        .filter_map(|value| value.to_str().ok())
+        .any(|value| self.check_authorization(Some(value)))
+    }
+
+    /// Derives a purpose-specific HMAC key from the token (or boot secret).
+    pub fn derive_key(&self, purpose: &str) -> [u8; 32] {
+        let token = self.token();
+        let boot_secret;
+        let base: &[u8] = match &token {
+            Some(token) => token.as_bytes(),
+            None => {
+                boot_secret = *self.boot_secret.read().expect("boot secret lock");
+                &boot_secret
+            }
+        };
+        let mut mac = HmacSha256::new_from_slice(base).expect("hmac accepts any key");
+        mac.update(b"cua-spacesd/");
+        mac.update(purpose.as_bytes());
+        mac.finalize().into_bytes().into()
+    }
+
+    /// Mints a ticket. `ttl` is clamped to [`MAX_TICKET_TTL`].
+    pub fn mint_ticket(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal_id: &str,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
+        self.mint_ticket_issued(scope, resource, principal_id, None, ttl)
+    }
+
+    /// [`Self::mint_ticket`] for a relayed call: records its assertion's
+    /// `iat` (`issued`) in the ticket.
+    pub fn mint_ticket_issued(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal_id: &str,
+        issued: Option<u64>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
+        self.mint_ticket_for(scope, resource, principal_id, issued, None, ttl)
+    }
+
+    /// [`Self::mint_ticket_issued`] bound to the enrolled `device` whose call
+    /// minted it.
+    pub fn mint_ticket_for(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal_id: &str,
+        issued: Option<u64>,
+        device: Option<&str>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
+        let expires_at = SystemTime::now() + ttl.min(MAX_TICKET_TTL);
+        let exp_ms = expires_at
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let payload = TicketPayload {
+            s: scope.as_str().to_owned(),
+            r: resource.to_owned(),
+            p: principal_id.to_owned(),
+            e: exp_ms,
+            n: random_id(9),
+            a: issued,
+            d: device.map(str::to_owned),
+        };
+        let payload = serde_json::to_vec(&payload).expect("ticket payload serializes");
+        let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let body = engine.encode(payload);
+        let sig = self.sign_ticket(&body);
+        (format!("v1.{body}.{}", engine.encode(sig)), expires_at)
+    }
+
+    fn sign_ticket(&self, body: &str) -> [u8; 32] {
+        let key = self.derive_key("ticket-v1");
+        let mut mac = HmacSha256::new_from_slice(&key).expect("hmac key");
+        mac.update(body.as_bytes());
+        mac.finalize().into_bytes().into()
+    }
+
+    /// Verifies a ticket's signature, scope and expiry.
+    pub fn validate_ticket(
+        &self,
+        ticket: &str,
+        scope: TicketScope,
+    ) -> Result<TicketClaims, TicketError> {
+        let mut parts = ticket.split('.');
+        let (Some("v1"), Some(body), Some(sig), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(TicketError::Malformed);
+        };
+        let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let sig = engine.decode(sig).map_err(|_| TicketError::Malformed)?;
+        let expected = self.sign_ticket(body);
+        if !constant_time_eq(&sig, &expected) {
+            return Err(TicketError::BadSignature);
+        }
+        let payload = engine.decode(body).map_err(|_| TicketError::Malformed)?;
+        let payload: TicketPayload =
+            serde_json::from_slice(&payload).map_err(|_| TicketError::Malformed)?;
+        let minted_scope = TicketScope::parse(&payload.s).ok_or(TicketError::Malformed)?;
+        if minted_scope != scope {
+            return Err(TicketError::WrongScope);
+        }
+        let expires_at = UNIX_EPOCH + Duration::from_millis(payload.e);
+        if SystemTime::now() >= expires_at {
+            return Err(TicketError::Expired);
+        }
+        Ok(TicketClaims {
+            scope,
+            resource: payload.r,
+            principal_id: payload.p,
+            expires_at,
+        })
+    }
+}
+
+/// Finds a valid viewer ticket among the bearer credentials of `headers`
+/// (`authorization` or `x-cua-env-authorization`). `None` when no bearer
+/// is a ticket at all; `Some(Err)` when one is, but it is invalid.
+pub fn viewer_ticket_from_headers(
+    auth: &Auth,
+    headers: &http::HeaderMap,
+) -> Option<Result<ViewerGrant, TicketError>> {
+    let mut refused = None;
+    for value in [
+        http::header::AUTHORIZATION.as_str(),
+        cua_proto::metadata::ENV_AUTHORIZATION,
+    ]
+    .iter()
+    .flat_map(|name| headers.get_all(*name))
+    .filter_map(|value| value.to_str().ok())
+    {
+        let Some(bearer) = parse_bearer(value) else {
+            continue;
+        };
+        if !bearer.starts_with("v1.") {
+            continue;
+        }
+        match auth.validate_ticket(bearer, TicketScope::Viewer) {
+            Ok(claims) => match serde_json::from_str::<ViewerGrant>(&claims.resource) {
+                Ok(mut grant) => {
+                    grant.expires_at = Some(claims.expires_at);
+                    return Some(Ok(grant));
+                }
+                Err(_) => refused = Some(TicketError::Malformed),
+            },
+            // A ticket for another scope in a bearer header is a mistake,
+            // not a viewer.
+            Err(TicketError::WrongScope) => refused = Some(TicketError::WrongScope),
+            Err(error) => refused = Some(error),
+        }
+    }
+    refused.map(Err)
+}
+
+/// Extracts `<token>` from `Bearer <token>` (scheme is case-insensitive).
+pub fn parse_bearer(header: &str) -> Option<&str> {
+    let (scheme, rest) = header.split_once(' ')?;
+    scheme
+        .eq_ignore_ascii_case("bearer")
+        .then(|| rest.trim())
+        .filter(|t| !t.is_empty())
+}
+
+/// A ticket presented on a side-channel request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresentedTicket {
+    /// The ticket.
+    pub ticket: String,
+    /// The subprotocol that carried it, which the server must echo when
+    /// accepting the WebSocket.
+    pub subprotocol: Option<String>,
+}
+
+/// Finds a ticket in the `ticket` query parameter or in a
+/// `Sec-WebSocket-Protocol: cua.ticket.<ticket>` entry.
+pub fn ticket_from_parts(uri: &http::Uri, headers: &http::HeaderMap) -> Option<PresentedTicket> {
+    if let Some(query) = uri.query() {
+        for pair in query.split('&') {
+            if let Some(value) = pair.strip_prefix("ticket=") {
+                let decoded = percent_encoding::percent_decode_str(value)
+                    .decode_utf8()
+                    .ok()?
+                    .into_owned();
+                return Some(PresentedTicket {
+                    ticket: decoded,
+                    subprotocol: None,
+                });
+            }
+        }
+    }
+    for value in headers.get_all(http::header::SEC_WEBSOCKET_PROTOCOL) {
+        let Ok(value) = value.to_str() else { continue };
+        for protocol in value.split(',').map(str::trim) {
+            if let Some(ticket) = protocol.strip_prefix(TICKET_SUBPROTOCOL_PREFIX) {
+                return Some(PresentedTicket {
+                    ticket: ticket.to_owned(),
+                    subprotocol: Some(protocol.to_owned()),
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Decodes the `x-cua-principal-bin` header (base64, padded or not).
+pub fn principal_from_headers(headers: &http::HeaderMap) -> Option<Principal> {
+    let raw = headers
+        .get(cua_proto::metadata::PRINCIPAL_BIN)?
+        .to_str()
+        .ok()?;
+    let trimmed = raw.trim().trim_end_matches('=');
+    let bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+        .decode(trimmed)
+        .ok()?;
+    Principal::decode(bytes.as_slice()).ok()
+}
+
+/// Encodes a principal for the `x-cua-principal-bin` header.
+pub fn encode_principal(principal: &Principal) -> String {
+    base64::engine::general_purpose::STANDARD_NO_PAD.encode(principal.encode_to_vec())
+}
+
+/// `name (id)` of a verified principal, or the id alone.
+/// Who vouched for an external grant, for the access log: the host's tailnet
+/// (`tailnet:` principals) or the relay (an assertion, also over the mesh).
+pub fn via_of(p: &Principal) -> &'static str {
+    if p.id.starts_with("tailnet:") {
+        "tailnet"
+    } else {
+        "relay"
+    }
+}
+
+pub fn principal_label(p: &Principal) -> String {
+    if p.display_name.is_empty() || p.display_name == p.id {
+        p.id.clone()
+    } else {
+        format!("{} ({})", p.display_name, p.id)
+    }
+}
+
+/// A token caller: the token is the identity; a principal it sends is only
+/// the client's claim.
+pub fn token_label(claimed: Option<Principal>) -> String {
+    match claimed
+        .map(|p| {
+            if p.display_name.is_empty() {
+                p.id
+            } else {
+                p.display_name
+            }
+        })
+        .filter(|n| !n.is_empty())
+    {
+        Some(name) => format!("token (claims {name})"),
+        None => "token".into(),
+    }
+}
+
+/// Separates an access line's caller from the agent session that made the
+/// call (` · agent Claude Code (agent:claude-code-4242)`).
+pub const AGENT_SESSION_TAG: &str = " \u{b7} agent ";
+
+/// The agent session a caller says it is, as an access line's suffix:
+/// ` · agent <name> (<id>)` for an agent principal (`agent:<label>-<pid>`,
+/// one per `cua mcp` process), empty for anything else. The name and id
+/// are the client's claim; the line's caller before the tag stays the
+/// verified identity. Readers use it to tell two agents of one account
+/// apart (the second-agent prompt in the apps).
+pub fn agent_session_suffix(claimed: Option<&Principal>) -> String {
+    let Some(p) = claimed.filter(|p| {
+        p.kind == cua_proto::env::v1::PrincipalKind::Agent as i32 && p.id.starts_with("agent:")
+    }) else {
+        return String::new();
+    };
+    let clean = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !c.is_control() && !matches!(c, '(' | ')'))
+            .take(64)
+            .collect::<String>()
+            .trim()
+            .to_string()
+    };
+    let id = clean(&p.id);
+    let name = clean(&p.display_name);
+    let name = if name.is_empty() {
+        "Agent".to_string()
+    } else {
+        name
+    };
+    format!("{AGENT_SESSION_TAG}{name} ({id})")
+}
+
+/// The gRPC service of a `/pkg.Service/Method` path (`ProcessService`).
+pub fn grpc_service(path: &str) -> &str {
+    let service = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    service.rsplit('.').next().unwrap_or(service)
+}
+
+/// Read-only, low-impact calls (capability and health probes, status
+/// polls, presence, listings) that clients make on their own. The access
+/// log records them as `<Service>/<Method> (background)` so readers can
+/// leave them out of "connected now"; the classification is the route's,
+/// decided here on the host, never anything the caller says about itself.
+/// Every other call (a stream, input, a shell, files, an agent, teleport,
+/// a share or the volume) is recorded by its service name, as before.
+pub const BACKGROUND_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.SystemService/Metrics",
+    "/cua.env.v1.PresenceService/Join",
+    "/cua.env.v1.PresenceService/UpdateCursor",
+    "/cua.env.v1.PresenceService/Leave",
+    "/cua.env.v1.StreamService/ListTargets",
+    "/cua.env.v1.ComputerService/ListDisplays",
+    "/cua.env.v1.HostSpacesService/GetHostSpaces",
+    "/cua.env.v1.HostJobsService/ListHostJobs",
+    "/cua.env.v1.HostJobsService/GetHostJob",
+    "/cua.env.v1.TunnelService/ListForwards",
+    "/cua.env.v1.TunnelService/GetHotspotStatus",
+    "/cua.env.v1.VolumeService/GetVolumeStatus",
+    "/cua.env.v1.DriverService/ListTools",
+];
+
+/// The suffix of a background call's `what` in the access log.
+pub const BACKGROUND_TAG: &str = " (background)";
+
+/// `ComputerService.Screenshot`: recorded by the handler once it knows the
+/// size asked for ([`record_screenshot`]).
+pub const SCREENSHOT_METHOD: &str = "/cua.env.v1.ComputerService/Screenshot";
+
+/// A screenshot no larger than this (long edge, pixels) is a thumbnail.
+pub const THUMBNAIL_MAX_DIMENSION: u32 = 480;
+
+/// What the access log records for an authorized gRPC call to `path`.
+pub fn call_what(path: &str) -> String {
+    let route = path.trim_start_matches('/');
+    let route = route.rsplit_once('.').map_or(route, |(_, r)| r);
+    if BACKGROUND_GRPC_METHODS.contains(&path) {
+        return format!("{route}{BACKGROUND_TAG}");
+    }
+    let service = grpc_service(path);
+    // Older drivers wrote these services bare, and readers take a bare
+    // one as background; their other calls (a viewer ticket, shutdown)
+    // name the method so they still count.
+    if LEGACY_BACKGROUND_SERVICES.contains(&service) {
+        return route.to_string();
+    }
+    service.to_string()
+}
+
+/// Services older drivers recorded without the method, which readers take
+/// as background when bare ([`call_what`] names the method for the rest).
+pub const LEGACY_BACKGROUND_SERVICES: &[&str] = &["SystemService", "PresenceService"];
+
+/// What the access log records for a screenshot of at most
+/// `max_dimension` pixels (0: full size): a thumbnail (background for the
+/// machine's owner, surfaced for anyone else) or a screen read.
+pub fn screenshot_what(max_dimension: u32, owner: bool) -> String {
+    if (1..=THUMBNAIL_MAX_DIMENSION).contains(&max_dimension) {
+        if owner {
+            "ComputerService/Screenshot (thumbnail)".into()
+        } else {
+            "ComputerService/Screenshot (thumbnail, not owner)".into()
+        }
+    } else {
+        "ComputerService".into()
+    }
+}
+
+/// An authorized screenshot not yet recorded: the handler records it with
+/// the size it was asked for ([`record_screenshot`]).
+#[derive(Clone)]
+pub struct PendingAccess {
+    log: Arc<crate::access_log::AccessLog>,
+    via: String,
+    who: String,
+    owner: bool,
+}
+
+impl std::fmt::Debug for PendingAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingAccess")
+            .field("via", &self.via)
+            .field("who", &self.who)
+            .field("owner", &self.owner)
+            .finish()
+    }
+}
+
+/// Records the screenshot `request` asks for (`ComputerService.Screenshot`
+/// handlers call it first): a thumbnail or a screen read, by its size.
+pub fn record_screenshot<T>(request: &tonic::Request<T>, max_dimension: u32) {
+    if let Some(p) = request.extensions().get::<PendingAccess>() {
+        p.log
+            .record(&p.via, &p.who, &screenshot_what(max_dimension, p.owner));
+    }
+}
+
+/// How the gRPC surface treats callers when no token is configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessMode {
+    /// Loopback bind without a token: every caller is trusted.
+    OpenLoopback,
+    /// Non-loopback bind without a token, explicitly allowed for first-claim
+    /// bootstrap: only `GetCapabilities`, `Health` and `Init` are reachable
+    /// until `Init` installs a token.
+    Bootstrap,
+    /// The token comes only from a file the orchestrator writes (see
+    /// `token_file`): until it holds a token only `GetCapabilities` and
+    /// `Health` are reachable, and `Init` never installs a token.
+    AwaitTokenFile,
+}
+
+/// Paths reachable without a token in [`AccessMode::Bootstrap`].
+pub const BOOTSTRAP_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.SystemService/Init",
+];
+
+/// Paths reachable without a token in [`AccessMode::AwaitTokenFile`].
+pub const AWAIT_TOKEN_FILE_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+];
+
+/// Request extension set by [`AuthLayer`] on every authorized gRPC call.
+#[derive(Debug, Clone, Default)]
+pub struct CallerIdentity {
+    /// The decoded `x-cua-principal-bin`, if any.
+    pub principal: Option<Principal>,
+    /// True when the call presented the configured token.
+    pub token_verified: bool,
+    /// True when `principal` was asserted by an [`ExternalAuthenticator`]
+    /// (a relay-signed identity) or a viewer ticket: services must not let
+    /// the request body override its id or display name.
+    pub asserted: bool,
+    /// Set when the call was authorized by a viewer ticket: services clamp
+    /// what they do to the grant.
+    pub viewer: Option<Arc<ViewerGrant>>,
+    /// The relay-verified account of a relayed call.
+    pub account: Option<RelayCaller>,
+    /// A relayed call to a machine that does not share its desktop
+    /// ([`ExternalGrant::host_only`]): `GetCapabilities` reports the
+    /// desktop's features unsupported to it.
+    pub host_only: bool,
+}
+
+/// Tower layer that authenticates gRPC (and gRPC-Web) calls.
+#[derive(Clone)]
+pub struct AuthLayer {
+    auth: Arc<Auth>,
+    mode: AccessMode,
+}
+
+impl AuthLayer {
+    /// Creates the layer.
+    pub fn new(auth: Arc<Auth>, mode: AccessMode) -> Self {
+        Self { auth, mode }
+    }
+}
+
+impl<S> Layer<S> for AuthLayer {
+    type Service = AuthService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        AuthService {
+            inner,
+            auth: self.auth.clone(),
+            mode: self.mode,
+        }
+    }
+}
+
+/// See [`AuthLayer`].
+#[derive(Clone)]
+pub struct AuthService<S> {
+    inner: S,
+    auth: Arc<Auth>,
+    mode: AccessMode,
+}
+
+impl<S, B, R> Service<Request<B>> for AuthService<S>
+where
+    S: Service<Request<B>, Response = Response<R>> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    B: Send + 'static,
+    R: Default + Send + 'static + http_body::Body<Data = bytes::Bytes> + From<axum::body::Body>,
+    <R as http_body::Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Response = Response<R>;
+    type Error = S::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: Request<B>) -> Self::Future {
+        let has_token = self.auth.has_token();
+        let external = self.auth.authenticate_external(req.headers());
+        let verdict = if let Some(external) = external {
+            match external {
+                Ok(grant) if grant.view_only => {
+                    let path = req.uri().path().to_owned();
+                    let who = principal_label(&grant.principal);
+                    if !SHARED_VIEWER_GRPC_METHODS.contains(&path.as_str()) {
+                        self.auth.record_access(
+                            via_of(&grant.principal),
+                            &who,
+                            &format!("refused {} (view-only share)", grpc_service(&path)),
+                        );
+                        tracing::debug!(%path, %who, "refused a view-only share");
+                        let response = crate::error::status(
+                            tonic::Code::PermissionDenied,
+                            cua_proto::env::v1::ErrorReason::PermissionDenied,
+                            format!("view-only share: {who} cannot call {path}"),
+                        )
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
+                    if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
+                        self.auth.record_access(
+                            via_of(&grant.principal),
+                            &who,
+                            &format!("refused {} (desktop not shared)", grpc_service(&path)),
+                        );
+                        tracing::debug!(%path, %who, "refused: this machine does not share its desktop");
+                        let response = crate::error::status(
+                            tonic::Code::PermissionDenied,
+                            cua_proto::env::v1::ErrorReason::PermissionDenied,
+                            format!(
+                                "this computer does not share its desktop (it only provides Spaces): \
+                                 {who} cannot call {path}"
+                            ),
+                        )
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
+                    self.auth.record_call(
+                        req.extensions_mut(),
+                        via_of(&grant.principal),
+                        &who,
+                        &path,
+                        false,
+                    );
+                    let viewer = Arc::new(grant.viewer_grant());
+                    req.extensions_mut().insert(CallerIdentity {
+                        principal: Some(grant.principal),
+                        token_verified: true,
+                        asserted: true,
+                        viewer: Some(viewer),
+                        account: grant.account,
+                        host_only: grant.host_only,
+                    });
+                    let mut inner = self.inner.clone();
+                    std::mem::swap(&mut self.inner, &mut inner);
+                    return Box::pin(inner.call(req));
+                }
+                Ok(grant) => {
+                    let path = req.uri().path().to_owned();
+                    let thread_space = grant
+                        .account
+                        .as_ref()
+                        .and_then(|a| a.space.as_deref())
+                        .filter(|_| !THREAD_GRANT_GRPC_METHODS.contains(&path.as_str()));
+                    if let Some(space) = thread_space {
+                        let who = principal_label(&grant.principal);
+                        self.auth.record_access(
+                            via_of(&grant.principal),
+                            &who,
+                            &format!(
+                                "refused {} (thread of relay:{space} only)",
+                                grpc_service(&path)
+                            ),
+                        );
+                        let response = crate::error::StatusBuilder::new(
+                            tonic::Code::PermissionDenied,
+                            cua_proto::env::v1::ErrorReason::PermissionDenied,
+                            format!(
+                                "{who} reaches only the thread of relay:{space} on this computer, \
+                                 not {path}"
+                            ),
+                        )
+                        .meta("kind", THREAD_GRANT_REFUSED)
+                        .build()
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
+                    if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
+                        let who = principal_label(&grant.principal);
+                        self.auth.record_access(
+                            via_of(&grant.principal),
+                            &who,
+                            &format!("refused {} (desktop not shared)", grpc_service(&path)),
+                        );
+                        tracing::debug!(%path, %who, "refused: this machine does not share its desktop");
+                        let response = crate::error::status(
+                            tonic::Code::PermissionDenied,
+                            cua_proto::env::v1::ErrorReason::PermissionDenied,
+                            format!(
+                                "this computer does not share its desktop (it only provides Spaces): \
+                                 {who} cannot call {path}"
+                            ),
+                        )
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
+                    let mut phone_guard = None;
+                    if let Some(caller) = grant.account.as_ref().filter(|a| a.phone.is_some()) {
+                        let external = self.auth.external.read().expect("external lock").clone();
+                        match phone_verdict(&path) {
+                            PhoneVerdict::Look | PhoneVerdict::Touch => {
+                                if let Some(external) = external {
+                                    let scope = if phone_verdict(&path) == PhoneVerdict::Touch {
+                                        crate::phone_control::Scope::Control
+                                    } else {
+                                        crate::phone_control::Scope::View
+                                    };
+                                    external.phone_used(caller, scope);
+                                    // A call that streams is looked at again
+                                    // while it runs (see `PhoneGuardBody`).
+                                    phone_guard = Some((external, caller.clone(), path.clone()));
+                                }
+                            }
+                            PhoneVerdict::Refuse => {
+                                let who = principal_label(&grant.principal);
+                                self.auth.record_access(
+                                    via_of(&grant.principal),
+                                    &who,
+                                    &format!("refused {} (phone)", grpc_service(&path)),
+                                );
+                                if let Some(external) = external {
+                                    external.phone_refused(caller, &path);
+                                }
+                                let response = crate::error::status(
+                                    tonic::Code::PermissionDenied,
+                                    cua_proto::env::v1::ErrorReason::PermissionDenied,
+                                    "a phone cannot make this call: it reaches Spaces, not this computer's own services",
+                                )
+                                .into_http::<R>();
+                                return Box::pin(async move { Ok(response) });
+                            }
+                        }
+                    }
+                    let owner = grant.account.as_ref().is_some_and(|a| a.role == "owner");
+                    // Only an owner keeps the agent kind (`principal_for`):
+                    // name which of its agent sessions this is.
+                    let session = if grant.principal.kind
+                        == cua_proto::env::v1::PrincipalKind::Agent as i32
+                    {
+                        agent_session_suffix(principal_from_headers(req.headers()).as_ref())
+                    } else {
+                        String::new()
+                    };
+                    // The device behind the call, and for a phone its scope
+                    // (`view` or `control`), are part of who is recorded: the
+                    // owner reads which device did what.
+                    let device_tag = grant
+                        .account
+                        .as_ref()
+                        .and_then(|c| {
+                            let dev = c.device.as_deref()?;
+                            Some(match &c.phone {
+                                Some(_) => format!(
+                                    " [{dev} mobile {}]",
+                                    if cua_relay::phone::PHONE_CONTROL_GRPC_METHODS
+                                        .contains(&path.as_str())
+                                    {
+                                        "control"
+                                    } else {
+                                        "view"
+                                    }
+                                ),
+                                None => format!(" [{dev}]"),
+                            })
+                        })
+                        .unwrap_or_default();
+                    self.auth.record_call(
+                        req.extensions_mut(),
+                        via_of(&grant.principal),
+                        &format!("{}{session}{device_tag}", principal_label(&grant.principal)),
+                        &path,
+                        owner,
+                    );
+                    req.extensions_mut().insert(CallerIdentity {
+                        principal: Some(grant.principal),
+                        token_verified: true,
+                        asserted: true,
+                        viewer: None,
+                        account: grant.account,
+                        host_only: grant.host_only,
+                    });
+                    let mut inner = self.inner.clone();
+                    std::mem::swap(&mut self.inner, &mut inner);
+                    let call = inner.call(req);
+                    return match phone_guard {
+                        None => Box::pin(call),
+                        Some((external, caller, path)) => Box::pin(async move {
+                            let response = call.await?;
+                            Ok(guard_phone_response(response, external, caller, path))
+                        }),
+                    };
+                }
+                Err(reason) => {
+                    self.auth.record_access(
+                        "relay",
+                        "refused",
+                        &reason.chars().take(120).collect::<String>(),
+                    );
+                    tracing::debug!(path = %req.uri().path(), %reason, "rejected external credential");
+                    // A thread grant this machine does not take says so,
+                    // typed ([`THREAD_GRANT_REFUSED`]).
+                    let mut status = crate::error::StatusBuilder::new(
+                        tonic::Code::PermissionDenied,
+                        cua_proto::env::v1::ErrorReason::PermissionDenied,
+                        format!("relay assertion refused: {reason}"),
+                    );
+                    if reason.starts_with(THREAD_GRANT_REASON_PREFIX) {
+                        status = status.meta("kind", THREAD_GRANT_REFUSED);
+                    }
+                    let response = status.build().into_http::<R>();
+                    return Box::pin(async move { Ok(response) });
+                }
+            }
+        } else if let Some(viewer) = viewer_ticket_from_headers(&self.auth, req.headers()) {
+            let path = req.uri().path().to_owned();
+            let refusal = match viewer {
+                Ok(grant) if cua_proto::metadata::VIEWER_GRPC_METHODS.contains(&path.as_str()) => {
+                    // A ticket a phone's call minted is a phone's: while this
+                    // computer does not answer phones, or does not share the
+                    // desktop it shows, it opens nothing, and a call that
+                    // runs is ended.
+                    let mut phone_guard = None;
+                    if grant.phone {
+                        let external = self.auth.external.read().expect("external lock").clone();
+                        let caller = RelayCaller::default();
+                        if let Some(external) = external {
+                            if let Err(why) = external.phone_still_allowed(&caller, &path) {
+                                let response = crate::error::status(
+                                    tonic::Code::PermissionDenied,
+                                    cua_proto::env::v1::ErrorReason::PermissionDenied,
+                                    why,
+                                )
+                                .into_http::<R>();
+                                return Box::pin(async move { Ok(response) });
+                            }
+                            phone_guard = Some((external, caller, path.clone()));
+                        }
+                    }
+                    self.auth.record_call(
+                        req.extensions_mut(),
+                        "viewer",
+                        &principal_label(&grant.principal()),
+                        &path,
+                        false,
+                    );
+                    req.extensions_mut().insert(CallerIdentity {
+                        principal: Some(grant.principal()),
+                        token_verified: true,
+                        asserted: true,
+                        viewer: Some(Arc::new(grant)),
+                        account: None,
+                        host_only: false,
+                    });
+                    let mut inner = self.inner.clone();
+                    std::mem::swap(&mut self.inner, &mut inner);
+                    let call = inner.call(req);
+                    return match phone_guard {
+                        None => Box::pin(call),
+                        Some((external, caller, path)) => Box::pin(async move {
+                            let response = call.await?;
+                            Ok(guard_phone_response(response, external, caller, path))
+                        }),
+                    };
+                }
+                Ok(_) => crate::error::status(
+                    tonic::Code::PermissionDenied,
+                    cua_proto::env::v1::ErrorReason::PermissionDenied,
+                    format!("a viewer ticket cannot call {path}"),
+                ),
+                Err(error) => {
+                    crate::error::unauthenticated(format!("viewer ticket refused: {error}"))
+                }
+            };
+            tracing::debug!(%path, "refused viewer call");
+            let response = refusal.into_http::<R>();
+            return Box::pin(async move { Ok(response) });
+        } else if has_token {
+            if self.auth.check_headers(req.headers()) {
+                Ok(true)
+            } else {
+                Err("missing or invalid bearer token")
+            }
+        } else {
+            match self.mode {
+                AccessMode::OpenLoopback => Ok(false),
+                AccessMode::Bootstrap => {
+                    if BOOTSTRAP_METHODS.contains(&req.uri().path()) {
+                        Ok(false)
+                    } else {
+                        tracing::debug!(path = %req.uri().path(), "refused: driver is uninitialized (bootstrap)");
+                        let response = crate::error::status(
+                            tonic::Code::FailedPrecondition,
+                            cua_proto::env::v1::ErrorReason::NotInitialized,
+                            "uninitialized: call SystemService.Init with a token first (gateway bootstrap)",
+                        )
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
+                }
+                AccessMode::AwaitTokenFile => {
+                    if AWAIT_TOKEN_FILE_METHODS.contains(&req.uri().path()) {
+                        Ok(false)
+                    } else {
+                        tracing::debug!(path = %req.uri().path(), "refused: awaiting the token file");
+                        let response = crate::error::status(
+                            tonic::Code::FailedPrecondition,
+                            cua_proto::env::v1::ErrorReason::NotInitialized,
+                            "awaiting token: the driver has no access token yet (it is read from the \
+                             claim's token file, never accepted over the network)",
+                        )
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
+                }
+            }
+        };
+        match verdict {
+            Ok(token_verified) => {
+                let principal = principal_from_headers(req.headers());
+                if token_verified {
+                    let path = req.uri().path().to_owned();
+                    let who = format!(
+                        "{}{}",
+                        token_label(principal.clone()),
+                        agent_session_suffix(principal.as_ref())
+                    );
+                    self.auth
+                        .record_call(req.extensions_mut(), "token", &who, &path, true);
+                }
+                req.extensions_mut().insert(CallerIdentity {
+                    principal,
+                    token_verified,
+                    asserted: false,
+                    viewer: None,
+                    account: None,
+                    host_only: false,
+                });
+                let mut inner = self.inner.clone();
+                std::mem::swap(&mut self.inner, &mut inner);
+                Box::pin(inner.call(req))
+            }
+            Err(message) => {
+                tracing::debug!(path = %req.uri().path(), "rejected unauthenticated call");
+                let response = crate::error::unauthenticated(message).into_http::<R>();
+                Box::pin(async move { Ok(response) })
+            }
+        }
+    }
+}
+
+impl Auth {
+    /// Watches a long-lived thing a phone's call opened (a media socket
+    /// opened by `OpenMedia`, which the response guard cannot reach): once a
+    /// second, until `done` says it ended, ask whether this computer still
+    /// allows the phone; when it does not, call `stop` with the reason. Does
+    /// nothing for a caller that is not a phone.
+    pub fn watch_phone(
+        self: &Arc<Self>,
+        caller: RelayCaller,
+        path: &str,
+        until: Option<SystemTime>,
+        done: impl Fn() -> bool + Send + 'static,
+        stop: impl FnOnce(String) + Send + 'static,
+    ) {
+        let Some(external) = self.external.read().expect("external lock").clone() else {
+            return;
+        };
+        let path = path.to_owned();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(PHONE_RECHECK).await;
+                if done() {
+                    return;
+                }
+                if until.is_some_and(|t| SystemTime::now() >= t) {
+                    stop("the phone's viewer ticket ended: ask for a new one".into());
+                    return;
+                }
+                if let Err(why) = external.phone_still_allowed(&caller, &path) {
+                    stop(why);
+                    return;
+                }
+            }
+        });
+    }
+}
+
+/// How often a phone's running call is looked at again.
+const PHONE_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The response of a phone's call, ended with `PermissionDenied` the moment
+/// the computer stops allowing it (it stopped sharing its desktop, the phones
+/// switch was turned off, the experiment was turned off). Looked at once a
+/// second, and again whenever a frame goes by.
+fn guard_phone_response<R>(
+    response: Response<R>,
+    external: Arc<dyn ExternalAuthenticator>,
+    caller: RelayCaller,
+    path: String,
+) -> Response<R>
+where
+    R: http_body::Body<Data = bytes::Bytes> + From<axum::body::Body> + Send + 'static,
+    R::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let (parts, body) = response.into_parts();
+    let guarded = PhoneGuardBody {
+        inner: Box::pin(body),
+        check: Box::new(move || external.phone_still_allowed(&caller, &path).err()),
+        sleep: Box::pin(tokio::time::sleep(PHONE_RECHECK)),
+        done: false,
+    };
+    Response::from_parts(parts, R::from(axum::body::Body::new(guarded)))
+}
+
+struct PhoneGuardBody<B> {
+    inner: Pin<Box<B>>,
+    check: Box<dyn Fn() -> Option<String> + Send + Sync>,
+    sleep: Pin<Box<tokio::time::Sleep>>,
+    done: bool,
+}
+
+impl<B> http_body::Body for PhoneGuardBody<B>
+where
+    B: http_body::Body<Data = bytes::Bytes>,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Data = bytes::Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<bytes::Bytes>, Self::Error>>> {
+        let this = &mut *self;
+        if this.done {
+            return Poll::Ready(None);
+        }
+        if this.sleep.as_mut().poll(cx).is_ready() {
+            this.sleep
+                .as_mut()
+                .reset(tokio::time::Instant::now() + PHONE_RECHECK);
+            // Arms the waker for the next second.
+            let _ = this.sleep.as_mut().poll(cx);
+            if let Some(why) = (this.check)() {
+                this.done = true;
+                let mut trailers = http::HeaderMap::new();
+                trailers.insert("grpc-status", http::HeaderValue::from_static("7"));
+                if let Ok(v) = http::HeaderValue::from_str(&why.replace(['\r', '\n'], " ")) {
+                    trailers.insert("grpc-message", v);
+                }
+                return Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))));
+            }
+        }
+        this.inner
+            .as_mut()
+            .poll_frame(cx)
+            .map(|o| o.map(|r| r.map_err(Into::into)))
+    }
+}
+
+/// Reads the [`CallerIdentity`] a request was authorized with.
+pub fn caller<T>(request: &tonic::Request<T>) -> CallerIdentity {
+    request
+        .extensions()
+        .get::<CallerIdentity>()
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+
+    /// A phone's call that streams is ended with `PermissionDenied` within a
+    /// second of the computer no longer allowing it, even when no frame flows.
+    #[tokio::test]
+    async fn a_phones_running_call_ends_when_the_computer_stops_allowing_it() {
+        use http_body_util::BodyExt as _;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Gate(AtomicBool);
+        impl ExternalAuthenticator for Gate {
+            fn authenticate(&self, _: &http::HeaderMap) -> Option<Result<ExternalGrant, String>> {
+                None
+            }
+            fn phone_still_allowed(&self, _: &RelayCaller, _: &str) -> Result<(), String> {
+                if self.0.load(Ordering::Relaxed) {
+                    Ok(())
+                } else {
+                    Err("this computer stopped sharing its desktop".into())
+                }
+            }
+        }
+        let gate = Arc::new(Gate(AtomicBool::new(true)));
+        // A stream that never sends anything.
+        let silent = axum::body::Body::from_stream(futures_util::stream::pending::<
+            Result<bytes::Bytes, std::io::Error>,
+        >());
+        let response = guard_phone_response(
+            Response::new(silent),
+            gate.clone(),
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia".into(),
+        );
+        let mut body = response.into_body();
+        // Allowed: nothing arrives (the stream is silent), and nothing ends.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1500), body.frame())
+                .await
+                .is_err()
+        );
+        gate.0.store(false, Ordering::Relaxed);
+        let frame = tokio::time::timeout(Duration::from_secs(3), body.frame())
+            .await
+            .expect("ended within a few seconds")
+            .expect("a frame")
+            .expect("not an error");
+        let trailers = frame.into_trailers().expect("trailers");
+        assert_eq!(trailers.get("grpc-status").unwrap(), "7");
+        assert_eq!(
+            trailers.get("grpc-message").unwrap(),
+            "this computer stopped sharing its desktop"
+        );
+        assert!(body.frame().await.is_none(), "and nothing after");
+    }
+
+    /// What a phone opened and left running (a media socket) is watched: it is
+    /// stopped, with the reason, when the computer stops allowing the phone,
+    /// and left alone once it has ended by itself.
+    #[tokio::test]
+    async fn a_watched_phone_session_is_stopped_with_the_reason() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Gate(AtomicBool);
+        impl ExternalAuthenticator for Gate {
+            fn authenticate(&self, _: &http::HeaderMap) -> Option<Result<ExternalGrant, String>> {
+                None
+            }
+            fn phone_still_allowed(&self, _: &RelayCaller, _: &str) -> Result<(), String> {
+                if self.0.load(Ordering::Relaxed) {
+                    Ok(())
+                } else {
+                    Err("phones are turned off on this computer".into())
+                }
+            }
+        }
+        let gate = Arc::new(Gate(AtomicBool::new(true)));
+        let auth = Arc::new(Auth::new(Some("t".into())));
+        auth.set_external(gate.clone());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let ended = Arc::new(AtomicBool::new(false));
+        let done = ended.clone();
+        auth.watch_phone(
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia",
+            None,
+            move || done.load(Ordering::Relaxed),
+            move |why| {
+                let _ = tx.send(why);
+            },
+        );
+        assert!(tokio::time::timeout(Duration::from_millis(1500), rx.recv())
+            .await
+            .is_err());
+        gate.0.store(false, Ordering::Relaxed);
+        let why = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("stopped within a few seconds")
+            .expect("a reason");
+        assert_eq!(why, "phones are turned off on this computer");
+        // A phone's ticket ends: the session it opened ends with it.
+        let (tx3, mut rx3) = tokio::sync::mpsc::unbounded_channel();
+        auth.watch_phone(
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia",
+            Some(SystemTime::now() + Duration::from_millis(500)),
+            || false,
+            move |why| {
+                let _ = tx3.send(why);
+            },
+        );
+        let why = tokio::time::timeout(Duration::from_secs(4), rx3.recv())
+            .await
+            .expect("stopped when the ticket ended")
+            .expect("a reason");
+        assert_eq!(why, "the phone's viewer ticket ended: ask for a new one");
+        // A session that ended by itself is not stopped again.
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+        auth.watch_phone(
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia",
+            None,
+            || true,
+            move |why| {
+                let _ = tx2.send(why);
+            },
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1600), rx2.recv())
+                .await
+                .map(|m| m.is_none())
+                .unwrap_or(true)
+        );
+    }
+
+    #[test]
+    fn a_phone_reaches_spaces_and_a_shared_desktop_and_never_the_computers_own_services() {
+        let path = |m: &str| format!("/cua.env.v1.{m}");
+        for look in [
+            "HostThreadService/CallThreadTool",
+            "SystemService/CreateViewerTicket",
+            "SystemService/GetCapabilities",
+            "ComputerService/Screenshot",
+        ] {
+            assert_eq!(phone_verdict(&path(look)), PhoneVerdict::Look, "{look}");
+        }
+        for touch in ["ComputerService/Pointer", "ComputerService/Keyboard"] {
+            assert_eq!(phone_verdict(&path(touch)), PhoneVerdict::Touch, "{touch}");
+        }
+        // These are the computer's own, whatever the role: never a phone's.
+        for never in [
+            "ProcessService/StartProcess",
+            "ProcessService/Run",
+            "FilesystemService/WriteFile",
+            "FilesystemService/ReadFile",
+            "FilesystemService/WatchDir",
+            "TunnelService/Forward",
+            "ComputerService/SetClipboard",
+            "ComputerService/GetClipboard",
+            "DriverService/CallTool",
+            "HostSpacesService/CreateHostSpace",
+            "HostJobsService/RunHostJobs",
+            "SystemService/AttachRelay",
+            "SystemService/Shutdown",
+        ] {
+            assert_eq!(phone_verdict(&path(never)), PhoneVerdict::Refuse, "{never}");
+        }
+        assert_eq!(phone_verdict("/mcp"), PhoneVerdict::Refuse);
+        assert_eq!(phone_verdict("/files"), PhoneVerdict::Refuse);
+        assert!(desktop_path(&path("StreamService/OpenMedia")));
+        assert!(desktop_path(&path("ComputerService/Pointer")));
+        assert!(!desktop_path(&path("HostThreadService/CallThreadTool")));
+    }
+    use super::*;
+
+    #[test]
+    fn screenshots_are_recorded_as_thumbnails_or_screen_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("access.log");
+        let auth = Auth::new(Some("t".into()));
+        auth.set_access_log(Arc::new(crate::access_log::AccessLog::open(&path)));
+        let shot = |who: &str, owner: bool, max_dimension: u32| {
+            let mut ext = http::Extensions::new();
+            auth.record_call(&mut ext, "relay", who, SCREENSHOT_METHOD, owner);
+            let req = tonic::Request::from_parts(tonic::metadata::MetadataMap::new(), ext, ());
+            record_screenshot(&req, max_dimension);
+        };
+        shot("owner", true, 320);
+        shot("guest", false, 320);
+        shot("owner", true, 0);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let what: Vec<String> = text
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<crate::access_log::AccessEntry>(l)
+                    .unwrap()
+                    .body
+                    .what
+            })
+            .collect();
+        assert_eq!(
+            what,
+            [
+                "ComputerService/Screenshot (thumbnail)",
+                "ComputerService/Screenshot (thumbnail, not owner)",
+                "ComputerService",
+            ]
+        );
+        assert_eq!(
+            call_what("/cua.env.v1.SystemService/Health"),
+            "SystemService/Health (background)"
+        );
+        assert_eq!(
+            call_what("/cua.env.v1.SystemService/CreateViewerTicket"),
+            "SystemService/CreateViewerTicket"
+        );
+        assert_eq!(
+            call_what("/cua.env.v1.TeleportService/ImportSession"),
+            "TeleportService"
+        );
+    }
+
+    #[test]
+    fn claim_token_installs_only_the_first_token() {
+        let auth = Auth::new(None);
+        assert!(!auth.claim_token(""));
+        assert!(!auth.has_token());
+        assert!(auth.claim_token("first"));
+        assert!(!auth.claim_token("second"));
+        assert_eq!(auth.token().as_deref(), Some("first"));
+        let configured = Auth::new(Some("preset".into()));
+        assert!(!configured.claim_token("x"));
+        assert_eq!(configured.token().as_deref(), Some("preset"));
+    }
+
+    #[test]
+    fn clear_token_revokes_tickets_and_reports_change() {
+        let auth = Auth::new(Some("one".into()));
+        let (ticket, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::from_secs(60));
+        assert!(auth.clear_token());
+        assert!(!auth.clear_token());
+        assert!(!auth.has_token());
+        assert_eq!(
+            auth.validate_ticket(&ticket, TicketScope::Media),
+            Err(TicketError::BadSignature)
+        );
+    }
+
+    #[test]
+    fn ticket_round_trip_and_scope_binding() {
+        let auth = Auth::new(Some("secret".into()));
+        let (ticket, _) = auth.mint_ticket(
+            TicketScope::Tunnel,
+            "fwd-1",
+            "alice",
+            Duration::from_secs(60),
+        );
+        let claims = auth.validate_ticket(&ticket, TicketScope::Tunnel).unwrap();
+        assert_eq!(claims.resource, "fwd-1");
+        assert_eq!(claims.principal_id, "alice");
+        assert_eq!(
+            auth.validate_ticket(&ticket, TicketScope::Media),
+            Err(TicketError::WrongScope)
+        );
+    }
+
+    #[test]
+    fn a_relayed_ticket_records_the_assertion_time_and_still_validates() {
+        use base64::Engine as _;
+        let auth = Auth::new(Some("secret".into()));
+        let payload = |ticket: &str| -> serde_json::Value {
+            let body = ticket.split('.').nth(1).unwrap();
+            let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(body)
+                .unwrap();
+            serde_json::from_slice(&raw).unwrap()
+        };
+        let (relayed, _) = auth.mint_ticket_issued(
+            TicketScope::Media,
+            "m",
+            "bob",
+            Some(1_791_773_000),
+            Duration::from_secs(60),
+        );
+        assert_eq!(payload(&relayed)["a"], 1_791_773_000);
+        assert_eq!(payload(&relayed)["p"], "bob");
+        let claims = auth.validate_ticket(&relayed, TicketScope::Media).unwrap();
+        assert_eq!(claims.principal_id, "bob");
+        // A local caller's ticket carries no `a` (same wire form as before).
+        let (local, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::from_secs(60));
+        assert!(payload(&local).get("a").is_none());
+    }
+
+    #[test]
+    fn ticket_expiry_is_enforced() {
+        let auth = Auth::new(None);
+        let (ticket, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::ZERO);
+        assert_eq!(
+            auth.validate_ticket(&ticket, TicketScope::Media),
+            Err(TicketError::Expired)
+        );
+    }
+
+    #[test]
+    fn tampered_ticket_is_refused() {
+        let auth = Auth::new(Some("secret".into()));
+        let (ticket, _) = auth.mint_ticket(TicketScope::Hotspot, "h", "", Duration::from_secs(60));
+        let mut parts: Vec<String> = ticket.split('.').map(str::to_owned).collect();
+        // Swap in a payload for a different resource, keeping the signature.
+        let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut payload: serde_json::Value =
+            serde_json::from_slice(&engine.decode(&parts[1]).unwrap()).unwrap();
+        payload["r"] = "other".into();
+        parts[1] = engine.encode(serde_json::to_vec(&payload).unwrap());
+        assert_eq!(
+            auth.validate_ticket(&parts.join("."), TicketScope::Hotspot),
+            Err(TicketError::BadSignature)
+        );
+        assert_eq!(
+            auth.validate_ticket("garbage", TicketScope::Hotspot),
+            Err(TicketError::Malformed)
+        );
+    }
+
+    #[test]
+    fn rotating_the_token_revokes_tickets() {
+        let auth = Auth::new(Some("one".into()));
+        let (ticket, _) = auth.mint_ticket(TicketScope::Files, "f", "", Duration::from_secs(60));
+        assert!(auth.set_token("two"));
+        assert_eq!(
+            auth.validate_ticket(&ticket, TicketScope::Files),
+            Err(TicketError::BadSignature)
+        );
+    }
+
+    #[test]
+    fn bearer_check_is_exact() {
+        let auth = Auth::new(Some("tok".into()));
+        assert!(auth.check_authorization(Some("Bearer tok")));
+        assert!(auth.check_authorization(Some("bearer tok")));
+        assert!(!auth.check_authorization(Some("Bearer tok2")));
+        assert!(!auth.check_authorization(Some("tok")));
+        assert!(!auth.check_authorization(None));
+        let open = Auth::new(None);
+        assert!(open.check_authorization(None));
+    }
+
+    #[test]
+    fn either_token_header_is_accepted() {
+        let auth = Auth::new(Some("tok".into()));
+        let mut headers = http::HeaderMap::new();
+        assert!(!auth.check_headers(&headers));
+        headers.insert(
+            cua_proto::metadata::ENV_AUTHORIZATION,
+            "Bearer tok".parse().unwrap(),
+        );
+        assert!(auth.check_headers(&headers), "x-cua-env-authorization");
+        // A gateway credential in `authorization` does not hide the env token.
+        headers.insert(
+            http::header::AUTHORIZATION,
+            "Bearer gateway-jwt".parse().unwrap(),
+        );
+        assert!(auth.check_headers(&headers));
+        let mut only_std = http::HeaderMap::new();
+        only_std.insert(http::header::AUTHORIZATION, "Bearer tok".parse().unwrap());
+        assert!(auth.check_headers(&only_std), "authorization");
+        let mut wrong = http::HeaderMap::new();
+        wrong.insert(
+            cua_proto::metadata::ENV_AUTHORIZATION,
+            "Bearer nope".parse().unwrap(),
+        );
+        assert!(!auth.check_headers(&wrong));
+    }
+
+    #[test]
+    fn ticket_found_in_query_or_subprotocol() {
+        let uri: http::Uri = "/tunnel?x=1&ticket=v1.a.b".parse().unwrap();
+        let found = ticket_from_parts(&uri, &http::HeaderMap::new()).unwrap();
+        assert_eq!(found.ticket, "v1.a.b");
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::SEC_WEBSOCKET_PROTOCOL,
+            "binary, cua.ticket.v1.c.d".parse().unwrap(),
+        );
+        let found = ticket_from_parts(&"/tunnel".parse().unwrap(), &headers).unwrap();
+        assert_eq!(found.ticket, "v1.c.d");
+        assert_eq!(found.subprotocol.as_deref(), Some("cua.ticket.v1.c.d"));
+    }
+
+    #[test]
+    fn an_agent_caller_names_its_session_on_the_access_line() {
+        let agent = |id: &str, name: &str| Principal {
+            id: id.into(),
+            display_name: name.into(),
+            color: String::new(),
+            kind: cua_proto::env::v1::PrincipalKind::Agent as i32,
+        };
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:claude-code-4242", "Claude Code"))),
+            " \u{b7} agent Claude Code (agent:claude-code-4242)"
+        );
+        // A person, a non-agent id, or nobody: nothing added.
+        let human = Principal {
+            kind: cua_proto::env::v1::PrincipalKind::Human as i32,
+            ..agent("agent:x-1", "Ada")
+        };
+        assert_eq!(agent_session_suffix(Some(&human)), "");
+        assert_eq!(agent_session_suffix(Some(&agent("u1", "Codex"))), "");
+        assert_eq!(agent_session_suffix(None), "");
+        // The claim can't break the line's shape.
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:a-1", "Evil) (x\n"))),
+            " \u{b7} agent Evil x (agent:a-1)"
+        );
+    }
+
+    #[test]
+    fn principal_header_round_trips() {
+        let principal = Principal {
+            id: "u1".into(),
+            display_name: "Ada".into(),
+            color: "#ff0000".into(),
+            kind: 1,
+        };
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            cua_proto::metadata::PRINCIPAL_BIN,
+            encode_principal(&principal).parse().unwrap(),
+        );
+        assert_eq!(principal_from_headers(&headers), Some(principal));
+    }
+}

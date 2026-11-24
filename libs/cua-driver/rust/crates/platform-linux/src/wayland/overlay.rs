@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native-Wayland agent-cursor overlay via `zwlr_layer_shell_v1`.
 //!
 //! Replaces the X11-only `overlay.rs` render loop on wlroots compositors
@@ -20,7 +23,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    OnceLock,
+    Arc, OnceLock,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -34,6 +37,7 @@ use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer::WlBuffer,
+        wl_callback::{self, WlCallback},
         wl_compositor::WlCompositor,
         wl_output::WlOutput,
         wl_region::WlRegion,
@@ -58,10 +62,19 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 /// SetPressed) are forwarded as-is so the layer-shell overlay matches the
 /// X11 visual: bloom + animated arrow + click pulse + press ring.
 enum WlOverlayCmd {
-    Cmd { key: CursorKey, cmd: OverlayCommand },
+    Cmd {
+        key: CursorKey,
+        cmd: OverlayCommand,
+    },
     Remove(CursorKey),
     Revive(CursorKey),
     Shutdown,
+    MoveAndWait {
+        key: CursorKey,
+        x: f64,
+        y: f64,
+        arrival: Arc<ArrivalFrame>,
+    },
 }
 
 static TX: OnceLock<Sender<WlOverlayCmd>> = OnceLock::new();
@@ -128,6 +141,9 @@ pub fn ensure_started() -> bool {
                 if let Err(e) = owner_thread(rx) {
                     tracing::warn!("cua-overlay-wl thread exited with error: {e}");
                 }
+                // No frame will ever be painted again: unblock every pointer
+                // action still waiting for its glide to arrive.
+                crate::overlay::release_all_arrivals();
             })
             .expect("spawn cua-overlay-wl thread");
         tx
@@ -183,6 +199,222 @@ pub fn shutdown() {
     }
 }
 
+/// Complete only after the owning cursor's arrival buffer receives a compositor
+/// frame callback. Queue loss, renderer failure and timeout refuse input.
+pub async fn animate_and_wait(key: CursorKey, x: f64, y: f64) -> anyhow::Result<()> {
+    // A human-origin session draws no cursor (its client draws the person's
+    // own), so there is no glide to wait for and nothing to enable or move.
+    if !crate::overlay::draws_cursor(&key)
+        || !CONFIG_ENABLED.load(Ordering::Acquire)
+        || crate::overlay::wayland_overlay_backend()
+            != crate::overlay::WaylandOverlayBackend::LayerShell
+    {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        available() && ensure_started(),
+        "Wayland arrival renderer unavailable"
+    );
+    let (done, arrived) = tokio::sync::oneshot::channel();
+    let arrival = Arc::new(ArrivalFrame::new(key.clone(), done));
+    // Cancellation also destroys a pending callback while the owner thread is
+    // stalled in a compositor roundtrip. A late event cannot authorize input.
+    let _cancel_on_drop = CancelArrivalOnDrop(Arc::downgrade(&arrival));
+    tx().ok_or_else(|| anyhow::anyhow!("Wayland overlay unavailable"))?
+        .try_send(WlOverlayCmd::MoveAndWait { key, x, y, arrival })
+        .map_err(|_| anyhow::anyhow!("Wayland overlay rejected arrival request"))?;
+    wait_for_arrival(arrived, Duration::from_secs(10)).await
+}
+
+async fn wait_for_arrival(
+    arrived: tokio::sync::oneshot::Receiver<()>,
+    budget: Duration,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(budget, arrived)
+        .await
+        .map_err(|_| anyhow::anyhow!("Wayland cursor arrival timed out; click not sent"))?
+        .map_err(|_| anyhow::anyhow!("Wayland cursor arrival cancelled; click not sent"))
+}
+
+struct Arrival {
+    x: f64,
+    y: f64,
+    frame: Arc<ArrivalFrame>,
+}
+
+struct ArrivalFrame {
+    key: CursorKey,
+    state: std::sync::Mutex<ArrivalFrameState>,
+}
+
+struct ArrivalFrameState {
+    done: Option<tokio::sync::oneshot::Sender<()>>,
+    callback: Option<WlCallback>,
+}
+
+impl ArrivalFrame {
+    fn new(key: CursorKey, done: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self {
+            key,
+            state: std::sync::Mutex::new(ArrivalFrameState {
+                done: Some(done),
+                callback: None,
+            }),
+        }
+    }
+
+    fn is_pending(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .done
+            .as_ref()
+            .is_some_and(|done| !done.is_closed())
+    }
+
+    fn arm(&self, callback: WlCallback) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.done.as_ref().is_some_and(|done| !done.is_closed()) {
+            state.callback = Some(callback);
+            true
+        } else {
+            drop(state);
+            destroy_cancelled_callback(callback);
+            false
+        }
+    }
+
+    fn complete(&self) {
+        let mut state = self.state.lock().unwrap();
+        // wl_callback.done is a destructor event: wayland-client releases the
+        // protocol object automatically. Clear our handle before waking input.
+        state.callback.take();
+        if let Some(done) = state.done.take() {
+            let _ = done.send(());
+        }
+    }
+
+    fn cancel(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.done.take(); // Dropping the sender explicitly cancels its receiver.
+        let callback = state.callback.take();
+        drop(state);
+        if let Some(callback) = callback {
+            destroy_cancelled_callback(callback);
+        }
+    }
+}
+
+fn destroy_cancelled_callback(callback: WlCallback) {
+    // wl_callback has no destructor request. This is the supported equivalent
+    // of wl_proxy_destroy; later done events for this object are ignored.
+    if let Some(backend) = callback.backend().upgrade() {
+        let _ = backend.destroy_object(&callback.id());
+    }
+}
+
+struct CancelArrivalOnDrop(std::sync::Weak<ArrivalFrame>);
+
+impl Drop for CancelArrivalOnDrop {
+    fn drop(&mut self) {
+        if let Some(arrival) = self.0.upgrade() {
+            arrival.cancel();
+        }
+    }
+}
+
+#[derive(Default)]
+struct ArrivalRequests {
+    moving: HashMap<CursorKey, Arrival>,
+    frames: HashMap<CursorKey, Arc<ArrivalFrame>>,
+}
+
+impl ArrivalRequests {
+    fn cancel(&mut self, key: &CursorKey) {
+        if let Some(arrival) = self.moving.remove(key) {
+            arrival.frame.cancel();
+        }
+        if let Some(frame) = self.frames.remove(key) {
+            frame.cancel();
+        }
+    }
+
+    fn replace(&mut self, key: CursorKey, arrival: Arrival) {
+        self.cancel(&key);
+        if arrival.frame.is_pending() {
+            self.moving.insert(key, arrival);
+        }
+    }
+
+    fn prune_cancelled(&mut self) {
+        self.moving.retain(|_, arrival| {
+            let pending = arrival.frame.is_pending();
+            if !pending {
+                arrival.frame.cancel();
+            }
+            pending
+        });
+        self.frames.retain(|_, frame| {
+            let pending = frame.is_pending();
+            if !pending {
+                frame.cancel();
+            }
+            pending
+        });
+    }
+
+    fn pending(&self) -> bool {
+        !self.moving.is_empty() || !self.frames.is_empty()
+    }
+
+    fn complete(&mut self, frame: &Arc<ArrivalFrame>) {
+        // Arc identity is this request's generation. A late callback for an old
+        // request must neither remove nor complete a newer request for this key.
+        if self
+            .frames
+            .get(&frame.key)
+            .is_some_and(|current| Arc::ptr_eq(current, frame))
+        {
+            self.frames.remove(&frame.key);
+            frame.complete();
+        }
+    }
+}
+
+impl Drop for ArrivalRequests {
+    fn drop(&mut self) {
+        for arrival in self.moving.values() {
+            arrival.frame.cancel();
+        }
+        for frame in self.frames.values() {
+            frame.cancel();
+        }
+    }
+}
+
+impl Dispatch<WlCallback, Arc<ArrivalFrame>> for OverlayState {
+    fn event(
+        state: &mut Self,
+        _: &WlCallback,
+        event: wl_callback::Event,
+        data: &Arc<ArrivalFrame>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if matches!(event, wl_callback::Event::Done { .. }) {
+            state.arrivals.complete(data);
+        }
+    }
+}
+
+fn arrived_at(core: &RenderStateCore, x: f64, y: f64) -> bool {
+    let target = cursor_overlay::anchor_for_pointer(x, y, std::f64::consts::FRAC_PI_4);
+    core.visible
+        && !core.is_moving()
+        && (core.pos.0 - target.0).abs() < 1e-6
+        && (core.pos.1 - target.1).abs() < 1e-6
+}
+
 // ── owner thread ─────────────────────────────────────────────────────────
 
 struct OverlayState {
@@ -214,6 +446,7 @@ struct OverlayState {
     /// Replaces the per-redraw `mem::forget` leak: the previous frame's
     /// memory is reclaimed as soon as the compositor releases it.
     pending_buffers: HashMap<u32, (*mut libc::c_void, usize, i32)>,
+    arrivals: ArrivalRequests,
 }
 
 struct NativeOutput {
@@ -348,6 +581,7 @@ impl OverlayState {
             // lazily-created named slots take their key as the id.
             render: WlRenderMap::new(template, ()),
             pending_buffers: HashMap::new(),
+            arrivals: ArrivalRequests::default(),
         }
     }
 }
@@ -370,7 +604,7 @@ fn apply_keyed_command(
         _ => None,
     };
     if let Some((target_x, target_y)) = seed_target {
-        render.seed_start_if_sentinel(&key, target_x, target_y, frame);
+        render.seed_start_if_unplaced(&key, target_x, target_y, frame);
     }
 
     let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
@@ -468,22 +702,56 @@ fn frame_plan(
     (selected, targets)
 }
 
+/// Whether a global logical `[x, y, w, h]` effect rect overlaps an output.
+fn effect_rect_intersects_output(layout: &OutputLayout, [x, y, w, h]: [f64; 4]) -> bool {
+    let left = f64::from(layout.origin_x);
+    let top = f64::from(layout.origin_y);
+    w > 0.0
+        && h > 0.0
+        && x < left + f64::from(layout.width)
+        && x + w > left
+        && y < top + f64::from(layout.height)
+        && y + h > top
+}
+
+/// Outputs touched by any effect rect, beyond the one each cursor sits on.
+fn effect_spill_outputs(
+    layouts: &[OutputLayout],
+    effect_rects: impl IntoIterator<Item = [f64; 4]>,
+) -> HashSet<u32> {
+    let rects: Vec<[f64; 4]> = effect_rects.into_iter().collect();
+    layouts
+        .iter()
+        .filter(|layout| {
+            rects
+                .iter()
+                .any(|rect| effect_rect_intersects_output(layout, *rect))
+        })
+        .map(|layout| layout.id)
+        .collect()
+}
+
 fn visible_cores_for_output<'a>(
     cores: &'a CursorMap<RenderStateCore>,
     layouts: &[OutputLayout],
     output_id: u32,
 ) -> Vec<(&'a CursorKey, &'a RenderStateCore)> {
+    let output = layouts.iter().find(|layout| layout.id == output_id);
     let mut visible_cores: Vec<_> = cores
         .iter()
         .filter(|(_, core)| {
-            core.visible
-                && core.pos.0 >= -100.0
-                && core.idle_alpha >= 0.004
-                && select_output(layouts, core.pos.0, core.pos.1)
+            core.is_revealed()
+                && (select_output(layouts, core.pos.0, core.pos.1)
                     .is_some_and(|selected| selected.id == output_id)
+                    // A cursor on another output whose trail or glow reaches
+                    // this one is painted here too, at this output's origin.
+                    || output.is_some_and(|layout| {
+                        core.effect_bounds()
+                            .is_some_and(|rect| effect_rect_intersects_output(layout, rect))
+                    }))
         })
         .collect();
-    visible_cores.sort_by(|(left, _), (right, _)| left.cmp(right));
+    visible_cores.sort_by_key(|(left, _)| *left);
     visible_cores
 }
 
@@ -555,6 +823,12 @@ fn wait_for_renderer_command(
     while let Ok(command) = rx.recv() {
         match command {
             WlOverlayCmd::Shutdown => return None,
+            WlOverlayCmd::MoveAndWait { key, x, y, arrival } => {
+                if arrival.is_pending() {
+                    return Some(WlOverlayCmd::MoveAndWait { key, x, y, arrival });
+                }
+                arrival.cancel();
+            }
             WlOverlayCmd::Remove(key) => {
                 remove_keyed_core(&mut state.render, key);
             }
@@ -650,9 +924,10 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let mut frame_tick_needed = false;
     let mut startup_command = Some(first_command);
     loop {
+        state.arrivals.prune_cancelled();
         let wait = next_wait(
             &state.render.cursors,
-            frame_tick_needed,
+            frame_tick_needed || state.arrivals.pending(),
             state.topology_dirty,
         );
         let wake = startup_command
@@ -680,10 +955,53 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     shutdown = true;
                     break;
                 }
+                Ok(WlOverlayCmd::MoveAndWait { key, x, y, arrival }) => {
+                    if state.render.ended.contains(&key) || !arrival.is_pending() {
+                        arrival.cancel();
+                        continue;
+                    }
+                    state.arrivals.cancel(&key);
+                    apply_keyed_command(
+                        &mut state.render,
+                        frame,
+                        key.clone(),
+                        OverlayCommand::SetEnabled(true),
+                    );
+                    let heading = std::f64::consts::FRAC_PI_4;
+                    let reduced_motion = state.render.cursors.get(&key).is_some_and(|core| {
+                        core.visual.reduced_motion == cursor_overlay::ReducedMotion::On
+                    });
+                    let command = if reduced_motion {
+                        let (x, y) = cursor_overlay::anchor_for_pointer(x, y, heading);
+                        OverlayCommand::SnapTo {
+                            x,
+                            y,
+                            heading_radians: Some(heading),
+                        }
+                    } else {
+                        OverlayCommand::MoveTo {
+                            x,
+                            y,
+                            end_heading_radians: heading,
+                            target: None,
+                        }
+                    };
+                    apply_keyed_command(&mut state.render, frame, key.clone(), command);
+                    state.arrivals.replace(
+                        key,
+                        Arrival {
+                            x,
+                            y,
+                            frame: arrival,
+                        },
+                    );
+                    dirty = true;
+                }
                 Ok(WlOverlayCmd::Cmd { key, cmd }) => {
                     dirty |= apply_keyed_command(&mut state.render, frame, key, cmd);
                 }
                 Ok(WlOverlayCmd::Remove(key)) => {
+                    state.arrivals.cancel(&key);
                     dirty |= remove_keyed_core(&mut state.render, key);
                 }
                 Ok(WlOverlayCmd::Revive(key)) => {
@@ -703,14 +1021,15 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         // Advance only on a scheduled animation/fade wake. A command wake
         // applies the new state at dt=0, avoiding a jump proportional to how
         // long the loop was parked.
+        let mut arrived = Vec::new();
         if let Some(timeout_kind) = timed_out {
             match timeout_kind {
                 WlWait::Frame => {
-                    tick_all_cores(&mut state.render.cursors, elapsed.min(0.05));
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed.min(0.05)));
                     dirty = true;
                 }
                 WlWait::Deadline(_) => {
-                    tick_all_cores(&mut state.render.cursors, elapsed);
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed));
                     dirty = true;
                 }
                 WlWait::Maintenance(_) => {
@@ -720,7 +1039,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                         .iter()
                         .map(|(key, core)| (key.clone(), core.idle_alpha))
                         .collect();
-                    tick_all_cores(&mut state.render.cursors, elapsed);
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed));
                     dirty |= state.render.cursors.iter().any(|(key, core)| {
                         before
                             .get(key)
@@ -744,6 +1063,12 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
             // parking. The buffer map remains authoritative until release, so
             // no mmap/fd can be reclaimed while the compositor still uses it.
             queue.roundtrip(&mut state)?;
+        }
+        // Report arrivals only once the frame at the target is committed, so
+        // a pointer action lands after the viewer saw the glide end (the X11
+        // renderer's contract).
+        for key in arrived {
+            crate::overlay::arrival_fire(&key);
         }
         frame_tick_needed = next_frame_tick_needed;
     }
@@ -815,23 +1140,25 @@ fn earliest_idle_fade_wait(cores: &CursorMap<RenderStateCore>) -> Option<Duratio
         .min()
 }
 
-fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) {
-    for core in cores.values_mut() {
-        core.tick_motion(dt);
-    }
+/// Advance every cursor and return the keys whose planned glide just ended.
+fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<CursorKey> {
+    cursor_overlay::render_map::update_peer_presence(cores.values_mut());
+    cores
+        .iter_mut()
+        .filter_map(|(key, core)| core.tick_motion(dt).then(|| key.clone()))
+        .collect()
 }
 
 /// The shared frame-tick predicate, including resting motion (the float bob),
 /// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
 /// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    core.visible && core.pos.0 >= -100.0 && core.needs_frame_tick()
+    core.visible && core.placed && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
-    core.path = None;
-    core.spring = None;
-    core.spring_tgt = None;
+    core.cancel_motion();
+    core.click_age = None;
     core.click_t = None;
 }
 
@@ -863,14 +1190,29 @@ fn redraw(
         .render
         .cursors
         .values()
-        .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
+        .filter(|core| core.is_revealed())
         .map(|core| core.pos);
-    let (selected, targets) = frame_plan(
+    let (mut selected, mut targets) = frame_plan(
         &layouts,
         &state.painted_outputs,
         &state.initialized_outputs,
         cursor_positions,
     );
+    // Each surface is a full-output buffer with full damage, so effects on the
+    // cursor's own output are drawn and erased with no extra bookkeeping. A
+    // trail or glow can spill onto a neighbouring output, though: paint those
+    // outputs too, and record them as painted so they are cleared next frame.
+    let effect_rects = state
+        .render
+        .cursors
+        .values()
+        .filter(|core| core.is_revealed())
+        .filter_map(|core| core.effect_bounds());
+    for id in effect_spill_outputs(&layouts, effect_rects) {
+        if selected.insert(id) && !targets.iter().any(|target| target.id == id) {
+            targets.push(FrameTarget { id });
+        }
+    }
 
     for target in targets {
         redraw_output(state, shm, qh, target, &layouts)?;
@@ -1012,6 +1354,30 @@ fn redraw_output(
         layout.origin_y,
         painted_positions.len(),
     ));
+    let ready: Vec<CursorKey> = state
+        .arrivals
+        .moving
+        .iter()
+        .filter_map(|(key, arrival)| {
+            let core = state.render.cursors.get(key)?;
+            let on_output = arrival.x >= f64::from(layout.origin_x)
+                && arrival.y >= f64::from(layout.origin_y)
+                && arrival.x < f64::from(layout.origin_x) + f64::from(layout.width)
+                && arrival.y < f64::from(layout.origin_y) + f64::from(layout.height);
+            (on_output && arrived_at(core, arrival.x, arrival.y)).then(|| key.clone())
+        })
+        .collect();
+    for key in ready {
+        if let Some(arrival) = state.arrivals.moving.remove(&key) {
+            if !arrival.frame.is_pending() {
+                continue;
+            }
+            let callback = surface.frame(qh, arrival.frame.clone());
+            if arrival.frame.arm(callback) {
+                state.arrivals.frames.insert(key, arrival.frame);
+            }
+        }
+    }
     surface.attach(Some(&buffer), 0, 0);
     // Damage both coordinate spaces. Some wlroots compositors otherwise leave
     // stale transparent frames behind while an animated cursor is moving.
@@ -1339,6 +1705,7 @@ mod tests {
     fn positioned_core() -> RenderStateCore {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (100.0, 100.0);
+        core.placed = true;
         core.motion.idle_hide_ms = 1_000.0;
         core
     }
@@ -1370,6 +1737,38 @@ mod tests {
                 height: 1024,
             },
         ]
+    }
+
+    /// The layer-shell renderer reports a glide's end exactly once, for the
+    /// key that moved, so pointer actions can wait for it like on X11.
+    #[test]
+    fn ticking_reports_each_glide_arrival_once() {
+        let mut render = WlRenderMap::new(CursorConfig::default(), ());
+        let frame = Some(ScreenFrame::new(0.0, 0.0, 1920.0, 1080.0));
+        apply_keyed_command(
+            &mut render,
+            frame,
+            "mover".to_owned(),
+            OverlayCommand::MoveTo {
+                x: 400.0,
+                y: 300.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+        );
+        let mut still = positioned_core();
+        still.motion.idle_hide_ms = 0.0;
+        render.cursors.insert("still".to_owned(), still);
+
+        let mut arrivals = Vec::new();
+        for _ in 0..600 {
+            arrivals.extend(tick_all_cores(&mut render.cursors, 1.0 / 60.0));
+        }
+        assert_eq!(arrivals, vec!["mover".to_owned()]);
+        assert!(
+            render.cursors["mover"].trajectory.is_none(),
+            "the planned glide has ended"
+        );
     }
 
     fn initialized(layouts: &[OutputLayout]) -> HashSet<u32> {
@@ -1426,11 +1825,49 @@ mod tests {
         ];
         let mut core = positioned_core();
         core.pos = (400.0, 300.0);
+        core.placed = true;
         let cores = CursorMap::from([("session".to_owned(), core)]);
 
         assert_eq!(select_output(&layouts, 400.0, 300.0).unwrap().id, 4);
         assert_eq!(visible_cores_for_output(&cores, &layouts, 4).len(), 1);
         assert!(visible_cores_for_output(&cores, &layouts, 8).is_empty());
+    }
+
+    #[test]
+    fn a_cursor_on_a_monitor_left_of_the_origin_is_drawn_there() {
+        // A left-hand monitor puts real cursor positions far below zero; they
+        // must not be mistaken for the never-placed sentinel.
+        let layouts = vec![
+            OutputLayout {
+                id: 3,
+                origin_x: -3840,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+            OutputLayout {
+                id: 4,
+                origin_x: 0,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+        ];
+        let mut core = positioned_core();
+        core.pos = (-2220.0, 980.0);
+        core.placed = true;
+        let cores = CursorMap::from([("session".to_owned(), core)]);
+        assert_eq!(visible_cores_for_output(&cores, &layouts, 3).len(), 1);
+        assert!(visible_cores_for_output(&cores, &layouts, 4).is_empty());
+        // And it paints there: a 160 px crop of the left monitor around it.
+        let mut crop = tiny_skia::Pixmap::new(160, 160).unwrap();
+        cursor_overlay::paint_cursor(&mut crop, &cores["session"], -2300.0, 900.0, None, 1.0);
+        assert!(crop.pixels().iter().any(|pixel| pixel.alpha() > 0));
+        let unplaced = CursorMap::from([(
+            "session".to_owned(),
+            RenderStateCore::new(CursorConfig::default()),
+        )]);
+        assert!(visible_cores_for_output(&unplaced, &layouts, 3).is_empty());
     }
 
     #[test]
@@ -1510,6 +1947,32 @@ mod tests {
     }
 
     #[test]
+    fn effects_spilling_across_an_output_edge_select_the_neighbour() {
+        let layouts = three_monitor_layout();
+        let first = layouts[0];
+        let right_edge = f64::from(first.origin_x) + f64::from(first.width);
+        let top = f64::from(first.origin_y);
+
+        // A trail straddling the edge between output 1 and its neighbour.
+        let straddle = [right_edge - 100.0, top + 10.0, 200.0, 50.0];
+        assert_eq!(
+            effect_spill_outputs(&layouts, Some(straddle)),
+            HashSet::from([1, 2]),
+            "the neighbour output must be painted too"
+        );
+
+        // An effect wholly inside output 1 touches no other output, and
+        // degenerate rects touch nothing.
+        let inside = [f64::from(first.origin_x) + 10.0, top + 10.0, 50.0, 50.0];
+        assert_eq!(
+            effect_spill_outputs(&layouts, Some(inside)),
+            HashSet::from([first.id])
+        );
+        assert!(effect_spill_outputs(&layouts, Some([0.0, 0.0, 0.0, 0.0])).is_empty());
+        assert!(effect_spill_outputs(&layouts, std::iter::empty()).is_empty());
+    }
+
+    #[test]
     fn hide_or_session_removal_clears_every_previously_painted_output() {
         let layouts = three_monitor_layout();
         let painted = HashSet::from([1, 2, 3]);
@@ -1566,11 +2029,20 @@ mod tests {
     }
 
     // Before the shared predicate, a settled Wayland cursor slept until its
-    // idle-fade deadline and its resting bob froze mid-swing.
+    // idle-fade deadline and its resting bob froze mid-swing. The bob is
+    // `cursor.float` (on by default); with it off the cursor rests still.
     #[test]
     fn stable_visible_overlay_keeps_frame_cadence_for_resting_motion() {
         let mut core = positioned_core();
+        core.options_override = Some(cursor_overlay::CursorOptions::NONE);
+        assert!(!core.has_resting_motion());
+        core.options_override = Some(cursor_overlay::CursorOptions::default());
         core.idle_secs = 0.25;
+        core.pos = (-1.0e9, -1.0e9);
+        assert!(needs_frame_tick(&core));
+        core.placed = false;
+        assert!(!needs_frame_tick(&core));
+        core.placed = true;
         assert!(core.has_resting_motion());
         let mut cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
@@ -1607,11 +2079,12 @@ mod tests {
                 x: 50.0,
                 y: 50.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
         ));
         let core = &render.cursors["session-a"];
         assert_eq!(core.pos, (2.0, 2.0));
-        assert!(core.path.is_some());
+        assert!(core.trajectory.is_some());
     }
 
     #[test]
@@ -1637,8 +2110,7 @@ mod tests {
         core.visible = false;
         quiesce_hidden(&mut core);
         assert!(core.click_t.is_none());
-        assert!(core.path.is_none());
-        assert!(core.spring.is_none());
+        assert!(core.trajectory.is_none());
         let cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(
             next_wait(&cores, false, false),
@@ -1761,7 +2233,7 @@ mod tests {
         ));
         let core = state.render.cursors.get("session-a").unwrap();
         assert_eq!(core.session_label.as_deref(), Some("Synthetic session"));
-        assert!(core.pos.0 < -50.0);
+        assert!(!core.placed);
         assert!(state.outputs.is_empty());
         assert!(matches!(
             rx.try_recv(),
@@ -1891,7 +2363,11 @@ mod tests {
             &layouts,
             &HashSet::new(),
             &initialized(&layouts),
-            render.cursors.values().map(|core| core.pos),
+            render
+                .cursors
+                .values()
+                .filter(|core| core.placed)
+                .map(|core| core.pos),
         );
         assert_eq!(painted, HashSet::from([1, 2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
@@ -1911,7 +2387,11 @@ mod tests {
             &layouts,
             &painted,
             &initialized(&layouts),
-            render.cursors.values().map(|core| core.pos),
+            render
+                .cursors
+                .values()
+                .filter(|core| core.placed)
+                .map(|core| core.pos),
         );
         assert_eq!(selected, HashSet::from([2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
@@ -1994,5 +2474,301 @@ mod tests {
         ));
         assert!(!ensure_started());
         assert_eq!(TX.get().is_some(), had_thread);
+    }
+}
+
+#[cfg(test)]
+mod click_arrival_tests {
+    use super::*;
+
+    #[test]
+    fn animation_has_intermediate_positions_and_exact_hotspot_arrival() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.glide_duration_ms = 650.0;
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 100.0,
+                y: 100.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 700.0,
+                y: 350.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        assert!(!arrived_at(&core, 700.0, 350.0));
+        let start = core.pos;
+        core.tick_motion(0.2);
+        assert_ne!(core.pos, start);
+        assert!(!arrived_at(&core, 700.0, 350.0));
+        for _ in 0..1200 {
+            core.tick_motion(0.01);
+            if arrived_at(&core, 700.0, 350.0) {
+                break;
+            }
+        }
+        assert!(
+            arrived_at(&core, 700.0, 350.0),
+            "position {:?}, heading {}, moving {}",
+            core.pos,
+            core.heading,
+            core.is_moving()
+        );
+        assert!(!arrived_at(&core, 701.0, 350.0));
+    }
+
+    #[test]
+    fn reduced_motion_snap_still_requires_exact_hotspot() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
+        let heading = std::f64::consts::FRAC_PI_4;
+        let (x, y) = cursor_overlay::anchor_for_pointer(700.0, 350.0, heading);
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x,
+                y,
+                heading_radians: Some(heading),
+            },
+            false,
+            false,
+        );
+        assert!(arrived_at(&core, 700.0, 350.0));
+    }
+
+    #[tokio::test]
+    async fn acknowledged_arrival_completes() {
+        let (done, arrived) = tokio::sync::oneshot::channel();
+        done.send(()).unwrap();
+        assert!(wait_for_arrival(arrived, Duration::from_secs(1))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn stalled_renderer_refuses_input_after_timeout() {
+        let (done, arrived) = tokio::sync::oneshot::channel::<()>();
+        let error = wait_for_arrival(arrived, Duration::ZERO).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Wayland cursor arrival timed out; click not sent"
+        );
+        drop(done);
+    }
+
+    #[tokio::test]
+    async fn lost_renderer_cancels_arrival_instead_of_authorizing_input() {
+        let (done, arrived) = tokio::sync::oneshot::channel::<()>();
+        drop(done);
+        let error = wait_for_arrival(arrived, Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Wayland cursor arrival cancelled; click not sent"
+        );
+    }
+    fn request(key: &str) -> (Arc<ArrivalFrame>, tokio::sync::oneshot::Receiver<()>) {
+        let (done, arrived) = tokio::sync::oneshot::channel();
+        (Arc::new(ArrivalFrame::new(key.to_owned(), done)), arrived)
+    }
+
+    #[tokio::test]
+    async fn replacing_a_click_cancels_the_previous_request_immediately() {
+        let mut requests = ArrivalRequests::default();
+        let (first, first_wait) = request("agent");
+        let (second, mut second_wait) = request("agent");
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 1.0,
+                y: 2.0,
+                frame: first.clone(),
+            },
+        );
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 3.0,
+                y: 4.0,
+                frame: second.clone(),
+            },
+        );
+        assert_eq!(
+            wait_for_arrival(first_wait, Duration::from_secs(1))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "Wayland cursor arrival cancelled; click not sent"
+        );
+        assert!(!first.is_pending());
+        assert!(matches!(
+            second_wait.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(second.is_pending());
+    }
+
+    #[tokio::test]
+    async fn dropping_the_renderer_cancels_its_pending_click() {
+        let (frame, arrived) = request("agent");
+        let mut requests = ArrivalRequests::default();
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 1.0,
+                y: 2.0,
+                frame,
+            },
+        );
+        drop(requests);
+        assert!(wait_for_arrival(arrived, Duration::from_secs(1))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("cancelled"));
+    }
+
+    fn callback_peer() -> (
+        Connection,
+        wayland_client::EventQueue<OverlayState>,
+        std::os::unix::net::UnixStream,
+        OverlayState,
+    ) {
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(client).unwrap();
+        let queue = connection.new_event_queue::<OverlayState>();
+        let state = OverlayState::new(CursorConfig::default());
+        (connection, queue, server, state)
+    }
+
+    fn arm_callback(
+        connection: &Connection,
+        queue: &wayland_client::EventQueue<OverlayState>,
+        server: &mut std::os::unix::net::UnixStream,
+        state: &mut OverlayState,
+        frame: &Arc<ArrivalFrame>,
+    ) -> WlCallback {
+        use std::io::Read;
+        let callback = connection.display().sync(&queue.handle(), frame.clone());
+        assert!(frame.arm(callback.clone()));
+        state
+            .arrivals
+            .frames
+            .insert(frame.key.clone(), frame.clone());
+        connection.flush().unwrap();
+        let mut request = [0_u8; 12];
+        server.read_exact(&mut request).unwrap();
+        assert_eq!(
+            u32::from_ne_bytes(request[8..12].try_into().unwrap()),
+            callback.id().protocol_id()
+        );
+        callback
+    }
+
+    fn send_done(server: &mut std::os::unix::net::UnixStream, callback: &WlCallback) {
+        use std::io::Write;
+        let id = callback.id().protocol_id();
+        // Actual wl_callback.done destructor event, followed by wl_display.delete_id.
+        for word in [id, 12 << 16, 0, 1, (12 << 16) | 1, id] {
+            server.write_all(&word.to_ne_bytes()).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn sustained_callbacks_destroy_protocol_objects_and_return_to_baseline() {
+        let (connection, mut queue, mut server, mut state) = callback_peer();
+        for _ in 0..64 {
+            let (frame, arrived) = request("agent");
+            let callback = arm_callback(&connection, &queue, &mut server, &mut state, &frame);
+            send_done(&mut server, &callback);
+            queue.blocking_dispatch(&mut state).unwrap();
+            assert!(wait_for_arrival(arrived, Duration::from_secs(1))
+                .await
+                .is_ok());
+            assert!(!callback.is_alive());
+            assert!(connection.backend().info(callback.id()).is_err());
+            assert!(!state.arrivals.pending());
+        }
+    }
+
+    #[tokio::test]
+    async fn stalled_renderer_timeout_cleans_callback_and_cannot_authorize_a_later_click() {
+        let (connection, mut queue, mut server, mut state) = callback_peer();
+        let (first, first_wait) = request("agent");
+        let old_callback = arm_callback(&connection, &queue, &mut server, &mut state, &first);
+        let guard = CancelArrivalOnDrop(Arc::downgrade(&first));
+        assert!(wait_for_arrival(first_wait, Duration::ZERO)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("timed out"));
+        drop(guard);
+        assert!(!old_callback.is_alive());
+        state.arrivals.prune_cancelled();
+        assert!(!state.arrivals.pending());
+
+        let (second, mut second_wait) = request("agent");
+        let new_callback = arm_callback(&connection, &queue, &mut server, &mut state, &second);
+        send_done(&mut server, &old_callback);
+        queue.blocking_dispatch(&mut state).unwrap();
+        assert!(matches!(
+            second_wait.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(new_callback.is_alive());
+        assert!(state.arrivals.pending());
+        send_done(&mut server, &new_callback);
+        queue.blocking_dispatch(&mut state).unwrap();
+        assert!(wait_for_arrival(second_wait, Duration::from_secs(1))
+            .await
+            .is_ok());
+        assert!(!new_callback.is_alive());
+        assert!(!state.arrivals.pending());
+    }
+
+    #[tokio::test]
+    async fn a_late_callback_for_a_replaced_generation_cannot_complete_the_new_one() {
+        let mut requests = ArrivalRequests::default();
+        let (old, old_wait) = request("agent");
+        requests.frames.insert("agent".into(), old.clone());
+        let (new, mut new_wait) = request("agent");
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 3.0,
+                y: 4.0,
+                frame: new.clone(),
+            },
+        );
+        requests.frames.insert("agent".into(), new.clone());
+        requests.complete(&old);
+        assert!(wait_for_arrival(old_wait, Duration::from_secs(1))
+            .await
+            .is_err());
+        assert!(matches!(
+            new_wait.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(requests.pending());
+        requests.complete(&new);
+        assert!(wait_for_arrival(new_wait, Duration::from_secs(1))
+            .await
+            .is_ok());
+        requests.moving.remove("agent");
+        assert!(!requests.pending());
+    }
+
+    #[tokio::test]
+    async fn disabled_overlay_skips_arrival_and_allows_input() {
+        CONFIG_ENABLED.store(false, Ordering::Release);
+        animate_and_wait("agent".into(), 10.0, 20.0).await.unwrap();
     }
 }

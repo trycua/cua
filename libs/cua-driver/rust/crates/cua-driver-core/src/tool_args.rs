@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared tool-argument extraction helpers.
 //!
 //! Every tool in every platform crate does the same dance to pull
@@ -659,5 +662,66 @@ mod tests {
         assert!(!args.bool_or("from_zoom", false));
         let args = json!({ "from_zoom": true });
         assert!(args.bool_or("from_zoom", false));
+    }
+}
+
+/// Description of the `app` filter that `list_windows` accepts on every
+/// platform.
+pub const LIST_WINDOWS_APP_FILTER_DESCRIPTION: &str = "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.";
+
+/// Whether a window owned by an app with `names` (and, where known,
+/// `bundle_id`) passes `list_windows`' `app` filter: a case-insensitive
+/// substring of any of the names, or the exact bundle id. An empty filter
+/// matches everything.
+pub fn app_filter_matches(filter: &str, names: &[&str], bundle_id: Option<&str>) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    if bundle_id.is_some_and(|id| id.eq_ignore_ascii_case(filter)) {
+        return true;
+    }
+    let filter = filter.to_lowercase();
+    names
+        .iter()
+        .any(|name| name.to_lowercase().contains(&filter))
+}
+
+#[cfg(test)]
+mod app_filter_tests {
+    use super::app_filter_matches;
+
+    #[test]
+    fn matches_name_substrings_and_exact_bundle_ids() {
+        assert!(app_filter_matches("libreoffice", &["LibreOffice"], None));
+        assert!(app_filter_matches("Office", &["LibreOffice"], None));
+        assert!(app_filter_matches(
+            "com.google.Chrome",
+            &["Google Chrome"],
+            Some("com.google.Chrome")
+        ));
+        assert!(app_filter_matches(
+            "COM.GOOGLE.CHROME",
+            &["Google Chrome"],
+            Some("com.google.Chrome")
+        ));
+        assert!(app_filter_matches("  ", &["Anything"], None));
+        assert!(!app_filter_matches(
+            "Safari",
+            &["Google Chrome"],
+            Some("com.google.Chrome")
+        ));
+        assert!(!app_filter_matches("com.google", &["Finder"], None));
+    }
+
+    #[test]
+    fn any_of_an_apps_names_matches() {
+        let calculator = ["计算器", "Calculator"];
+        let bundle_id = Some("com.apple.calculator");
+        assert!(app_filter_matches("Calculator", &calculator, bundle_id));
+        assert!(app_filter_matches("计算器", &calculator, bundle_id));
+        assert!(app_filter_matches("calc", &calculator, bundle_id));
+        assert!(!app_filter_matches("TextEdit", &calculator, bundle_id));
+        assert!(!app_filter_matches("Calculator", &[], None));
     }
 }

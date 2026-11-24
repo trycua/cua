@@ -1,0 +1,188 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CuaIdentityAndRead",
+      "Effect": "Allow",
+      "Action": ["sts:GetCallerIdentity", "ec2:DescribeAvailabilityZones", "ec2:DescribeImages", "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeInstances", "ec2:DescribeInternetGateways", "ec2:DescribeRouteTables", "ec2:DescribeSecurityGroups", "ec2:DescribeSubnets", "ec2:DescribeVpcs", "ec2:DescribeAddresses", "ec2:DescribeSecurityGroupRules"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CuaResolvePublicImageParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameters",
+      "Resource": "arn:aws:ssm:*::parameter/aws/service/*"
+    },
+    {
+      "Sid": "CuaLaunchTaggedInstancesAndVolumes",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": ["arn:aws:ec2:*:*:instance/*", "arn:aws:ec2:*:*:volume/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaLaunchInstancesWithIMDSv2Only",
+      "Effect": "Deny",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringNotEquals": {
+          "ec2:MetadataHttpTokens": "required"
+        }
+      }
+    },
+    {
+      "Sid": "CuaLaunchUsesExistingNetworkAndImages",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": ["arn:aws:ec2:*::image/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:network-interface/*", "arn:aws:ec2:*:*:security-group/*"]
+    },
+    {
+      "Sid": "CuaCreateTaggedSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaCreateSecurityGroupsInAVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:*:*:vpc/*"
+    },
+    {
+      "Sid": "CuaCreateItsOwnVpcAndParts",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVpc", "ec2:CreateSubnet", "ec2:CreateInternetGateway", "ec2:CreateRouteTable"],
+      "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaCreateSubnetsAndRouteTablesInItsOwnVpc",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSubnet", "ec2:CreateRouteTable"],
+      "Resource": "arn:aws:ec2:*:*:vpc/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaWireItsOwnNetwork",
+      "Effect": "Allow",
+      "Action": ["ec2:AttachInternetGateway", "ec2:DetachInternetGateway", "ec2:CreateRoute", "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable"],
+      "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaTagOnlyWhatItCreates",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": ["arn:aws:ec2:*:*:instance/*", "arn:aws:ec2:*:*:volume/*", "arn:aws:ec2:*:*:security-group/*", "arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*", "arn:aws:ec2:*:*:elastic-ip/*", "arn:aws:ec2:*:*:security-group-rule/*"],
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": ["RunInstances", "CreateSecurityGroup", "CreateVpc", "CreateSubnet", "CreateInternetGateway", "CreateRouteTable", "AllocateAddress", "AuthorizeSecurityGroupIngress"],
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaManageItsOwnInstances",
+      "Effect": "Allow",
+      "Action": ["ec2:StartInstances", "ec2:StopInstances", "ec2:TerminateInstances", "ec2:GetConsoleOutput"],
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaManageItsOwnSecurityGroups",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:DeleteSecurityGroup", "ec2:RevokeSecurityGroupIngress"],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaDeleteItsOwnNetwork",
+      "Effect": "Allow",
+      "Action": ["ec2:DeleteVpc", "ec2:DeleteSubnet", "ec2:DeleteInternetGateway", "ec2:DeleteRouteTable"],
+      "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaOpenTaggedShareRules",
+      "Effect": "Allow",
+      "Action": "ec2:AuthorizeSecurityGroupIngress",
+      "Resource": "arn:aws:ec2:*:*:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaReserveTaggedAddresses",
+      "Effect": "Allow",
+      "Action": "ec2:AllocateAddress",
+      "Resource": "arn:aws:ec2:*:*:elastic-ip/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaManageItsOwnAddresses",
+      "Effect": "Allow",
+      "Action": ["ec2:AssociateAddress", "ec2:DisassociateAddress", "ec2:ReleaseAddress"],
+      "Resource": ["arn:aws:ec2:*:*:elastic-ip/*", "arn:aws:ec2:*:*:instance/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaRenewItsOwnShareEdges",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": ["arn:aws:ec2:*:*:instance/*", "arn:aws:ec2:*:*:security-group/*", "arn:aws:ec2:*:*:elastic-ip/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true",
+          "aws:ResourceTag/cua-role": "share-edge"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["cua-expires"]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "name": "delete-space",
+  "about": "Delete shows a Deleting row the instant it is confirmed (registry probes during the delete cannot turn it into timed out or Running), a second Delete does nothing, the row goes the moment the delete returns (even while the registry still lists the Space) and stays gone until the registry drops it; a failed delete restores the row with the delete-failed banner.",
+  "now": 1800000000000,
+  "rows": [
+    {
+      "id": "local:demo",
+      "name": "demo",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream"],
+      "addedAt": "2027-01-15T08:00:00Z",
+      "os": "linux",
+      "reachable": true
+    },
+    {
+      "id": "local:keep",
+      "name": "keep",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream"],
+      "addedAt": "2027-01-15T07:00:00Z",
+      "os": "linux",
+      "reachable": true
+    }
+  ],
+  "steps": [
+    { "step": "delete demo", "action": { "type": "delete-start", "id": "local:demo", "now": 1800000001000 } },
+    {
+      "step": "probe: demo timed out",
+      "rows": [
+        { "id": "local:demo", "name": "demo", "provider": "local", "spacesdVersion": "", "features": [], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "reachable": false, "error": "timed out" },
+        { "id": "local:keep", "name": "keep", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "linux", "reachable": true }
+      ]
+    },
+    {
+      "step": "probe: demo running",
+      "rows": [
+        { "id": "local:demo", "name": "demo", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "reachable": true },
+        { "id": "local:keep", "name": "keep", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "linux", "reachable": true }
+      ]
+    },
+    { "step": "delete demo again", "action": { "type": "delete-start", "id": "local:demo", "now": 1800000002000 } },
+    { "step": "delete demo done", "action": { "type": "delete-done", "id": "local:demo" } },
+    {
+      "step": "refresh still lists demo",
+      "rows": [
+        { "id": "local:demo", "name": "demo", "provider": "local", "spacesdVersion": "", "features": [], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "reachable": false, "error": "timed out" },
+        { "id": "local:keep", "name": "keep", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "linux", "reachable": true }
+      ]
+    },
+    {
+      "step": "refresh without demo",
+      "rows": [
+        { "id": "local:keep", "name": "keep", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "linux", "reachable": true }
+      ]
+    },
+    { "step": "delete keep", "action": { "type": "delete-start", "id": "local:keep", "now": 1800000003000 } },
+    { "step": "delete keep fails", "action": { "type": "delete-fail", "id": "local:keep" }, "error": "lume is not running" }
+  ]
+}

@@ -1,0 +1,72 @@
+---
+title: A Space's exit and paths
+description: Send a Space's internet traffic out through this computer, another Space or a proxy, reach this computer's ports from a Space, and see the path between your computers.
+---
+
+This page continues [A Space's network](/cua-sdk/guides/egress). Everything here is part of Secure Spaces.
+
+## Exit through
+
+A Space's internet traffic leaves through its own network unless you choose an exit:
+
+```bash skip="local-vm"
+cua network set studio --via this-computer            # this computer's network (the hotspot)
+cua network set worker-1 --via space:gateway          # another Space of its tree
+cua network set studio --via socks5://proxy.example:1080
+cua network set studio --via internet                 # its own network again
+```
+
+In the app, the Network sheet's **Exit through** row picks the same. `--via` alone keeps the preset; `--network` alone keeps the exit.
+
+- The Space's rules apply first. An exit carries only what the Space may reach, and a Space exiting through another Space is under that Space's rules too.
+- With an exit set, the Space's own direct internet is closed. If the exit goes away (the exit Space stops, the proxy doesn't answer), its internet stops. It never falls back to its own network. `cua network show` says when the exit isn't reachable, and the app says so at the top of the Space's More details, in amber.
+- A child keeps its parent's exit and can't leave it.
+- Its tree, its own loopback and `host` keep their own paths.
+- Inside the Space, new processes get `ALL_PROXY`, `HTTPS_PROXY` and `HTTP_PROXY` (and their lowercase forms) pointing at the exit's local SOCKS address, and a program that ignores them still can't get out another way.
+- An agent through Cua's tools may choose a Space of its own tree as the exit. This computer and a proxy are yours to choose.
+- For a while instead of for good, `cua hotspot start studio` sends a Space's traffic out through this computer until `cua hotspot stop studio`. `cua hotspot status studio` says what it carried. Choosing where traffic exits is part of Secure Spaces; an exit that is another Space of the tree also needs the Child Spaces experiment.
+
+## This computer's ports in the Space
+
+The `localhost` preset opens ports of the computer that runs the Space. They answer at `host:<port>` on every runtime. Where the Space's image can (`host_ports` in its features, the Cua images), they also answer at `localhost:<port>` inside the Space, so an app written for `localhost:3000` works unchanged. Only the listed ports are carried, never anything else on this computer, and `localhost:all` stays at `host:<port>`. A port something in the Space already listens on keeps that service; the host's port is then at `host:<port>`, and `cua network show` says so.
+
+## What a Space knows about its network
+
+Inside each Space, `/etc/cua/network.json` (or `/run/cua/network.json` where `/etc` can't be written) says its name and tree address, its tree's members, the host's ports it may reach and how, its rules in plain words and its exit. It's rewritten when any of that changes. `cua network show --json` prints the same document as `topology`, with the exit's state, the tree proxy, the members that run on other computers (with the computer's name), and `overlay`: each other computer with the path to it and why, and the members it runs.
+
+## Paths to your other computers
+
+Traffic between your computers (tree members, an exit Space on another computer, Cua Volume sync) rides the Cua mesh. It probes every path to each computer (the local network, direct across the internet, the relay), keeps the fastest that answers and moves within seconds when one stops answering. The relay only ever sees encrypted traffic.
+
+```bash skip="local-vm"
+cua mesh status                    # each computer, its path and why
+cua mesh status --prefer lan       # the local network whenever it answers
+cua mesh status --prefer auto      # lift the pin
+```
+
+`relay` keeps traffic on the relay and `direct` avoids it while a direct path answers. A pin never stops traffic: when the pinned path goes away, the next one carries it until it's back.
+
+## Where it is enforced
+
+| Space | Enforced by | Without protection |
+| --- | --- | --- |
+| Container, runc or gVisor (any Docker engine, also the built-in runtime on a Mac) | nftables in the engine's own network namespace, on the Space's bridge port; each tree gets its own Docker network | |
+| Firecracker microVM (Linux) | iptables in the network namespace pasta creates around the VM | |
+| QEMU VM (Linux) | iptables in the network namespace pasta creates around QEMU | |
+| A Space one of your computers provides | that computer, as above | |
+| `vz` microVM (Mac), QEMU VM on macOS or Windows | the Cua network gateway: the VM's own user-mode network on the host, which checks every connection before making it | |
+| macOS VM (Lume) | the Cua network gateway, as above; Cua reaches the VM through the gateway's forwards | |
+| Apple Containerization microVM | not yet | refused; `unprotected` starts it |
+| Your own cloud account (AWS, Google Cloud, Azure, Hetzner) | the cloud computer's own firewall, installed before any Space starts: Internet only, whatever the Space asks; other presets and lists are refused | `unprotected` is accepted, but the computer's firewall still applies |
+| Modal (`on="modal"`, also when `auto` or overflow puts a Space there) | Modal's own outbound allow-list, set at create: the public IPv4 space minus the blocked ranges, cut and widened by `custom` lists (IPv4 only; domains and IPv6 entries are refused); `none` blocks all but the Space's own channel | `unprotected` leaves it open |
+
+A runtime that can't protect a Space never starts it open on its own. `cua network show` and `SpaceInfo.network_note` say why a Space has no network.
+
+## Requirements
+
+- Containers: `nft` (nftables) where the container engine runs. A deny of another member of the same tree also needs the kernel module `nf_conntrack_bridge` (Linux 5.3 or later) on the engine's host. Without it the Space doesn't start, and the error says to load the module with `sudo modprobe nf_conntrack_bridge`.
+- VMs on Linux: `pasta` (the passt package) and unprivileged user namespaces, and `cua-netgw` for VMs that talk to their tree. Any passt works: cua asks `pasta --help` and passes `--host-lo-to-ns-lo` (which passt releases since late 2024 need to deliver a VM's forwarded ports to its loopback) only when the installed one lists it. Ubuntu 24.04 restricts those to programs with an AppArmor profile; allow pasta with one that grants `userns`, or set `kernel.apparmor_restrict_unprivileged_userns=0`. Cua carries the VM's published ports (its channel, SSH, the display) into the namespace itself rather than through pasta's forwards, which add about 40 ms to every round trip in passt releases before 2025; `CUA_NSFWD=0` uses pasta's forwards instead.
+
+To check it from inside a Space as root: `nft flush ruleset; iptables -F` changes nothing, a raw socket can't be opened in a container, and a connection to this computer's address times out.
+
+The older `egress` allow and deny lists (`SpaceCreateOptions.egress`, `set_egress`, `--egress-allow`, `--egress-deny`) still work: they are the lists of a `custom` network.

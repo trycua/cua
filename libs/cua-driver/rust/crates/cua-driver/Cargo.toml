@@ -21,7 +21,6 @@ cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cua-driver-sdk = { path = "../cua-driver-sdk" }
 cursor-overlay = { path = "../cursor-overlay" }
-pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
 httparse = "1.10.1"
 base64 = { workspace = true }
@@ -31,6 +30,16 @@ zeroize = { workspace = true }
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
 # rustls (default) so Linux/Windows builds don't require system OpenSSL.
 ureq = { version = "3", features = ["json"] }
+# The switches shared by every Cua program (DO_NOT_TRACK, CUA_TELEMETRY,
+# `[telemetry] enabled` in $CUA_HOME/config.toml). Only its config reader
+# is used; no sender.
+cua-telemetry = { path = "../../../../cua/crates/cua-telemetry", default-features = false }
+# `connect --replace` switches an agent's `cua-driver` server through the
+# step Cua Spaces' Set up runs (`AgentSetup::configure_mcp`).
+cua-agent-setup = { path = "../../../../cua/crates/cua-agent-setup" }
+# Reads Codex's config.toml in `connect`. Already in the tree through
+# cua-telemetry, at the same version.
+toml_edit = "0.25"
 # Strict semver comparison for the startup update-available banner so that
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".
@@ -50,6 +59,12 @@ cap-std = "4.0.3"
 cap-fs-ext = "4.0.3"
 rustix = { version = "1.1", features = ["fs", "process"] }
 image = { workspace = true }
+# RFB client for `permissions vnc`: VNC password (DES) and Apple Remote
+# Desktop (Diffie-Hellman, MD5, AES) authentication.
+des = "0.8"
+aes = "0.8"
+md-5 = "0.10"
+num-bigint = "0.4"
 
 # Used by crate::bundle::parent_is_not_launchd() for the TCC
 # auto-relaunch detection path on Unix (only the macOS heuristic
@@ -99,6 +114,14 @@ base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
 # never touch the developer's real `~/.cua-driver/version_check.json`.
 tempfile = "3"
+# Parses the Cordis patch `mcp-config --client deepseek-harness` prints.
+serde_yaml = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Private session and accessibility buses for the AT-SPI listener tests: the
+# test owns `org.a11y.Bus` and `org.a11y.atspi.Registry` itself and reads
+# the bus daemon's per-connection statistics.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 platform-windows = { path = "../platform-windows" }

@@ -51,7 +51,7 @@ on:
 
 permissions:
   contents: write
-  issues: read
+  issues: write # the rolling unresolved-attribution issue
   pull-requests: read
 
 concurrency:
@@ -59,6 +59,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
   APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
   INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
   CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
@@ -306,6 +309,7 @@ jobs:
             --path libs/lume \
             --changelog libs/lume/CHANGELOG.md \
             --asset-dir release-upload \
+            --report-issue \
             --output release-metadata/release-manifest.json
 
       - name: Render release body and announcement draft

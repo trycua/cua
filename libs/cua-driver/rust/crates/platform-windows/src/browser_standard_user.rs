@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Win32 side of the standard-user launch for isolated browsers.
 //!
 //! An elevated Driver derives a standard-user token from its own process token
@@ -197,7 +200,7 @@ fn safer_normal_user_token(driver_token: HANDLE) -> Result<OwnedHandle, String> 
     let computed = unsafe {
         SaferComputeTokenFromLevel(
             level,
-            driver_token,
+            Some(driver_token),
             &mut derived,
             SAFER_COMPUTE_TOKEN_FROM_LEVEL_FLAGS(0),
             None,
@@ -213,7 +216,7 @@ fn set_medium_integrity(token: HANDLE) -> Result<(), String> {
     let mut sid_buffer = [0u64; 12];
     let mut sid_size = std::mem::size_of_val(&sid_buffer) as u32;
     let sid = PSID(sid_buffer.as_mut_ptr().cast());
-    unsafe { CreateWellKnownSid(WinMediumLabelSid, PSID::default(), sid, &mut sid_size) }
+    unsafe { CreateWellKnownSid(WinMediumLabelSid, None, Some(sid), &mut sid_size) }
         .map_err(|error| format!("could not build the Medium integrity SID: {error}"))?;
     let label = TOKEN_MANDATORY_LABEL {
         Label: SID_AND_ATTRIBUTES {
@@ -303,7 +306,12 @@ fn token_privileges(token: HANDLE) -> Result<Vec<(String, LUID)>, String> {
         let mut name = [0u16; 128];
         let mut length = name.len() as u32;
         let resolved = unsafe {
-            LookupPrivilegeNameW(PCWSTR::null(), &luid, PWSTR(name.as_mut_ptr()), &mut length)
+            LookupPrivilegeNameW(
+                PCWSTR::null(),
+                &luid,
+                Some(PWSTR(name.as_mut_ptr())),
+                &mut length,
+            )
         };
         // An unresolvable privilege keeps a synthetic name, which is never on
         // the standard-user allow list, so validation fails closed.
@@ -323,8 +331,8 @@ fn administrators_membership(token: HANDLE) -> Result<AdministratorsMembership, 
     unsafe {
         CreateWellKnownSid(
             WinBuiltinAdministratorsSid,
-            PSID::default(),
-            administrators,
+            None,
+            Some(administrators),
             &mut sid_size,
         )
     }
@@ -568,9 +576,9 @@ pub(crate) fn spawn_with_token(
     let mut information = PROCESS_INFORMATION::default();
     unsafe {
         CreateProcessAsUserW(
-            token.raw(),
+            Some(token.raw()),
             PCWSTR(application.as_ptr()),
-            PWSTR(command_line.as_mut_ptr()),
+            Some(PWSTR(command_line.as_mut_ptr())),
             None,
             None,
             false,

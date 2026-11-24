@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // CuaTestHarness.WKWebView — macOS analogue of the Windows WebView2 harness.
 //
 // A minimal AppKit NSWindow hosting a WKWebView (Apple WebKit, NOT Chromium)
@@ -23,6 +26,7 @@ final class HarnessAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDel
     var webView: WKWebView!
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        NSApp.mainMenu = makeMainMenu()
         let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
         window = NSWindow(
             contentRect: NSRect(origin: NSPoint(x: 100, y: 100), size: kContentSize),
@@ -63,6 +67,27 @@ final class HarnessAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDel
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+
+    // The standard Edit menu a WebKit app ships. WKWebView pastes only from
+    // the `paste:` action, so Cmd+V reaches the page through this menu.
+    private func makeMainMenu() -> NSMenu {
+        let mainMenu = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        return mainMenu
+    }
 }
 
 @main

@@ -5,7 +5,7 @@ import Virtualization
 private func parseNetworkModeString(_ value: String) throws -> NetworkMode {
     guard let mode = NetworkMode.parse(value) else {
         throw ValidationError(
-            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', 'bridged:<interface>' or 'gateway:<socket path>'."
         )
     }
     return mode
@@ -23,6 +23,18 @@ struct RunVMRequest: Codable {
     /// "enabled" (default) or "disabled". Absent keeps the historic behavior of
     /// always starting a VNC server.
     let vnc: String?
+    /// Guest ports to publish on host loopback ports over vsock (the VM
+    /// gets a virtio socket device; the guest needs Cua's vsock agent).
+    /// `get` reports the host ports under `forwards` once the agent answers.
+    var forwards: [UInt16]? = nil
+    /// Leave the virtio sound device (host audio) out of the VM.
+    var noAudioDevice: Bool? = nil
+    /// Leave the clipboard-sharing device out of the VM and turn off
+    /// clipboard sync; cannot be combined with `clipboard: true`.
+    var noClipboardDevice: Bool? = nil
+    /// Vsock port on which the host serves its UTC time to the guest
+    /// ([`GuestTimeService`]); absent leaves the service off.
+    var timeVsockPort: UInt32? = nil
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -68,6 +80,25 @@ struct RunVMRequest: Codable {
         return policy
     }
 
+    /// The host devices this run attaches; rejects clipboard sync with the
+    /// clipboard device turned off.
+    func validatedHostDevices() throws -> HostDeviceOptions {
+        let options = HostDeviceOptions(
+            audio: !(noAudioDevice ?? false),
+            clipboard: !(noClipboardDevice ?? false))
+        try options.validate(clipboardSync: clipboard ?? false)
+        return options
+    }
+
+    func validatedTimeVsockPort() throws -> UInt32? {
+        guard let timeVsockPort else { return nil }
+        guard GuestTimeService.isValidPort(timeVsockPort) else {
+            throw ValidationError(
+                "Invalid timeVsockPort \(timeVsockPort). Expected 1 to \(GuestTimeService.validPorts.upperBound).")
+        }
+        return timeVsockPort
+    }
+
     func validatedVNCPolicy(noDisplayDefault: Bool) throws -> VNCPolicy {
         let policy = try parseVNCPolicy()
         let noDisplay = self.noDisplay ?? noDisplayDefault
@@ -104,6 +135,10 @@ struct PullRequest: Codable {
     }
 }
 
+struct PullCancelRequest: Codable {
+    let name: String
+}
+
 struct CreateVMRequest: Codable {
     let name: String
     let os: String
@@ -129,7 +164,9 @@ struct CreateVMRequest: Codable {
         guard let network else {
             return .nat
         }
-        return try parseNetworkModeString(network)
+        let mode = try parseNetworkModeString(network)
+        try mode.checkStorable()
+        return mode
     }
 }
 
@@ -163,6 +200,13 @@ struct CloneRequest: Codable {
     let newName: String
     let sourceLocation: String?
     let destLocation: String?
+    /// Clone the source's saved machine state too (`POST /lume/vms/:name/suspend`).
+    let withSavedState: Bool?
+}
+
+struct RenameVMRequest: Codable {
+    let newName: String
+    let storage: String?
 }
 
 struct SetupVMRequest: Codable {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Internal, non-wire representation of what an action actually did.
 //!
 //! This deliberately has no serde derives: it is the driver's source of truth,
@@ -64,6 +67,9 @@ pub enum ActionTransport {
     MacosAxWindowFrame,
     MacosCgEventPid,
     MacosCgEventHid,
+    /// An Apple Event to the target app's scripting interface (Finder
+    /// rename, a document save), which never activates the app.
+    MacosAppleEvent,
     WindowsUiaInvoke,
     WindowsUiaToggle,
     WindowsUiaSelection,
@@ -106,6 +112,7 @@ impl ActionTransport {
         Self::MacosAxWindowFrame,
         Self::MacosCgEventPid,
         Self::MacosCgEventHid,
+        Self::MacosAppleEvent,
         Self::WindowsUiaInvoke,
         Self::WindowsUiaToggle,
         Self::WindowsUiaSelection,
@@ -169,7 +176,9 @@ impl ActionTransport {
             | Self::LinuxWaylandVirtualPointer
             | Self::LinuxHyprlandForegroundInput
             | Self::LinuxCuaCompositorInject => ActionRoute::GlobalInput,
-            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow => ActionRoute::SystemApi,
+            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow | Self::MacosAppleEvent => {
+                ActionRoute::SystemApi
+            }
             Self::BrowserCdpRuntimeFunction => ActionRoute::Dom,
             Self::BrowserCdpInputMouse | Self::BrowserCdpInputKey => ActionRoute::TrustedInput,
         }
@@ -292,6 +301,19 @@ impl ActionExecutionRecord {
         requested_delivery: RequestedDelivery,
     ) -> ActionExecutionRecordBuilder {
         ActionExecutionRecordBuilder::new(effect, transport, requested_delivery)
+    }
+
+    /// A `move_cursor` record. A cursor move gives an app nothing to confirm,
+    /// so the effect is unverifiable and no app delivery applies, whether the
+    /// user's real pointer or only the drawn agent cursor moved.
+    pub fn cursor_move(transport: ActionTransport, args: &serde_json::Value) -> Self {
+        let mut record = Self::new(
+            ActionEffect::Unverifiable,
+            transport,
+            requested_delivery("move_cursor", args),
+        );
+        record.actual_delivery = Some(ActualDelivery::NotApplicable);
+        record
     }
 
     pub fn validate(&self) -> Result<(), ActionRecordValidationError> {
@@ -451,6 +473,10 @@ impl ActionExecutionRecord {
                 }
                 _ => None,
             },
+            // The dispatch seam adds these after the record is projected.
+            hint: None,
+            next_call: None,
+            fast_path: None,
         })
     }
 
@@ -469,15 +495,20 @@ impl ActionExecutionRecord {
         if !is_action_tool(tool_name) {
             return None;
         }
+        let effect = legacy_effect(structured);
+        // Every successful `move_cursor` producer attaches its own record;
+        // only its refusals still come through here.
+        if tool_name == "move_cursor" && effect != ActionEffect::Refused {
+            return None;
+        }
         let requested_delivery = requested_delivery(tool_name, args);
         let raw_path = structured
             .get("path")
             .or_else(|| structured.get("route"))
             .and_then(serde_json::Value::as_str);
         let transport = transport_from_legacy(tool_name, args, raw_path)?;
-        let effect = legacy_effect(structured);
         let actual_delivery =
-            actual_delivery_from_legacy(tool_name, args, structured, raw_path, transport, effect);
+            actual_delivery_from_legacy(tool_name, args, structured, raw_path, effect);
 
         let mut record = Self::new(effect, transport, requested_delivery);
         record.actual_delivery = actual_delivery;
@@ -771,10 +802,15 @@ fn transport_from_legacy(
         "msaa" => ActionTransport::WindowsMsaaAction,
         "post_message" | "PostMessage" => ActionTransport::WindowsPostMessage,
         "SendInput" => ActionTransport::WindowsSendInput,
-        "SetCursorPos" => ActionTransport::WindowsSetCursorPos,
         "atspi" | "wayland_atspi" | "x11_atspi" => ActionTransport::LinuxAtSpiAction,
         "pty" => ActionTransport::LinuxPty,
-        "mpx_uinput" | "mpx_pointer" => ActionTransport::LinuxX11MpxUinput,
+        // set_value's keyboard fallback on Linux: the field (or combo box)
+        // is clicked open with the session's MPX pointer, or with XTest in
+        // the foreground, and typed into or picked from.
+        "mpx_uinput" | "mpx_pointer" | "click_type_mpx" | "click_select_mpx" => {
+            ActionTransport::LinuxX11MpxUinput
+        }
+        "click_type_fg" | "click_select_fg" => ActionTransport::LinuxXTest,
         "x11_xsendevent" => ActionTransport::LinuxXSendEvent,
         "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop"
         | "xtest_core_grab" => ActionTransport::LinuxXTest,
@@ -784,6 +820,9 @@ fn transport_from_legacy(
             ActionTransport::LinuxCuaCompositorInject
         }
         "hid" | "cgevent_hid" | "cgevent_fg" => ActionTransport::MacosCgEventHid,
+        // A GTK 3 app held AppKit-active by the activation event, with the
+        // click posted to its pid as NSEvent-built events.
+        "appkit_activated" => ActionTransport::MacosCgEventPid,
         "cgevent" => {
             if args
                 .get("delivery_mode")
@@ -856,6 +895,8 @@ fn transport_from_legacy(
             }
         }
         "" if tool_name == "browser_type" => ActionTransport::BrowserCdpInputKey,
+        // Only move_cursor refusals reach here: an agent-cursor or window
+        // move was aimed at the overlay.
         "" if tool_name == "move_cursor"
             && args.get("scope").and_then(serde_json::Value::as_str) != Some("desktop") =>
         {
@@ -947,7 +988,6 @@ fn actual_delivery_from_legacy(
     args: &serde_json::Value,
     structured: &serde_json::Value,
     raw_path: Option<&str>,
-    transport: ActionTransport,
     effect: ActionEffect,
 ) -> Option<ActualDelivery> {
     if effect == ActionEffect::Refused {
@@ -957,16 +997,19 @@ fn actual_delivery_from_legacy(
         tool_name,
         "browser_click" | "browser_pointer" | "browser_type"
     ) {
-        return Some(ActualDelivery::Background);
+        return match structured
+            .get("delivery_mode")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("foreground") => Some(ActualDelivery::Foreground),
+            _ => Some(ActualDelivery::Background),
+        };
     }
-    if transport == ActionTransport::AgentCursorOverlay
-        || args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop")
-    {
+    if args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop") {
         return Some(ActualDelivery::NotApplicable);
     }
-    match structured_delivery_mode(args, structured) {
-        Some(delivery) => return Some(delivery),
-        None => {}
+    if let Some(delivery) = structured_delivery_mode(args, structured) {
+        return Some(delivery);
     }
     match raw_path {
         Some(path) if path.ends_with("_fg") => Some(ActualDelivery::Foreground),
@@ -1099,6 +1142,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::MacosAxWindowFrame => "macos_ax_window_frame",
         ActionTransport::MacosCgEventPid => "macos_cg_event_pid",
         ActionTransport::MacosCgEventHid => "macos_cg_event_hid",
+        ActionTransport::MacosAppleEvent => "macos_apple_event",
         ActionTransport::WindowsUiaInvoke => "windows_uia_invoke",
         ActionTransport::WindowsUiaToggle => "windows_uia_toggle",
         ActionTransport::WindowsUiaSelection => "windows_uia_selection",
@@ -1590,6 +1634,74 @@ mod tests {
         );
     }
 
+    /// What every `move_cursor` producer publishes: only a cursor moved, so
+    /// no effect is provable and no app delivery applies. The route is
+    /// global input for the user's real pointer and synthetic events for the
+    /// drawn agent cursor, including window-target hover moves.
+    #[test]
+    fn move_cursor_publishes_the_pinned_cursor_projection() {
+        let projection = |route: &str| {
+            serde_json::json!({
+                "effect": "unverifiable",
+                "route": route,
+                "delivery": {"mode": "not_applicable"},
+            })
+        };
+        let cases = [
+            (ActionTransport::MacosCgEventHid, "global_input"),
+            (ActionTransport::WindowsSetCursorPos, "global_input"),
+            (ActionTransport::LinuxWaylandVirtualPointer, "global_input"),
+            (ActionTransport::LinuxXTest, "global_input"),
+            (ActionTransport::AgentCursorOverlay, "synthetic_events"),
+        ];
+        for (transport, route) in cases {
+            let record = ActionExecutionRecord::cursor_move(transport, &serde_json::json!({}));
+            assert_eq!(
+                serde_json::to_value(record.public_result().unwrap()).unwrap(),
+                projection(route),
+                "{transport:?}"
+            );
+        }
+    }
+
+    /// A `move_cursor` producer builds its own record; a text-only result
+    /// no longer normalizes, so a producer that drops its record fails at
+    /// the dispatch seam instead of publishing a guessed route.
+    #[test]
+    fn move_cursor_is_not_interpreted_from_legacy_payloads() {
+        for args in [
+            serde_json::json!({"x": 1, "y": 1}),
+            serde_json::json!({"x": 1, "y": 1, "scope": "desktop"}),
+        ] {
+            assert_eq!(
+                ActionExecutionRecord::from_legacy("move_cursor", &args, &serde_json::Value::Null),
+                None,
+                "{args}"
+            );
+        }
+    }
+
+    /// A refused agent-cursor move, such as macOS without its overlay
+    /// host, still records a refusal on the overlay route.
+    #[test]
+    fn move_cursor_refusal_normalizes_on_the_overlay_route() {
+        let record = ActionExecutionRecord::from_legacy(
+            "move_cursor",
+            &serde_json::json!({"x": 10, "y": 20}),
+            &serde_json::json!({
+                "status": "refused",
+                "refusal": {
+                    "code": "facility_unavailable",
+                    "facility": "macos_cursor_overlay",
+                    "message": "macOS agent cursor overlay is unavailable",
+                }
+            }),
+        )
+        .expect("a move_cursor refusal normalizes");
+        assert_eq!(record.effect, ActionEffect::Refused);
+        assert_eq!(record.transport, ActionTransport::AgentCursorOverlay);
+    }
+
     #[test]
     fn confirmed_rejects_debug_only_evidence() {
         let record = ActionExecutionRecord::builder(
@@ -1668,6 +1780,48 @@ mod tests {
                 "{tool} cannot confirm from a delivery acknowledgement"
             );
             assert!(record.evidence.is_empty());
+        }
+    }
+
+    #[test]
+    fn linux_set_value_keyboard_fallback_paths_normalize() {
+        // A successful set_value fallback must carry an execution record;
+        // without a transport the registry reports action_outcome_mismatch.
+        for (path, mode, transport, delivery) in [
+            (
+                "click_type_fg",
+                "foreground",
+                ActionTransport::LinuxXTest,
+                ActualDelivery::Foreground,
+            ),
+            (
+                "click_select_fg",
+                "foreground",
+                ActionTransport::LinuxXTest,
+                ActualDelivery::Foreground,
+            ),
+            (
+                "click_type_mpx",
+                "background",
+                ActionTransport::LinuxX11MpxUinput,
+                ActualDelivery::Background,
+            ),
+            (
+                "click_select_mpx",
+                "background",
+                ActionTransport::LinuxX11MpxUinput,
+                ActualDelivery::Background,
+            ),
+        ] {
+            let record = ActionExecutionRecord::from_legacy(
+                "set_value",
+                &serde_json::json!({ "delivery_mode": mode }),
+                &serde_json::json!({ "path": path, "verified": false, "effect": "unverifiable" }),
+            )
+            .unwrap_or_else(|| panic!("{path} should normalize"));
+            assert_eq!(record.transport, transport, "{path}");
+            assert_eq!(record.actual_delivery, Some(delivery), "{path}");
+            record.public_result().expect("public result");
         }
     }
 
@@ -1767,6 +1921,7 @@ mod tests {
                 "ref": "secret-ref",
                 "destination_ref": "secret-destination",
                 "input_route": input_route,
+                "delivery_mode": "foreground",
             });
             let structured = serde_json::json!({
                 "status": "ok",
@@ -1892,6 +2047,34 @@ mod tests {
     }
 
     #[test]
+    fn foreground_cgevent_path_is_preserved_when_effect_is_unverifiable() {
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "foreground"}),
+            &serde_json::json!({
+                "path": "cgevent_fg",
+                "verified": false,
+                "effect": "unverifiable",
+            }),
+        )
+        .expect("foreground CGEvent result should normalize");
+
+        assert_eq!(record.transport, ActionTransport::MacosCgEventHid);
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
+
+        let public = record.public_result().expect("public ActionResult");
+        assert_eq!(
+            public.effect,
+            cua_driver_contract::ActionEffect::Unverifiable
+        );
+        assert_eq!(public.route, cua_driver_contract::ActionRoute::GlobalInput);
+        assert_eq!(
+            public.delivery.map(|delivery| delivery.mode),
+            Some(cua_driver_contract::ActionDeliveryMode::Foreground)
+        );
+    }
+
+    #[test]
     fn producer_emitted_delivery_wins_over_requested_delivery() {
         let record = ActionExecutionRecord::from_legacy(
             "scroll",
@@ -1970,7 +2153,6 @@ mod tests {
             "post_message",
             "PostMessage",
             "SendInput",
-            "SetCursorPos",
             "atspi",
             "wayland_atspi",
             "x11_atspi",
@@ -1990,6 +2172,7 @@ mod tests {
             "cgevent_hid",
             "cgevent",
             "cgevent_fg",
+            "appkit_activated",
             "dom_event",
             "trusted",
             "key_events",
@@ -2038,7 +2221,6 @@ mod tests {
             "drag",
             "mouse_drag",
             "parallel_mouse_drag",
-            "move_cursor",
             "mouse_button_down",
             "mouse_button_up",
             "type_text",

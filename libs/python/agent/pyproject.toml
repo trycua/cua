@@ -4,16 +4,17 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.8.4"
+version = "0.9.1"
 description = "Cua (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
+classifiers = ["Development Status :: 7 - Inactive"]
 license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
 dependencies = [
     "httpx>=0.27.0",
-    "aiohttp>=3.9.3",
+    "aiohttp>=3.14.4",
     "anyio>=4.4.1",
     "typing-extensions>=4.12.2",
     "pydantic>=2.6.4",
@@ -21,14 +22,14 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "cua-core>=0.3.0,<0.4.0",
     "certifi>=2024.2.2",
-    "litellm==1.86.2",
+    "litellm==1.95.0",
     "Pillow>=10.0.0"
 ]
 requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
 computer = [
-    "cua-computer>=0.5.0,<0.6.0",
+    "cua-sandbox>=0.8.0,<0.12.0",
 ]
 openai = []
 anthropic = []
@@ -37,10 +38,9 @@ qwen = [
     "qwen-agent",
     "Pillow>=10.0.0",
 ]
-omni = [
-    # Deprecated: cua-som is no longer maintained (AGPL-3.0).
-    "cua-som>=0.1.0,<0.2.0",
-]
+# No `omni` extra: cua-som is deprecated, unmaintained and AGPL-3.0, and this
+# package is MIT. The omniparser loop still runs with it installed separately
+# (`pip install cua-som`).
 uitars = []
 uitars-mlx = [
     "mlx-vlm>=0.1.27; sys_platform == 'darwin'"
@@ -48,31 +48,31 @@ uitars-mlx = [
 uitars-hf = [
     "accelerate",
     "torch",
-    "transformers>=4.54.0"
+    "transformers>=5.10.1"
 ]
 glm45v-hf = [
     "accelerate",
     "torch",
-    "transformers>=5.0.0rc3"
+    "transformers>=5.10.1"
 ]
 opencua-hf = [
     "accelerate",
     "torch",
-    "transformers>=4.53.0",
+    "transformers>=5.10.1",
     "tiktoken>=0.11.0",
     "blobfile>=3.0.0"
 ]
 internvl-hf = [
     "accelerate",
     "torch",
-    "transformers>=4.55.0",
+    "transformers>=5.10.1",
     "einops",
     "timm"
 ]
 moondream3 = [
     "accelerate",
     "torch",
-    "transformers>=4.55.0"
+    "transformers>=5.10.1"
 ]
 ui = [
     "gradio>=6.0.0",
@@ -105,7 +105,7 @@ all = [
     "mlx-vlm>=0.1.27; sys_platform == 'darwin'",
     "accelerate",
     "torch",
-    "transformers>=4.55.0",
+    "transformers>=5.10.1",
     # internvl requirements,
     "einops",
     "timm",
@@ -133,3 +133,4 @@ distribution = true
 
 [tool.pdm.build]
 includes = ["cua_agent/"]
+source-includes = ["README.md", "LICENSE"]

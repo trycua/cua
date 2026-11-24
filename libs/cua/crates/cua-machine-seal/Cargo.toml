@@ -1,0 +1,34 @@
+[package]
+name = "cua-machine-seal"
+description = "Sealed delivery to a pinned machine key (S1): X25519 ECDH + HKDF-SHA256 + XChaCha20Poly1305, so a relay in the path forwards only ciphertext. Shared by cua-spacesd (the guest that decrypts) and the cua SDK (the sender: Keyvault site-login, teleport bundles)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Refuses writing a key/pin file under the user's real ~/.cua from a test
+# process that forgot to isolate CUA_HOME (same safety net every other
+# writer of host state in this repo uses); harmless on the guest side,
+# where this crate's other writes live under the guest's own data_dir.
+cua-home = { path = "../cua-home" }
+chacha20poly1305 = "0.11"
+# 0.12 (hmac 0.12 / digest 0.10) to match sha2 0.10, the workspace's pin;
+# hkdf 0.13 wants hmac/digest 0.11, which sha2 0.10 does not implement.
+hkdf = "0.12"
+sha2.workspace = true
+x25519-dalek = { version = "3", features = ["static_secrets"] }
+rand_core = { version = "0.9", features = ["os_rng"] }
+zeroize = { version = "1", features = ["derive"] }
+serde = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+# `PayloadEntry`/config types that travel as JSON (the daemon boundary).
+serde = ["dep:serde"]

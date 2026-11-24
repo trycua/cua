@@ -1,0 +1,13 @@
+{
+  "common": {
+    "app_name": "Cua Spaces"
+  },
+  "common.action.dismiss": "Descartar",
+  "common.action.retry": "Reintentar",
+  "common.action.cancel": "Cancelar",
+  "common.action.close": "Cerrar",
+  "common.action.reconnect": "Volver a conectar",
+  "common.status.connecting": "Conectando…",
+  "common.action.back": "Atrás",
+  "common.action.done": "Listo"
+}

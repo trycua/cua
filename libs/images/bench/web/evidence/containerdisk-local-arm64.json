@@ -1,0 +1,100 @@
+{
+  "id": "web",
+  "variant": "containerdisk",
+  "where": "local",
+  "arch": "arm64",
+  "image": "ghcr.io/trycua/bench-web@sha256:9986c79436295ccc31e67f72f34b9214389fceb067e957b0404376018a615827",
+  "child": "ghcr.io/trycua/bench-web@sha256:9986c79436295ccc31e67f72f34b9214389fceb067e957b0404376018a615827",
+  "container_runtime": null,
+  "pinned_ref": "ghcr.io/trycua/bench-web@sha256:798e995956ca6a7ef7eacca04535ab44ff468d27631387308e92c61c2d44c4e1",
+  "doctor": "pass",
+  "seconds": 132.4,
+  "ok": true,
+  "checks": [
+    {
+      "check": "ready",
+      "status": "pass",
+      "detail": "after 87s"
+    },
+    {
+      "check": "server",
+      "status": "pass",
+      "detail": "GET /healthz on :7000 -> 200",
+      "seconds": 2.03
+    },
+    {
+      "check": "spacesd",
+      "status": "pass",
+      "detail": "GetCapabilities: arch, bootTime, displayServer, displays, features, hostname, initialized, limits, os, protocolRevision, protocolVersion, runtime, runtimeDetail, sideChannels, version",
+      "seconds": 0.1
+    },
+    {
+      "check": "screen",
+      "status": "pass",
+      "detail": "1280x800 (want 1280x800), color variety 0.061",
+      "seconds": 0.07
+    },
+    {
+      "check": "input",
+      "status": "pass",
+      "detail": {
+        "ok": true,
+        "click": [
+          639,
+          500
+        ],
+        "title": "clicked",
+        "changed_fraction": 0.833
+      },
+      "seconds": 3.07
+    },
+    {
+      "check": "bench.miniwob_oracle",
+      "status": "pass",
+      "detail": {
+        "done": true,
+        "raw": 1,
+        "reward": 0.9493
+      }
+    },
+    {
+      "check": "bench.miniwob_noop",
+      "status": "pass",
+      "detail": {
+        "done": false,
+        "raw": 0,
+        "reward": 0
+      }
+    },
+    {
+      "check": "bench.chromium",
+      "status": "pass",
+      "detail": {
+        "ok": true,
+        "browser": "Chrome/154.0.8037.57",
+        "tabs": 1
+      }
+    },
+    {
+      "check": "bench.bench_ui_window",
+      "status": "pass",
+      "detail": {
+        "pid": 936,
+        "rect": {
+          "x": 493,
+          "y": 317,
+          "width": 34,
+          "height": 27
+        },
+        "two": 2
+      }
+    },
+    {
+      "check": "doctor",
+      "status": "pass",
+      "detail": "rc=0 (report in containerdisk-local-arm64-doctor.json); all checks pass",
+      "seconds": 35.77
+    }
+  ],
+  "date": "2026-09-28T01:01:30Z"
+}

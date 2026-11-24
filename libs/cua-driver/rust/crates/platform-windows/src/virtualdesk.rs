@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure math for `MOUSEEVENTF_VIRTUALDESK` absolute-coordinate normalization.
 //!
 //! `SendInput` with `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK` interprets
@@ -71,8 +74,8 @@ pub fn to_virtualdesk_absolute(
 /// Inverse of [`to_virtualdesk_absolute`] — given an absolute coordinate `(dx, dy)`
 /// in `0..=65535` and the virtual-desktop rect, recover the screen pixel.
 ///
-/// This mirrors Windows' own internal reverse mapping (`dx * (virt_w - 1) / 65535
-/// + virt_x`) and is used **only** by the round-trip tests; the production
+/// This mirrors Windows' own internal reverse mapping
+/// (`dx * (virt_w - 1) / 65535 + virt_x`) and is used **only** by the round-trip tests; the production
 /// click dispatcher never needs to reverse the normalization.
 #[inline]
 #[cfg(test)]
@@ -99,12 +102,15 @@ pub fn from_virtualdesk_absolute(
 mod tests {
     use super::*;
 
+    /// (label, virt_x, virt_y, virt_w, virt_h, sample points).
+    type Layout = (&'static str, i32, i32, i32, i32, Vec<(i32, i32)>);
+
     /// Layouts we care about (issue #1979 surfaces the LEFT case).
     ///
     /// Each tuple: (label, virt_x, virt_y, virt_w, virt_h, sample screen pts).
     /// The sample points cover: the four corners of the virtual desktop, plus
     /// any case-specific pixel of interest (e.g. the reporter's `(-1795, 383)`).
-    fn layouts() -> Vec<(&'static str, i32, i32, i32, i32, Vec<(i32, i32)>)> {
+    fn layouts() -> Vec<Layout> {
         vec![
             (
                 // The reporter's setup: secondary to the LEFT of primary, both 1920x1080.
@@ -184,10 +190,12 @@ mod tests {
                 vec![(0, 0), (1919, 1079), (960, 540), (1, 1)],
             ),
             (
-                // HiDPI secondary. cua-driver runs Per-Monitor-V2 DPI-aware (see
-                // win32 manifest), so GetSystemMetrics returns PIXEL extents
-                // regardless of DPI scaling — the normalization math is identical
-                // to the same-resolution case. We exercise a larger secondary
+                // HiDPI secondary. Cua Driver runs Per-Monitor-V2 DPI-aware:
+                // standalone mode uses the win32 manifest, while embedded mode
+                // initializes its owned SDK threads. GetSystemMetrics therefore
+                // returns PIXEL extents regardless of DPI scaling — the
+                // normalization math is identical to the same-resolution case.
+                // We exercise a larger secondary
                 // (e.g. 2560x1440) to the left of a 1920x1080 primary to confirm
                 // there's no implicit DPI assumption in the helper.
                 //

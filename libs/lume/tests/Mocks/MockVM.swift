@@ -26,7 +26,9 @@ class MockVM: VM {
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled
+        vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = [],
+        hostDevices: HostDeviceOptions = .all,
+        guestTimePort: UInt32? = nil
     ) async throws {
         mockIsRunning = true
         try await super.run(
@@ -35,7 +37,9 @@ class MockVM: VM {
             usbMassStoragePaths: usbMassStoragePaths,
             additionalDiskPaths: additionalDiskPaths,
             networkMode: networkMode, clipboard: clipboard,
-            vncPolicy: vncPolicy
+            vncPolicy: vncPolicy, forwards: forwards,
+            hostDevices: hostDevices,
+            guestTimePort: guestTimePort
         )
     }
 

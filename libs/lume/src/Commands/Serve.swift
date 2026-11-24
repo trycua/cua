@@ -7,14 +7,16 @@ struct Serve: AsyncParsableCommand {
     )
 
     @Option(help: "Port to listen on (HTTP mode only)")
-    var port: UInt16 = 7777
+    var port: UInt16 = LumeChannel.current.lumePort
 
     @Flag(name: .long, help: "Run as MCP server (stdio transport) for AI agent integration")
     var mcp: Bool = false
 
     func run() async throws {
         if mcp {
-            // MCP mode - run as MCP server over stdio
+            // MCP mode - run as MCP server over stdio. Stdout carries the
+            // protocol, so every log and progress line goes to stderr.
+            Console.shared.reserveStdout()
             TelemetryClient.shared.record(event: TelemetryEvent.serve, properties: [
                 "mode": "mcp"
             ])
@@ -22,7 +24,6 @@ struct Serve: AsyncParsableCommand {
             let controller = LumeController()
             let mcpServer = await LumeMCPServer(controller: controller)
 
-            // Note: Don't log to stdout in MCP mode as it interferes with the protocol
             try await mcpServer.start()
         } else {
             // HTTP mode - run as HTTP server
@@ -45,7 +46,7 @@ struct Serve: AsyncParsableCommand {
                 // Create a user-friendly error message that includes the suggestion
                 let message = """
                 \(error.localizedDescription)
-                Try using a different port: lume serve --port \(suggestedPort)
+                Try using a different port: \(LumeChannel.current.lumeBinName) serve --port \(suggestedPort)
                 """
 
                 // Log the message (without the "ERROR:" prefix that ArgumentParser will add)

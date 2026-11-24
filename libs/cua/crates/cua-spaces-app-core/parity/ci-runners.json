@@ -1,0 +1,112 @@
+{
+  "name": "ci-runners",
+  "about": "The CI Runners page (GitHub Actions jobs on your own machines): the setup checklist moves from nothing connected to a job that passed, the connect sheet goes Choose, Waiting for GitHub, Connected (and falls back to a token, which can fail and be tried again), the jobs table filters by tab and opens a row to its timeline, cost, machine and cloud, the repository picker searches and shows what is ready, automatic sizing says its goal, budget used and reasons, and the help opens one topic at a time. The data is `cua ci overview`; every sentence, format and tab is the core's. All data here is made up.",
+  "overviews": {
+    "fresh": {
+      "generated_ms": 1800000000000,
+      "setup": [
+        { "id": "connect_github", "state": "todo", "detail": "" },
+        { "id": "repositories", "state": "todo", "detail": "" },
+        { "id": "runner_label", "state": "todo", "detail": "" },
+        { "id": "first_job_passed", "state": "todo", "detail": "" }
+      ],
+      "github": { "connected": false, "mode": "none" },
+      "repositories": { "used": [], "all": null },
+      "usage": { "starts_24h": 0, "jobs_7d": 0, "pass_rate_7d": null, "spend_7d_micros": 0 },
+      "jobs": [],
+      "targets": [],
+      "budget": { "month_committed_micros": 0, "monthly_micros": 0, "state": "ok" }
+    },
+    "connected": {
+      "generated_ms": 1800000000000,
+      "setup": [
+        { "id": "connect_github", "state": "done", "detail": "Connected" },
+        { "id": "repositories", "state": "done", "detail": "3 repositories can run jobs" },
+        { "id": "runner_label", "state": "todo", "detail": "0 repositories used it this week" },
+        { "id": "first_job_passed", "state": "todo", "detail": "No job has passed yet" }
+      ],
+      "github": { "connected": true, "mode": "hosted", "login": "acme", "choose_url": "https://github.com/organizations/acme/settings/installations" },
+      "repositories": {
+        "used": [],
+        "all": [
+          { "name": "acme/app", "allowed": true },
+          { "name": "acme/api", "allowed": true },
+          { "name": "acme/docs", "allowed": true },
+          { "name": "acme/website", "allowed": false }
+        ]
+      },
+      "usage": { "starts_24h": 0, "jobs_7d": 0, "pass_rate_7d": null, "spend_7d_micros": 0 },
+      "jobs": [],
+      "targets": [],
+      "budget": { "month_committed_micros": 0, "monthly_micros": 0, "state": "ok" }
+    },
+    "busy": {
+      "generated_ms": 1800000000000,
+      "setup": [
+        { "id": "connect_github", "state": "done", "detail": "Connected" },
+        { "id": "repositories", "state": "done", "detail": "3 repositories can run jobs" },
+        { "id": "runner_label", "state": "done", "detail": "2 repositories used it this week" },
+        { "id": "first_job_passed", "state": "done", "detail": "A job passed" }
+      ],
+      "github": { "connected": true, "mode": "hosted", "login": "acme", "choose_url": "https://github.com/organizations/acme/settings/installations" },
+      "repositories": {
+        "used": [
+          { "name": "acme/app", "jobs_7d": 31, "last_job_ms": 1799999000000 },
+          { "name": "acme/api", "jobs_7d": 9, "last_job_ms": 1799990000000 }
+        ],
+        "all": [
+          { "name": "acme/app", "allowed": true },
+          { "name": "acme/api", "allowed": true },
+          { "name": "acme/docs", "allowed": true },
+          { "name": "acme/website", "allowed": false }
+        ]
+      },
+      "usage": { "starts_24h": 18, "jobs_7d": 40, "pass_rate_7d": 0.925, "spend_7d_micros": 3190000 },
+      "jobs": [
+        { "job_key": "9912/301", "name": "test", "repo": "acme/app", "state": "running", "queued_ms": 1799999700000, "wait_ms": 4000, "run_ms": null, "cost_micros": null, "start_mode": "warm_pool", "machine": "cua-ci-7", "machine_type": "c7i.xlarge", "cloud": "aws", "spot": true, "log_pool": "hosted", "log_slot": "s7" },
+        { "job_key": "9911/298", "name": "build", "repo": "acme/app", "state": "passed", "queued_ms": 1799999000000, "wait_ms": 6000, "run_ms": 72000, "cost_micros": 41000, "all_in_micros": 52000, "start_mode": "fork", "machine": "cua-ci-7", "machine_type": "c7i.xlarge", "cloud": "aws", "spot": true, "log_pool": "hosted", "log_slot": "s7" },
+        { "job_key": "9910/295", "name": "lint", "repo": "acme/api", "state": "failed", "queued_ms": 1799990000000, "wait_ms": 21000, "run_ms": 38000, "cost_micros": 27000, "all_in_micros": 27000, "start_mode": "cold_create", "machine": "cua-ci-4", "machine_type": "c7i.large", "cloud": "aws", "spot": false, "log_pool": "hosted", "log_slot": "s4" },
+        { "job_key": "9800/210", "name": "unit", "repo": "acme/app", "state": "passed", "queued_ms": 1799400000000, "wait_ms": 1200, "run_ms": 190000, "cost_micros": null, "start_mode": "warm_pool", "machine": "", "machine_type": "", "cloud": "", "spot": false, "log_pool": "hosted", "log_slot": "s1" },
+        { "job_key": "9700/110", "name": "", "repo": "", "state": "queued", "queued_ms": 1799999990000, "cost_micros": null, "start_mode": "", "machine": "", "machine_type": "", "cloud": "", "spot": false, "log_pool": "hosted", "log_slot": "" }
+      ],
+      "targets": [
+        {
+          "target": "aws",
+          "goal": "balanced",
+          "warm": null,
+          "autopilot": {
+            "goal": "balanced",
+            "classes": [
+              { "class": "linux", "phase": "steady", "jobs_seen": 212, "warm_now": 1, "idle_ttl_secs": 600, "spot": true, "reasons": ["Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.", "Spot machines were taken back 2 times in 212 jobs, so spot is still used."] },
+              { "class": "macos", "phase": "learning", "jobs_seen": 6, "warm_now": 0, "idle_ttl_secs": 600, "spot": false, "reasons": [] }
+            ]
+          }
+        }
+      ],
+      "budget": { "month_committed_micros": 12400000, "monthly_micros": 50000000, "state": "ok" }
+    }
+  },
+  "steps": [
+    { "step": "nothing is connected: the checklist starts at Connect GitHub", "overview": "fresh" },
+    { "step": "Connect GitHub opens the sheet", "actions": [{ "type": "connectOpen" }] },
+    { "step": "Continue on GitHub", "actions": [{ "type": "connectStart" }] },
+    { "step": "GitHub's page is open and the page waits", "actions": [{ "type": "connectAnswer", "answer": { "state": "waiting", "url": "https://github.com/apps/cua-ci/installations/new?state=ins_1" } }] },
+    { "step": "the install link expired", "actions": [{ "type": "connectAnswer", "answer": { "state": "failed", "message": "The GitHub link expired. Connect again." } }] },
+    { "step": "not signed in to Cua yet", "actions": [{ "type": "connectOpen" }, { "type": "connectStart" }, { "type": "connectAnswer", "answer": { "state": "sign_in" } }] },
+    { "step": "use a token instead", "actions": [{ "type": "useToken" }] },
+    { "step": "an organization is typed and Connect is pressed", "actions": [{ "type": "tokenOrg", "value": "acme" }, { "type": "tokenSubmit" }] },
+    { "step": "GitHub refused the token", "actions": [{ "type": "tokenDone", "ok": false, "message": "GitHub refused the token (401)" }] },
+    { "step": "connected: three repositories can run jobs, no workflow yet", "overview": "connected", "actions": [{ "type": "tokenDone", "ok": true }] },
+    { "step": "a week of jobs: the table, the overview line and automatic sizing", "overview": "busy" },
+    { "step": "Running tab", "actions": [{ "type": "tab", "tab": "running" }] },
+    { "step": "Failed tab, the failed job opened", "actions": [{ "type": "tab", "tab": "failed" }, { "type": "expand", "key": "9910/295" }] },
+    { "step": "All tab, a passed job on a cloud machine opened", "actions": [{ "type": "tab", "tab": "all" }, { "type": "expand", "key": "9911/298" }] },
+    { "step": "a job that ran on your own machine opened", "actions": [{ "type": "expand", "key": "9800/210" }] },
+    { "step": "the repository picker", "actions": [{ "type": "picker", "open": true }] },
+    { "step": "searching the picker", "actions": [{ "type": "query", "value": "AP" }] },
+    { "step": "a search that matches nothing", "actions": [{ "type": "query", "value": "zzz" }] },
+    { "step": "the picker closed", "actions": [{ "type": "picker", "open": false }] },
+    { "step": "help: a job stays queued", "actions": [{ "type": "help", "id": "queued" }] },
+    { "step": "help: another topic replaces it", "actions": [{ "type": "help", "id": "slow" }] }
+  ]
+}

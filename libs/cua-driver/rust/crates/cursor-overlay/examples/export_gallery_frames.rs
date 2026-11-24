@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cursor_overlay::{
     render_frame, CursorAction, CursorConfig, DeliveryModifier, OverlayCommand, RenderStateCore,
     TargetModifier,
@@ -123,14 +126,20 @@ fn main() {
 fn export_state(output: &Path, state: GalleryState) {
     fs::create_dir_all(output).expect("create frame output");
     for frame in 0..FPS * DURATION_SECS {
-        let mut config = CursorConfig::default();
-        config.cursor_id = "gallery-session".into();
+        let config = CursorConfig {
+            cursor_id: "gallery-session".into(),
+            ..CursorConfig::default()
+        };
         let mut core = RenderStateCore::new(config);
+        // The gallery documents every badge combination, which only the
+        // verbose badge shows.
+        core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         core.motion.idle_hide_ms = 0.0;
         core.pos = (
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
         );
+        core.placed = true;
         core.heading = f64::from(std::f32::consts::FRAC_PI_4);
         if let Some(session_label) = state.session_label {
             core.apply_command_base(

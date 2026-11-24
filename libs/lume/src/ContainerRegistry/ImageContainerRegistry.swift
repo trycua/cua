@@ -48,6 +48,16 @@ private let sparseZeroChunk = Data(count: sparseHoleGranularityBytes)
 func gunzipChunkAndWriteSparse(
     inputPath: URL, outputHandle: FileHandle, startOffset: UInt64
 ) throws -> UInt64 {
+    try gunzipChunkAndWriteSparse(
+        inputPath: inputPath, outputHandle: outputHandle, startOffsets: [startOffset])
+}
+
+/// Decompresses a gzip blob once and writes it sparsely at every offset in
+/// `startOffsets` (a blob that several disk parts share, such as an all-zero
+/// chunk). Returns the decompressed size of the blob.
+func gunzipChunkAndWriteSparse(
+    inputPath: URL, outputHandle: FileHandle, startOffsets: [UInt64]
+) throws -> UInt64 {
     guard FileManager.default.fileExists(atPath: inputPath.path) else {
         throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
     }
@@ -64,33 +74,85 @@ func gunzipChunkAndWriteSparse(
     process.arguments = ["-c", inputPath.path]
     process.standardOutput = tempHandle
     try process.run()
-    process.waitUntilExit()
+    // Poll instead of waitUntilExit so a cancelled pull stops gunzip at once.
+    while process.isRunning {
+        if Task.isCancelled {
+            process.terminate()
+            process.waitUntilExit()
+            try? tempHandle.close()
+            throw CancellationError()
+        }
+        usleep(20_000)
+    }
     try tempHandle.close()
 
+    if Task.isCancelled { throw CancellationError() }
     guard process.terminationStatus == 0 else {
         throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
     }
 
-    let readHandle = try FileHandle(forReadingFrom: decompressedPath)
+    return try writeFileSparse(decompressedPath, to: outputHandle, startOffsets: startOffsets)
+}
+
+func writeFileSparse(
+    _ url: URL, to outputHandle: FileHandle, startOffsets: [UInt64]
+) throws -> UInt64 {
+    let readHandle = try FileHandle(forReadingFrom: url)
     defer { try? readHandle.close() }
 
-    var currentWriteOffset = startOffset
-    var totalDecompressedBytes: UInt64 = 0
+    let blockSize = sparseHoleGranularityBytes
 
-    while true {
-        let decompressedData = readHandle.readData(ofLength: sparseHoleGranularityBytes)
-        if decompressedData.isEmpty { break }
-
-        if decompressedData.count == sparseHoleGranularityBytes
-            && decompressedData == sparseZeroChunk
-        {
-            currentWriteOffset += UInt64(decompressedData.count)
-        } else {
-            try outputHandle.seek(toOffset: currentWriteOffset)
-            try outputHandle.write(contentsOf: decompressedData)
-            currentWriteOffset += UInt64(decompressedData.count)
+    // One offset: stream the blob once, skipping all-zero blocks.
+    if startOffsets.count == 1 {
+        var currentWriteOffset = startOffsets[0]
+        var totalDecompressedBytes: UInt64 = 0
+        while true {
+            // A cancelled pull stops between blocks instead of finishing the chunk.
+            if Task.isCancelled { throw CancellationError() }
+            let written: Int = try autoreleasepool {
+                let data = readHandle.readData(ofLength: blockSize)
+                if data.isEmpty { return 0 }
+                if !(data.count == blockSize && data == sparseZeroChunk) {
+                    try outputHandle.seek(toOffset: currentWriteOffset)
+                    try outputHandle.write(contentsOf: data)
+                }
+                return data.count
+            }
+            if written == 0 { break }
+            currentWriteOffset += UInt64(written)
+            totalDecompressedBytes += UInt64(written)
         }
-        totalDecompressedBytes += UInt64(decompressedData.count)
+        return totalDecompressedBytes
+    }
+
+    // Several offsets: find the blocks that hold data once, then write only
+    // those at each offset. A shared all-zero blob (common in disk images)
+    // then costs one scan instead of one full pass per offset.
+    var dataBlocks: [UInt64] = []
+    var totalDecompressedBytes: UInt64 = 0
+    while true {
+        if Task.isCancelled { throw CancellationError() }
+        let count: Int = autoreleasepool {
+            let data = readHandle.readData(ofLength: blockSize)
+            if data.isEmpty { return 0 }
+            if !(data.count == blockSize && data == sparseZeroChunk) {
+                dataBlocks.append(totalDecompressedBytes)
+            }
+            return data.count
+        }
+        if count == 0 { break }
+        totalDecompressedBytes += UInt64(count)
+    }
+    for startOffset in startOffsets {
+        for blockOffset in dataBlocks {
+            if Task.isCancelled { throw CancellationError() }
+            try autoreleasepool {
+                try readHandle.seek(toOffset: blockOffset)
+                let data = readHandle.readData(ofLength: blockSize)
+                try outputHandle.seek(toOffset: startOffset + blockOffset)
+                try outputHandle.write(contentsOf: data)
+            }
+        }
     }
 
     return totalDecompressedBytes
@@ -221,11 +283,44 @@ enum OCIMediaType {
     static let config = "application/vnd.trycua.lume.config.v1+json"
     static let disk   = "application/vnd.trycua.lume.disk.v1"
     static let nvram  = "application/vnd.trycua.lume.nvram.v1"
+    static let standardTarLayer = "application/vnd.oci.image.layer.v1.tar"
 
     static func detect(_ manifest: Manifest) -> ImageFormat {
         let hasOCIDisk = manifest.layers.contains { $0.mediaType == disk }
         let hasOCIConfig = manifest.config?.mediaType == config
         return (hasOCIDisk || hasOCIConfig) ? .oci : .legacy
+    }
+
+    static func rawDiskPart(_ layer: Layer) -> (number: Int, total: Int)? {
+        let fields = layer.mediaType.lowercased().split(separator: ";").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        guard fields.first == standardTarLayer,
+            layer.annotations?["org.opencontainers.image.title"]?.hasPrefix("disk.img.part.")
+                == true
+        else {
+            return nil
+        }
+        var parameters: [String: Int] = [:]
+        for field in fields.dropFirst() {
+            let pair = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            guard pair.count == 2, !pair[0].isEmpty else { return (0, 0) }
+            parameters[pair[0]] = Int(pair[1])
+        }
+        return (parameters["part.number"] ?? 0, parameters["part.total"] ?? 0)
+    }
+
+    static func validateRawDiskParts(_ manifest: Manifest) throws {
+        let parts = manifest.layers.compactMap(rawDiskPart)
+        guard !parts.isEmpty else { return }
+        guard parts.map({ $0.number }).sorted() == Array(1...parts.count),
+            parts.allSatisfy({ $0.total == parts.count }),
+            !manifest.layers.contains(where: { $0.mediaType == "application/octet-stream+lz4" })
+        else {
+            throw PullError.reassemblyFailed(
+                "raw OCI disk parts must be numbered 1...part.total without LZ4 parts")
+        }
     }
 }
 
@@ -235,6 +330,31 @@ enum OCIAnnotation {
     static let partTotal  = "org.trycua.lume.part.total"
     static let partOffset = "org.trycua.lume.part.offset"
     static let chunkSize  = "org.trycua.lume.chunk.size"
+}
+
+/// Where chunked disk layers fail to cover a disk of `total` bytes: the first
+/// gap or overlap (chunks as `(offset, size)`), or nil when they tile it
+/// exactly. A push that lost chunks published a manifest whose layers leave
+/// holes; reassembling it leaves those ranges zero and the guest's file
+/// system corrupt, so pull refuses it and push never writes one.
+func diskChunkCoverageGap(_ chunks: [(offset: UInt64, size: UInt64)], total: UInt64) -> String? {
+    var next: UInt64 = 0
+    for chunk in chunks.sorted(by: { $0.offset < $1.offset }) {
+        if chunk.offset > next {
+            return "bytes \(next)..<\(chunk.offset) are in no disk layer"
+        }
+        if chunk.offset < next {
+            return "disk layers overlap at byte \(chunk.offset)"
+        }
+        next = chunk.offset + chunk.size
+    }
+    if next < total {
+        return "bytes \(next)..<\(total) are in no disk layer"
+    }
+    if next > total {
+        return "disk layers end at byte \(next), past the disk's \(total) bytes"
+    }
+    return nil
 }
 
 /// Holds per-chunk upload results for manifest construction.
@@ -295,9 +415,9 @@ actor DiskPartsCollector {
     private var partCounter = 0
 
     // Adds a part and returns its assigned sequential number
-    func addPart(url: URL) -> Int {
-        partCounter += 1  // Use counter logic
-        let partNum = partCounter
+    func addPart(url: URL, number: Int? = nil) -> Int {
+        let partNum = number ?? partCounter + 1
+        partCounter = max(partCounter, partNum)
         diskParts.append((partNum, url))  // Store sequential number
         return partNum  // Return assigned sequential number
     }
@@ -310,273 +430,6 @@ actor DiskPartsCollector {
     // Restore getTotalParts
     func getTotalParts() -> Int {
         return partCounter
-    }
-}
-
-actor ProgressTracker {
-    private var totalBytes: Int64 = 0
-    private var downloadedBytes: Int64 = 0
-    private var progressLogger = ProgressLogger(threshold: 0.01)
-    private var totalFiles: Int = 0
-    private var completedFiles: Int = 0
-    var onProgress: (@Sendable (Double) -> Void)? = nil
-
-    func setProgressHandler(_ handler: @escaping @Sendable (Double) -> Void) {
-        onProgress = handler
-    }
-
-    // Download speed tracking
-    private var startTime: Date = Date()
-    private var lastUpdateTime: Date = Date()
-    private var lastUpdateBytes: Int64 = 0
-    private var speedSamples: [Double] = []
-    private var peakSpeed: Double = 0
-    private var totalElapsedTime: TimeInterval = 0
-
-    // Smoothing factor for speed calculation
-    private var speedSmoothing: Double = 0.3
-    private var smoothedSpeed: Double = 0
-
-    func setTotal(_ total: Int64, files: Int) {
-        totalBytes = total
-        totalFiles = files
-        startTime = Date()
-        lastUpdateTime = startTime
-        smoothedSpeed = 0
-    }
-
-    func addProgress(_ bytes: Int64) {
-        downloadedBytes += bytes
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastUpdateTime)
-
-        // Show first progress update immediately, then throttle updates
-        let shouldUpdate = (downloadedBytes <= bytes) || (elapsed >= 0.5)
-
-        if shouldUpdate {
-            let currentSpeed = Double(downloadedBytes - lastUpdateBytes) / max(elapsed, 0.001)
-            speedSamples.append(currentSpeed)
-
-            // Cap samples array to prevent memory growth
-            if speedSamples.count > 20 {
-                speedSamples.removeFirst(speedSamples.count - 20)
-            }
-
-            // Update peak speed
-            peakSpeed = max(peakSpeed, currentSpeed)
-
-            // Apply exponential smoothing to the speed
-            if smoothedSpeed == 0 {
-                smoothedSpeed = currentSpeed
-            } else {
-                smoothedSpeed = speedSmoothing * currentSpeed + (1 - speedSmoothing) * smoothedSpeed
-            }
-
-            // Calculate average speed over the last few samples
-            let recentAvgSpeed = calculateAverageSpeed()
-
-            // Calculate overall average
-            let totalElapsed = now.timeIntervalSince(startTime)
-            let overallAvgSpeed = totalElapsed > 0 ? Double(downloadedBytes) / totalElapsed : 0
-
-            let progress = totalBytes > 0 ? Double(downloadedBytes) / Double(totalBytes) : 0.0
-            onProgress?(progress * 100.0)
-            logSpeedProgress(
-                current: progress,
-                currentSpeed: currentSpeed,
-                averageSpeed: recentAvgSpeed,
-                smoothedSpeed: smoothedSpeed,
-                overallSpeed: overallAvgSpeed,
-                peakSpeed: peakSpeed,
-                context: "Downloading Image"
-            )
-
-            // Update tracking variables
-            lastUpdateTime = now
-            lastUpdateBytes = downloadedBytes
-            totalElapsedTime = totalElapsed
-        }
-    }
-
-    private func calculateAverageSpeed() -> Double {
-        guard !speedSamples.isEmpty else { return 0 }
-
-        // Use weighted average giving more emphasis to recent samples
-        var totalWeight = 0.0
-        var weightedSum = 0.0
-
-        let samples = speedSamples.suffix(min(8, speedSamples.count))
-        for (index, speed) in samples.enumerated() {
-            let weight = Double(index + 1)
-            weightedSum += speed * weight
-            totalWeight += weight
-        }
-
-        return totalWeight > 0 ? weightedSum / totalWeight : 0
-    }
-
-    func getDownloadStats() -> DownloadStats {
-        let avgSpeed = totalElapsedTime > 0 ? Double(downloadedBytes) / totalElapsedTime : 0
-        return DownloadStats(
-            totalBytes: totalBytes,
-            downloadedBytes: downloadedBytes,
-            elapsedTime: totalElapsedTime,
-            averageSpeed: avgSpeed,
-            peakSpeed: peakSpeed
-        )
-    }
-
-    private func logSpeedProgress(
-        current: Double,
-        currentSpeed: Double,
-        averageSpeed: Double,
-        smoothedSpeed: Double,
-        overallSpeed: Double,
-        peakSpeed: Double,
-        context: String
-    ) {
-        let progressPercent = Int(current * 100)
-        let currentSpeedStr = formatByteSpeed(currentSpeed)
-        let avgSpeedStr = formatByteSpeed(averageSpeed)
-        let peakSpeedStr = formatByteSpeed(peakSpeed)
-
-        // Calculate ETA based on the smoothed speed which is more stable
-        // This provides a more realistic estimate that doesn't fluctuate as much
-        let remainingBytes = totalBytes - downloadedBytes
-        let speedForEta = max(smoothedSpeed, averageSpeed * 0.8)  // Use the higher of smoothed or 80% of avg
-        let etaSeconds = speedForEta > 0 ? Double(remainingBytes) / speedForEta : 0
-        let etaStr = formatTimeRemaining(etaSeconds)
-
-        let progressBar = createProgressBar(progress: current)
-
-        print(
-            "\r\(progressBar) \(progressPercent)% | Current: \(currentSpeedStr) | Avg: \(avgSpeedStr) | Peak: \(peakSpeedStr) | ETA: \(etaStr)     ",
-            terminator: "")
-        fflush(stdout)
-    }
-
-    private func createProgressBar(progress: Double, width: Int = 30) -> String {
-        let completedWidth = Int(progress * Double(width))
-        let remainingWidth = width - completedWidth
-
-        let completed = String(repeating: "█", count: completedWidth)
-        let remaining = String(repeating: "░", count: remainingWidth)
-
-        return "[\(completed)\(remaining)]"
-    }
-
-    private func formatByteSpeed(_ bytesPerSecond: Double) -> String {
-        let units = ["B/s", "KB/s", "MB/s", "GB/s"]
-        var speed = bytesPerSecond
-        var unitIndex = 0
-
-        while speed > 1024 && unitIndex < units.count - 1 {
-            speed /= 1024
-            unitIndex += 1
-        }
-
-        return String(format: "%.1f %@", speed, units[unitIndex])
-    }
-
-    private func formatTimeRemaining(_ seconds: Double) -> String {
-        if seconds.isNaN || seconds.isInfinite || seconds <= 0 {
-            return "calculating..."
-        }
-
-        let hours = Int(seconds) / 3600
-        let minutes = (Int(seconds) % 3600) / 60
-        let secs = Int(seconds) % 60
-
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
-        } else {
-            return String(format: "%d:%02d", minutes, secs)
-        }
-    }
-}
-
-struct DownloadStats {
-    let totalBytes: Int64
-    let downloadedBytes: Int64
-    let elapsedTime: TimeInterval
-    let averageSpeed: Double
-    let peakSpeed: Double
-
-    func formattedSummary() -> String {
-        let bytesStr = ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)
-        let avgSpeedStr = formatSpeed(averageSpeed)
-        let peakSpeedStr = formatSpeed(peakSpeed)
-        let timeStr = formatTime(elapsedTime)
-
-        return """
-            Download Statistics:
-            - Total downloaded: \(bytesStr)
-            - Elapsed time: \(timeStr)
-            - Average speed: \(avgSpeedStr)
-            - Peak speed: \(peakSpeedStr)
-            """
-    }
-
-    private func formatSpeed(_ bytesPerSecond: Double) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        let bytesStr = formatter.string(fromByteCount: Int64(bytesPerSecond))
-        return "\(bytesStr)/s"
-    }
-
-    private func formatTime(_ seconds: TimeInterval) -> String {
-        let hours = Int(seconds) / 3600
-        let minutes = (Int(seconds) % 3600) / 60
-        let secs = Int(seconds) % 60
-
-        if hours > 0 {
-            return String(format: "%d hours, %d minutes, %d seconds", hours, minutes, secs)
-        } else if minutes > 0 {
-            return String(format: "%d minutes, %d seconds", minutes, secs)
-        } else {
-            return String(format: "%d seconds", secs)
-        }
-    }
-}
-
-// Renamed struct
-struct UploadStats {
-    let totalBytes: Int64
-    let uploadedBytes: Int64  // Renamed
-    let elapsedTime: TimeInterval
-    let averageSpeed: Double
-    let peakSpeed: Double
-
-    func formattedSummary() -> String {
-        let bytesStr = ByteCountFormatter.string(fromByteCount: uploadedBytes, countStyle: .file)
-        let avgSpeedStr = formatSpeed(averageSpeed)
-        let peakSpeedStr = formatSpeed(peakSpeed)
-        let timeStr = formatTime(elapsedTime)
-        return """
-            Upload Statistics:
-            - Total uploaded: \(bytesStr)
-            - Elapsed time: \(timeStr)
-            - Average speed: \(avgSpeedStr)
-            - Peak speed: \(peakSpeedStr)
-            """
-    }
-    private func formatSpeed(_ bytesPerSecond: Double) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        let bytesStr = formatter.string(fromByteCount: Int64(bytesPerSecond))
-        return "\(bytesStr)/s"
-    }
-    private func formatTime(_ seconds: TimeInterval) -> String {
-        let hours = Int(seconds) / 3600
-        let minutes = (Int(seconds) % 3600) / 60
-        let secs = Int(seconds) % 60
-        if hours > 0 {
-            return String(format: "%d hours, %d minutes, %d seconds", hours, minutes, secs)
-        } else if minutes > 0 {
-            return String(format: "%d minutes, %d seconds", minutes, secs)
-        } else {
-            return String(format: "%d seconds", secs)
-        }
     }
 }
 
@@ -599,21 +452,16 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private let downloadLock = NSLock()
     private var activeDownloads: [String] = []
     private let cachingEnabled: Bool
+    /// Extra URLProtocol classes for layer downloads (tests serve blobs locally).
+    var urlProtocolClasses: [AnyClass]? = nil
+    /// Base delay in seconds between layer download retries.
+    var retryBaseDelay: Double = 2
+    /// Part of the hidden name a layer has while it is being copied into the cache.
+    static let cacheStagingMarker = ".partial-"
 
     // Constants for zero-skipping write logic
     private static let holeGranularityBytes = 4 * 1024 * 1024  // 4MB block size for checking zeros
     private static let zeroChunk = Data(count: holeGranularityBytes)
-
-    // Add the createProgressBar function here as a private method
-    private func createProgressBar(progress: Double, width: Int = 30) -> String {
-        let completedWidth = Int(progress * Double(width))
-        let remainingWidth = width - completedWidth
-
-        let completed = String(repeating: "█", count: completedWidth)
-        let remaining = String(repeating: "░", count: remainingWidth)
-
-        return "[\(completed)\(remaining)]"
-    }
 
     init(registry: String, organization: String, username: String? = nil, password: String? = nil) {
         self.registry = registry
@@ -636,6 +484,18 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Create organization directory
         let orgDir = cacheDirectory.appendingPathComponent(organization)
         try? FileManager.default.createDirectory(at: orgDir, withIntermediateDirectories: true)
+    }
+
+    /// Creates a registry client with an explicit cache (tests).
+    init(
+        registry: String, organization: String, cacheDirectory: URL, cachingEnabled: Bool
+    ) {
+        self.registry = registry
+        self.organization = organization
+        self.username = nil
+        self.password = nil
+        self.cacheDirectory = cacheDirectory
+        self.cachingEnabled = cachingEnabled
     }
 
     private func getManifestIdentifier(_ manifest: Manifest, manifestDigest: String) -> String {
@@ -661,13 +521,22 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "manifest.json")
     }
 
-    private func getCachedLayerPath(manifestId: String, digest: String) -> URL {
+    func getCachedLayerPath(manifestId: String, digest: String) -> URL {
         return getImageCacheDirectory(manifestId: manifestId).appendingPathComponent(
             digest.replacingOccurrences(of: ":", with: "_"))
     }
 
-    private func setupImageCache(manifestId: String) throws {
+    private func setupImageCache(manifestId: String, manifest: Manifest) throws {
         let cacheDir = getImageCacheDirectory(manifestId: manifestId)
+        // An earlier pull of this manifest that was cancelled or failed left its
+        // verified layers here: keep them so this pull resumes from them.
+        if FileManager.default.fileExists(atPath: cacheDir.path),
+            let cachedManifest = loadCachedManifest(manifestId: manifestId),
+            cachedManifest.layers == manifest.layers
+        {
+            pruneUnusableCacheFiles(in: cacheDir, manifest: manifest)
+            return
+        }
         // Remove existing cache if it exists
         if FileManager.default.fileExists(atPath: cacheDir.path) {
             try FileManager.default.removeItem(at: cacheDir)
@@ -677,6 +546,28 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
         }
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+    }
+
+    /// Removes copies that never finished (staging files) and layer files whose
+    /// size does not match the manifest, so only complete layers are reused.
+    private func pruneUnusableCacheFiles(in cacheDir: URL, manifest: Manifest) {
+        let fm = FileManager.default
+        let sizes = Dictionary(
+            manifest.layers.map { ($0.digest.replacingOccurrences(of: ":", with: "_"), $0.size) },
+            uniquingKeysWith: { first, _ in first })
+        guard let names = try? fm.contentsOfDirectory(atPath: cacheDir.path) else { return }
+        for name in names {
+            let path = cacheDir.appendingPathComponent(name)
+            if name.contains(Self.cacheStagingMarker) {
+                try? fm.removeItem(at: path)
+            } else if let expected = sizes[name],
+                let actual = (try? fm.attributesOfItem(atPath: path.path)[.size] as? NSNumber)?
+                    .intValue,
+                actual != expected
+            {
+                try? fm.removeItem(at: path)
+            }
+        }
     }
 
     private func loadCachedManifest(manifestId: String) -> Manifest? {
@@ -737,13 +628,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         try JSONEncoder().encode(manifest).write(to: manifestPath)
     }
 
-    private func isDownloading(_ digest: String) -> Bool {
+    func isDownloading(_ digest: String) -> Bool {
         downloadLock.lock()
         defer { downloadLock.unlock() }
         return activeDownloads.contains(digest)
     }
 
-    private func markDownloadStarted(_ digest: String) {
+    func markDownloadStarted(_ digest: String) {
         downloadLock.lock()
         if !activeDownloads.contains(digest) {
             activeDownloads.append(digest)
@@ -887,7 +778,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         name: String?,
         locationName: String? = nil,
         force: Bool = false,
-        progressHandler: (@Sendable (Double) -> Void)? = nil
+        progressHandler: PullProgressHandler? = nil
     ) async throws -> VMDirectory {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
@@ -1018,12 +909,14 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 Logger.info("Cache miss or invalid cache, setting up new cache")
             }
 
+            try OCIMediaType.validateRawDiskParts(manifest)
+
             // Clean up old versions of this repository before setting up new cache if caching is enabled
             if cachingEnabled {
                 try cleanupOldVersions(currentManifestId: manifestId, image: imageName)
 
                 // Setup new cache directory
-                try setupImageCache(manifestId: manifestId)
+                try setupImageCache(manifestId: manifestId, manifest: manifest)
                 // Save new manifest
                 try saveManifest(manifest, manifestId: manifestId)
 
@@ -1050,16 +943,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             let totalSize = manifest.layers.reduce(0) { $0 + Int64($1.size) }
             await downloadProgress.setTotal(totalSize, files: totalFiles)
 
-            // Process layers with limited concurrency
-            Logger.info("Processing Image layers")
             Logger.info(
-                "This may take several minutes depending on the image size and your internet connection. Please wait..."
-            )
-
-            // Add immediate progress indicator before starting downloads
-            print(
-                "[░░░░░░░░░░░░░░░░░░░░] 0% | Initializing downloads... | ETA: calculating...     ")
-            fflush(stdout)
+                "Downloading \(totalFiles) layers (\(ProgressFormat.bytes(totalSize)))")
 
             // Instantiate the collector
             let diskPartsCollector = DiskPartsCollector()
@@ -1070,7 +955,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             let maxConcurrentTasks = calculateOptimalConcurrency(
                 memoryConstrained: memoryConstrained, networkQuality: networkQuality)
 
-            Logger.info(
+            Logger.debug(
                 "Using adaptive download configuration: Concurrency=\(maxConcurrentTasks), Memory-optimized=\(memoryConstrained)"
             )
 
@@ -1089,7 +974,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     }
 
                     // Identify disk parts by media type
-                    if layer.mediaType == "application/octet-stream+lz4" {
+                    if layer.mediaType == "application/octet-stream+lz4"
+                        || OCIMediaType.rawDiskPart(layer) != nil
+                    {
                         // --- Handle LZ4 Disk Part Layer ---
                         lz4LayerCount += 1  // Increment count
                         let currentPartNum = lz4LayerCount  // Use the current count as the logical number for logging
@@ -1106,7 +993,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                             let collectorPartNum = await diskPartsCollector.addPart(
                                 url: cachedLayer)
                             // Log using the sequential number from collector for clarity if needed, or the lz4LayerCount
-                            Logger.info(
+                            Logger.debug(
                                 "Using cached lz4 layer (part \(currentPartNum)) directly: \(cachedLayer.lastPathComponent) -> Collector #\(collectorPartNum)"
                             )
                             await downloadProgress.addProgress(Int64(size))
@@ -1162,7 +1049,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                 let collectorPartNum = await diskPartsCollector.addPart(
                                     url: finalPath)
                                 // Log using the sequential number from collector
-                                Logger.info(
+                                Logger.debug(
                                     "Assigned path for lz4 layer (part \(currentPartNum)): \(finalPath.lastPathComponent) -> Collector #\(collectorPartNum)"
                                 )
                                 await counter.decrement()
@@ -1238,10 +1125,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 for try await _ in group {}
             }  // End TaskGroup
 
-            // Display download statistics
-            let stats = await downloadProgress.getDownloadStats()
-            Logger.info("")  // New line after progress
-            Logger.info(stats.formattedSummary())
+            await downloadProgress.finish()
 
             // Now that we've downloaded everything to the cache, use copyFromCache to create final VM files
             if cachingEnabled {
@@ -1701,7 +1585,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "Cache pull simulation completed successfully with partition table preservation")
     }
 
-    private func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
+    func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
         async throws
     {
         Logger.debug("Copying from cache...")
@@ -1784,6 +1668,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // If we don't have a reassembled image, proceed with legacy part handling
         Logger.debug("No reassembled image found, using part-based reassembly")
 
+        try OCIMediaType.validateRawDiskParts(manifest)
         // Instantiate collector
         let diskPartsCollector = DiskPartsCollector()
         var lz4LayerCount = 0  // Count lz4 layers found
@@ -1794,20 +1679,22 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         for layer in manifest.layers {
             let cachedLayer = getCachedLayerPath(manifestId: manifestId, digest: layer.digest)
 
+            let rawPart = OCIMediaType.rawDiskPart(layer)
             // Identify disk parts simply by media type
-            if layer.mediaType == "application/octet-stream+lz4" {
+            if layer.mediaType == "application/octet-stream+lz4" || rawPart != nil {
                 lz4LayerCount += 1  // Increment count
 
                 // When caching is disabled, the file might not exist with the cache path name
                 // Check if the file exists before trying to use it
-                if !FileManager.default.fileExists(atPath: cachedLayer.path) {
+                if rawPart == nil && !FileManager.default.fileExists(atPath: cachedLayer.path) {
                     Logger.info("Layer file not found in cache: \(cachedLayer.path) - skipping")
                     continue
                 }
 
                 // Add to collector. It will assign the sequential part number.
-                let collectorPartNum = await diskPartsCollector.addPart(url: cachedLayer)
-                Logger.info(
+                let collectorPartNum = await diskPartsCollector.addPart(
+                    url: cachedLayer, number: rawPart?.number)
+                Logger.debug(
                     "Adding cached lz4 layer (part \(lz4LayerCount)) -> Collector #\(collectorPartNum): \(cachedLayer.lastPathComponent)"
                 )
             } else {
@@ -1850,6 +1737,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // --- Safely retrieve parts AFTER loop ---
         let diskPartSources = await diskPartsCollector.getSortedParts()  // Sorted by assigned sequential number
         let totalParts = await diskPartsCollector.getTotalParts()  // Get total count from collector
+        let rawParts = manifest.layers.contains { OCIMediaType.rawDiskPart($0) != nil }
 
         Logger.info("Found \(totalParts) lz4 disk parts in cache to reassemble.")
         // --- End retrieving parts ---
@@ -1910,7 +1798,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
 
             // If we have just one disk part, use the shared function
-            if totalParts == 1 {
+            if totalParts == 1 && !rawParts {
                 // Single part - use shared function
                 let sourceURL = diskPartSources[0].1  // Get the first source URL (index 1 of the tuple)
                 try createDiskImageFromSource(
@@ -1970,16 +1858,20 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     let sourceURL = sourceInfo.1  // Get URL from tuple
 
                     // Log using the sequential collector part number
-                    Logger.info(
+                    Logger.debug(
                         "Decompressing part \(collectorPartNum) of \(totalParts) from cache: \(sourceURL.lastPathComponent) at offset \(currentOffset)..."
                     )
 
                     // Always use the correct sparse decompression function
-                    let decompressedBytesWritten = try decompressChunkAndWriteSparse(
-                        inputPath: sourceURL.path,
-                        outputHandle: outputHandle,
-                        startOffset: currentOffset
-                    )
+                    let decompressedBytesWritten =
+                        try rawParts
+                        ? writeFileSparse(
+                            sourceURL, to: outputHandle, startOffsets: [currentOffset])
+                        : decompressChunkAndWriteSparse(
+                            inputPath: sourceURL.path,
+                            outputHandle: outputHandle,
+                            startOffset: currentOffset
+                        )
                     currentOffset += decompressedBytesWritten
                     // Update progress (using sizeForTruncate which should be available)
                     reassemblyProgressLogger.logProgress(
@@ -1990,16 +1882,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 }
 
                 // Finalize progress, close handle (done by defer)
-                reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembly Complete")
-
-                // Add test patterns at the beginning and end of the file
-                Logger.info("Writing test patterns to sparse file to verify integrity...")
-                let testPattern = "LUME_TEST_PATTERN".data(using: .utf8)!
-                try outputHandle.seek(toOffset: 0)
-                try outputHandle.write(contentsOf: testPattern)
-                try outputHandle.seek(toOffset: sizeForTruncate - UInt64(testPattern.count))
-                try outputHandle.write(contentsOf: testPattern)
-                try outputHandle.synchronize()
+                reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembling Cache")
 
                 // Ensure handle is properly synchronized before closing
                 try outputHandle.synchronize()
@@ -2303,41 +2186,31 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         return (manifest, digest)
     }
 
-    private func downloadLayer(
+    /// Downloads one blob to `url`, reporting bytes to `progress` as they arrive.
+    ///
+    /// The blob is verified against its digest before it counts as done or is
+    /// copied into the cache, so the cache only ever holds verified layers. A
+    /// failed attempt drops its in-flight bytes before retrying. Task
+    /// cancellation stops the transfer at once (URLSession removes its temp
+    /// file) and ends the retry loop instead of retrying.
+    func downloadLayer(
         repository: String,
         digest: String,
         mediaType: String,
         token: String,
         to url: URL,
         maxRetries: Int = 5,
-        progress: isolated ProgressTracker,
-        manifestId: String? = nil
+        progress: ProgressTracker,
+        manifestId: String? = nil,
+        onBytes: (@Sendable (Int64) -> Void)? = nil
     ) async throws {
+        // Whatever happens, this pull no longer downloads the digest.
+        defer { markDownloadComplete(digest) }
         var lastError: Error?
 
-        // Create a shared session configuration for all download attempts
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 3600
-        config.waitsForConnectivity = true
-        config.httpMaximumConnectionsPerHost = 6
-        config.httpShouldUsePipelining = true
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-
-        // Enable HTTP/2 when available
-        if #available(macOS 13.0, *) {
-            config.httpAdditionalHeaders = ["Connection": "keep-alive"]
-        }
-
-        // Check for TCP window size and optimize if possible
-        if getTCPReceiveWindowSize() != nil {
-            config.networkServiceType = .responsiveData
-        }
-
-        // Create one session to be reused across retries
-        let session = URLSession(configuration: config)
-
         for attempt in 1...maxRetries {
+            try Task.checkCancellation()
+            let transferId = "\(digest)#\(UUID().uuidString)"
             do {
                 var request = URLRequest(
                     url: URL(string: "https://\(self.registry)/v2/\(repository)/blobs/\(digest)")!)
@@ -2354,27 +2227,18 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 // gzip/deflate decompression by URLSession would corrupt the stored bytes.
                 request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
 
-                let (tempURL, response) = try await session.download(for: request)
-                guard let httpResponse = response as? HTTPURLResponse,
-                    httpResponse.statusCode == 200
-                else {
-                    throw PullError.layerDownloadFailed(digest)
-                }
-
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                do {
-                    try FileManager.default.moveItem(at: tempURL, to: url)
-                } catch let moveError as NSError
-                    where moveError.domain == NSCocoaErrorDomain
-                        && moveError.code == NSFileWriteFileExistsError
-                {
-                    // Destination already exists from a previous interrupted download.
-                    // Use replaceItemAt for an atomic swap instead of the racy
-                    // fileExists+removeItem+moveItem pattern.
-                    _ = try FileManager.default.replaceItemAt(
-                        url, withItemAt: tempURL, backupItemName: nil, options: [])
-                }
+
+                let written = try await LayerDownload.run(
+                    request: request,
+                    configuration: makeLayerSessionConfiguration(),
+                    to: url,
+                    onBytes: { bytes in
+                        onBytes?(bytes)
+                        Task { await progress.updateTransfer(id: transferId, bytesWritten: bytes) }
+                    })
+                try Task.checkCancellation()
 
                 // Verify the layer against its digest before caching it; a mismatch means
                 // a corrupt blob, so drop it and let the retry loop re-download (issue #296).
@@ -2388,39 +2252,33 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     }
                 }
 
-                progress.addProgress(Int64(httpResponse.expectedContentLength))
-
                 // Always save a copy to the cache directory for use by copyFromCache,
                 // even if caching is disabled
                 if let manifestId = manifestId {
                     let cachedLayer = getCachedLayerPath(manifestId: manifestId, digest: digest)
-                    // Make sure cache directory exists
-                    try FileManager.default.createDirectory(
-                        at: cachedLayer.deletingLastPathComponent(),
-                        withIntermediateDirectories: true
-                    )
-
-                    if FileManager.default.fileExists(atPath: cachedLayer.path) {
-                        try FileManager.default.removeItem(at: cachedLayer)
-                    }
-                    try FileManager.default.copyItem(at: url, to: cachedLayer)
+                    try storeVerifiedLayer(from: url, inCacheAt: cachedLayer)
                 }
 
-                // Mark download as complete regardless of caching
-                markDownloadComplete(digest)
+                await progress.finishTransfer(id: transferId, bytes: written)
                 return
 
             } catch {
+                await progress.dropTransfer(id: transferId)
+                if Task.isCancelled || error is CancellationError {
+                    try? FileManager.default.removeItem(at: url)
+                    throw CancellationError()
+                }
                 lastError = error
                 if case PullError.layerVerificationFailed(let expected, let actual) = error {
-                    Logger.info(
+                    Logger.warning(
                         "Layer checksum mismatch (expected \(expected), got \(actual)); will re-download."
                     )
                 }
                 if attempt < maxRetries {
-                    // Exponential backoff with jitter for retries
-                    let baseDelay = Double(attempt) * 2
-                    let jitter = Double.random(in: 0...1)
+                    // Exponential backoff with jitter for retries. Task.sleep throws
+                    // on cancellation, which ends the loop instead of retrying.
+                    let baseDelay = Double(attempt) * retryBaseDelay
+                    let jitter = Double.random(in: 0...1) * min(1, retryBaseDelay)
                     let delay = baseDelay + jitter
                     try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
 
@@ -2430,6 +2288,45 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
 
         throw lastError ?? PullError.layerDownloadFailed(digest)
+    }
+
+    /// Session configuration for one layer download attempt.
+    private func makeLayerSessionConfiguration() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 3600
+        config.waitsForConnectivity = true
+        config.httpMaximumConnectionsPerHost = 6
+        config.httpShouldUsePipelining = true
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.httpAdditionalHeaders = ["Connection": "keep-alive"]
+
+        // Check for TCP window size and optimize if possible
+        if getTCPReceiveWindowSize() != nil {
+            config.networkServiceType = .responsiveData
+        }
+        if let protocolClasses = urlProtocolClasses {
+            config.protocolClasses = protocolClasses
+        }
+        return config
+    }
+
+    /// Copies a verified layer into the cache without ever exposing a partial
+    /// file under the cached name: the copy goes to a hidden sibling first and
+    /// is renamed into place once complete.
+    func storeVerifiedLayer(from source: URL, inCacheAt cachedLayer: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(
+            at: cachedLayer.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staging = cachedLayer.deletingLastPathComponent().appendingPathComponent(
+            ".\(cachedLayer.lastPathComponent)\(Self.cacheStagingMarker)\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: staging) }
+        try fm.copyItem(at: source, to: staging)
+        if fm.fileExists(atPath: cachedLayer.path) {
+            _ = try fm.replaceItemAt(cachedLayer, withItemAt: staging)
+        } else {
+            try fm.moveItem(at: staging, to: cachedLayer)
+        }
     }
 
     // Function removed as it's not applicable to the observed manifest format
@@ -3334,7 +3231,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                             }
                         }
                         if layer == nil {
-                            Logger.info("Processing chunk \(chunkIndex + 1)/\(totalChunks)")
+                            Logger.debug("Processing chunk \(chunkIndex + 1)/\(totalChunks)")
                             let localFileHandle = try FileHandle(forReadingFrom: diskPath)
                             defer { try? localFileHandle.close() }
                             try localFileHandle.seek(toOffset: UInt64(chunkIndex * chunkSizeBytes))
@@ -3417,14 +3314,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
                 if totalUploadSizeBytes > 0 {
                     Logger.info(
-                        "Initializing upload progress: \(totalUploadFiles) files, total size: \(ByteCountFormatter.string(fromByteCount: totalUploadSizeBytes, countStyle: .file))"
+                        "Uploading \(totalUploadFiles) files (\(ProgressFormat.bytes(totalUploadSizeBytes)))"
                     )
                     await uploadProgress.setTotal(totalUploadSizeBytes, files: totalUploadFiles)
-                    // Print initial progress bar
-                    print(
-                        "[░░░░░░░░░░░░░░░░░░░░] 0% (0/\(totalUploadFiles)) | Initializing upload... | ETA: calculating...     "
-                    )
-                    fflush(stdout)
                 } else {
                     Logger.info("No files marked for upload.")
                 }
@@ -3474,7 +3366,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
                 // Process each chunk in order
                 for (index, cachedChunkPath, _) in diskChunks.sorted(by: { $0.index < $1.index }) {
-                    Logger.info(
+                    Logger.debug(
                         "Decompressing & writing part \(index + 1)/\(diskChunks.count): \(cachedChunkPath.lastPathComponent) at offset \(currentOffset)..."
                     )
 
@@ -3499,7 +3391,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 }
 
                 // Finalize progress
-                reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembly Complete")
+                reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembling")
                 Logger.info("")  // Newline
 
                 // Close handle before post-processing
@@ -3695,9 +3587,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             uncompressedDiskSize: uncompressedDiskSize
         )
 
+        // The uploads are done: leave their summary line above what follows.
+        await uploadProgress.finish()
+
         // Push manifest only if not in dry-run mode
         if !dryRun {
-            Logger.info("Pushing manifest(s)")  // Updated log
+            Logger.info("Pushing manifest(s)")
             // Serialize the manifest dictionary to Data first
             let manifestData = try JSONSerialization.data(
                 withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
@@ -3712,12 +3607,6 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     token: token  // Token should be in scope here now
                 )
             }
-        }
-
-        // Print final upload summary if not dry run
-        if !dryRun {
-            let stats = await uploadProgress.getUploadStats()
-            Logger.info("\n\(stats.formattedSummary())")  // Add newline for separation
         }
 
         // Clean up cache directory only on successful non-dry-run push
@@ -4016,6 +3905,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // Process the decompressed output by reading from the filter
         while let decompressedData = try filter.readData(ofLength: Self.holeGranularityBytes) {
+            if Task.isCancelled { throw CancellationError() }
             if decompressedData.isEmpty { break }  // End of stream
 
             // Check if the chunk is all zeros
@@ -4502,7 +4392,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             for i in 0..<chunkCount {
                 let estSize = Int64(min(chunkSize, diskSize - UInt64(i) * chunkSize))
                 await progress.addLayer(
-                    id: "chunk-\(i)", label: "disk layer \(i + 1)/\(chunkCount)",
+                    id: "chunk-\(i)", label: "part \(i + 1)/\(chunkCount)",
                     totalBytes: estSize)
             }
 
@@ -4714,10 +4604,22 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             await progress.finish()
 
+            // Never publish a manifest that leaves part of the disk out.
+            let diskChunks = await chunkCollector.getAll()
+            if let gap = diskChunkCoverageGap(
+                diskChunks.map { (offset: $0.diskOffset, size: $0.uncompressedSize) }, total: diskSize)
+            {
+                let have = Swift.Set(diskChunks.map(\.partNumber))
+                let missing = (0..<chunkCount).first { !have.contains($0) } ?? 0
+                Logger.error(
+                    "Disk chunks do not cover the disk; not pushing the manifest",
+                    metadata: ["gap": gap, "chunks": "\(diskChunks.count)/\(chunkCount)"])
+                throw PushError.missingPart(missing)
+            }
             manifest = createOCIManifest(
                 configDigest: configDigest, configSize: configSize,
                 nvramDigest: nvramDigest, nvramSize: nvramSize,
-                diskChunks: await chunkCollector.getAll(),
+                diskChunks: diskChunks,
                 totalUncompressedSize: diskSize,
                 vmConfig: vmConfig
             )
@@ -4761,7 +4663,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         if let cached = cachedChunkPath,
             FileManager.default.fileExists(atPath: cached.path)
         {
-            Logger.info(
+            Logger.debug(
                 "Chunk found in cache, skipping download (\(chunk.digest.prefix(19))…)"
             )
             await downloadProgress.addProgress(Int64(chunk.size))
@@ -4769,6 +4671,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             // sparse decompression cannot race with another Lume process.
             try FileManager.default.copyItem(at: cached, to: blobDest)
         } else {
+            let referenceIds = chunkGroup.references.map { "chunk-\($0.index)" }
             try await downloadLayer(
                 repository: repository,
                 digest: chunk.digest,
@@ -4776,10 +4679,17 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 token: token,
                 to: blobDest,
                 maxRetries: 5,
-                progress: downloadProgress
+                progress: downloadProgress,
+                onBytes: { bytes in
+                    Task {
+                        for id in referenceIds {
+                            await pullProgress.updateProgress(id: id, completedBytes: bytes)
+                        }
+                    }
+                }
             )
             if let cached = cachedChunkPath {
-                try? FileManager.default.copyItem(at: blobDest, to: cached)
+                try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
             }
         }
 
@@ -4787,6 +4697,29 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     }
 
     /// Pull an OCI-compliant image (kubelet format) into `destination` as a Lume VM directory.
+    /// Refuses a chunked manifest whose disk layers leave part of the disk
+    /// out: reassembling it would leave those ranges zero (a corrupt guest).
+    /// Manifests without offset annotations (older pushes) are not checked.
+    static func checkDiskCoverage(_ manifest: Manifest) throws {
+        let diskLayers = manifest.layers.filter { $0.mediaType == OCIMediaType.disk }
+        guard diskLayers.contains(where: { $0.annotations?[OCIAnnotation.partNumber] != nil }),
+              let totalStr = manifest.annotations?["org.trycua.lume.total-uncompressed-size"],
+              let total = UInt64(totalStr)
+        else { return }
+        let spans: [(offset: UInt64, size: UInt64)] = diskLayers.compactMap { layer in
+            guard let offset = layer.annotations?[OCIAnnotation.partOffset].flatMap(UInt64.init),
+                  let size = layer.annotations?["org.trycua.lume.content.uncompressed-size"]
+                    .flatMap(UInt64.init)
+            else { return nil }
+            return (offset: offset, size: size)
+        }
+        guard spans.count == diskLayers.count, let gap = diskChunkCoverageGap(spans, total: total)
+        else { return }
+        throw PullError.reassemblyFailed(
+            "the image is incomplete (\(gap)); it was published with missing disk layers, "
+                + "so pull a different tag or ask its publisher to push it again")
+    }
+
     private func pullOCI(
         manifest: Manifest,
         manifestId: String,
@@ -4795,7 +4728,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         token: String,
         to destination: URL
     ) async throws {
-        Logger.info("Downloading OCI-compliant layers")
+        try Self.checkDiskCoverage(manifest)
+        Logger.debug("Downloading OCI-compliant layers")
         try FileManager.default.createDirectory(
             at: destination, withIntermediateDirectories: true)
 
@@ -4825,6 +4759,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         let isChunked = diskLayers.count > 1
             || (diskLayers.count == 1 && diskLayers[0].annotations?[OCIAnnotation.partNumber] != nil)
 
+
         // Set total download size so progress % is meaningful
         let allLayers = manifest.layers + (manifest.config.map { [$0] } ?? [])
         let downloadableLayers = uniqueLayersByDigest(
@@ -4833,6 +4768,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             $0 + Int64($1.size)
         }
         let totalFiles = downloadableLayers.count
+        var manifestLine = "Manifest: \(totalFiles) layers, \(ProgressFormat.bytes(totalDownloadBytes)) compressed"
+        if let onDisk = manifest.annotations?["org.trycua.lume.total-uncompressed-size"]
+            .flatMap(Int64.init)
+        {
+            manifestLine += " / \(ProgressFormat.bytes(onDisk)) on disk"
+        }
+        Logger.info(manifestLine)
         await downloadProgress.setTotal(totalDownloadBytes, files: totalFiles)
 
         // ── Download config & aux (shared by both paths) ─────────────────────
@@ -4844,13 +4786,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             if let cached = cachedConfigPath,
                 FileManager.default.fileExists(atPath: cached.path)
             {
-                Logger.info("Config layer found in cache, skipping download (\(configLayer.digest.prefix(19))…)")
+                Logger.debug("Config layer found in cache, skipping download (\(configLayer.digest.prefix(19))…)")
                 await downloadProgress.addProgress(Int64(configLayer.size))
                 blobDest = cached
             } else {
                 blobDest = tempDir.appendingPathComponent(
                     configLayer.digest.replacingOccurrences(of: ":", with: "_"))
-                Logger.info("Downloading config layer (\(configLayer.digest.prefix(19))…)")
+                Logger.debug("Downloading config layer (\(configLayer.digest.prefix(19))…)")
                 try await downloadLayer(
                     repository: repository,
                     digest: configLayer.digest,
@@ -4862,7 +4804,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 )
                 // Save to cache
                 if let cached = cachedConfigPath {
-                    try? FileManager.default.copyItem(at: blobDest, to: cached)
+                    try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
                 }
             }
             configData = try Data(contentsOf: blobDest)
@@ -4876,13 +4818,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             if let cached = cachedNvramPath,
                 FileManager.default.fileExists(atPath: cached.path)
             {
-                Logger.info("Nvram layer found in cache, skipping download (\(nvramLayer.digest.prefix(19))…)")
+                Logger.debug("Nvram layer found in cache, skipping download (\(nvramLayer.digest.prefix(19))…)")
                 await downloadProgress.addProgress(Int64(nvramLayer.size))
                 blobDest = cached
             } else {
                 blobDest = tempDir.appendingPathComponent(
                     nvramLayer.digest.replacingOccurrences(of: ":", with: "_"))
-                Logger.info("Downloading nvram layer (\(nvramLayer.digest.prefix(19))…)")
+                Logger.debug("Downloading nvram layer (\(nvramLayer.digest.prefix(19))…)")
                 try await downloadLayer(
                     repository: repository,
                     digest: nvramLayer.digest,
@@ -4894,7 +4836,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 )
                 // Save to cache
                 if let cached = cachedNvramPath {
-                    try? FileManager.default.copyItem(at: blobDest, to: cached)
+                    try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
                 }
             }
             nvramBlobPath = blobDest
@@ -4905,18 +4847,18 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         var diskUncompressedSize: UInt64?
 
         if let data = configData {
-            Logger.info("Config layer raw JSON: \(String(data: data, encoding: .utf8) ?? "<not utf8>")")
+            Logger.debug("Config layer raw JSON: \(String(data: data, encoding: .utf8) ?? "<not utf8>")")
         }
-        Logger.info("Manifest layers: \(manifest.layers.map { "\($0.mediaType) size=\($0.size)" }.joined(separator: ", "))")
-        Logger.info("Manifest config mediaType: \(manifest.config?.mediaType ?? "nil")")
+        Logger.debug("Manifest layers: \(manifest.layers.map { "\($0.mediaType) size=\($0.size)" }.joined(separator: ", "))")
+        Logger.debug("Manifest config mediaType: \(manifest.config?.mediaType ?? "nil")")
 
         if let data = configData {
             do {
                 let ociCfg = try JSONDecoder().decode(LumeOCIConfig.self, from: data)
-                Logger.info("Decoded LumeOCIConfig: os=\(ociCfg.os) hardwareModel=\(ociCfg.hardwareModel.prefix(20))...")
+                Logger.debug("Decoded LumeOCIConfig: os=\(ociCfg.os) hardwareModel=\(ociCfg.hardwareModel.prefix(20))...")
                 _ = ociCfg  // used below in the outer block
             } catch {
-                Logger.info("WARNING: Failed to decode LumeOCIConfig: \(error)")
+                Logger.warning("Failed to decode LumeOCIConfig: \(error)")
             }
         }
 
@@ -4968,18 +4910,18 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(cfg)
             try data.write(to: configDest)
-            Logger.info("Wrote config.json")
+            Logger.debug("Wrote config.json")
         } else {
-            Logger.info("WARNING: vmConfig is nil, skipping config.json write")
+            Logger.warning("The image has no usable VM config; config.json was not written")
         }
 
         // ── Process nvram ────────────────────────────────────────────────────
         if let nvramPath = nvramBlobPath {
             let nvramDest = destination.appendingPathComponent("nvram.bin")
             try FileManager.default.copyItem(at: nvramPath, to: nvramDest)
-            Logger.info("Saved nvram.bin")
+            Logger.debug("Saved nvram.bin")
         } else {
-            Logger.info("WARNING: nvramBlobPath is nil, skipping nvram.bin write")
+            Logger.warning("The image has no nvram layer; nvram.bin was not written")
         }
 
         // ── Process disk ──────────────────────────────────────────────────────
@@ -4998,7 +4940,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 $0.annotations?["org.trycua.lume.content.uncompressed-size"].flatMap(UInt64.init)
             }.reduce(0, +)
 
-            Logger.info("Chunked disk: \(sortedChunks.count) parts, total uncompressed size: \(totalSize)")
+            Logger.debug("Chunked disk: \(sortedChunks.count) parts, total uncompressed size: \(totalSize)")
 
             // Create sparse output file pre-sized to total
             FileManager.default.createFile(atPath: diskDest.path, contents: nil)
@@ -5010,16 +4952,17 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             for (idx, chunk) in sortedChunks.enumerated() {
                 await pullProgress.addLayer(
                     id: "chunk-\(idx)",
-                    label: "disk layer \(idx + 1)/\(sortedChunks.count)",
+                    label: "part \(idx + 1)/\(sortedChunks.count)",
                     totalBytes: Int64(chunk.size),
-                    mode: .pull)
+                    mode: .pull,
+                    digest: chunk.digest)
             }
 
             let chunkGroups = groupOCIChunksByDigest(sortedChunks)
             let chunkGroupsByDigest = Dictionary(
                 uniqueKeysWithValues: chunkGroups.map { ($0.layer.digest, $0) })
             if chunkGroups.count < sortedChunks.count {
-                Logger.info(
+                Logger.debug(
                     "Reusing \(chunkGroups.count) unique blobs across \(sortedChunks.count) disk parts"
                 )
             }
@@ -5044,29 +4987,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
                 var nextGroupIndex = initialCount
                 while let (completedDigest, completedPath) = try await group.next() {
+                    try Task.checkCancellation()
                     guard let completedGroup = chunkGroupsByDigest[completedDigest] else {
                         throw PullError.reassemblyFailed(
                             "Downloaded an unexpected OCI blob \(completedDigest)")
                     }
 
-                    for reference in completedGroup.references {
-                        await pullProgress.updateStatus(
-                            id: "chunk-\(reference.index)", status: .decompressing)
-                        let handle = try FileHandle(forWritingTo: diskDest)
-                        do {
-                            let _ = try gunzipChunkAndWriteSparse(
-                                inputPath: completedPath,
-                                outputHandle: handle,
-                                startOffset: reference.offset)
-                            try handle.close()
-                        } catch {
-                            try? handle.close()
-                            throw error
-                        }
-                        await pullProgress.markDone(id: "chunk-\(reference.index)")
-                    }
-                    try? FileManager.default.removeItem(at: completedPath)
-
+                    // Keep downloads flowing while this blob is written out.
                     if nextGroupIndex < chunkGroups.count {
                         let chunkGroup = chunkGroups[nextGroupIndex]
                         nextGroupIndex += 1
@@ -5080,11 +5007,32 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                 pullProgress: pullProgress)
                         }
                     }
+
+                    // Decompress the blob once and write it at every part that uses it.
+                    for reference in completedGroup.references {
+                        await pullProgress.updateStatus(
+                            id: "chunk-\(reference.index)", status: .decompressing)
+                    }
+                    let handle = try FileHandle(forWritingTo: diskDest)
+                    do {
+                        let _ = try gunzipChunkAndWriteSparse(
+                            inputPath: completedPath,
+                            outputHandle: handle,
+                            startOffsets: completedGroup.references.map(\.offset))
+                        try handle.close()
+                    } catch {
+                        try? handle.close()
+                        throw error
+                    }
+                    for reference in completedGroup.references {
+                        await pullProgress.markDone(id: "chunk-\(reference.index)")
+                    }
+                    try? FileManager.default.removeItem(at: completedPath)
                 }
             }
 
             await pullProgress.finish()
-            Logger.info("Disk image reassembled from \(sortedChunks.count) chunks")
+            Logger.debug("Disk image reassembled from \(sortedChunks.count) chunks")
 
         } else if let singleDiskLayer = diskLayers.first {
             // ── Single-blob fallback (backward compat) ───────────────────────
@@ -5094,7 +5042,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             if let cached = cachedDiskPath,
                 FileManager.default.fileExists(atPath: cached.path)
             {
-                Logger.info(
+                Logger.debug(
                     "Single disk layer found in cache, skipping download (\(singleDiskLayer.digest.prefix(19))…)"
                 )
                 await downloadProgress.addProgress(Int64(singleDiskLayer.size))
@@ -5106,7 +5054,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             } else {
                 blobDest = tempDir.appendingPathComponent(
                     singleDiskLayer.digest.replacingOccurrences(of: ":", with: "_"))
-                Logger.info(
+                Logger.debug(
                     "Downloading single disk layer (\(singleDiskLayer.digest.prefix(19))…)")
                 try await downloadLayer(
                     repository: repository,
@@ -5119,7 +5067,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 )
                 // Save to cache
                 if let cached = cachedDiskPath {
-                    try? FileManager.default.copyItem(at: blobDest, to: cached)
+                    try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
                 }
             }
 
@@ -5146,7 +5094,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try saveImageMetadata(image: imageName, manifestId: manifestId)
         }
 
-        Logger.info("OCI pull complete")
+        await downloadProgress.finish()
+        Logger.debug("OCI pull complete")
     }
 
     /// Returns true when every OCI layer for this manifest is already in the local cache.
@@ -5366,582 +5315,5 @@ actor DigestTracker {
         }
         seen.insert(digest)
         return false
-    }
-}
-
-/// Docker-style multi-line progress display for concurrent layer operations.
-/// Each layer gets its own line, updated in-place using ANSI escape codes.
-actor LayerProgressDisplay {
-    enum LayerStatus {
-        case waiting
-        case compressing
-        case waitingUpload
-        case pushing
-        case downloading
-        case decompressing
-        case exists
-        case done
-        case error(String)
-    }
-
-    enum LayerMode {
-        case push
-        case pull
-    }
-
-    struct LayerState {
-        let label: String
-        var totalBytes: Int64
-        var completedBytes: Int64 = 0
-        var status: LayerStatus = .waiting
-        var digest: String?
-        var mode: LayerMode = .push
-    }
-
-    private var layers: [String: LayerState] = [:]
-    private var layerOrder: [String] = []
-    private var lineCount = 0
-    private var lastRenderTime: Date = .distantPast
-    private var startTime: Date = Date()
-
-    // Separate throughput tracking for compress vs upload
-    // Per-layer byte counters for accurate parallel tracking
-    private var layerCompressedBytes: [String: Int64] = [:]
-    private var layerUploadedBytes: [String: Int64] = [:]
-    private var lastCompressedTotal: Int64 = 0
-    private var lastUploadedTotal: Int64 = 0
-    private var lastSpeedTime: Date = Date()
-    private var compressSpeed: Double = 0
-    private var uploadSpeed: Double = 0
-    private var smoothedOverallSpeed: Double = 0
-    private var lastTotalDone: Int64 = 0
-    private var hasSeenUpload: Bool = false
-    private var smoothedUploadSpeed: Double = 0
-    private var smoothedCompressSpeed: Double = 0
-    // Track compressed bytes for upload ETA
-    private var totalUploadBytes: Int64 = 0      // compressed bytes registered for upload
-    private var totalUploadedBytes: Int64 = 0    // compressed bytes actually uploaded
-    private var totalUncompressedRegistered: Int64 = 0  // uncompressed bytes of registered layers
-    private var totalUncompressedAll: Int64 = 0  // total uncompressed bytes across all layers
-    private var skippedBytes: Int64 = 0          // compressed bytes of dedup/exists layers (no upload)
-
-    func addLayer(id: String, label: String, totalBytes: Int64 = 0, mode: LayerMode = .push) {
-        layers[id] = LayerState(label: label, totalBytes: totalBytes, mode: mode)
-        layerOrder.append(id)
-    }
-
-    func setDigest(id: String, digest: String) {
-        layers[id]?.digest = digest
-    }
-
-    func updateStatus(id: String, status: LayerStatus) {
-        layers[id]?.status = status
-        render()
-    }
-
-    func updateProgress(id: String, completedBytes: Int64, totalBytes: Int64? = nil) {
-        if let total = totalBytes {
-            layers[id]?.totalBytes = total
-        }
-        layers[id]?.completedBytes = completedBytes
-        render()
-    }
-
-    func setTotalUncompressed(_ bytes: Int64) {
-        totalUncompressedAll = bytes
-    }
-
-    func registerUploadWork(compressedBytes: Int64, uncompressedBytes: Int64) {
-        totalUploadBytes += compressedBytes
-        totalUncompressedRegistered += uncompressedBytes
-    }
-
-    func registerSkipped(compressedBytes: Int64, uncompressedBytes: Int64) {
-        skippedBytes += compressedBytes
-        totalUncompressedRegistered += uncompressedBytes
-    }
-
-    func reportUploadDone(_ bytes: Int64) {
-        totalUploadedBytes += bytes
-    }
-
-    func reportCompressBytes(id: String, _ bytes: Int64) {
-        layerCompressedBytes[id] = bytes
-    }
-
-    func reportUploadBytes(id: String, _ bytes: Int64) {
-        layerUploadedBytes[id] = bytes
-    }
-
-    func markDone(id: String, bytes: Int64? = nil) {
-        if let b = bytes { layers[id]?.completedBytes = b }
-        layers[id]?.status = .done
-        let current = layers[id]?.completedBytes ?? 0
-        if current == 0 {
-            let total = layers[id]?.totalBytes ?? 0
-            layers[id]?.completedBytes = total
-        }
-        render()
-    }
-
-    func markExists(id: String) {
-        layers[id]?.status = .exists
-        let total = layers[id]?.totalBytes ?? 0
-        layers[id]?.completedBytes = total
-        render()
-    }
-
-    func finish() {
-        forceRender()
-        print()  // Final newline
-    }
-
-    private func render() {
-        let now = Date()
-        guard now.timeIntervalSince(lastRenderTime) >= 0.15 else { return }
-        lastRenderTime = now
-        forceRender()
-    }
-
-    private func forceRender() {
-        // Get terminal height to cap output
-        var ws = winsize()
-        let termHeight: Int
-        if ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 {
-            termHeight = Int(ws.ws_row) - 1  // leave 1 line margin
-        } else {
-            termHeight = 40  // fallback
-        }
-
-        // Move cursor up to overwrite previous render
-        if lineCount > 0 {
-            print("\u{1B}[\(lineCount)A", terminator: "")
-        }
-
-        var doneCount = 0
-        var doneLayers: [LayerState] = []
-        var waitingUploadLayers: [LayerState] = []
-        var activeLayers: [LayerState] = []
-        var isCompressing = false
-
-        for id in layerOrder {
-            guard let layer = layers[id] else { continue }
-            switch layer.status {
-            case .waiting:
-                break
-            case .done, .exists:
-                doneCount += 1
-                doneLayers.append(layer)
-            case .waitingUpload:
-                waitingUploadLayers.append(layer)
-            case .compressing:
-                isCompressing = true
-            default:
-                activeLayers.append(layer)
-            }
-        }
-
-        // Build all output lines into an array, then cap to terminal height
-        var outputLines: [String] = []
-
-        // Done layers: deduplicate by digest, then first 10 ... last 10
-        if !doneLayers.isEmpty {
-            var seenDigests = Swift.Set<String>()
-            var uniqueDone: [LayerState] = []
-            for layer in doneLayers {
-                let key = layer.digest ?? layer.label
-                if !seenDigests.contains(key) {
-                    seenDigests.insert(key)
-                    uniqueDone.append(layer)
-                }
-            }
-            let showDone: [LayerState]
-            if uniqueDone.count <= 20 {
-                showDone = uniqueDone
-            } else {
-                showDone = Array(uniqueDone.prefix(10)) + Array(uniqueDone.suffix(10))
-            }
-            for (i, layer) in showDone.enumerated() {
-                if uniqueDone.count > 20 && i == 10 {
-                    outputLines.append("...")
-                }
-                outputLines.append(formatLayer(layer))
-            }
-        }
-
-        // Aggregate compression progress as single line
-        if isCompressing && totalUncompressedAll > 0 {
-            let totalCompressed = layerCompressedBytes.values.reduce(Int64(0), +)
-            let pct = Double(totalCompressed) / Double(totalUncompressedAll)
-            let bar = progressBar(progress: pct)
-            let label = "disk.img".padding(toLength: 12, withPad: " ", startingAt: 0)
-            outputLines.append("\(label): Compressing \(bar) \(formatBytes(totalCompressed))/\(formatBytes(totalUncompressedAll))")
-        }
-
-        // Waiting-for-upload layers
-        for layer in waitingUploadLayers {
-            outputLines.append(formatLayer(layer))
-        }
-
-        // Active layers (uploading, downloading, etc.)
-        for layer in activeLayers {
-            outputLines.append(formatLayer(layer))
-        }
-
-        // Reserve 1 line for summary
-        let maxLayerLines = termHeight - 1
-        if outputLines.count > maxLayerLines {
-            // Keep last N lines (active/uploading are most important, at the end)
-            let overflow = outputLines.count - maxLayerLines
-            outputLines = ["... (\(overflow) more)"] + Array(outputLines.suffix(maxLayerLines - 1))
-        }
-
-        // Print all lines, clearing each
-        var lines = 0
-        for line in outputLines {
-            print("\u{1B}[2K\(line)")
-            lines += 1
-        }
-
-        // Update throughput tracking
-        let now = Date()
-        let elapsed = now.timeIntervalSince(startTime)
-        let dt = now.timeIntervalSince(lastSpeedTime)
-        if dt >= 0.5 {
-            let compressedTotal = layerCompressedBytes.values.reduce(Int64(0), +)
-            let uploadedTotal = layerUploadedBytes.values.reduce(Int64(0), +)
-            let dCompress = Double(compressedTotal - lastCompressedTotal)
-            let dUpload = Double(uploadedTotal - lastUploadedTotal)
-            // Exponential smoothing for display speed (responsive, alpha=0.3)
-            let alpha = 0.3
-            compressSpeed = alpha * (dCompress / dt) + (1 - alpha) * compressSpeed
-            uploadSpeed = alpha * (dUpload / dt) + (1 - alpha) * uploadSpeed
-
-            // Heavier smoothing for ETA speeds (alpha=0.1) — stable, won't flicker
-            // Only decay toward zero slowly; between-chunk gaps won't kill the estimate
-            let etaAlpha = 0.1
-            if dUpload > 0 {
-                hasSeenUpload = true
-                smoothedUploadSpeed = smoothedUploadSpeed > 0
-                    ? etaAlpha * (dUpload / dt) + (1 - etaAlpha) * smoothedUploadSpeed
-                    : dUpload / dt
-            } else if smoothedUploadSpeed > 0 {
-                // Decay very slowly when no upload data (gap between chunks)
-                smoothedUploadSpeed *= 0.98
-            }
-            if dCompress > 0 {
-                smoothedCompressSpeed = smoothedCompressSpeed > 0
-                    ? etaAlpha * (dCompress / dt) + (1 - etaAlpha) * smoothedCompressSpeed
-                    : dCompress / dt
-            } else if smoothedCompressSpeed > 0 {
-                smoothedCompressSpeed *= 0.98
-            }
-
-            lastCompressedTotal = compressedTotal
-            lastUploadedTotal = uploadedTotal
-            lastSpeedTime = now
-        }
-
-        let totalDone = layers.values.reduce(Int64(0)) { $0 + $1.completedBytes }
-        let totalAll = layers.values.reduce(Int64(0)) { $0 + $1.totalBytes }
-        let total = layers.count
-
-        var summary = "\u{1B}[2K\(doneCount)/\(total) done"
-        summary += " | \(formatBytes(totalDone))/\(formatBytes(totalAll))"
-        // ETA first
-        if hasSeenUpload && smoothedUploadSpeed > 0 {
-            // Estimate total compressed upload size using observed compression ratio
-            // ratio = total_compressed_seen / total_uncompressed_seen
-            let seenCompressed = totalUploadBytes + skippedBytes
-            let ratio = totalUncompressedRegistered > 0
-                ? Double(seenCompressed) / Double(totalUncompressedRegistered)
-                : 0.5
-            // Extrapolate total compressed bytes for all layers (minus skipped)
-            let estimatedTotalUpload = Double(totalUncompressedAll) * ratio - Double(skippedBytes)
-            let remaining = max(0, estimatedTotalUpload - Double(totalUploadedBytes))
-            let eta = remaining / smoothedUploadSpeed
-            summary += " | ETA \(formatTime(eta)) (uploading)"
-        } else if smoothedCompressSpeed > 0 && totalDone > 0 && totalAll > totalDone {
-            let eta = Double(totalAll - totalDone) / smoothedCompressSpeed
-            summary += " | ETA \(formatTime(eta)) (compressing)"
-        } else {
-            summary += " | \(formatTime(elapsed))"
-        }
-        // Speeds after ETA
-        if compressSpeed > 0 {
-            summary += " | 🗜 \(formatSpeed(compressSpeed))"
-        }
-        if uploadSpeed > 0 {
-            summary += " | ⬆ \(formatSpeed(uploadSpeed))"
-        }
-        print(summary)
-        lines += 1
-
-        // Clear any leftover lines from previous render that had more lines
-        if lines < lineCount {
-            for _ in 0..<(lineCount - lines) {
-                print("\u{1B}[2K")
-            }
-            // Move back up to just after our content
-            let extra = lineCount - lines
-            if extra > 0 {
-                print("\u{1B}[\(extra)A", terminator: "")
-            }
-        }
-
-        lineCount = lines
-        fflush(stdout)
-    }
-
-    private func formatLayer(_ layer: LayerState) -> String {
-        // For digest-based labels (upload/download/done), use first 12 chars of digest
-        // For compression, use the chunk label
-        let id: String
-        if let digest = layer.digest {
-            let short = digest.hasPrefix("sha256:")
-                ? String(digest.dropFirst(7).prefix(12))
-                : String(digest.prefix(12))
-            id = short.padding(toLength: 12, withPad: " ", startingAt: 0)
-        } else {
-            let short = layer.label.count > 12
-                ? String(layer.label.prefix(12))
-                : layer.label
-            id = short.padding(toLength: 12, withPad: " ", startingAt: 0)
-        }
-
-        switch layer.status {
-        case .waiting:
-            return "\(id): Waiting"
-        case .compressing:
-            if layer.totalBytes > 0 && layer.completedBytes > 0 {
-                let pct = Double(layer.completedBytes) / Double(layer.totalBytes)
-                let bar = progressBar(progress: pct)
-                return "\(id): Compressing \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
-            }
-            return "\(id): Compressing..."
-        case .waitingUpload:
-            return "\(id): Waiting"
-        case .pushing:
-            let pct = layer.totalBytes > 0
-                ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0
-            let bar = progressBar(progress: pct)
-            return "\(id): Uploading   \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
-        case .downloading:
-            let pct = layer.totalBytes > 0
-                ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0
-            let bar = progressBar(progress: pct)
-            return "\(id): Downloading \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
-        case .decompressing:
-            return "\(id): Extracting..."
-        case .exists:
-            return "\(id): Already exists"
-        case .done:
-            let action = layer.mode == .push ? "Push complete" : "Pull complete"
-            return "\(id): \(action)"
-        case .error(let msg):
-            return "\(id): Error: \(msg)"
-        }
-    }
-
-    private func progressBar(progress: Double, width: Int = 25) -> String {
-        let filled = Int(progress * Double(width))
-        let empty = width - filled
-        return
-            "[" + String(repeating: "█", count: max(0, filled))
-            + String(repeating: "░", count: max(0, empty)) + "]"
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        let units = ["B", "KB", "MB", "GB"]
-        var size = Double(bytes)
-        var idx = 0
-        while size > 1024 && idx < units.count - 1 {
-            size /= 1024
-            idx += 1
-        }
-        return String(format: "%.1f %@", size, units[idx])
-    }
-
-    private func formatSpeed(_ bytesPerSec: Double) -> String {
-        return formatBytes(Int64(bytesPerSec)) + "/s"
-    }
-
-    private func formatTime(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds)
-        if total >= 3600 {
-            let hrs = total / 3600
-            let mins = (total % 3600) / 60
-            let secs = total % 60
-            return String(format: "%dh %dm %ds", hrs, mins, secs)
-        } else if total >= 60 {
-            let mins = total / 60
-            let secs = total % 60
-            return String(format: "%dm %ds", mins, secs)
-        } else {
-            return String(format: "%ds", total)
-        }
-    }
-}
-
-actor UploadProgressTracker {
-    private var totalBytes: Int64 = 0
-    private var uploadedBytes: Int64 = 0  // Renamed
-    private var progressLogger = ProgressLogger(threshold: 0.01)
-    private var totalFiles: Int = 0  // Keep track of total items
-    private var completedFiles: Int = 0  // Keep track of completed items
-
-    // Upload speed tracking
-    private var startTime: Date = Date()
-    private var lastUpdateTime: Date = Date()
-    private var lastUpdateBytes: Int64 = 0
-    private var speedSamples: [Double] = []
-    private var peakSpeed: Double = 0
-    private var totalElapsedTime: TimeInterval = 0
-
-    // Smoothing factor for speed calculation
-    private var speedSmoothing: Double = 0.3
-    private var smoothedSpeed: Double = 0
-
-    func setTotal(_ total: Int64, files: Int) {
-        totalBytes = total
-        totalFiles = files
-        startTime = Date()
-        lastUpdateTime = startTime
-        uploadedBytes = 0  // Reset uploaded bytes
-        completedFiles = 0  // Reset completed files
-        smoothedSpeed = 0
-        speedSamples = []
-        peakSpeed = 0
-        totalElapsedTime = 0
-    }
-
-    func addProgress(_ bytes: Int64) {
-        uploadedBytes += bytes
-        completedFiles += 1  // Increment completed files count
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastUpdateTime)
-
-        // Show first progress update immediately, then throttle updates
-        let shouldUpdate =
-            (uploadedBytes <= bytes) || (elapsed >= 0.5) || (completedFiles == totalFiles)
-
-        if shouldUpdate && totalBytes > 0 {  // Ensure totalBytes is set
-            let currentSpeed = Double(uploadedBytes - lastUpdateBytes) / max(elapsed, 0.001)
-            speedSamples.append(currentSpeed)
-
-            // Cap samples array
-            if speedSamples.count > 20 {
-                speedSamples.removeFirst(speedSamples.count - 20)
-            }
-
-            peakSpeed = max(peakSpeed, currentSpeed)
-
-            // Apply exponential smoothing
-            if smoothedSpeed == 0 {
-                smoothedSpeed = currentSpeed
-            } else {
-                smoothedSpeed = speedSmoothing * currentSpeed + (1 - speedSmoothing) * smoothedSpeed
-            }
-
-            let recentAvgSpeed = calculateAverageSpeed()
-            let totalElapsed = now.timeIntervalSince(startTime)
-            let overallAvgSpeed = totalElapsed > 0 ? Double(uploadedBytes) / totalElapsed : 0
-
-            let progress = totalBytes > 0 ? Double(uploadedBytes) / Double(totalBytes) : 1.0  // Avoid division by zero
-            logSpeedProgress(
-                current: progress,
-                currentSpeed: currentSpeed,
-                averageSpeed: recentAvgSpeed,
-                smoothedSpeed: smoothedSpeed,
-                overallSpeed: overallAvgSpeed,
-                peakSpeed: peakSpeed,
-                context: "Uploading Image"  // Changed context
-            )
-
-            lastUpdateTime = now
-            lastUpdateBytes = uploadedBytes
-            totalElapsedTime = totalElapsed
-        }
-    }
-
-    private func calculateAverageSpeed() -> Double {
-        guard !speedSamples.isEmpty else { return 0 }
-        var totalWeight = 0.0
-        var weightedSum = 0.0
-        let samples = speedSamples.suffix(min(8, speedSamples.count))
-        for (index, speed) in samples.enumerated() {
-            let weight = Double(index + 1)
-            weightedSum += speed * weight
-            totalWeight += weight
-        }
-        return totalWeight > 0 ? weightedSum / totalWeight : 0
-    }
-
-    // Use the UploadStats struct
-    func getUploadStats() -> UploadStats {
-        let avgSpeed = totalElapsedTime > 0 ? Double(uploadedBytes) / totalElapsedTime : 0
-        return UploadStats(
-            totalBytes: totalBytes,
-            uploadedBytes: uploadedBytes,  // Renamed
-            elapsedTime: totalElapsedTime,
-            averageSpeed: avgSpeed,
-            peakSpeed: peakSpeed
-        )
-    }
-
-    private func logSpeedProgress(
-        current: Double,
-        currentSpeed: Double,
-        averageSpeed: Double,
-        smoothedSpeed: Double,
-        overallSpeed: Double,
-        peakSpeed: Double,
-        context: String
-    ) {
-        let progressPercent = Int(current * 100)
-        // let currentSpeedStr = formatByteSpeed(currentSpeed) // Removed unused
-        let avgSpeedStr = formatByteSpeed(averageSpeed)
-        // let peakSpeedStr = formatByteSpeed(peakSpeed) // Removed unused
-        let remainingBytes = totalBytes - uploadedBytes
-        let speedForEta = max(smoothedSpeed, averageSpeed * 0.8)
-        let etaSeconds = speedForEta > 0 ? Double(remainingBytes) / speedForEta : 0
-        let etaStr = formatTimeRemaining(etaSeconds)
-        let progressBar = createProgressBar(progress: current)
-        let fileProgress = "(\(completedFiles)/\(totalFiles))"  // Add file count
-
-        print(
-            "\r\(progressBar) \(progressPercent)% \(fileProgress) | Speed: \(avgSpeedStr) (Avg) | ETA: \(etaStr)     ",  // Simplified output
-            terminator: "")
-        fflush(stdout)
-    }
-
-    // Helper methods (createProgressBar, formatByteSpeed, formatTimeRemaining) remain the same
-    private func createProgressBar(progress: Double, width: Int = 30) -> String {
-        let completedWidth = Int(progress * Double(width))
-        let remainingWidth = width - completedWidth
-        let completed = String(repeating: "█", count: completedWidth)
-        let remaining = String(repeating: "░", count: remainingWidth)
-        return "[\(completed)\(remaining)]"
-    }
-    private func formatByteSpeed(_ bytesPerSecond: Double) -> String {
-        let units = ["B/s", "KB/s", "MB/s", "GB/s"]
-        var speed = bytesPerSecond
-        var unitIndex = 0
-        while speed > 1024 && unitIndex < units.count - 1 {
-            speed /= 1024
-            unitIndex += 1
-        }
-        return String(format: "%.1f %@", speed, units[unitIndex])
-    }
-    private func formatTimeRemaining(_ seconds: Double) -> String {
-        if seconds.isNaN || seconds.isInfinite || seconds <= 0 { return "calculating..." }
-        let hours = Int(seconds) / 3600
-        let minutes = (Int(seconds) % 3600) / 60
-        let secs = Int(seconds) % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
-        } else {
-            return String(format: "%d:%02d", minutes, secs)
-        }
     }
 }

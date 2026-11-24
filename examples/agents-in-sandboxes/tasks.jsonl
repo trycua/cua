@@ -1,0 +1,5 @@
+# One task per line. `check` runs in the task's directory inside the sandbox
+# (exit 0 passes). `mock` scripts the mock provider (cua-mock-llm) and is
+# used only with --scripted.
+{"id": "hello", "prompt": "Create a file hello.txt whose only line is: hello", "check": "grep -qx hello hello.txt", "mock": "shell echo hello > hello.txt && cat hello.txt"}
+{"id": "primes", "prompt": "Write primes.py that prints the first 10 primes, one per line, and run it.", "check": "test \"$(python3 primes.py | tr '\\n' ' ')\" = '2 3 5 7 11 13 17 19 23 29 '", "mock": "shell printf '%s\\n' 'p = [n for n in range(2, 30) if all(n % d for d in range(2, n))]' 'print(*p, sep=chr(10))' > primes.py && python3 primes.py"}

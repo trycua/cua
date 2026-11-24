@@ -52,15 +52,19 @@ assuming the convenience command supports every raw-tool argument.
   responsible runtime's grant. Permission status is not proof of live capture.
 - Windows video uses ffmpeg `gdigrab`; the runtime must be in the interactive
   desktop session.
-- Linux X11 video uses ffmpeg `x11grab`. Native Wayland needs a supported
-  compositor-specific recorder and any portal grant; see [LINUX.md](LINUX.md).
+- Linux X11 video uses ffmpeg `x11grab`. Native Wayland routes by compositor:
+  GNOME uses the trusted Shell helper frames, wlroots compositors use
+  `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) use the
+  xdg-desktop-portal ScreenCast, which needs a `portal-capture` build, the
+  PipeWire client library (`libpipewire-0.3-0`), and a one-time monitor grant
+  in the portal dialog; see [LINUX.md](LINUX.md).
   A successful desktop PNG does not establish video availability.
 
 ## What each turn folder contains
 
 Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
-- `before_state.json` and `after_state.json` — application accessibility
+- `before_state.json` and `after_state.json`: application accessibility
   state immediately before and after the action. They carry the same
   `tree_markdown` and `element_count` shape as `get_window_state`. Each walk
   is bounded by `start_recording`'s `state_timeout_ms` (default 1000, like
@@ -73,17 +77,17 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   state walk is skipped and the state is recorded as `not_applicable` with
   the classification `action_refused_before_dispatch`. Pass
   `include_accessibility_tree: false` to record without state.
-- `before.png` and `after.png` — target-window images immediately before
+- `before.png` and `after.png`: target-window images immediately before
   and after the action. Window capture remains scoped to the target when
   another window covers it.
-- `evidence.json` — capture status for each phase. Missing expected capture
+- `evidence.json`: capture status for each phase. Missing expected capture
   has an explicit classification instead of disappearing from the turn.
-- `app_state.json` and `screenshot.png` — compatibility aliases for
+- `app_state.json` and `screenshot.png`: compatibility aliases for
   `after_state.json` and `after.png`.
-- `action.json` — the tool name, full input arguments, result
+- `action.json`: the tool name, full input arguments, result
   summary, result-error flag, pid, click point (when applicable), ISO-8601
   timestamp.
-- `click.png` — for click-family actions (`click`, `double_click`,
+- `click.png`: for click-family actions (`click`, `double_click`,
   `right_click`): a copy of the pre-input image with a red marker drawn at
   the click point. Usually that source is `before.png`. When Windows scrolls
   an element into view during an action, it retains an additional
@@ -112,12 +116,28 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   Out-of-image points are rejected, never moved to an image edge. Other dispatched clicks whose markers
   cannot be resolved or rendered remain evidence failures.
 
+## What the recording folder contains
+
+`session.json` sits next to the turn folders and describes the whole
+recording:
+
+- `schema_version`: `1`.
+- `started_at_unix_ms`: the wall-clock time recording started, in Unix
+  epoch milliseconds. Stopping the recording does not change it.
+- `started_at_monotonic_ms`: the same value, kept for readers of the
+  original schema. Despite its name, it is not a monotonic clock reading.
+- `video`: whether `recording.mp4` was captured and, after stop, its
+  duration and finalization.
+- `cursor`: whether `cursor.jsonl` was sampled and how many samples landed.
+
 ## Replay is a new action sequence
 
-`replay_trajectory` invokes recorded arguments in turn order; it is not a
-semantic task planner. It accepts `dir`, `delay_ms`, and `stop_on_error`.
-Read its live schema before use, and obtain authorization for the actions
-being replayed.
+`replay_trajectory` is deprecated and will be removed in the first Cua Driver
+release after 26 Nov 2026; prefer calling the steps again yourself with
+`run_steps`, which re-checks each target against fresh state. Recording stays.
+Until then, it invokes recorded arguments in turn order; it is not a semantic
+task planner. It accepts `dir`, `delay_ms`, and `stop_on_error`. Read its live
+schema before use, and obtain authorization for the actions being replayed.
 
 Recorded PIDs, window IDs, element tokens, browser refs, and geometry can all
 be stale. Read-only snapshots are not part of the action sequence, so replay

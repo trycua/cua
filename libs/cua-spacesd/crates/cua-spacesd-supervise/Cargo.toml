@@ -1,0 +1,15 @@
+[package]
+name = "cua-spacesd-supervise"
+description = "PID 1 duties for cua-spacesd in an OCI image that does not carry it: run the image's command as a supervised child, reap zombies, forward signals"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

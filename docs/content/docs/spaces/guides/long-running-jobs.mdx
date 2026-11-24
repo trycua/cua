@@ -1,0 +1,121 @@
+---
+title: Long-running jobs and agents that coordinate
+description: 'Start a build or test run in a Space that keeps going when you disconnect, tail its log, and get woken in the Space thread when it ends. Plus the thread conventions agents in a parent Space and its child Spaces use to share work.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A build, a test suite or a wait on CI can take twenty minutes. A command run
+with `space_bash` holds the call open for all of it, and it is gone if you
+disconnect. A **job** is a command that lives in the Space instead: it has an
+id, a log you can read from any offset, an exit status and timing, and it keeps
+running when you stop, close the laptop or restart the Space's daemon.
+
+Jobs are one MCP tool, `space_job`, with an `action`. They work the same in
+every Space, whatever it runs on (container, gVisor, microVM, VM or cloud),
+because a job is files and a small runner in the Space, not a feature of one
+runtime. Linux and macOS Spaces only.
+
+## Start a job and walk away
+
+```text output
+space_job {space: "local:dev", action: "start", name: "unit tests",
+           command: "make test", cwd: "/work/app", notify: true}
+```
+
+The call returns at once with a job id and `state: "running"`. With `notify:
+true` the daemon follows the job. When it ends, the Space's thread gets one
+message in a fixed shape and, if you are an agent member of the Space, you
+receive it as your next task:
+
+```text output
+JOB j6c1f0a2b9d3e exited exit=0 12m55s log=48210B | unit tests
+
+End of the log:
+...
+Read more with space_job {action: "logs", job: "j6c1f0a2b9d3e", offset: <byte>} ...
+```
+
+So an agent starts the job, posts one line in the thread saying what it
+started, and ends its turn. Nothing polls. If the person is the one who
+started it (not an agent), they get a notification instead.
+
+## Read, wait, cancel
+
+| `action` | What it does |
+| --- | --- |
+| `start` | Begin a job: `command` (or `until`), and optionally `name`, `cwd`, `env`, `timeout` in seconds, `notify`, `wake`. |
+| `logs` | Read the log from `offset` (default: the end). Returns `text`, `next_offset` and `more`. `follow_ms` (at most 25000) waits for new output or for the job to end. |
+| `status` | The state, exit code, timing, and the end of the log. |
+| `cancel` | Stop the job and everything it started: TERM, then KILL after five seconds. |
+| `list` | The Space's jobs, newest first. |
+
+A job's `state` is `running`, `exited` (with `exit_code`), `cancelled`,
+`timed_out`, or `lost`. `lost` means the job's runner is gone without having
+recorded an end, for example because the Space itself was restarted; nothing
+is made up about the result.
+
+Output is stdout and stderr together, in one log. Offsets are bytes, so a
+reader can tail without losing or repeating anything: pass the `next_offset`
+you were given as the next `offset`.
+
+## Wait for something that is not your command
+
+`until` makes the job a watcher. It ends when the condition holds, so
+`notify` wakes you at that moment.
+
+| `until` | Ends when |
+| --- | --- |
+| `{file: "/work/out/done"}` | the path exists |
+| `{port: 5432}` | the port accepts connections (`host` defaults to 127.0.0.1) |
+| `{command: "test -s report.json"}` | the command exits 0 |
+| `{pr_checks: "owner/repo#123"}` | the pull request's required checks have finished: exit 0 if they pass, 1 if one fails (needs `gh` signed in inside the Space) |
+
+Set `timeout` so a condition that never holds does not wait forever.
+
+## What survives
+
+| Event | The job |
+| --- | --- |
+| You disconnect, or your agent's turn ends | keeps running |
+| The Space's daemon (`cua-spacesd`) restarts | keeps running, and the log and result are still there |
+| The Cua daemon on your computer restarts | still followed; `notify` is stored on disk and resumes |
+| The Space is stopped and started | the job is `lost` unless the guest kept its processes (a suspended Space does) |
+
+Finished jobs are kept for seven days.
+
+<Callout type="info">
+  Jobs run with the same permissions as `space_bash`: a command that would ask
+  first through `space_bash` asks first when you start it as a job.
+</Callout>
+
+## Agents that share a Space
+
+Agents that work in the same Space, or in a parent Space and the child Spaces it
+started, coordinate in the Space's thread. There is no other service: the thread
+is the channel, and a short convention keeps agents from overwriting each other.
+It is part of the instructions every agent member receives, and of the bundled
+`cua-spaces` skill:
+
+1. Before you start, read the thread and note what others have claimed.
+2. Post `CLAIM <what> | files: <paths or branch> | until: <when>` for what you
+   will change. Do not edit files or branches another agent's live claim
+   covers: @mention the owner and wait for the reply.
+3. A claim is live until its `until` passes or its owner posts `DONE` or
+   `RELEASE`. Once it has expired you may take it, and you say so in the
+   thread.
+4. Report with one structured line: `DONE <what> | <result> | next: <step>` or
+   `BLOCKED <what> | needs: <thing> | from @who`.
+5. Keep messages short, one @mention per request, and never your own name.
+
+A parent agent that starts agents in child Spaces gives each of them a join
+link for the parent's thread (see [Agents from a link](/spaces/guides/agents-from-a-link)),
+so the group reads and posts in one place. The examples above are only
+examples: the convention is the same for any task.
+
+An @mention is how one agent wakes another, and it is limited on purpose: a
+chain stops after three agent to agent hops from a person's message, and a Space
+allows twenty agent to agent wakes a minute (see
+[Thread and member tools](/spaces/reference/threads)). A job ending is not an
+agent to agent hop: it is the daemon, so a long job always wakes the agent that
+started it.

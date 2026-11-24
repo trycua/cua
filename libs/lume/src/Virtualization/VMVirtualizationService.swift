@@ -17,6 +17,14 @@ struct VMVirtualizationServiceContext {
     let usbMassStoragePaths: [Path]?
     let additionalDiskPaths: [Path]?
     let networkMode: NetworkMode
+    /// Adds a virtio socket device (for host port forwards over vsock and
+    /// the guest time service).
+    var socketDevice: Bool = false
+    /// Host audio and clipboard devices to attach; all by default.
+    var hostDevices: HostDeviceOptions = .all
+    /// Vsock port on which the host serves its wall-clock time to the guest
+    /// ([`GuestTimeService`]). Setting it also adds the socket device.
+    var guestTimePort: UInt32? = nil
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -31,6 +39,19 @@ protocol VMVirtualizationService {
     func resume() async throws
     func updateSharedDirectories(_ sharedDirectories: [SharedDirectory]) async throws
     func waitForStop() async throws
+    /// Writes the paused VM's full state (memory and devices) to `url`
+    /// (Virtualization.framework `saveMachineStateTo`, macOS 14+).
+    func saveMachineState(to url: URL) async throws
+    /// Loads a state written by `saveMachineState(to:)` into this stopped VM,
+    /// which is left paused. The configuration must match the saved one.
+    func restoreMachineState(from url: URL) async throws
+    /// Opens vsock streams to the guest, when the VM has a virtio socket
+    /// device.
+    func vsockConnector() -> VsockForwarder.Connect?
+}
+
+extension VMVirtualizationService {
+    func vsockConnector() -> VsockForwarder.Connect? { nil }
 }
 
 /// Base implementation of VMVirtualizationService using VZVirtualMachine
@@ -50,6 +71,9 @@ class BaseVirtualizationService: VMVirtualizationService {
     var virtualMachine: VZVirtualMachine { virtualMachineHandle.machine }
     let recoveryMode: Bool  // Store whether we should start in recovery mode
     private let lifecycleMonitor: VMVirtualMachineLifecycleMonitor
+    /// The guest time service and its listener. The device holds the
+    /// listener and the listener its delegate weakly, so both live here.
+    private var guestTimeService: (service: GuestTimeService, listener: VZVirtioSocketListener)?
 
     var state: VZVirtualMachine.State {
         let handle = virtualMachineHandle
@@ -188,6 +212,88 @@ class BaseVirtualizationService: VMVirtualizationService {
         try await lifecycleMonitor.waitForStop()
     }
 
+    /// Starts serving the host's time on vsock `port` ([`GuestTimeService`]).
+    /// Called before the VM starts, so the guest finds it from early boot.
+    func startGuestTimeService(port: UInt32) throws {
+        let service = GuestTimeService(port: port)
+        let listener = VZVirtioSocketListener()
+        listener.delegate = service
+        let handle = virtualMachineHandle
+        let attached = handle.queue.sync { () -> Bool in
+            guard let device = handle.machine.socketDevices.first as? VZVirtioSocketDevice
+            else { return false }
+            device.setSocketListener(listener, forPort: port)
+            return true
+        }
+        guard attached else {
+            throw VMError.internalError(
+                "The guest time service needs a virtio socket device")
+        }
+        guestTimeService = (service, listener)
+        Logger.info("Serving the host's time to the guest over vsock", metadata: ["port": "\(port)"])
+    }
+
+    func vsockConnector() -> VsockForwarder.Connect? {
+        let handle = virtualMachineHandle
+        let hasDevice = handle.queue.sync { !handle.machine.socketDevices.isEmpty }
+        guard hasDevice else { return nil }
+        return { port in
+            let result = VsockConnectResult()
+            handle.queue.async {
+                guard let device = handle.machine.socketDevices.first as? VZVirtioSocketDevice
+                else {
+                    result.finish(nil)
+                    return
+                }
+                device.connect(toPort: port) { outcome in
+                    switch outcome {
+                    case .success(let connection):
+                        let box = VsockConnectionBox(connection)
+                        result.finish(
+                            VsockForwarder.Stream(
+                                fd: connection.fileDescriptor,
+                                close: { box.connection.close() }))
+                    case .failure:
+                        result.finish(nil)
+                    }
+                }
+            }
+            return result.wait(seconds: 5)
+        }
+    }
+
+    func saveMachineState(to url: URL) async throws {
+        let handle = virtualMachineHandle
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            handle.queue.async {
+                handle.machine.saveMachineStateTo(url: url) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
+    func restoreMachineState(from url: URL) async throws {
+        let handle = virtualMachineHandle
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            handle.queue.async {
+                handle.machine.restoreMachineStateFrom(url: url) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
     // Helper methods for creating common configurations
     static func createStorageDeviceConfiguration(
         diskPath: Path,
@@ -270,6 +376,9 @@ class BaseVirtualizationService: VMVirtualizationService {
                     "localizedName": bridgeInterface.localizedDisplayName ?? "unknown",
                 ])
             network.attachment = VZBridgedNetworkDeviceAttachment(interface: bridgeInterface)
+        case .gateway(let socket):
+            Logger.info("Using gateway networking", metadata: ["socket": socket])
+            network.attachment = try GatewayNetwork.attachment(socket: socket)
         }
 
         network.macAddress = vzMacAddress
@@ -284,7 +393,10 @@ class BaseVirtualizationService: VMVirtualizationService {
     {
         let grouped = Dictionary(grouping: sharedDirectories ?? [], by: \.tag)
         let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
-        return grouped.map { tag, directories in
+        // Sorted by tag: a saved machine state restores only into the same
+        // devices in the same order, so the order must not depend on
+        // dictionary iteration.
+        return grouped.sorted { $0.key < $1.key }.map { tag, directories in
             let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
             device.share = createDirectoryShare(
                 directories,
@@ -405,27 +517,12 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+        if config.socketDevice || config.guestTimePort != nil {
+            vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+        }
         
-        // Audio configuration
-        let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-        let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-        let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-        
-        inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-        outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-        
-        soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-        vzConfig.audioDevices = [soundDeviceConfiguration]
-        
-        // Clipboard sharing via Spice agent
-        let spiceAgentConsoleDevice = VZVirtioConsoleDeviceConfiguration()
-        let spiceAgentPort = VZVirtioConsolePortConfiguration()
-        spiceAgentPort.name = VZSpiceAgentPortAttachment.spiceAgentPortName
-        let spiceAgentPortAttachment = VZSpiceAgentPortAttachment()
-        spiceAgentPortAttachment.sharesClipboard = true
-        spiceAgentPort.attachment = spiceAgentPortAttachment
-        spiceAgentConsoleDevice.ports[0] = spiceAgentPort
-        vzConfig.consoleDevices.append(spiceAgentConsoleDevice)
+        // Host audio and clipboard devices (each can be left out).
+        config.hostDevices.apply(to: vzConfig)
 
         // Optional serial console for debugging. When LUME_SERIAL_CONSOLE points
         // at a writable path, attach a virtio serial port whose output is written
@@ -515,6 +612,9 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
             virtualMachine: VZVirtualMachine(configuration: vzConfig, queue: queue),
             queue: queue,
             recoveryMode: configuration.recoveryMode)
+        if let port = configuration.guestTimePort {
+            try startGuestTimeService(port: port)
+        }
     }
 
     func installMacOS(imagePath: Path, progressHandler: (@Sendable (Double) -> Void)?) async throws
@@ -627,27 +727,12 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+        if config.socketDevice || config.guestTimePort != nil {
+            vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+        }
 
-        // Audio configuration
-        let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-        let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-        let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-        
-        inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-        outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-        
-        soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-        vzConfig.audioDevices = [soundDeviceConfiguration]
-
-        // Clipboard sharing via Spice agent
-        let spiceAgentConsoleDevice = VZVirtioConsoleDeviceConfiguration()
-        let spiceAgentPort = VZVirtioConsolePortConfiguration()
-        spiceAgentPort.name = VZSpiceAgentPortAttachment.spiceAgentPortName
-        let spiceAgentPortAttachment = VZSpiceAgentPortAttachment()
-        spiceAgentPortAttachment.sharesClipboard = true
-        spiceAgentPort.attachment = spiceAgentPortAttachment
-        spiceAgentConsoleDevice.ports[0] = spiceAgentPort
-        vzConfig.consoleDevices.append(spiceAgentConsoleDevice)
+        // Host audio and clipboard devices (each can be left out).
+        config.hostDevices.apply(to: vzConfig)
 
         // Directory sharing
         var directorySharingDevices = createDirectorySharingDevices(
@@ -702,5 +787,49 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
             virtualMachine: VZVirtualMachine(configuration: vzConfig, queue: queue),
             queue: queue
         )
+        if let port = configuration.guestTimePort {
+            try startGuestTimeService(port: port)
+        }
     }
+}
+
+/// One vsock connect's answer, handed from the VM's queue to the waiting
+/// thread.
+final class VsockConnectResult: @unchecked Sendable {
+    private let done = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var stream: VsockForwarder.Stream?
+    private var finished = false
+    private var abandoned = false
+
+    func finish(_ stream: VsockForwarder.Stream?) {
+        lock.lock()
+        let late = abandoned
+        if !late {
+            self.stream = stream
+            finished = true
+        }
+        lock.unlock()
+        // An answer after the waiter gave up: nobody will use the stream.
+        if late { stream?.close() }
+        done.signal()
+    }
+
+    func wait(seconds: Double) -> VsockForwarder.Stream? {
+        let timedOut = done.wait(timeout: .now() + seconds) == .timedOut
+        lock.lock()
+        defer { lock.unlock() }
+        if timedOut && !finished {
+            abandoned = true
+            return nil
+        }
+        return stream
+    }
+}
+
+/// Keeps a vsock connection open until its stream is closed (closing it is
+/// thread-safe).
+final class VsockConnectionBox: @unchecked Sendable {
+    let connection: VZVirtioSocketConnection
+    init(_ connection: VZVirtioSocketConnection) { self.connection = connection }
 }

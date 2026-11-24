@@ -5,14 +5,30 @@ on:
       - "libs/lume/**"
       - ".github/workflows/ci-swift-lume.yml"
 
+  merge_group:
 concurrency:
   group: lume-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Runner images: https://github.com/actions/runner-images
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+permissions:
+  contents: read
+
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   test:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Test
     runs-on: macos-15
     steps:
@@ -22,6 +38,8 @@ jobs:
       - run: swift test
         working-directory: ./libs/lume
   build:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Release build
     runs-on: macos-15
     steps:

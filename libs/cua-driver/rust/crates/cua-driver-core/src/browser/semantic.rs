@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Deterministic semantic browser snapshots.
 //!
 //! The collector joins Chrome's accessibility tree with pierced DOM metadata
@@ -10,7 +13,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry};
+use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry, SemanticScope};
 
 pub(crate) const SEMANTIC_COMPUTED_STYLES: &[&str] = &[
     "display",
@@ -80,6 +83,7 @@ struct DomMeta {
     attrs: HashMap<String, String>,
     order: usize,
     css_hidden: bool,
+    transparent: bool,
     parent_backend_node_id: Option<i64>,
     frame_id: Option<String>,
 }
@@ -125,7 +129,21 @@ pub(crate) struct SemanticNode {
     pub(crate) document_order: usize,
 }
 
+// Same-process frames share an AX namespace; separate targets can reuse ids.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct AxNodeKey<'a> {
+    target_id: Option<&'a str>,
+    ax_id: &'a str,
+}
+
 impl SemanticNode {
+    fn ax_key<'a>(&'a self, ax_id: &'a str) -> AxNodeKey<'a> {
+        AxNodeKey {
+            target_id: self.frame.oopif_target_id.as_deref(),
+            ax_id,
+        }
+    }
+
     pub(crate) fn to_ref_entry(&self) -> Option<RefEntry> {
         let backend_node_id = self.backend_node_id?;
         Some(RefEntry {
@@ -149,6 +167,7 @@ pub(crate) struct OmissionCounts {
     pub(crate) unknown: usize,
     pub(crate) budget: usize,
     pub(crate) unprovable_frame: usize,
+    pub(crate) not_rendered: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +185,7 @@ pub(crate) struct SemanticDocument {
     pub(crate) nodes: Vec<SemanticNode>,
     pub(crate) css_hidden_dom_count: usize,
     pub(crate) unprovable_frame_count: usize,
+    pub(crate) not_rendered_count: usize,
     pub(crate) complete: bool,
 }
 
@@ -186,6 +206,7 @@ impl SemanticDocument {
         self.nodes.extend(other.nodes);
         self.css_hidden_dom_count += other.css_hidden_dom_count;
         self.unprovable_frame_count += other.unprovable_frame_count;
+        self.not_rendered_count += other.not_rendered_count;
         self.complete = if was_empty {
             other.complete
         } else {
@@ -198,9 +219,9 @@ impl SemanticDocument {
         offset: usize,
         budget: usize,
         query: Option<&str>,
-        scope_backend_node_id: Option<i64>,
+        scope: Option<&SemanticScope>,
     ) -> SemanticPage {
-        let mut candidates = scoped_indices(&self.nodes, query, scope_backend_node_id);
+        let mut candidates = scoped_indices(&self.nodes, query, scope);
         candidates.retain(|idx| {
             !matches!(
                 self.nodes[*idx].visibility,
@@ -232,6 +253,7 @@ impl SemanticDocument {
         let mut omissions = OmissionCounts {
             css_hidden: self.css_hidden_dom_count.max(semantic_css_hidden),
             unprovable_frame: self.unprovable_frame_count,
+            not_rendered: self.not_rendered_count,
             ..Default::default()
         };
         for node in &self.nodes {
@@ -293,6 +315,10 @@ pub(crate) fn build_dom_index(root: &Value) -> DomIndex {
         let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
         let attrs = attributes(node);
         let hidden = inherited_hidden || statically_hidden(&attrs);
+        let transparent = statically_transparent(&attrs)
+            || parent_backend_node_id
+                .and_then(|parent| index.nodes.get(&parent))
+                .is_some_and(|parent| parent.transparent);
         let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
         let frame_id = if node_type == 9 {
             node.get("frameId").and_then(Value::as_str)
@@ -315,6 +341,7 @@ pub(crate) fn build_dom_index(root: &Value) -> DomIndex {
                     attrs,
                     order: *order,
                     css_hidden: hidden,
+                    transparent,
                     parent_backend_node_id,
                     frame_id: frame_id.map(str::to_owned),
                 },
@@ -568,6 +595,7 @@ pub(crate) fn compose_accessibility_tree(
         nodes,
         css_hidden_dom_count: dom.css_hidden_count,
         unprovable_frame_count: 0,
+        not_rendered_count: 0,
         complete: true,
     }
 }
@@ -725,32 +753,38 @@ fn statically_hidden(attrs: &HashMap<String, String>) -> bool {
     if attrs.contains_key("hidden") || attrs.get("aria-hidden").is_some_and(|v| v == "true") {
         return true;
     }
-    let style = attrs
+    inline_style(attrs).any(|(property, value)| hiding_style(property, value))
+}
+
+fn statically_transparent(attrs: &HashMap<String, String>) -> bool {
+    inline_style(attrs).any(|(property, value)| {
+        property.trim().eq_ignore_ascii_case("opacity") && hiding_style(property, value)
+    })
+}
+
+fn inline_style(attrs: &HashMap<String, String>) -> impl Iterator<Item = (&str, &str)> {
+    attrs
         .get("style")
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_default();
-    style.contains("display:none")
-        || style.contains("display: none")
-        || style.contains("visibility:hidden")
-        || style.contains("visibility: hidden")
-        || style.contains("opacity:0")
-        || style.contains("opacity: 0")
+        .into_iter()
+        .flat_map(|style| style.split(';'))
+        .filter_map(|declaration| declaration.split_once(':'))
+}
+
+fn hiding_style(property: &str, value: &str) -> bool {
+    let value = value.trim().trim_end_matches("!important").trim_end();
+    match property.trim().to_ascii_lowercase().as_str() {
+        "display" => value.eq_ignore_ascii_case("none"),
+        "visibility" => value.eq_ignore_ascii_case("hidden"),
+        "opacity" => value.parse::<f64>().is_ok_and(|opacity| opacity <= 0.0),
+        _ => false,
+    }
 }
 
 fn layout_hidden(layout: &LayoutMeta) -> bool {
     layout
         .styles
-        .get("display")
-        .is_some_and(|value| value.eq_ignore_ascii_case("none"))
-        || layout
-            .styles
-            .get("visibility")
-            .is_some_and(|value| value.eq_ignore_ascii_case("hidden"))
-        || layout
-            .styles
-            .get("opacity")
-            .and_then(|value| value.parse::<f64>().ok())
-            .is_some_and(|opacity| opacity <= 0.0)
+        .iter()
+        .any(|(property, value)| hiding_style(property, value))
 }
 
 fn classify_visibility(
@@ -758,7 +792,10 @@ fn classify_visibility(
     layout: Option<&LayoutMeta>,
     viewport: &Viewport,
 ) -> BrowserVisibility {
-    if dom.is_some_and(|meta| meta.css_hidden) || layout.is_some_and(layout_hidden) {
+    let rendered = layout.is_some_and(|layout| layout.bounds.is_some_and(Rect::has_area));
+    if dom.is_some_and(|meta| meta.transparent || (meta.css_hidden && !rendered))
+        || layout.is_some_and(layout_hidden)
+    {
         return BrowserVisibility::CssHidden;
     }
     let Some(layout) = layout else {
@@ -999,33 +1036,34 @@ fn rank(node: &SemanticNode) -> u8 {
 fn scoped_indices(
     nodes: &[SemanticNode],
     query: Option<&str>,
-    scope_backend_node_id: Option<i64>,
+    scope: Option<&SemanticScope>,
 ) -> Vec<usize> {
-    let by_ax_id: HashMap<&str, usize> = nodes
+    let by_ax_id: HashMap<AxNodeKey<'_>, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(idx, node)| (node.ax_id.as_str(), idx))
+        .map(|(idx, node)| (node.ax_key(&node.ax_id), idx))
         .collect();
     let mut allowed = HashSet::new();
-    if let Some(scope_backend) = scope_backend_node_id {
-        if let Some(scope) = nodes
-            .iter()
-            .find(|node| node.backend_node_id == Some(scope_backend))
-        {
-            let mut stack = vec![scope.ax_id.as_str()];
+    if let Some(scope) = scope {
+        if let Some(root) = nodes.iter().find(|node| {
+            node.backend_node_id == Some(scope.backend_node_id)
+                && node.frame.oopif_target_id == scope.oopif_target_id
+        }) {
+            let mut stack = vec![root.ax_key(&root.ax_id)];
             while let Some(ax_id) = stack.pop() {
-                if !allowed.insert(ax_id.to_owned()) {
+                if !allowed.insert(ax_id) {
                     continue;
                 }
-                if let Some(idx) = by_ax_id.get(ax_id) {
-                    stack.extend(nodes[*idx].child_ax_ids.iter().map(String::as_str));
+                if let Some(idx) = by_ax_id.get(&ax_id) {
+                    let node = &nodes[*idx];
+                    stack.extend(node.child_ax_ids.iter().map(|id| node.ax_key(id)));
                 }
             }
         }
     }
     let query = query.map(|value| value.trim().to_ascii_lowercase());
     let in_scope =
-        |node: &SemanticNode| scope_backend_node_id.is_none() || allowed.contains(&node.ax_id);
+        |node: &SemanticNode| scope.is_none() || allowed.contains(&node.ax_key(&node.ax_id));
     let exact_match_exists = query.as_ref().is_some_and(|query| {
         !query.is_empty()
             && nodes
@@ -1087,16 +1125,16 @@ fn query_score(node: &SemanticNode, query: &str) -> usize {
 }
 
 fn with_ancestors(nodes: &[SemanticNode], selected: &[usize]) -> HashSet<usize> {
-    let by_ax_id: HashMap<&str, usize> = nodes
+    let by_ax_id: HashMap<AxNodeKey<'_>, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(idx, node)| (node.ax_id.as_str(), idx))
+        .map(|(idx, node)| (node.ax_key(&node.ax_id), idx))
         .collect();
     let mut keep: HashSet<usize> = selected.iter().copied().collect();
     for idx in selected {
         let mut parent = nodes[*idx].parent_ax_id.as_deref();
         while let Some(parent_id) = parent {
-            let Some(parent_idx) = by_ax_id.get(parent_id).copied() else {
+            let Some(parent_idx) = by_ax_id.get(&nodes[*idx].ax_key(parent_id)).copied() else {
                 break;
             };
             if !keep.insert(parent_idx) {
@@ -1109,10 +1147,10 @@ fn with_ancestors(nodes: &[SemanticNode], selected: &[usize]) -> HashSet<usize> 
 }
 
 fn render_outline(nodes: &[SemanticNode], selected: &HashSet<usize>) -> String {
-    let by_ax_id: HashMap<&str, usize> = nodes
+    let by_ax_id: HashMap<AxNodeKey<'_>, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(idx, node)| (node.ax_id.as_str(), idx))
+        .map(|(idx, node)| (node.ax_key(&node.ax_id), idx))
         .collect();
     let mut ordered: Vec<usize> = selected.iter().copied().collect();
     ordered.sort_by_key(|idx| nodes[*idx].document_order);
@@ -1123,11 +1161,15 @@ fn render_outline(nodes: &[SemanticNode], selected: &HashSet<usize>) -> String {
             continue;
         }
         let mut depth = 0;
+        let mut visited = HashSet::from([idx]);
         let mut parent = node.parent_ax_id.as_deref();
         while let Some(parent_id) = parent {
-            let Some(parent_idx) = by_ax_id.get(parent_id).copied() else {
+            let Some(parent_idx) = by_ax_id.get(&node.ax_key(parent_id)).copied() else {
                 break;
             };
+            if !visited.insert(parent_idx) {
+                break;
+            }
             if selected.contains(&parent_idx)
                 && !matches!(nodes[parent_idx].role.as_str(), "rootwebarea" | "webarea")
             {
@@ -1173,6 +1215,7 @@ mod tests {
             attrs: HashMap::from([("type".into(), "file".into())]),
             order: 0,
             css_hidden: false,
+            transparent: false,
             parent_backend_node_id: None,
             frame_id: None,
         };
@@ -1181,10 +1224,238 @@ mod tests {
             vec![BrowserActionKind::Upload]
         );
     }
-    use crate::browser::store::FrameRef;
+    use crate::browser::store::{FrameIdentity, FrameKind, FrameRef};
 
     fn frame() -> FrameRef {
         FrameRef::main_unproven()
+    }
+
+    fn document_in_frame(frame_id: &str, ax: Value) -> SemanticDocument {
+        compose_accessibility_tree(
+            &ax,
+            &DomIndex::default(),
+            &LayoutIndex::default(),
+            &Viewport::default(),
+            FrameRef {
+                kind: if frame_id == "main" {
+                    FrameKind::Main
+                } else {
+                    FrameKind::Oopif
+                },
+                oopif_target_id: (frame_id != "main").then(|| format!("target-{frame_id}")),
+                identity: Some(FrameIdentity {
+                    frame_id: frame_id.into(),
+                    loader_id: format!("loader-{frame_id}"),
+                }),
+            },
+        )
+    }
+
+    fn main_scope(backend_node_id: i64) -> SemanticScope {
+        SemanticScope {
+            oopif_target_id: None,
+            backend_node_id,
+        }
+    }
+
+    #[test]
+    fn scoped_container_keeps_same_process_iframe_content() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"},
+                 "name": {"value": "Container"}, "backendDOMNodeId": 101,
+                 "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "Iframe"},
+                 "name": {"value": "Embedded frame"}, "backendDOMNodeId": 102,
+                 "childIds": ["3"]}
+            ]}),
+        );
+        let child = compose_accessibility_tree(
+            &json!({"nodes": [
+                {"nodeId": "3", "parentId": "2", "role": {"value": "RootWebArea"},
+                 "childIds": ["4"]},
+                {"nodeId": "4", "parentId": "3", "role": {"value": "button"},
+                 "name": {"value": "Inner button"}, "backendDOMNodeId": 104}
+            ]}),
+            &DomIndex::default(),
+            &LayoutIndex::default(),
+            &Viewport::default(),
+            FrameRef {
+                kind: FrameKind::Iframe,
+                oopif_target_id: None,
+                identity: Some(FrameIdentity {
+                    frame_id: "inner".into(),
+                    loader_id: "loader-inner".into(),
+                }),
+            },
+        );
+        document.extend(child);
+
+        let scoped = document.page(0, 300, None, Some(&main_scope(101)));
+        assert!(
+            scoped
+                .selected
+                .iter()
+                .any(|node| node.name.as_deref() == Some("Inner button")),
+            "scoped container lost its same-process iframe content"
+        );
+        let queried = document.page(0, 300, Some("Inner button"), Some(&main_scope(101)));
+        assert_eq!(queried.selected_nodes, 1);
+        assert_eq!(
+            queried.outline,
+            "- group \"Container\"\n  - iframe \"Embedded frame\"\n    - button \"Inner button\""
+        );
+    }
+
+    #[test]
+    fn colliding_frame_ids_do_not_cross_scope_or_ancestor_boundaries() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Main group"},
+                 "backendDOMNodeId": 101, "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Main button"}, "backendDOMNodeId": 102}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Child group"},
+                 "backendDOMNodeId": 201, "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Child button"}, "backendDOMNodeId": 202}
+            ]}),
+        ));
+
+        let scoped = document.page(0, 300, None, Some(&main_scope(101)));
+        let mut names: Vec<_> = scoped
+            .selected
+            .iter()
+            .filter_map(|node| node.name.as_deref())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["Main button", "Main group"]);
+        let queried = document.page(0, 300, Some("Main button"), None);
+        assert_eq!(
+            queried.outline,
+            "- group \"Main group\"\n  - button \"Main button\""
+        );
+    }
+
+    #[test]
+    fn scope_root_resolves_in_its_own_target_when_backend_ids_collide() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Main group"},
+                 "backendDOMNodeId": 101, "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Main button"}, "backendDOMNodeId": 102}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "7", "role": {"value": "group"}, "name": {"value": "Child group"},
+                 "backendDOMNodeId": 101, "childIds": ["8"]},
+                {"nodeId": "8", "parentId": "7", "role": {"value": "button"},
+                 "name": {"value": "Child button"}, "backendDOMNodeId": 102}
+            ]}),
+        ));
+
+        let scope = SemanticScope {
+            oopif_target_id: Some("target-child".into()),
+            backend_node_id: 101,
+        };
+        let scoped = document.page(0, 300, None, Some(&scope));
+        let mut names: Vec<_> = scoped
+            .selected
+            .iter()
+            .filter_map(|node| node.name.as_deref())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["Child button", "Child group"]);
+    }
+
+    #[test]
+    fn dangling_parent_does_not_resolve_in_another_frame() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "ignored": true, "role": {"value": "generic"}},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Main button"}}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Unrelated group"}}
+            ]}),
+        ));
+        let page = document.page(0, 300, Some("Main button"), None);
+        assert_eq!(page.outline, "- button \"Main button\"");
+    }
+
+    #[test]
+    fn colliding_frame_parent_ids_cannot_form_an_outline_cycle() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "parentId": "2", "role": {"value": "button"},
+                 "name": {"value": "Main button"}},
+                {"nodeId": "2", "ignored": true}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Child button"}},
+                {"nodeId": "1", "ignored": true}
+            ]}),
+        ));
+        let page = document.page(0, 300, None, None);
+        assert_eq!(
+            page.outline,
+            "- button \"Main button\"\n- button \"Child button\""
+        );
+    }
+
+    #[test]
+    fn outline_parent_walk_stops_at_cycles_within_one_frame() {
+        for (parents, expected) in [
+            (["1", "1"], "- button \"First\"\n  - button \"Second\""),
+            (["2", "1"], "  - button \"First\"\n  - button \"Second\""),
+        ] {
+            let document = document_in_frame(
+                "main",
+                json!({"nodes": [
+                    {"nodeId": "1", "parentId": parents[0], "role": {"value": "button"},
+                     "name": {"value": "First"}},
+                    {"nodeId": "2", "parentId": parents[1], "role": {"value": "button"},
+                     "name": {"value": "Second"}}
+                ]}),
+            );
+            let page = document.page(0, 300, None, None);
+            assert_eq!(page.selected_nodes, 2);
+            assert_eq!(page.outline, expected);
+        }
+    }
+
+    #[test]
+    fn not_rendered_count_propagates_through_extend_and_page() {
+        let mut document = SemanticDocument {
+            not_rendered_count: 1,
+            ..Default::default()
+        };
+        document.extend(SemanticDocument {
+            complete: true,
+            ..Default::default()
+        });
+        assert_eq!(document.page(0, 300, None, None).omissions.not_rendered, 1);
     }
 
     #[test]
@@ -1224,6 +1495,90 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(actionable.len(), 1);
         assert_eq!(actionable[0].name.as_deref(), Some("Reply"));
+    }
+
+    #[test]
+    fn inline_style_hides_only_on_exact_hiding_declarations() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "children": [
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 1,
+                 "attributes": ["style", "opacity: 0.98; transition: opacity 0.2s"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 2,
+                 "attributes": ["style", "--overlay-display:none;opacity:0.5"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 3,
+                 "attributes": ["style", "color: red; display: none !important"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 4,
+                 "attributes": ["style", "OPACITY:0"]}
+            ]
+        }));
+        let hidden = |backend| dom.nodes[&backend].css_hidden;
+        assert!(!hidden(1));
+        assert!(!hidden(2));
+        assert!(hidden(3));
+        assert!(hidden(4));
+        assert_eq!(dom.css_hidden_count, 2);
+    }
+
+    #[test]
+    fn rendered_layout_overrides_inherited_static_hiding() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "frameId": "F_MAIN",
+            "children": [
+                {"nodeType": 1, "nodeName": "FORM", "backendNodeId": 1,
+                 "attributes": ["style", "visibility: hidden"],
+                 "children": [
+                    {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 2,
+                     "attributes": ["aria-label", "Business name",
+                                    "style", "visibility: visible"]},
+                    {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 3,
+                     "attributes": ["aria-label", "Unrendered"]}
+                 ]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 4,
+                 "attributes": ["style", "opacity: 0"],
+                 "children": [
+                    {"nodeType": 1, "nodeName": "SPAN", "children": [
+                        {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 5,
+                         "attributes": ["aria-label", "Transparent"]}
+                    ]}
+                 ]}
+            ]
+        }));
+        let layout = build_layout_index(&json!({
+            "strings": ["block", "visible", "1", "auto"],
+            "documents": [{
+                "nodes": {"backendNodeId": [2, 5]},
+                "layout": {
+                    "nodeIndex": [0, 1],
+                    "bounds": [[10, 10, 200, 30], [10, 50, 200, 30]],
+                    "styles": [[0, 1, 2, 3, 3, 3, 3], [0, 1, 2, 3, 3, 3, 3]],
+                    "paintOrders": [1, 2]
+                }
+            }]
+        }));
+        let viewport = parse_viewport(&json!({
+            "cssVisualViewport": {"pageX": 0.0, "pageY": 0.0,
+                                  "clientWidth": 800.0, "clientHeight": 600.0}
+        }));
+        let document = compose_accessibility_tree(
+            &json!({"nodes": [{"nodeId": "root", "ignored": false,
+                "role": {"value": "RootWebArea"}, "childIds": []}]}),
+            &dom,
+            &layout,
+            &viewport,
+            frame(),
+        );
+        let page = document.page(0, 300, None, None);
+        let names = page
+            .selected
+            .iter()
+            .filter_map(|node| Some((node.name.as_deref()?, node.visibility)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![("Business name", BrowserVisibility::InViewport)]
+        );
     }
 
     #[test]

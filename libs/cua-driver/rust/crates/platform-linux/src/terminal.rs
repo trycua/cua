@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Terminal-emulator detection for the Linux `type_text` path.
 //!
 //! Linux already routes terminal typing through pty injection
@@ -50,7 +53,7 @@ pub const TERMINAL_PROCESS_NAMES: &[&str] = &[
 /// Returns `true` if `process_name` is a known terminal emulator
 /// binary name.
 pub fn is_terminal_process_name(process_name: &str) -> bool {
-    TERMINAL_PROCESS_NAMES.iter().any(|n| *n == process_name)
+    TERMINAL_PROCESS_NAMES.contains(&process_name)
 }
 
 /// Returns `true` if either the instance or class field of `WM_CLASS`

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows `health_report` provider.
 //!
 //! Implements [`cua_driver_core::health_report::HealthCheckProvider`]
@@ -178,7 +181,10 @@ fn probe_d3d11_device() -> Result<(), String> {
 fn ver_string() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt as _;
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
         let output = std::process::Command::new("cmd")
+            .creation_flags(CREATE_NO_WINDOW.0)
             .args(["/c", "ver"])
             .output()
             .ok()?;
@@ -210,7 +216,7 @@ fn arch_label() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
+    use cua_driver_core::health_report::HealthReportTool;
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
 

@@ -1,0 +1,17 @@
+{
+  "name": "cua-streaming-example-node",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The shared streaming scenario (examples/streaming/SCENARIO.md) on @trycua/cua for Node",
+  "type": "module",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "start": "node main.ts",
+    "check": "node --check pixels.ts && node --test pixels.test.ts"
+  },
+  "dependencies": {
+    "@trycua/cua": "file:../../../libs/cua/typescript"
+  }
+}

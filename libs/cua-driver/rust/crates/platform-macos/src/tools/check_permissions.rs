@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -9,8 +12,7 @@ use std::{future::Future, path::Path, sync::Arc, time::Duration};
 use super::ToolState;
 use crate::permission_observation::{DirectCaptureEvidenceStore, DirectCaptureVerification};
 use crate::permissions::status::{
-    accessibility_granted, request_accessibility, request_screen_recording,
-    screen_recording_granted,
+    accessibility_granted, current_status, request_next_missing, screen_recording_granted,
 };
 
 /// Private argv sentinel shared by the trusted CLI launcher and the public
@@ -27,14 +29,18 @@ impl CheckPermissionsTool {
     }
 }
 
-/// LaunchServices-hosted permission setup entrypoint. This is deliberately
+/// LaunchServices-hosted permission entrypoint. This is deliberately
 /// not registered as an agent tool or exposed on the daemon socket: the
-/// standalone `permissions grant` command launches the app bundle and macOS
-/// owns the actual approval UI.
-pub async fn request_from_launchservices_host(probe_direct_capture: bool) -> ToolResult {
+/// standalone `permissions grant` / `permissions status` commands launch the
+/// app bundle so the answer (and any macOS prompt) belongs to the app, and
+/// macOS owns the actual approval UI. `prompt: false` only reads.
+pub async fn request_from_launchservices_host(
+    prompt: bool,
+    probe_direct_capture: bool,
+) -> ToolResult {
     let tool = CheckPermissionsTool::new(Arc::new(ToolState::new(false, false, None)));
     tool.invoke(serde_json::json!({
-        "prompt": true,
+        "prompt": prompt,
         "probe_direct_capture": probe_direct_capture,
     }))
     .await
@@ -85,6 +91,51 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
     direct_capture_evidence_store_for_identity(&current_executable(), Path::new(&home), attribution)
 }
 
+unsafe extern "C" {
+    fn responsibility_get_pid_responsible_for_pid(pid: libc::pid_t) -> libc::pid_t;
+}
+
+/// Whether macOS attributes this process's TCC checks to itself. A driver
+/// reparented to launchd after its launcher exits still answers to that
+/// launcher's host, so the parent pid alone does not prove it.
+fn is_own_responsible_process() -> bool {
+    let pid = unsafe { libc::getpid() };
+    unsafe { responsibility_get_pid_responsible_for_pid(pid) == pid }
+}
+
+/// Whether a successful probe from this process raised the direct-capture
+/// consent alert for its own bundle rather than for the app it answers to.
+fn probe_raised_own_consent_alert() -> bool {
+    crate::capture_consent::macos_has_direct_capture_consent() && is_own_responsible_process()
+}
+
+/// The grant evidence that stands for consent to capture as this process: the
+/// driver daemon's own record, and only while macOS confirms the daemon is
+/// responsible for itself. Anything else would raise its alert for another app.
+pub(crate) fn consent_evidence_store_for_identity(
+    executable: &str,
+    home: &Path,
+    attribution: Option<&str>,
+    own_responsible: bool,
+) -> Option<DirectCaptureEvidenceStore> {
+    if !own_responsible {
+        return None;
+    }
+    direct_capture_evidence_store_for_identity(executable, home, attribution)
+}
+
+/// [`consent_evidence_store_for_identity`] for the running process.
+pub(crate) fn driver_daemon_direct_capture_evidence_store() -> Option<DirectCaptureEvidenceStore> {
+    let home = std::env::var_os("HOME")?;
+    let source = permission_source(false, None);
+    consent_evidence_store_for_identity(
+        &current_executable(),
+        Path::new(&home),
+        source.get("attribution").and_then(Value::as_str),
+        is_own_responsible_process(),
+    )
+}
+
 /// (A) Real ScreenCaptureKit capability probe — what THIS process can
 /// actually capture right now, independent of the CGPreflight cache.
 ///
@@ -94,11 +145,17 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
 /// documents. `SCShareableContent::get()` does a live query: it only
 /// returns displays when the answering process can genuinely capture. When
 /// it disagrees with the preflight boolean, the preflight one is lying.
+///
+/// Listing content alone does not make macOS ask for its direct-capture
+/// consent (measured on macOS 26.5), so the probe also takes one tiny frame:
+/// the consent then appears during this explicit grant, not over the user's
+/// window during later background work (CUA-1792).
 fn screen_recording_capturable() -> bool {
     use screencapturekit::prelude::SCShareableContent;
-    SCShareableContent::get()
+    let listed = SCShareableContent::get()
         .map(|c| !c.displays().is_empty())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    listed && crate::capture::capture_probe_frame()
 }
 
 const DIRECT_CAPTURE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -174,6 +231,7 @@ fn should_prompt_permissions(requested: bool, host_owns_permission_ux: bool) -> 
 fn resolve_direct_capture_verification(
     store: Option<&DirectCaptureEvidenceStore>,
     probe: Option<DirectCaptureProbeResult>,
+    consent_alert_raised: bool,
 ) -> Result<Option<DirectCaptureVerification>, Value> {
     match probe {
         None => Ok(store.and_then(DirectCaptureEvidenceStore::load)),
@@ -184,18 +242,23 @@ fn resolve_direct_capture_verification(
                     "message": "the installed product identity or user home directory is unavailable",
                 }));
             };
-            store.record_now().map(Some).map_err(|error| {
-                let message = match store.clear() {
-                    Ok(()) => error,
-                    Err(clear_error) => {
-                        format!("{error}; clear prior direct-capture verification: {clear_error}")
-                    }
-                };
-                serde_json::json!({
-                    "code": "direct_capture_verification_store_failed",
-                    "message": message,
+            store
+                .record_now(consent_alert_raised)
+                .map(Some)
+                .map_err(|error| {
+                    let message = match store.clear() {
+                        Ok(()) => error,
+                        Err(clear_error) => {
+                            format!(
+                                "{error}; clear prior direct-capture verification: {clear_error}"
+                            )
+                        }
+                    };
+                    serde_json::json!({
+                        "code": "direct_capture_verification_store_failed",
+                        "message": message,
+                    })
                 })
-            })
         }
         Some(_) => {
             let Some(store) = store else {
@@ -211,15 +274,83 @@ fn resolve_direct_capture_verification(
     }
 }
 
+/// The process macOS charges this process's TCC requests to, or `None` when
+/// the kernel does not say.
+fn responsible_pid() -> Option<libc::pid_t> {
+    let pid = unsafe { responsibility_get_pid_responsible_for_pid(libc::getpid()) };
+    (pid > 0).then_some(pid)
+}
+
+fn executable_for_pid(pid: libc::pid_t) -> Option<String> {
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let len = unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if len <= 0 {
+        return None;
+    }
+    buffer.truncate(len as usize);
+    String::from_utf8(buffer).ok()
+}
+
+/// Whose TCC grants this process uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TccIdentity {
+    /// Its own responsible process, running from a CuaDriver app bundle.
+    DriverDaemon(&'static str),
+    /// Its own responsible process, running outside any CuaDriver bundle.
+    OwnExecutable,
+    /// macOS charges another process: the app that started this one.
+    ResponsibleApp(libc::pid_t),
+    /// macOS did not report the responsible process.
+    Unknown,
+}
+
+/// The parent pid says nothing here: a daemon whose launching shell exited is
+/// reparented to launchd (ppid 1) yet stays charged to the app that started it.
+fn tcc_identity(
+    driver_bundle_id: Option<&'static str>,
+    pid: libc::pid_t,
+    responsible_pid: Option<libc::pid_t>,
+) -> TccIdentity {
+    match (responsible_pid, driver_bundle_id) {
+        (None, _) => TccIdentity::Unknown,
+        (Some(responsible), _) if responsible != pid => TccIdentity::ResponsibleApp(responsible),
+        (Some(_), Some(bundle_id)) => TccIdentity::DriverDaemon(bundle_id),
+        (Some(_), None) => TccIdentity::OwnExecutable,
+    }
+}
+
+fn caller_note(identity: TccIdentity, responsible_label: &str, exe: &str) -> String {
+    match identity {
+        TccIdentity::ResponsibleApp(_) => format!(
+            "These booleans reflect the TCC grants of {responsible_label}, the app macOS holds \
+             responsible for this process because it started it, NOT an installed CuaDriver \
+             app bundle. Tool calls on this daemon use these grants. To use CuaDriver's own \
+             grants instead, run `cua-driver stop`, then `cua-driver permissions grant`."
+        ),
+        TccIdentity::OwnExecutable => format!(
+            "These booleans reflect the TCC grants of this executable ({exe}), NOT an \
+             installed CuaDriver app bundle. To grant for the driver, run \
+             `cua-driver permissions grant`."
+        ),
+        TccIdentity::Unknown | TccIdentity::DriverDaemon(_) => {
+            "macOS did not report which process is responsible for this one, so these \
+             booleans may belong to the app that launched it (e.g. your terminal/IDE), NOT \
+             an installed CuaDriver app bundle. To grant for the driver, run \
+             `cua-driver permissions grant`."
+                .to_owned()
+        }
+    }
+}
+
 /// (B) Which TCC identity the booleans in this response reflect.
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
-/// process* (the LaunchServices launching app), not the executable path.
-/// So `check_permissions` answered by the daemon reflects:
+/// process*, not the executable path. The kernel names it, so the answer
+/// reflects:
 ///   - the **CuaDriver daemon** (`com.trycua.driver`) when this process is
-///     its own responsible process — the real driver status.
-///   - the **embedding host** otherwise. That is intentional only when the
-///     host directly spawned `cua-driver serve --embedded`.
+///     its own responsible process and runs from the app bundle.
+///   - the **app that started it** when another process is responsible:
+///     an embedding host, or a caller whose process tree spawned the daemon.
 fn permission_source(
     host_owns_permission_ux: bool,
     configured_host_bundle_id: Option<&str>,
@@ -228,6 +359,10 @@ fn permission_source(
     let ppid = unsafe { libc::getppid() };
     let exe = current_executable();
     let disclaimed = std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
+    let responsible = responsible_pid();
+    let responsible_executable = responsible.and_then(executable_for_pid);
+    let responsible_bundle_id = responsible
+        .and_then(|pid| super::health_report::application_bundle_identifier_for_pid(pid as u32));
     // Embedded mode: the driver is a child in a host app's responsibility
     // chain, so the probes already answer for the host's TCC identity.
     // This branch only ever downgrades attribution (host, never
@@ -244,7 +379,10 @@ fn permission_source(
             "embedded": cua_driver_core::embedded_mode(),
             "direct_runtime": host_owns_permission_ux && !cua_driver_core::embedded_mode(),
             "pid": pid,
-            "responsible_ppid": ppid,
+            "parent_pid": ppid,
+            "responsible_pid": responsible,
+            "responsible_executable": responsible_executable,
+            "responsible_bundle_id": responsible_bundle_id,
             "executable": exe,
             "disclaim_env": disclaimed,
             "note": "Embedded mode: these booleans reflect the HOST app's TCC \
@@ -254,43 +392,37 @@ fn permission_source(
                      the driver never raises its own prompt.",
         });
     }
-    // The trustworthy, non-spoofable signal is the executable path: a caller
-    // can't run from inside the code-signed `CuaDriver.app` bundle without
-    // controlling that install. The disclaim env var is caller-controlled, so
-    // it is treated only as a corroborating signal that explains why a
-    // bundle-resident daemon has `ppid != 1` (it re-exec'd itself with
-    // responsibility disclaim, so launchd is no longer its parent). On its own
-    // — outside the bundle — the env var must NOT grant daemon attribution, or
-    // a caller could pre-set it and spoof the TCC source. Fail closed to
-    // "caller" whenever the bundle signal is absent.
+    // Daemon attribution needs both non-spoofable signals: the kernel names
+    // this process as its own responsible process, and it runs from inside
+    // the code-signed `CuaDriver.app` bundle. Fail closed to "caller" when
+    // either is missing.
     let driver_bundle_id = driver_bundle_id_for_executable(&exe);
-    let is_driver_daemon = driver_bundle_id.is_some() && (ppid == 1 || disclaimed);
+    let identity = tcc_identity(driver_bundle_id, pid, responsible);
 
-    let (attribution, note) = if is_driver_daemon {
-        (
+    let (attribution, note) = match identity {
+        TccIdentity::DriverDaemon(bundle_id) => (
             "driver-daemon",
             format!(
                 "These booleans reflect the CuaDriver daemon's own TCC identity \
-                 ({}) because this process is its own responsible process.",
-                driver_bundle_id.expect("driver daemon must have a bundle id")
+                 ({bundle_id}) because this process is its own responsible process."
             ),
-        )
-    } else {
-        (
-            "caller",
-            "These booleans reflect the TCC identity of the app that launched \
-             this process (e.g. your terminal/IDE), NOT an installed CuaDriver \
-             app bundle. A standalone check can read `true` here while the \
-             driver's bundle has no grant. To grant for the driver, run \
-             `cua-driver permissions grant`."
-                .to_owned(),
-        )
+        ),
+        other => {
+            let responsible_label = responsible_bundle_id
+                .clone()
+                .or_else(|| responsible_executable.clone())
+                .unwrap_or_else(|| "the app that started it".to_owned());
+            ("caller", caller_note(other, &responsible_label, &exe))
+        }
     };
 
     serde_json::json!({
         "attribution": attribution,
         "pid": pid,
-        "responsible_ppid": ppid,
+        "parent_pid": ppid,
+        "responsible_pid": responsible,
+        "responsible_executable": responsible_executable,
+        "responsible_bundle_id": responsible_bundle_id,
         "executable": exe,
         "disclaim_env": disclaimed,
         "bundle_id": driver_bundle_id,
@@ -383,15 +515,18 @@ impl Tool for CheckPermissionsTool {
         );
         let probe_direct_capture = args.bool_or("probe_direct_capture", true);
         if should_prompt {
-            let _ = request_accessibility();
-            let _ = request_screen_recording();
+            // One permission per call, Accessibility first. Asking for both
+            // at once made macOS drop the Screen Recording prompt, leaving
+            // Cua Driver out of that list. Callers ask again once
+            // Accessibility is on.
+            let _ = request_next_missing(current_status());
         }
         let accessibility = accessibility_granted();
         let screen_recording = screen_recording_granted();
         // (A) Authoritative live probe — see `screen_recording_capturable`.
-        // SCShareableContent::get() can itself raise Tahoe's separate
-        // private-window-picker bypass consent. A status/read-only call must
-        // therefore never execute it. The explicit grant path opts in with
+        // The probe's capture raises Tahoe's separate private-window-picker
+        // bypass consent. A status/read-only call must therefore never
+        // execute it. The explicit grant path opts in with
         // `prompt:true`, explains the dialog first, and verifies the result.
         let direct_capture_probe =
             if should_probe_direct_capture(should_prompt, screen_recording, probe_direct_capture) {
@@ -416,8 +551,11 @@ impl Tool for CheckPermissionsTool {
         );
         let evidence_store = current_direct_capture_evidence_store(&source);
         let (direct_capture_verification, direct_capture_verification_error) =
-            match resolve_direct_capture_verification(evidence_store.as_ref(), direct_capture_probe)
-            {
+            match resolve_direct_capture_verification(
+                evidence_store.as_ref(),
+                direct_capture_probe,
+                probe_raised_own_consent_alert(),
+            ) {
                 Ok(verification) => (verification, None),
                 Err(error) => (None, Some(error)),
             };
@@ -567,7 +705,9 @@ mod tests {
         )
         .expect("local store");
 
-        release.record_now().expect("record release verification");
+        release
+            .record_now(true)
+            .expect("record release verification");
         assert!(release.load().is_some());
         assert!(local.load().is_none());
         assert!(direct_capture_evidence_store_for_identity(
@@ -595,24 +735,38 @@ mod tests {
 
         assert!(resolve_direct_capture_verification(
             Some(&store),
-            Some(DirectCaptureProbeResult::Ready)
+            Some(DirectCaptureProbeResult::Ready),
+            true,
         )
         .expect("record evidence")
         .is_some());
-        assert!(resolve_direct_capture_verification(Some(&store), None)
-            .expect("load evidence")
-            .is_some());
+        assert!(store.records_consent_alert());
+        assert!(
+            resolve_direct_capture_verification(Some(&store), None, false)
+                .expect("load evidence")
+                .is_some()
+        );
+        assert!(store.records_consent_alert());
+        assert!(resolve_direct_capture_verification(
+            Some(&store),
+            Some(DirectCaptureProbeResult::Ready),
+            false,
+        )
+        .expect("record evidence")
+        .is_some());
+        assert!(!store.records_consent_alert());
         assert_eq!(
             resolve_direct_capture_verification(
                 Some(&store),
-                Some(DirectCaptureProbeResult::Unavailable)
+                Some(DirectCaptureProbeResult::Unavailable),
+                true,
             )
             .expect("clear evidence"),
             None
         );
         assert!(store.load().is_none());
         assert_eq!(
-            resolve_direct_capture_verification(None, Some(DirectCaptureProbeResult::Ready))
+            resolve_direct_capture_verification(None, Some(DirectCaptureProbeResult::Ready), true)
                 .expect_err("missing-store error")["code"],
             "direct_capture_verification_store_unavailable"
         );
@@ -626,7 +780,7 @@ mod tests {
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
         let store = release_evidence_store(&home);
-        store.record_now().expect("record prior evidence");
+        store.record_now(true).expect("record prior evidence");
         let state_directory = home.join(".cua-driver");
         std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o500))
             .expect("make evidence directory read-only");
@@ -634,6 +788,7 @@ mod tests {
         let result = resolve_direct_capture_verification(
             Some(&store),
             Some(DirectCaptureProbeResult::Ready),
+            true,
         );
 
         std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o700))
@@ -735,6 +890,54 @@ mod tests {
 
         assert_eq!(ready, DirectCaptureProbeResult::Ready);
         assert_eq!(unavailable, DirectCaptureProbeResult::Unavailable);
+    }
+
+    /// #4802: a host shell that starts the bundle daemon and exits leaves it
+    /// with ppid 1, but macOS still charges it to the host app.
+    #[test]
+    fn only_its_own_responsible_process_is_the_driver_daemon() {
+        let bundle = Some("com.trycua.driver");
+        assert_eq!(
+            tcc_identity(bundle, 500, Some(500)),
+            TccIdentity::DriverDaemon("com.trycua.driver")
+        );
+        assert_eq!(
+            tcc_identity(bundle, 500, Some(42)),
+            TccIdentity::ResponsibleApp(42)
+        );
+        assert_eq!(tcc_identity(bundle, 500, None), TccIdentity::Unknown);
+        assert_eq!(
+            tcc_identity(None, 500, Some(500)),
+            TccIdentity::OwnExecutable
+        );
+        assert_eq!(
+            tcc_identity(None, 500, Some(42)),
+            TccIdentity::ResponsibleApp(42)
+        );
+    }
+
+    #[test]
+    fn caller_note_names_the_app_whose_grants_apply() {
+        let note = caller_note(
+            TccIdentity::ResponsibleApp(42),
+            "com.example.host",
+            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+        );
+        assert!(note.contains("com.example.host"), "{note}");
+        assert!(note.contains("cua-driver stop"), "{note}");
+        let note = caller_note(TccIdentity::OwnExecutable, "", "/usr/local/bin/cua-driver");
+        assert!(note.contains("/usr/local/bin/cua-driver"), "{note}");
+    }
+
+    #[test]
+    fn the_kernel_reports_this_process_and_its_executable() {
+        let pid = unsafe { libc::getpid() };
+        assert!(responsible_pid().is_some());
+        let exe = executable_for_pid(pid).expect("own executable");
+        assert_eq!(
+            std::fs::canonicalize(exe).unwrap(),
+            std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap()
+        );
     }
 
     #[test]

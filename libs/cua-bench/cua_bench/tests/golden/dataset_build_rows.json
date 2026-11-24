@@ -1,0 +1,20 @@
+{
+  "aguvis-stage-1": {
+    "annotated_images": "list",
+    "images": "list",
+    "source": "str",
+    "texts": "list"
+  },
+  "gui-r1": {
+    "annotated_images": "list",
+    "gt_action": "str",
+    "gt_bbox": "list",
+    "gt_input_text": "str",
+    "history": "str",
+    "images": "list",
+    "instruction": "str",
+    "os_type": "str",
+    "resolution": "str",
+    "task_type": "str"
+  }
+}

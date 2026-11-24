@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Regression guard for the UIA element-cache use-after-free fixed in
 //! d95b89a1 (retain-under-lock / `RetainedElement`).
 //!
@@ -8,10 +11,10 @@
 //!     every cached `IUIAutomationElement`.
 //!   - Session B: `click` / `type_text` / `set_value` looked the element up out
 //!     of the cache and is mid-action, dereferencing the same COM pointer.
-//!   A bare pointer copy with no AddRef could be `Release`d to zero by A
-//!   between the lookup and the dereference → use-after-free → daemon crash.
-//!   This is the Windows analogue of the macOS #1796
-//!   `AXUIElementCopyActionNames` fault.
+//!     A bare pointer copy with no AddRef could be `Release`d to zero by A
+//!     between the lookup and the dereference → use-after-free → daemon crash.
+//!     This is the Windows analogue of the macOS #1796
+//!     `AXUIElementCopyActionNames` fault.
 //!
 //! HOW WE REPRODUCE IT DETERMINISTICALLY WITHOUT A GUI:
 //!   The cache only ever calls IUnknown vtable slots on the cached pointers
@@ -114,6 +117,7 @@ fn snapshot_with(ptrs: Vec<usize>) -> UiaSnapshot {
                 center: (0, 0),
                 rect: None,
                 msaa_role: None,
+                read_while_minimized: false,
             })
             .collect(),
     }
@@ -254,6 +258,7 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
     payload.elements[0].center = (31, 47);
     payload.elements[0].rect = Some((11, 27, 51, 67));
     payload.elements[0].msaa_role = Some(0x38);
+    let payload = payload.with_read_while_minimized(true);
     let first = cache.publish(PID as i32, HWND, payload);
     let guard = acquire(&cache, first, 0).unwrap();
     let second = cache.publish(PID as i32, HWND, snapshot_with(vec![make_fake(hits)]));
@@ -265,8 +270,12 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
     assert_eq!(guard.msaa_role, Some(0x38));
     assert!(guard.focus_element().is_err());
     assert_eq!(guard.element_has_keyboard_focus(), None);
-    assert_eq!(acquire(&cache, second, 0).unwrap().center, (0, 0));
+    assert!(guard.read_while_minimized);
+    let replacement = acquire(&cache, second, 0).unwrap();
+    assert_eq!(replacement.center, (0, 0));
+    assert!(!replacement.read_while_minimized);
     let cloned = guard.clone();
+    assert!(cloned.read_while_minimized);
     drop(guard);
     unsafe { touch_vtable(cloned.as_ptr()) };
     drop(cloned);
@@ -295,7 +304,7 @@ fn eviction_remove_and_clear_release_payload_but_not_acquired_guard() {
     unsafe { touch_vtable(guard.as_ptr()) };
     let removed_ptr = make_fake(hits);
     let removed = cache.publish(PID as i32, HWND, snapshot_with(vec![removed_ptr]));
-    cache.remove(PID as i32, HWND);
+    cache.remove(PID as i32, HWND, None);
     assert!(acquire(&cache, removed, 0).is_none());
     assert_eq!(
         unsafe {
@@ -452,5 +461,54 @@ fn unpublished_payload_releases_its_walker_retain() {
         unsafe { (*(ptr as *const FakeObj)).refcount.load(Ordering::SeqCst) },
         0
     );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+fn walker_node(element_index: Option<usize>, element_ptr: usize) -> crate::uia::UiaNode {
+    crate::uia::UiaNode {
+        element_index,
+        control_type: "Text".to_owned(),
+        name: Some("row".to_owned()),
+        value: None,
+        automation_id: None,
+        help_text: None,
+        actions: Vec::new(),
+        enabled: Some(true),
+        selected: None,
+        is_password: None,
+        element_ptr,
+        center_x: 0,
+        center_y: 0,
+        rect: None,
+        msaa_role: None,
+        depth: 0,
+        parent_element_index: None,
+        in_web_content: false,
+    }
+}
+
+fn refcount(ptr: usize) -> isize {
+    unsafe { (*(ptr as *const FakeObj)).refcount.load(Ordering::SeqCst) }
+}
+
+/// #6867: content-only rows carry a walker reference too. The snapshot
+/// hand-off must release those, and keep exactly one reference per indexed
+/// element until the snapshot drops.
+#[test]
+fn snapshot_handoff_releases_content_only_walker_references() {
+    let hits = Box::leak(Box::new(AtomicUsize::new(0)));
+    let indexed = make_fake(hits);
+    let content = make_fake(hits);
+    let mut nodes = vec![walker_node(Some(0), indexed), walker_node(None, content)];
+
+    let snapshot = UiaSnapshot::from_nodes(&mut nodes, SnapshotKind::Uia);
+
+    assert!(nodes.iter().all(|node| node.element_ptr == 0));
+    assert_eq!(refcount(content), 0);
+    assert_eq!(refcount(indexed), 1);
+    assert_eq!(snapshot.elements.len(), 1);
+    assert_eq!(snapshot.elements[0].as_ptr(), indexed);
+    drop(snapshot);
+    assert_eq!(refcount(indexed), 0);
     assert_eq!(hits.load(Ordering::SeqCst), 0);
 }

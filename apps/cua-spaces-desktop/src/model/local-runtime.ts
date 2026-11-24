@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+/** Why New Space cannot run anything on this machine, in the words of its OS. */
+
+/**
+ * The line New Space shows when no local runtime is ready. `containerDetail`
+ * is the runtime doctor's detail for the container engine, when it gave one
+ * (for example "container engine at npipe://... is not running").
+ */
+export function noLocalRuntimeReason(platform: string, containerDetail?: string, managedDetail?: string): string {
+  if (platform === "darwin") return "No local runtime found (Docker or Lume).";
+  // Windows: Cua Spaces runs its own container engine in WSL 2. When it cannot, its
+  // detail says what to turn on (WSL 2, Virtual Machine Platform, virtualization).
+  if (platform === "win32" && managedDetail && /wsl|virtual|not enough disk space/i.test(managedDetail)) return managedDetail;
+  const detail = (containerDetail ?? "").toLowerCase();
+  const installedButStopped = /not running|did not answer|not listening|start |socket not found|pipe\/dockerdesktop/.test(detail);
+  if (platform === "win32") {
+    // Cua Spaces manages its own runtime; the person never has to install Docker.
+    return "Local Spaces run on Windows' built-in Linux support (WSL 2), which isn't set up on this PC yet. You can also choose your own engine in Settings, Runtimes.";
+  }
+  if (/permission denied/.test(detail)) {
+    return "Docker is installed, but your account isn't allowed to use it yet. Run `sudo usermod -aG docker $USER` in a terminal, then reopen Cua Spaces.";
+  }
+  if (installedButStopped) return "Docker isn't running. Start it (for example `sudo systemctl start docker`), then try again.";
+  return "No local runtime found. Install Docker Engine or Podman and start it, then try again.";
+}

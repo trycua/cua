@@ -40,11 +40,11 @@ pdf = [
     "pdfplumber>=0.11,<1",
 ]
 mcp = [
-    "mcp>=1,<2",
+    "mcp>=1.30.0,<2",
 ]
 nano-vision = [
-    "transformers>=4.45,<5",
-    "pillow>=10,<12",
+    "transformers>=5.10.1,<6",
+    "pillow>=13.0.0,<14",
 ]
 four-b = [
     "transformers>=5.10.1,<6",
@@ -52,19 +52,19 @@ four-b = [
     "torchvision>=0.17,<1",
 ]
 four-b-train = [
-    "transformers>=4.45,<5",
+    "transformers>=5.10.1,<6",
     "peft>=0.13,<1",
     "accelerate>=0.34,<2",
     "torchvision>=0.17,<1",
     "cua-bench-s1",
 ]
 four-b-rl = [
-    "transformers>=4.45,<5",
+    "transformers>=5.10.1,<6",
     "peft>=0.13,<1",
     "accelerate>=0.34,<2",
     # The RL trainer renders its own set-of-mark screenshots (multimodal mode)
     # and decodes them for the processor.
-    "pillow>=10,<12",
+    "pillow>=13.0.0,<14",
     "cua-bench-s1",
     # The live environment itself (the `cua_bench` package) is deliberately not
     # declared here: it is the monorepo's own `libs/cua-bench`, imported lazily
@@ -72,10 +72,10 @@ four-b-rl = [
     # without it.
 ]
 all = [
-    "mcp>=1,<2",
+    "mcp>=1.30.0,<2",
     "pdfplumber>=0.11,<1",
-    "transformers>=4.45,<5",
-    "pillow>=10,<12",
+    "transformers>=5.10.1,<6",
+    "pillow>=13.0.0,<14",
     "peft>=0.13,<1",
 ]
 training = [
@@ -84,14 +84,6 @@ training = [
 
 [tool.uv.sources]
 cua-bench-s1 = { path = "../../cua-bench-s1/python", editable = true }
-
-[tool.uv]
-conflicts = [
-    [{ extra = "four-b" }, { extra = "nano-vision" }],
-    [{ extra = "four-b" }, { extra = "four-b-train" }],
-    [{ extra = "four-b" }, { extra = "four-b-rl" }],
-    [{ extra = "four-b" }, { extra = "all" }],
-]
 
 [project.scripts]
 cua-s1-mcp = "cua_s1.server:main"

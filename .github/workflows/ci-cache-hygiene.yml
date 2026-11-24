@@ -1,0 +1,59 @@
+name: "CI: Cache hygiene"
+
+# The Actions cache budget belongs to main's Rust and nix caches. When it fills,
+# GitHub evicts the least recently used entries, which are main's big
+# dependency caches, and every pull request then compiles from scratch.
+# This workflow removes what nothing can use (see .github/scripts/cache_hygiene.py):
+# caches of closed pull requests (at once, on close), of old tags and branches,
+# and the superseded days of main's sccache families (daily).
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print what would be deleted"
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: cache-hygiene-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune caches
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # The script comes from main; nothing from the pull request is executed.
+      # Plain pull_request (no pull_request_target, which GitHub blocks): a
+      # same-repo pull request gets the actions: write token declared above.
+      # A fork pull request gets a read-only token, so its delete step is
+      # skipped and the daily sweep removes its caches instead.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          sparse-checkout: .github/scripts/cache_hygiene.py
+          sparse-checkout-cone-mode: false
+      - name: Delete the caches of the closed pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 .github/scripts/cache_hygiene.py --only-pr "$PR"
+      - name: Sweep
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}
+        run: python3 .github/scripts/cache_hygiene.py $DRY

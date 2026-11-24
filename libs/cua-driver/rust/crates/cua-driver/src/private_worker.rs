@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Hidden process-isolated SDK runtime entry point.
 //!
 //! This is intentionally not a CLI product surface. A trusted SDK host starts
@@ -160,7 +163,7 @@ async fn run_async(
     )?;
 
     let mut sessions: HashMap<String, Arc<CuaDriverSession>> = HashMap::new();
-    while let Some(line) = lines.next() {
+    for line in lines {
         let line = match line {
             Ok(line) => line,
             Err(_) => break,

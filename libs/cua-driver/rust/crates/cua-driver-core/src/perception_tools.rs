@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Common `parse_visual_regions` tool implementation.
 
 use std::sync::Arc;
@@ -77,7 +80,7 @@ impl Tool for ParseVisualRegionsTool {
         &self,
         _adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         let binding = (self.resolve_binding)(args).map_err(|error| error.message)?;
         let capture_id = args
             .get("capture_id")
@@ -562,7 +565,9 @@ mod tests {
         ScreenshotToActionTransform,
     };
     use crate::image_utils::encode_rgba_to_png;
-    use crate::perception_client::{PerceptionClient, PerceptionClientResolver};
+    use crate::perception_client::{
+        PerceptionClient, PerceptionClientResolver, ResolutionDeferred,
+    };
     use sha2::Digest as _;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -768,15 +773,15 @@ mod tests {
             format!("{:?}", self.installed.lock().unwrap())
         }
 
-        fn resolve(&self) -> PerceptionClient {
+        fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred> {
             self.resolutions.fetch_add(1, Ordering::SeqCst);
-            match self.installed.lock().unwrap().as_deref() {
+            Ok(match self.installed.lock().unwrap().as_deref() {
                 Some(executable) => PerceptionClient::new(
                     crate::perception_client::PerceptionWorkerConfig::new(executable),
                 )
                 .unwrap(),
                 None => PerceptionClient::unavailable(),
-            }
+            })
         }
     }
 
@@ -829,8 +834,10 @@ mod tests {
     #[tokio::test]
     async fn expired_capture_fails_at_the_tool_boundary_before_worker_launch() {
         let clock = Arc::new(ManualClock::default());
-        let mut config = CaptureRegistryConfig::default();
-        config.ttl = Duration::from_millis(10);
+        let config = CaptureRegistryConfig {
+            ttl: Duration::from_millis(10),
+            ..CaptureRegistryConfig::default()
+        };
         let service = Arc::new(CaptureService::with_clock(config, clock.clone()).unwrap());
         let (capture_id, binding) = capture(&service);
         clock.0.store(10, Ordering::SeqCst);
@@ -1094,7 +1101,7 @@ else:
     #[test]
     fn parsed_window_provenance_keeps_native_ids_and_full_affine_mapping() {
         let service = Arc::new(CaptureService::default());
-        let png = encode_rgba_to_png(&vec![17; 4 * 3 * 4], 4, 3).unwrap();
+        let png = encode_rgba_to_png(&[17; 4 * 3 * 4], 4, 3).unwrap();
         let transform = ScreenshotToActionTransform::new(1.5, 0.25, -0.5, 2.0, 7.25, -3.5).unwrap();
         let target = CaptureTarget::Window {
             pid: 4242,

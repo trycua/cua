@@ -1,0 +1,62 @@
+[
+  {
+    "window": "target-172aad9a-1da8-4582-a30d-3437271a78b7",
+    "target_epoch": 1,
+    "app_name": "Blender",
+    "title": "* octocat.blend - Blender 4.5.13 LTS",
+    "geometry": {
+      "width_px": 1024,
+      "height_px": 681,
+      "scale_factor": 1.0
+    },
+    "visible": true
+  },
+  {
+    "window": "target-e6413bee-f36b-4a55-9882-234f8f41dc18",
+    "target_epoch": 1,
+    "app_name": "RCDP Host",
+    "title": "",
+    "geometry": {
+      "width_px": 1024,
+      "height_px": 768,
+      "scale_factor": 1.0
+    },
+    "visible": true
+  },
+  {
+    "window": "target-417417e3-28be-446e-8e9e-d2e4dd8422c3",
+    "target_epoch": 1,
+    "app_name": "universalAccessAuthWarn",
+    "title": "Accessibility Access",
+    "geometry": {
+      "width_px": 461,
+      "height_px": 181,
+      "scale_factor": 1.0
+    },
+    "visible": true
+  },
+  {
+    "window": "target-c0056e02-2ecb-4a88-8ba2-3551a2ebe9de",
+    "target_epoch": 1,
+    "app_name": "Unity Hub",
+    "title": "Unity Hub 3.21.3",
+    "geometry": {
+      "width_px": 1024,
+      "height_px": 681,
+      "scale_factor": 1.0
+    },
+    "visible": true
+  },
+  {
+    "window": "target-5774b65d-e1ff-446c-a0e4-4b51c27a1046",
+    "target_epoch": 1,
+    "app_name": "Cua Driver Local",
+    "title": "",
+    "geometry": {
+      "width_px": 1024,
+      "height_px": 768,
+      "scale_factor": 1.0
+    },
+    "visible": true
+  }
+]

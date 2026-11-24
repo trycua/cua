@@ -14,6 +14,10 @@ COMPONENT_PATHS = {
     "cua-driver-rs": "libs/cua-driver",
     "lume": "libs/lume",
     "sandbox": "libs/python/cua-sandbox",
+    "cua-spacesd": "libs/cua-spacesd",
+    "cua-sdk": "libs/cua",
+    "cua-spaces": "apps/cua-spaces-macos",
+    "bench": "libs/cua-bench",
 }
 
 

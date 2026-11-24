@@ -1,10 +1,15 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for the `type_text_chars` → `type_text` deprecated alias.
 //!
 //! Swift's ToolRegistry.swift resolves `type_text_chars` to `type_text` at
 //! invoke time AND emits a stderr deprecation warning. The aliased name
 //! is NOT in `tools/list`. Rust now does the same.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

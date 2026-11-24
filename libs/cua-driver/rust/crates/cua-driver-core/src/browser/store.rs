@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Session-scoped target / tab / page-ref capability store.
 //!
 //! Browser target ids (`bt-<uuid>`), tab ids (`tab-<uuid>`) and page refs
@@ -19,6 +22,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use indexmap::IndexMap;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -180,11 +184,19 @@ pub struct SnapshotRecord {
     pub(crate) continuations: HashMap<String, SemanticContinuation>,
 }
 
+/// The root of a subtree read: a backend node id in the tab's own renderer
+/// (`oopif_target_id` unset) or in one OOPIF target, whose ids can collide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticScope {
+    pub oopif_target_id: Option<String>,
+    pub backend_node_id: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SemanticContinuation {
     pub offset: usize,
     pub query: Option<String>,
-    pub scope_backend_node_id: Option<i64>,
+    pub scope: Option<SemanticScope>,
     pub oopif_supported: bool,
     pub oopif_frames: usize,
 }
@@ -228,7 +240,7 @@ pub struct TargetRecord {
     /// CDP browser window id, or None for the exact single-page embedded route.
     pub cdp_window_id: Option<i64>,
     pub quality: BindingQuality,
-    pub tabs: HashMap<String, TabRecord>,
+    pub tabs: IndexMap<String, TabRecord>,
 }
 
 #[derive(Default)]
@@ -488,7 +500,7 @@ mod tests {
             cdp_target_id: "CDP1".into(),
             cdp_window_id: Some(11),
             quality: BindingQuality::Exact,
-            tabs: HashMap::new(),
+            tabs: IndexMap::new(),
         }
     }
 

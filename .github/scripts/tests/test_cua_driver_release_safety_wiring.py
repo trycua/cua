@@ -25,13 +25,17 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CD = REPO_ROOT / ".github/workflows/cd-rust-cua-driver.yml"
 SIGNATURES = REPO_ROOT / ".github/workflows/cua-driver-release-signatures.yml"
 SELF_TEST = REPO_ROOT / ".github/workflows/ci-cua-driver-release-signatures.yml"
-DO_NOTARIZE = "${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}"
-# Only the Release Please tag push can publish; there is no manual publish input.
-TAG_PUSH = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
+# Publishing happens only on the Release Please tag push, or on a workflow_dispatch
+# from main that rebuilds an existing stable tag (rebuild_tag); there is no publish input.
+TAG_PUSH = (
+    "((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) "
+    "|| (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))"
+)
+DO_NOTARIZE = "${{ " + TAG_PUSH + " || inputs.notarize == true }}"
 CAN_PUBLISH = "${{ " + TAG_PUSH + " }}"
 E2E_GATES = {"e2e-linux", "e2e-windows", "e2e-macos", "e2e-standalone-browsers"}
 # The same suites gate the stable tag push and nightly builds.
-E2E_GATE_IF = f"({TAG_PUSH}) || inputs.channel == 'nightly'"
+E2E_GATE_IF = f"{TAG_PUSH} || inputs.channel == 'nightly'"
 SIGNATURE_GATES = {"verify-macos-release-signatures", "verify-windows-release-signatures"}
 STATUS_OVERRIDES = ("always()", "failure()", "cancelled()", "!cancelled()")
 
@@ -83,7 +87,7 @@ def test_macos_build_notarizes_every_tag_build(cd: dict) -> None:
     first = build["steps"][0]
     assert first["name"] == "Assert notarization for publishable builds"
     assert first["env"]["CAN_PUBLISH"] == CAN_PUBLISH
-    assert '"$GITHUB_REF" == refs/tags/cua-driver-rs-v* && "$DO_NOTARIZE" != "true"' in first["run"]
+    assert '"$RELEASE_REF" == refs/tags/cua-driver-rs-v* && "$DO_NOTARIZE" != "true"' in first["run"]
     assert '"$CAN_PUBLISH" == "true" && "$DO_NOTARIZE" != "true"' in first["run"]
     # Signing and notarization steps are all keyed on the same switch.
     for name in (
@@ -165,7 +169,7 @@ def test_installer_bake_needs_post_publication_verification(cd: dict) -> None:
 
     assert needs(bake) == {"release", "verify-published-signatures", "verify-published-installers"}
     assert "if" not in bake
-    advance = step(bake, "Advance public installer version on main")
+    advance = step(bake, "Advance public installer version through a pull request")
     assert advance["env"]["VERSION"] == "${{ needs.release.outputs.version }}"
     assert "--withdrawn-path \"$UPDATE_ROOT/.github/release-state/cua-driver-rs-withdrawn-versions\"" in advance["run"]
     assert "validate_release_versions.py" in advance["run"]
@@ -205,12 +209,15 @@ def test_signature_workflow_checks_what_the_operating_systems_check() -> None:
     assert set(trigger) == {
         "version",
         "source",
+        "release_repository",
         "verify_macos",
         "verify_windows",
         "expect_macos",
         "expect_windows",
         "legacy_unsigned_node_runtime",
     }
+    # Published releases default to this repository (the release pipeline).
+    assert trigger["release_repository"]["default"] == ""
     assert trigger["expect_macos"]["default"] == "pass"
     assert trigger["expect_windows"]["default"] == "pass"
     assert trigger["legacy_unsigned_node_runtime"]["default"] is False
@@ -253,22 +260,26 @@ def test_signature_team_matches_the_pinned_signing_team() -> None:
 def test_self_test_proves_the_gate_in_both_directions() -> None:
     workflow = load(SELF_TEST)
     jobs = workflow["jobs"]
+    # The fixture releases live on trycua/cua, including when a fork runs this.
     # 0.28.2 predates the signed Node runtime (#4168): it passes only in
     # legacy mode, and the strict gate must reject its real archives.
     assert jobs["signed-release"]["with"] == {
         "version": "0.28.2",
         "source": "release",
+        "release_repository": "trycua/cua",
         "legacy_unsigned_node_runtime": True,
     }
     assert jobs["unsigned-node-runtime"]["with"] == {
         "version": "0.28.2",
         "source": "release",
+        "release_repository": "trycua/cua",
         "verify_windows": False,
         "expect_macos": "fail",
     }
     assert jobs["unsigned-release"]["with"] == {
         "version": "0.28.3",
         "source": "release",
+        "release_repository": "trycua/cua",
         "expect_macos": "fail",
         "expect_windows": "pass",
     }

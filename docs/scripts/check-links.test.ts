@@ -60,8 +60,8 @@ test('rejects obsolete, missing, and non-rendered fragments with source location
 test('maps docs paths consistently for absolute paths and nested index pages', () => {
   assert.equal(pathToUrl('content/docs/index.mdx'), '/');
   assert.equal(
-    pathToUrl('content/docs/reference/lume/cli-reference.mdx'),
-    '/reference/lume/cli-reference'
+    pathToUrl('content/docs/lume/reference/cli.mdx'),
+    '/lume/reference/cli'
   );
   assert.equal(
     pathToUrl(path.join(docs, 'content/docs/reference/lume/index.mdx')),
@@ -90,12 +90,11 @@ test('the four repaired source links validate against their current destinations
   const scanned = await buildScannedUrls(files);
   const referringPages = files.filter((file) =>
     [
-      '/concepts/how-lume-expands-macos-disks',
-      '/concepts/the-no-foreground-contract',
-      '/reference/cua-driver/action-selection-policy',
+      '/lume/concepts/how-lume-works',
+      '/cua-driver/concepts/how-cua-driver-works',
     ].includes(file.url!)
   );
-  assert.equal(referringPages.length, 3);
+  assert.equal(referringPages.length, 2);
   assert.deepEqual(await checkLinks(referringPages, scanned), []);
   for (const file of referringPages) {
     assert.doesNotMatch(

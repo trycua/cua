@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::{ScrollBy, ScrollDirection, ScrollInput};
@@ -11,8 +14,8 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_element_attr, copy_string_attr, element_screen_center, kAXErrorSuccess,
-    perform_action, AXUIElementRef,
+    copy_children, copy_element_attr, copy_string_attr, kAXErrorSuccess, perform_action,
+    AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -32,6 +35,9 @@ struct WheelTarget {
     screen_y: f64,
     win_local: Option<(f64, f64)>,
     wid: Option<u32>,
+    /// Element screen rect `[x, y, w, h]` for the cursor glide; `None` for
+    /// pixel targets.
+    rect: Option<[f64; 4]>,
 }
 
 pub struct ScrollTool {
@@ -51,37 +57,50 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 const AMOUNT_MIN: u64 = 1;
 const AMOUNT_MAX: u64 = 50;
 
+/// Wheel point for an element: the center of its part inside the window, or
+/// the center of the whole element when the window is unknown or they do not
+/// overlap (the background guard then refuses it as outside the window).
+fn element_wheel_point(rect: [f64; 4], window: Option<[f64; 4]>) -> (f64, f64) {
+    let [x, y, w, h] = window
+        .and_then(|window| crate::ax::reveal_scroll::intersect(rect, window))
+        .unwrap_or(rect);
+    (x + w / 2.0, y + h / 2.0)
+}
+
 fn clamp_amount(requested: u64) -> usize {
     requested.clamp(AMOUNT_MIN, AMOUNT_MAX) as usize
 }
 
+const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unavailable for \
+     this Electron/Chromium window on macOS: it drops background wheel events and keystrokes, \
+     and background scroll movement could not be established through accessibility. \
+     Without fronting the window: find the item with a get_window_state query and act on it by \
+     element_token, or make the window taller with set_window_frame. If the user allows the \
+     window to come forward, retry with delivery_mode:\"foreground\" (same window_id, \
+     element_token or x,y); the driver briefly fronts it, scrolls, and restores the prior \
+     frontmost app.";
+
+const ELECTRON_BACKGROUND_SCROLL_SUGGESTION: &str = "Act on the item by element_token (find it \
+     with a get_window_state query) instead of scrolling, or retry with \
+     delivery_mode:\"foreground\" only if the user allows the window to come forward.";
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
-        description: "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n\
-            • **Targeted wheel path** — when you pass a target, either \
-            `element_token` (preferred) or window-local `x, y` pixels: \
-            the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, \
-            at that screen point. The renderer hit-tests the wheel at the \
-            cursor, so the scroll lands on whatever element is under the point — exactly \
-            like physically rolling the wheel over it. This is the ONLY way to scroll a \
-            nested `overflow:auto` region (e.g. a scrollable <div> with no tabindex): such \
-            regions never take keyboard focus, so the keystroke path below no-ops on them. \
-            Use this for inner/nested scrollers in web views.\n\n\
-            • **Keystroke path (focused region)** — when you pass NO target (just pid + \
-            direction): synthesizes PageDown/PageUp (by='page') or Down/Up arrows \
-            (by='line'); horizontal uses Left/Right arrows. Drives the focused / page \
-            scroller only.\n\n\
-            Mapping: by='page' → larger step; by='line' → smaller step; amount = number of \
-            wheel notches (targeted path) or keystroke repetitions (keystroke path).".into(),
+        description: "Scroll the target pid.\n\
+            - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n\
+            - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\
+            \n\
+            Electron/Chromium windows drop background wheel events: there a background scroll reveals the content just past the edge of the scroll container under the target through accessibility (about `amount` notches); `delivery_mode:\"foreground\"` is the fallback.\n\
+            `amount` is wheel notches (targeted) or key repetitions (keystroke).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` conditionally required (validated in code), not pinned in the
             // schema — keeps the contract consistent across platforms.
             "required": ["direction"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
+                "session": cua_driver_core::tool_schema::session_schema(),
+                "pid": { "type": "integer", "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied." },
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down", "left", "right"],
@@ -96,14 +115,14 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": AMOUNT_MIN,
                     "maximum": AMOUNT_MAX,
-                    "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3."
+                    "description": "Wheel notches or key repetitions, clamped to the maximum. Default 3."
                 },
-                "window_id": { "type": "integer" },
+                "window_id": { "type": "integer", "description": "Window ID. Required with x/y; optional with element_token." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
-                "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
+                "x": { "type": "number", "description": "Window-local screenshot X (get_window_state PNG). With y, wheel-scrolls at that point; needs window_id." },
+                "y": { "type": "number", "description": "Window-local screenshot Y." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with x,y and no pid/window_id uses get_desktop_state coordinates." },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with("Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.")
             },
             "additionalProperties": false
         }),
@@ -145,9 +164,15 @@ impl Tool for ScrollTool {
                 ScrollDirection::Right => (0, -step),
                 ScrollDirection::Left => (0, step),
             };
-            let (x, y) = super::desktop_screenshot_point(x, y).await;
+            let (x, y) = super::desktop_screenshot_point(x, y);
+            if let Some(refusal) =
+                super::desktop_pointer_guard::check("scroll", &args, vec![(x, y)]).await
+            {
+                return refusal;
+            }
+            let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
+                crate::input::mouse::scroll_wheel_desktop(prompt, x, y, delta_y, delta_x, amount)
             })
             .await;
             return match result {
@@ -159,11 +184,15 @@ impl Tool for ScrollTool {
                     "path": "hid",
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop scroll failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop scroll failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
             };
         }
-        let pid = match args.require_i32("pid") {
+        let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -172,13 +201,10 @@ impl Tool for ScrollTool {
         // background CGEvents). Only the pixel-wheel path honors it; the
         // keystroke path is background-by-design and untouched.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
-        if !delivery_mode.is_foreground() && crate::browser::ElectronJs::is_electron(pid) {
-            return ToolResult::error(
-                "Background scroll is unavailable for Electron/Chromium windows on macOS."
-                    .to_owned(),
-            )
-            .with_structured(serde_json::json!({ "code": "background_unavailable" }));
-        }
+        // Electron/Chromium drop background wheel events and keystrokes; a
+        // background scroll there goes through accessibility instead (below).
+        let electron_background =
+            !delivery_mode.is_foreground() && crate::browser::ElectronJs::is_electron(pid);
         let direction = match args.require_str("direction") {
             Ok(v) => v,
             Err(e) => return e,
@@ -359,9 +385,9 @@ impl Tool for ScrollTool {
             } else {
                 Ok(())
             };
-            // Element path: wheel at the element's screen-space center. Both AX
-            // coordinates and window bounds are logical top-left points, so no
-            // Retina scaling is needed here.
+            // Element path: wheel at the center of the element's part inside the
+            // window. Both AX coordinates and window bounds are logical top-left
+            // points, so no Retina scaling is needed here.
             let wid = window_id;
             let target_guard = pre_focus_guard.clone();
             let target_task = tokio::task::spawn_blocking(move || {
@@ -379,16 +405,20 @@ impl Tool for ScrollTool {
                     );
                 }
                 std::thread::sleep(std::time::Duration::from_millis(40));
-                let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
-                Ok(center.map(|(cx, cy)| {
-                    let win_local = wid
-                        .and_then(crate::windows::window_bounds_by_id)
-                        .map(|b| (cx - b.x, cy - b.y));
+                let rect = unsafe {
+                    crate::ax::bindings::element_screen_rect(element_ptr as AXUIElementRef)
+                };
+                let bounds = wid.and_then(crate::windows::window_bounds_by_id);
+                let window = bounds.as_ref().map(|b| [b.x, b.y, b.width, b.height]);
+                Ok(rect.map(|rect| {
+                    let (cx, cy) = element_wheel_point(rect, window);
+                    let win_local = bounds.as_ref().map(|b| (cx - b.x, cy - b.y));
                     WheelTarget {
                         screen_x: cx,
                         screen_y: cy,
                         win_local,
                         wid,
+                        rect: Some(rect),
                     }
                 }))
             });
@@ -431,6 +461,7 @@ impl Tool for ScrollTool {
                         screen_y: sy,
                         win_local: Some((lx, ly)),
                         wid: Some(wid),
+                        rect: None,
                     })
                 }
                 Err(refusal) => return refusal,
@@ -438,6 +469,21 @@ impl Tool for ScrollTool {
         } else {
             None
         };
+
+        if electron_background {
+            return electron_reveal_scroll(
+                pid,
+                window_id,
+                wheel_target
+                    .as_ref()
+                    .map(|target| (target.screen_x, target.screen_y)),
+                &direction,
+                (step.unsigned_abs() as usize * amount) as f64,
+                pre_focus_ptr,
+                &mut _mutation_lease,
+            )
+            .await;
+        }
 
         if let Some(target) = wheel_target {
             if !delivery_mode.is_foreground() {
@@ -492,10 +538,11 @@ impl Tool for ScrollTool {
                     cursor_overlay::OverlayCommand::PinAbove(wid as u64),
                 );
             }
-            crate::cursor::overlay::animate_cursor_to(
+            crate::cursor::overlay::animate_cursor_to_target(
                 cursor_key.clone(),
                 target.screen_x,
                 target.screen_y,
+                target.rect,
             )
             .await;
             self.state.cursor_registry.update_position(
@@ -512,6 +559,7 @@ impl Tool for ScrollTool {
                 screen_y,
                 win_local,
                 wid,
+                ..
             } = target;
             let amount_ticks = amount;
             let fg = delivery_mode.is_foreground() && wid.is_some();
@@ -665,6 +713,82 @@ impl Tool for ScrollTool {
     }
 }
 
+/// Background scroll for Electron/Chromium windows, which drop background
+/// wheel events: reveal the content just past the edge of the scroll
+/// container under `point` (the window's center when there is no target)
+/// through accessibility. Refuses as before when no container moves.
+async fn electron_reveal_scroll(
+    pid: i32,
+    window_id: Option<u32>,
+    point: Option<(f64, f64)>,
+    direction: &str,
+    distance: f64,
+    pre_focus_ptr: Option<usize>,
+    lease: &mut Option<super::BackgroundMutationLease>,
+) -> ToolResult {
+    let unavailable = || {
+        cua_driver_core::delivery::background_unavailable_result_with_suggestion(
+            ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE,
+            "background_unavailable",
+            "Electron/Chromium windows drop background wheel events and keystrokes on macOS",
+            serde_json::json!({ "effect": "refused" }),
+            ELECTRON_BACKGROUND_SCROLL_SUGGESTION,
+        )
+    };
+    let window = window_id.and_then(crate::windows::window_bounds_by_id);
+    let Some(point) = point.or_else(|| {
+        window
+            .as_ref()
+            .map(|b| (b.x + b.width / 2.0, b.y + b.height / 2.0))
+    }) else {
+        return unavailable();
+    };
+    if let Some(wid) = window_id {
+        let gate = match lease.as_ref() {
+            Some(lease) => {
+                lease
+                    .gate_again(
+                        wid,
+                        pre_focus_ptr,
+                        cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                    )
+                    .await
+            }
+            None => super::gate_background_window_action(
+                pid,
+                wid,
+                pre_focus_ptr,
+                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+            )
+            .await
+            .map(|granted| *lease = Some(granted)),
+        };
+        if let Err(refusal) = gate {
+            return refusal;
+        }
+    }
+    let window_rect = window.map(|b| [b.x, b.y, b.width, b.height]);
+    let direction_owned = direction.to_owned();
+    let outcome = tokio::task::spawn_blocking(move || unsafe {
+        crate::ax::reveal_scroll::reveal_scroll(pid, point, window_rect, &direction_owned, distance)
+    })
+    .await;
+    match outcome {
+        Ok(Some(outcome)) => ToolResult::text(format!(
+            "✅ Scrolled {direction} about {:.0} pt in the background through accessibility \
+             (revealed the content just past the {}'s edge; this Electron/Chromium window drops \
+             background wheel events).",
+            outcome.moved, outcome.container_role
+        ))
+        .with_structured(serde_json::json!({
+            "path": "ax",
+            "verified": false,
+            "effect": "unverifiable",
+        })),
+        _ => unavailable(),
+    }
+}
+
 unsafe fn scroll_native_text_area(
     element: AXUIElementRef,
     direction: &str,
@@ -743,5 +867,48 @@ mod tests {
         assert_eq!(clamp_amount(1100), AMOUNT_MAX as usize);
         assert_eq!(clamp_amount(0), AMOUNT_MIN as usize);
         assert_eq!(clamp_amount(3), 3);
+    }
+
+    #[test]
+    fn element_wheel_point_is_the_center_of_an_element_inside_the_window() {
+        assert_eq!(
+            element_wheel_point([100.0, 100.0, 200.0, 100.0], Some([0.0, 0.0, 800.0, 600.0])),
+            (200.0, 150.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_stays_inside_a_window_shorter_than_the_element() {
+        assert_eq!(
+            element_wheel_point([0.0, 50.0, 800.0, 3000.0], Some([0.0, 0.0, 800.0, 600.0])),
+            (400.0, 325.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_uses_the_visible_part_of_an_element_above_the_window() {
+        assert_eq!(
+            element_wheel_point(
+                [100.0, -400.0, 200.0, 600.0],
+                Some([0.0, 100.0, 800.0, 600.0])
+            ),
+            (200.0, 150.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_falls_back_to_the_element_center_outside_the_window() {
+        assert_eq!(
+            element_wheel_point([0.0, 900.0, 200.0, 100.0], Some([0.0, 0.0, 800.0, 600.0])),
+            (100.0, 950.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_is_the_element_center_without_window_bounds() {
+        assert_eq!(
+            element_wheel_point([0.0, 50.0, 800.0, 3000.0], None),
+            (400.0, 1550.0)
+        );
     }
 }

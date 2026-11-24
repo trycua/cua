@@ -1,0 +1,7 @@
+Floating keycaps and starfield
+
+Cua's own artwork, copied unchanged from the public spaces.cua.ai hero
+(https://spaces.cua.ai/_spaces/img/float/) on 4 Nov 2026. The new first run
+(src/components/first-run-new/float-keys.tsx) places them as the site's wide
+layout does. The Apple, Windows and Linux marks on the keys are drawn in code
+from the site's download menu (src/components/first-run-new/os-marks.tsx).

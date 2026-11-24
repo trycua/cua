@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.1...cua-driver-rs-v0.61.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** report why a Windows key press stalled, and what the doctor's form read ([#8627](https://github.com/trycua/cua/issues/8627)) ([3151ed0](https://github.com/trycua/cua/commit/3151ed03b798aa88bf22cf5b8e578be6a6352f69))
+
 ## [0.61.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.0...cua-driver-rs-v0.61.1) (2026-11-24)
 
 

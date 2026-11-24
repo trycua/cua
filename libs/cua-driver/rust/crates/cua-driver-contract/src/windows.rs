@@ -267,6 +267,11 @@ pub struct WindowElement {
     pub depth: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_token: Option<String>,
+    /// Native accessibility provider identifier. On Windows this is the UIA
+    /// AutomationId of a control outside the Document subtree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

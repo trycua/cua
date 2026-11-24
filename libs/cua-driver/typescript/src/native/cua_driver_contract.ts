@@ -6243,6 +6243,11 @@ export type WindowElement = {
     role: string,
     depth: number,
     elementToken?: string,
+    /**
+     * Native accessibility provider identifier. On Windows this is the UIA
+     * AutomationId of a control outside the Document subtree.
+     */
+    id?: string,
     label?: string,
     value?: string,
     valueDescription?: string,
@@ -6271,6 +6276,7 @@ export type WindowElement = {
  */
 export const WindowElement = (() => {
     const defaults = () => ({
+        id: undefined,
     });
     const create = (() => {
         return uniffiCreateRecord<WindowElement, ReturnType<typeof defaults>>(defaults);
@@ -6291,6 +6297,7 @@ const FfiConverterTypeWindowElement = (() => {
                 role: FfiConverterString.read(from),
                 depth: FfiConverterUInt32.read(from),
                 elementToken: FfiConverterOptionalString.read(from),
+                id: FfiConverterOptionalString.read(from),
                 label: FfiConverterOptionalString.read(from),
                 value: FfiConverterOptionalString.read(from),
                 valueDescription: FfiConverterOptionalString.read(from),
@@ -6311,6 +6318,7 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterString.write(value.role, into);
             FfiConverterUInt32.write(value.depth, into);
             FfiConverterOptionalString.write(value.elementToken, into);
+            FfiConverterOptionalString.write(value.id, into);
             FfiConverterOptionalString.write(value.label, into);
             FfiConverterOptionalString.write(value.value, into);
             FfiConverterOptionalString.write(value.valueDescription, into);
@@ -6330,6 +6338,7 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterString.allocationSize(value.role) +
              FfiConverterUInt32.allocationSize(value.depth) +
              FfiConverterOptionalString.allocationSize(value.elementToken) +
+             FfiConverterOptionalString.allocationSize(value.id) +
              FfiConverterOptionalString.allocationSize(value.label) +
              FfiConverterOptionalString.allocationSize(value.value) +
              FfiConverterOptionalString.allocationSize(value.valueDescription) +

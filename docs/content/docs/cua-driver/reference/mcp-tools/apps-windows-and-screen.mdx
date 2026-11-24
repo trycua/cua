@@ -479,7 +479,9 @@ POPUP MENUS: a context menu / popover / combo list is an override-redirect windo
 </Tab>
 <Tab value="Windows">
 
-Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:"markdown"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:"elements"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `"both"` for both (about twice the size). `Edit` elements carry `is_password` (`true` for a password field), and the Markdown row marks a password field with `password`.
+Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:"markdown"`). Every indexed element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:"elements"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `"both"` for both (about twice the size). `Edit` elements carry `is_password` (`true` for a password field), and the Markdown row marks a password field with `password`.
+
+Native controls with a non-blank UIA AutomationId carry it as `id` in `elements`, even when disabled or without action patterns. Document nodes and their descendants omit this field. A row with an ID alone can be read from the snapshot; check `actions` before using an action.
 
 Size: a read is bounded by default (`max_elements` 250). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the platform's walk limits (≤5 000 elements, depth ≤25).
 

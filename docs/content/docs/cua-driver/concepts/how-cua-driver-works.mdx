@@ -16,11 +16,17 @@ model -> agent harness -> Cua Driver (MCP, CLI, or SDK) -> OS accessibility + in
 ## Observe: tree and pixels together
 
 `get_window_state(pid, window_id)` returns the window's accessibility tree and
-a screenshot in one call. The tree says what is actionable (roles, labels, an
-`element_token` per element); the screenshot says which
-one, and shows what the tree omits or gets wrong. Pass
+a screenshot in one call. The tree reports roles, labels, and an
+`element_token` for each indexed row. The screenshot shows where the
+controls are and what the tree omits. Pass
 `include_screenshot: false` to skip the image when you only need to re-index.
 `get_desktop_state` captures the whole primary display.
+
+In Windows structured snapshots (`tree_format: "elements"` or `"both"`),
+native controls carry their non-blank UIA `AutomationId` as `id`. An ID
+keeps a control indexed even when it is disabled or has no action patterns.
+Check `actions` and `enabled` before acting. UIA Document nodes and their
+descendants omit the structured ID.
 
 When neither the tree nor typed browser state exposes the target, the optional
 [perception extension](#the-optional-perception-extension) can parse that same

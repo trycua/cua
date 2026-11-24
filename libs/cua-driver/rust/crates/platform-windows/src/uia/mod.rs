@@ -88,12 +88,32 @@ pub struct UiaNode {
     /// level). Defaults to 0 when the node came from a builder that
     /// doesn't track depth.
     pub depth: usize,
-    /// `element_index` of the nearest actionable ancestor, if any.
+    /// `element_index` of the nearest indexed ancestor, if any.
     /// Mirrors the markdown's parent-of-this-row.
     pub parent_element_index: Option<usize>,
     /// True when this node is below a UIA Document control. Browser-owned
     /// consent chrome must never match renderer-controlled descendants.
     pub in_web_content: bool,
+}
+
+impl UiaNode {
+    pub(crate) fn native_automation_id(&self) -> Option<&str> {
+        // The Document root has no Document ancestor, so check its role too.
+        if self.in_web_content || self.control_type.eq_ignore_ascii_case("Document") {
+            return None;
+        }
+        self.automation_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+    }
+
+    fn is_indexable(&self, index_native_ids: bool) -> bool {
+        !self.actions.is_empty() || (index_native_ids && self.native_automation_id().is_some())
+    }
+}
+
+pub(crate) fn nodes_have_actions(nodes: &[UiaNode]) -> bool {
+    nodes.iter().any(|node| !node.actions.is_empty())
 }
 
 pub struct UiaTreeResult {
@@ -110,14 +130,16 @@ pub struct UiaTreeResult {
 struct WalkState<'a> {
     budget: &'a mut WalkBudget,
     max_depth: usize,
+    index_native_ids: bool,
     complete: bool,
 }
 
 impl<'a> WalkState<'a> {
-    fn new(budget: &'a mut WalkBudget, max_depth: usize) -> Self {
+    fn new(budget: &'a mut WalkBudget, max_depth: usize, index_native_ids: bool) -> Self {
         Self {
             budget,
             max_depth,
+            index_native_ids,
             complete: true,
         }
     }
@@ -293,7 +315,17 @@ pub fn walk_tree_budgeted(
     max_depth: usize,
     budget: &mut WalkBudget,
 ) -> UiaTreeResult {
-    unsafe { walk_tree_unsafe(hwnd, query, max_depth, budget) }
+    unsafe { walk_tree_unsafe(hwnd, query, max_depth, budget, false) }
+}
+
+/// Walk for `get_window_state`, where a native ID can also earn an index.
+pub(crate) fn walk_snapshot_tree_budgeted(
+    hwnd: u64,
+    query: Option<&str>,
+    max_depth: usize,
+    budget: &mut WalkBudget,
+) -> UiaTreeResult {
+    unsafe { walk_tree_unsafe(hwnd, query, max_depth, budget, true) }
 }
 
 /// Join this thread to the MTA unless COM is already up on it. The init is
@@ -320,6 +352,7 @@ unsafe fn walk_tree_unsafe(
     query: Option<&str>,
     max_depth: usize,
     budget: &mut WalkBudget,
+    index_native_ids: bool,
 ) -> UiaTreeResult {
     if let Err(e) = ensure_com() {
         return UiaTreeResult {
@@ -441,7 +474,7 @@ unsafe fn walk_tree_unsafe(
     let mut nodes: Vec<UiaNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new();
     let mut counter = 0usize;
-    let mut walk_state = WalkState::new(budget, max_depth);
+    let mut walk_state = WalkState::new(budget, max_depth, index_native_ids);
     if !cache_request_complete {
         walk_state.mark_incomplete();
     }
@@ -464,15 +497,14 @@ unsafe fn walk_tree_unsafe(
     // of the hwnd's UIA element. inspect.exe walks from root for these apps;
     // we mirror that here when the primary path yields nothing actionable.
     //
-    // Trigger: walk produced zero actionable nodes (the primary path may have
-    // still pushed a wrapper-only node — that's why we filter on
-    // `element_index.is_some()`).
+    // A wrapper may be indexed for its native ID alone. Look at its actions
+    // to decide whether the primary walk found any usable action targets.
     //
     // Stage the fallback walk into fresh accumulators and only swap them in
     // if the fallback actually finds actionable elements. Otherwise the
     // wrapper-only node from the primary walk stays the result. Both paths
     // share the caller's time and node budget.
-    if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
+    if !nodes_have_actions(&nodes) {
         // An empty HWND wrapper cannot prove a complete window snapshot. The
         // fallback may discover controls in other windows of the process, so
         // it remains discovery evidence rather than an exact-window proof.
@@ -499,7 +531,7 @@ unsafe fn walk_tree_unsafe(
                     &mut walk_state,
                 );
 
-                if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
+                if nodes_have_actions(&fallback_nodes) {
                     release_walk_nodes(std::mem::replace(&mut nodes, fallback_nodes));
                     lines = fallback_lines;
                 } else {
@@ -651,7 +683,10 @@ unsafe fn walk_cached_bounded(
         element,
         depth,
         parent_index,
-        in_web_content,
+        NodeProjection {
+            in_web_content,
+            index_native_ids: walk_state.index_native_ids,
+        },
         nodes,
         lines,
         counter,
@@ -811,8 +846,15 @@ unsafe fn walk_native_level(
     if !budget.admit() {
         return Err("the native UIA tree exceeded the element budget".to_owned());
     }
-    let (control_type, emitted_parent) =
-        emit_cached_node(element, depth, parent_index, false, nodes, lines, counter);
+    let (control_type, emitted_parent) = emit_cached_node(
+        element,
+        depth,
+        parent_index,
+        NodeProjection::default(),
+        nodes,
+        lines,
+        counter,
+    );
     if control_type.eq_ignore_ascii_case("Document") {
         return Ok(());
     }
@@ -838,13 +880,19 @@ unsafe fn walk_native_level(
     Ok(())
 }
 
+#[derive(Default)]
+struct NodeProjection {
+    in_web_content: bool,
+    index_native_ids: bool,
+}
+
 /// Project one cached element into `nodes`/`lines`. Returns its control type
 /// and the parent index its descendants should inherit.
 fn emit_cached_node(
     element: &IUIAutomationElement,
     depth: usize,
     parent_index: Option<usize>,
-    in_web_content: bool,
+    projection: NodeProjection,
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
@@ -865,73 +913,47 @@ fn emit_cached_node(
     // convention, not something UIA enforces. Never echo it once the element
     // says it is a password field.
     let value = redact_password_value(value, is_password);
-    let is_actionable = !actions.is_empty();
-    let has_content = name
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-        || value
-            .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-
-    let mut emitted_parent: Option<usize> = parent_index;
-    if is_actionable || has_content {
-        let retained: IUIAutomationElement = element.clone();
-        let ptr = retained.as_raw() as usize;
-        std::mem::forget(retained);
-
-        let node = if is_actionable {
-            let idx = *counter;
-            *counter += 1;
-            let (center_x, center_y, rect) = read_cached_bounding_rect_full(element);
-            emitted_parent = Some(idx);
-            UiaNode {
-                element_index: Some(idx),
-                control_type: control_type.clone(),
-                name: name.clone(),
-                value: value.clone(),
-                automation_id: automation_id.clone(),
-                help_text: help_text.clone(),
-                actions: actions.clone(),
-                enabled,
-                selected,
-                is_password,
-                element_ptr: ptr,
-                center_x,
-                center_y,
-                rect,
-                msaa_role: None,
-                depth,
-                parent_element_index: parent_index,
-                in_web_content,
-            }
-        } else {
-            UiaNode {
-                element_index: None,
-                control_type: control_type.clone(),
-                name: name.clone(),
-                value: value.clone(),
-                automation_id: automation_id.clone(),
-                help_text: help_text.clone(),
-                actions: vec![],
-                enabled,
-                selected,
-                is_password,
-                element_ptr: ptr,
-                center_x: 0,
-                center_y: 0,
-                rect: None,
-                msaa_role: None,
-                depth,
-                parent_element_index: parent_index,
-                in_web_content,
-            }
-        };
-
-        lines.push((depth, format_node_line(&node)));
-        nodes.push(node);
+    let mut node = UiaNode {
+        element_index: None,
+        control_type,
+        name,
+        value,
+        automation_id,
+        help_text,
+        actions,
+        enabled,
+        selected,
+        is_password,
+        element_ptr: 0,
+        center_x: 0,
+        center_y: 0,
+        rect: None,
+        msaa_role: None,
+        depth,
+        parent_element_index: parent_index,
+        in_web_content: projection.in_web_content,
+    };
+    let is_indexable = node.is_indexable(projection.index_native_ids);
+    let has_content = node.name.as_deref().is_some_and(|s| !s.trim().is_empty())
+        || node.value.as_deref().is_some_and(|s| !s.trim().is_empty());
+    if !is_indexable && !has_content {
+        return (node.control_type, parent_index);
     }
+
+    let retained: IUIAutomationElement = element.clone();
+    node.element_ptr = retained.as_raw() as usize;
+    std::mem::forget(retained);
+    let mut emitted_parent: Option<usize> = parent_index;
+    if is_indexable {
+        node.element_index = Some(*counter);
+        emitted_parent = node.element_index;
+        *counter += 1;
+        (node.center_x, node.center_y, node.rect) = read_cached_bounding_rect_full(element);
+    }
+
+    let control_type = node.control_type.clone();
+    lines.push((depth, format_node_line(&node)));
+    nodes.push(node);
     (control_type, emitted_parent)
 }
 
@@ -1237,9 +1259,8 @@ fn render_lines(lines: &[(usize, String)]) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_disabled_control_row_says_so() {
-        let node = UiaNode {
+    fn disabled_checkbox() -> UiaNode {
+        UiaNode {
             element_index: Some(7),
             control_type: "CheckBox".into(),
             name: Some("Reset".into()),
@@ -1258,7 +1279,12 @@ mod tests {
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
-        };
+        }
+    }
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let node = disabled_checkbox();
         assert_eq!(
             format_node_line(&node),
             "- [7] CheckBox \"Reset\" [id=chk-reset enabled=false actions=[toggle]]"
@@ -1271,6 +1297,30 @@ mod tests {
             format_node_line(&enabled),
             "- [7] CheckBox \"Reset\" [id=chk-reset actions=[toggle]]"
         );
+    }
+
+    #[test]
+    fn only_native_non_blank_ids_index_patternless_nodes() {
+        let mut node = UiaNode {
+            name: None,
+            element_index: None,
+            actions: Vec::new(),
+            ..disabled_checkbox()
+        };
+        assert!(node.is_indexable(true));
+        assert!(!node.is_indexable(false));
+
+        node.in_web_content = true;
+        assert!(!node.is_indexable(true));
+        node.in_web_content = false;
+        node.control_type = "Document".into();
+        assert!(!node.is_indexable(true));
+
+        node.control_type = "CheckBox".into();
+        node.automation_id = Some("  ".into());
+        assert!(!node.is_indexable(true));
+        node.actions.push("toggle".into());
+        assert!(node.is_indexable(true));
     }
 
     #[test]
@@ -1388,7 +1438,7 @@ mod tests {
 
         for case in cases {
             let mut budget = WalkBudget::nodes_only(case.max_elements);
-            let mut state = WalkState::new(&mut budget, case.max_depth);
+            let mut state = WalkState::new(&mut budget, case.max_depth, false);
             walk_synthetic_tree(&case.children, 0, 0, &mut state);
             assert_eq!(
                 state.budget.outcome().nodes_visited,
@@ -1408,7 +1458,7 @@ mod tests {
     fn walk_state_keeps_the_callers_budget_across_walks() {
         let mut budget = WalkBudget::nodes_only(2);
         assert!(budget.admit());
-        let mut state = WalkState::new(&mut budget, DEFAULT_MAX_DEPTH);
+        let mut state = WalkState::new(&mut budget, DEFAULT_MAX_DEPTH, false);
 
         walk_synthetic_tree(&star(1), 0, 0, &mut state);
 
@@ -1422,7 +1472,7 @@ mod tests {
     fn timed_out_walk_cannot_report_complete() {
         let mut budget = WalkBudget::new(100, 10);
         budget.stop_for_timeout();
-        let mut state = WalkState::new(&mut budget, DEFAULT_MAX_DEPTH);
+        let mut state = WalkState::new(&mut budget, DEFAULT_MAX_DEPTH, false);
 
         walk_synthetic_tree(&star(0), 0, 0, &mut state);
 

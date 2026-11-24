@@ -451,7 +451,10 @@ pub(crate) fn save_result(
                     AutomationPermission::NeedsConsent | AutomationPermission::Denied
                 )
             {
-                return Err(refusal);
+                return Err(ScriptRefusal {
+                    code: refusal.code,
+                    reason: format!("{app_name} did not answer within 30 s"),
+                });
             }
             return Err(ScriptRefusal {
                 code: "automation_consent_pending",

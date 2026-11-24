@@ -1266,7 +1266,9 @@ mod tests {
             let refusal = save_result(
                 Err(ScriptRefusal {
                     code: "automation_timeout",
-                    reason: "no answer".into(),
+                    reason: "the app did not answer within 30 s (a macOS Automation prompt may be \
+                             waiting for the user)"
+                        .into(),
                 }),
                 before,
                 || after,
@@ -1307,6 +1309,9 @@ mod tests {
                 "save_indeterminate"
             };
             assert_eq!(data["code"], code, "{case}");
+            if !refused {
+                assert!(!reply.contains("prompt may be waiting"), "{case}: {reply}");
+            }
         }
     }
 

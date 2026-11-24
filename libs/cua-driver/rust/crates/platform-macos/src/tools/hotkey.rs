@@ -388,7 +388,7 @@ impl Tool for HotkeyTool {
                         }
                         _ => None,
                     };
-                    let focused = match (element_index, focus_xy) {
+                    let mut focused = match (element_index, focus_xy) {
                         (Some(index), _) => Some(format!("element [{index}]")),
                         (None, Some((x, y))) => Some(format!("the element at ({x:.0}, {y:.0})")),
                         (None, None) => None,
@@ -407,7 +407,7 @@ impl Tool for HotkeyTool {
                             Ok(lease) => lease,
                             Err(refusal) => return refusal,
                         };
-                        if let Err(error) = super::focus_by_pixel(
+                        match super::focus_by_pixel(
                             &self.state,
                             pid,
                             Some(wid),
@@ -423,7 +423,9 @@ impl Tool for HotkeyTool {
                         )
                         .await
                         {
-                            return error;
+                            Ok(true) => {}
+                            Ok(false) => focused = None,
+                            Err(error) => return error,
                         }
                     } else if let Some(ptr) = element_ptr {
                         let focused =

@@ -790,7 +790,7 @@ pub(crate) async fn focus_by_pixel(
     session_id: Option<String>,
     from_zoom: bool,
     mutation_lease: Option<&BackgroundMutationLease>,
-) -> Result<(), cua_driver_core::protocol::ToolResult> {
+) -> Result<bool, cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::tool::Tool;
     let mut click_args = serde_json::json!({
         "pid": pid, "x": x, "y": y,
@@ -815,7 +815,7 @@ pub(crate) async fn focus_by_pixel(
     // enclosing AXGroup that rejects AXFocused, so the fallback click moved
     // the caret and dropped the selection (#4125).
     if focused_element_holds_point(pid, window_id, x, y, true).await {
-        return Ok(());
+        return Ok(false);
     }
     if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
@@ -843,7 +843,7 @@ pub(crate) async fn focus_by_pixel(
         // success alone, which is exactly what the ladder forbids. Confirm the
         // focus actually moved before claiming this rung worked.
         if await_pixel_focus(pid, window_id, x, y).await || !foreground {
-            return Ok(());
+            return Ok(true);
         }
     } else if !foreground {
         return Err(cua_driver_core::protocol::ToolResult::error(format!(
@@ -880,7 +880,7 @@ pub(crate) async fn focus_by_pixel(
     }
     // Let the renderer register focus before the keystrokes.
     await_pixel_focus(pid, window_id, x, y).await;
-    Ok(())
+    Ok(true)
 }
 
 /// Longest a pixel focus-click waits for the focused element to cover its

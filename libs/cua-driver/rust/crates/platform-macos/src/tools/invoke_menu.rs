@@ -549,11 +549,15 @@ fn save_failure(
             refusal.code, refusal.reason
         ));
     }
+    let sent = if refusal.code == "automation_timeout" {
+        "The save request may have reached the app"
+    } else {
+        "The save request was sent"
+    };
     let text = format!(
-        "{preface}{message}, so the save was sent through {app_name}'s scripting interface, \
-         but it did not confirm ({}: {}). The save request was sent and its outcome is \
-         unknown: read the document's state (the window's edited mark or the file on disk) \
-         before saving again.",
+        "{preface}{message}, so the save was tried through {app_name}'s scripting interface, \
+         but it did not confirm ({}: {}). {sent} and its outcome is unknown: read the \
+         document's state (the window's edited mark or the file on disk) before saving again.",
         refusal.code, refusal.reason
     );
     ToolResult::error(text).with_structured(serde_json::json!({
@@ -563,8 +567,9 @@ fn save_failure(
         "retryable": false,
         "escalation": {
             "recommended": "verify_state",
-            "reason": "The save request reached the app; read the document's state before \
-                       deciding whether to save again."
+            "reason": format!(
+                "{sent}; read the document's state before deciding whether to save again."
+            )
         }
     }))
 }
@@ -1222,6 +1227,7 @@ mod tests {
         };
         for code in ["save_unconfirmed", "automation_timeout"] {
             let result = failure(code);
+            let reply = text(&result);
             assert_eq!(result.is_error, Some(true));
             assert!(!text(&result).contains("invoke_menu does not activate a background app"));
             assert!(text(&result).contains("outcome is unknown"));
@@ -1230,6 +1236,14 @@ mod tests {
             assert_eq!(data["effect"], "indeterminate");
             assert_eq!(data["retryable"], false);
             assert_eq!(data["escalation"]["recommended"], "verify_state");
+            let sent = if code == "automation_timeout" {
+                "may have reached the app"
+            } else {
+                "was sent"
+            };
+            assert!(reply.contains(sent), "{code}");
+            let reason = data["escalation"]["reason"].as_str().expect("reason");
+            assert!(reason.contains(sent), "{code}: {reason}");
         }
         for code in ["automation_failed", "automation_denied"] {
             let result = failure(code);

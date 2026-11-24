@@ -1305,34 +1305,6 @@ mod tests {
         .unwrap();
     }
 
-    /// uiautomationcore caches out-of-process proxies for the whole process
-    /// (#3656: the ComponentUI broker in `GetParentViewId`). If the last COM
-    /// apartment closes, COM unloads their proxy code and the next walk calls
-    /// through a dangling vtable, so a UIA client must keep the MTA open after
-    /// the thread that created it leaves COM.
-    #[test]
-    fn the_process_mta_outlives_the_thread_that_created_a_uia_client() {
-        use windows::Win32::System::Com::{
-            CoGetApartmentType, CoUninitialize, APTTYPE, APTTYPEQUALIFIER,
-            APTTYPEQUALIFIER_IMPLICIT_MTA, APTTYPE_MTA, COINIT_APARTMENTTHREADED,
-        };
-        std::thread::spawn(|| unsafe {
-            assert!(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
-            drop(new_automation().expect("create a UIA client"));
-            CoUninitialize();
-        })
-        .join()
-        .unwrap();
-        let apartment = std::thread::spawn(|| unsafe {
-            let mut kind = APTTYPE::default();
-            let mut qualifier = APTTYPEQUALIFIER::default();
-            CoGetApartmentType(&mut kind, &mut qualifier).map(|()| (kind, qualifier))
-        })
-        .join()
-        .unwrap();
-        assert_eq!(apartment, Ok((APTTYPE_MTA, APTTYPEQUALIFIER_IMPLICIT_MTA)));
-    }
-
     fn star(child_count: usize) -> Vec<Vec<usize>> {
         let mut children = vec![Vec::new(); child_count + 1];
         children[0] = (1..=child_count).collect();

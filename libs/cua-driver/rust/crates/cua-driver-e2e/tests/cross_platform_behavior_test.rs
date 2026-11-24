@@ -2464,6 +2464,65 @@ fn webkit_background_paste_runs_the_edit_menu_item() {
     resume_first_failure(failure);
 }
 
+/// set_value with a numeric-looking value on a web text input puts that exact
+/// text in the page. Chromium takes a CFNumber AXValue write on a text input
+/// as success and empties the field.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn web_set_value_keeps_numeric_text_exact() {
+    const VALUE: &str = "007";
+    let mut failure = None;
+    let mut selected = 0usize;
+    for spec in host_specs() {
+        let case = CaseSpec::delivered(
+            format!("macos-{}-set-value-numeric-text-ax-background", spec.name),
+            spec.name,
+            "platform-webview",
+            "set_value_numeric_text",
+            Targeting::Ax,
+            Delivery::Background,
+            Scope::Window,
+            cua_driver_testkit::e2e::DriverRoute::MacosAxValue,
+            vec![OracleKind::FixtureState],
+        );
+        if !cell_selected(&case) {
+            continue;
+        }
+        selected += 1;
+        let result = run_host_case_with_outcome(case, &spec, |fixture| {
+            let state = snapshot(fixture);
+            let mut args =
+                action_target_args(fixture, &state, "keyboard-input", "ax", "background");
+            args.as_object_mut()
+                .expect("action arguments object")
+                .remove("delivery_mode");
+            args["value"] = serde_json::json!(VALUE);
+            let response = fixture.driver.call("set_value", args);
+            assert!(
+                !response.is_error(),
+                "{}: set_value failed: {}",
+                fixture.name,
+                response.raw
+            );
+            assert_fixture_value(fixture, "keyboard-input", VALUE);
+            delivered_observation()
+        });
+        if failure.is_none() {
+            failure = result;
+        }
+    }
+    let filtered = ["CUA_E2E_HARNESS_FILTER", "CUA_E2E_CELL_FILTER"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|filter| !filter.trim().is_empty()));
+    if selected == 0 && filtered {
+        eprintln!("no web set_value rows matched CUA_E2E_HARNESS_FILTER or CUA_E2E_CELL_FILTER");
+        return;
+    }
+    assert!(selected > 0, "no web set_value cells were selected");
+    resume_first_failure(failure);
+}
+
 #[test]
 #[ignore]
 fn shared_web_action_matrix_is_state_verified() {

@@ -550,7 +550,7 @@ fn def() -> &'static ToolDef {
             - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n\
             - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\
             \n\
-            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. A press on a menu button or popup button returns once its menu is in the accessibility tree (waiting up to 1 s), so the next get_window_state lists the items. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`.".into(),
+            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu (a pixel right-click at the element center when it opens no menu) and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. A press on a menu button or popup button returns once its menu is in the accessibility tree (waiting up to 1 s), so the next get_window_state lists the items. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` is conditionally required — needed for window/element clicks
@@ -2342,6 +2342,10 @@ fn perform_ax_click(
         let deadline = std::time::Instant::now() + MENU_OPEN_TIMEOUT;
         unsafe { !menu_beside(element, deadline) }
     };
+    // A context menu belongs to no element, so its window is what shows it
+    // opened (#3808).
+    let context_menus_before = (ax_action == "AXShowMenu" && !opens_menu(ax_action, &role))
+        .then(|| crate::windows::menu_window_ids(pid));
     // Making the window key, or the menu wait, can let the app open a sheet.
     unsafe { ensure_sheet_clear(element) }?;
     let pressed_at = std::time::Instant::now();
@@ -2404,6 +2408,34 @@ fn perform_ax_click(
     }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
+
+    if let Some(before) = context_menus_before {
+        use super::right_click::{right_click_element_center, show_menu_outcome, ShowMenu};
+        match show_menu_outcome(err, || {
+            before
+                .as_deref()
+                .and_then(|before| crate::windows::wait_for_new_menu(pid, before))
+        }) {
+            ShowMenu::Opened => summary.push_str(" Its menu is on screen."),
+            ShowMenu::Unconfirmed => summary.push_str(
+                "\n⚠️ The window list could not be read, so whether a menu opened is \
+                 unconfirmed; take a screenshot before choosing an item.",
+            ),
+            ShowMenu::NotShown(reason) => {
+                let (cx, cy) =
+                    right_click_element_center(element, pid, window_id)?.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "[{idx}] {role} \"{title}\": {reason}, and it has no resolvable \
+                             on-screen center for a pixel right-click. Pass x, y directly."
+                        )
+                    })?;
+                summary = format!(
+                    "✅ Right-clicked [{idx}] {role} \"{title}\" at element center \
+                     ({cx:.0}, {cy:.0}) (pixel right-click; {reason})."
+                );
+            }
+        }
+    }
 
     // The app publishes the menu after the press returns; wait so a snapshot
     // taken right after this call finds its items.

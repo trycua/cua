@@ -855,19 +855,32 @@ pub(crate) fn new_menu_windows(pid: i32, before: &[u32]) -> Option<usize> {
 /// (polled for up to 400 ms), `Some(false)` when one still is, `None` when
 /// that could not be read.
 pub(crate) fn wait_for_new_menus_closed(pid: i32, before: &[u32]) -> Option<bool> {
-    poll_until_no_menu(
+    poll_menus(
         || new_menu_windows(pid, before),
+        |open| open == 0,
         std::time::Duration::from_millis(400),
     )
 }
 
-fn poll_until_no_menu(
+/// `Some(true)` once a menu window of `pid` outside `before` is on screen
+/// (polled for up to 500 ms), `Some(false)` when none appeared, `None` when
+/// that could not be read.
+pub(crate) fn wait_for_new_menu(pid: i32, before: &[u32]) -> Option<bool> {
+    poll_menus(
+        || new_menu_windows(pid, before),
+        |open| open > 0,
+        std::time::Duration::from_millis(500),
+    )
+}
+
+fn poll_menus(
     mut open_menus: impl FnMut() -> Option<usize>,
+    done: impl Fn(usize) -> bool,
     timeout: std::time::Duration,
 ) -> Option<bool> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if open_menus()? == 0 {
+        if done(open_menus()?) {
             return Some(true);
         }
         if std::time::Instant::now() >= deadline {
@@ -1260,14 +1273,22 @@ mod tests {
     }
 
     #[test]
-    fn menu_close_polling_keeps_an_unreadable_window_list_unknown() {
+    fn menu_polling_keeps_an_unreadable_window_list_unknown() {
         let timeout = std::time::Duration::from_millis(100);
-        assert_eq!(poll_until_no_menu(|| Some(0), timeout), Some(true));
-        assert_eq!(poll_until_no_menu(|| None, timeout), None);
-        assert_eq!(poll_until_no_menu(|| Some(1), timeout), Some(false));
+        let closed = |open: usize| open == 0;
+        assert_eq!(poll_menus(|| Some(0), closed, timeout), Some(true));
+        assert_eq!(poll_menus(|| None, closed, timeout), None);
+        assert_eq!(poll_menus(|| Some(1), closed, timeout), Some(false));
         let mut reads = [Some(1), Some(0)].into_iter();
         assert_eq!(
-            poll_until_no_menu(|| reads.next().flatten(), timeout),
+            poll_menus(|| reads.next().flatten(), closed, timeout),
+            Some(true)
+        );
+        let opened = |open: usize| open > 0;
+        assert_eq!(poll_menus(|| Some(0), opened, timeout), Some(false));
+        let mut reads = [Some(0), Some(1)].into_iter();
+        assert_eq!(
+            poll_menus(|| reads.next().flatten(), opened, timeout),
             Some(true)
         );
     }

@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::ax::bindings::{
-    copy_action_names, copy_string_attr, kAXErrorSuccess, perform_action, AXUIElementRef,
+    copy_action_names, copy_string_attr, kAXErrorSuccess, perform_action, AXError, AXUIElementRef,
 };
 
 use super::ToolState;
@@ -34,7 +34,9 @@ fn def() -> &'static ToolDef {
             "Right-click against a target pid. Two addressing modes:\n\n\
              - `element_token` (from the last `get_window_state` snapshot) — \
                performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
-               hidden windows, no cursor move or focus steal. Requires a prior \
+               hidden windows, no cursor move or focus steal. When the element does not \
+               advertise `AXShowMenu`, or the action opens no menu window, the driver \
+               right-clicks the element's center instead and says so. Requires a prior \
                `get_window_state(pid, window_id)` in this turn.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
@@ -331,6 +333,61 @@ impl Tool for RightClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
+/// What a dispatched `AXShowMenu` did.
+#[derive(Debug, PartialEq)]
+pub(super) enum ShowMenu {
+    /// A new menu window came on screen.
+    Opened,
+    /// The action succeeded but the window list could not be read.
+    Unconfirmed,
+    /// No menu opened; the reason goes into the pixel fallback's reply.
+    NotShown(String),
+}
+
+/// Classifies an `AXShowMenu` that returned `err`. Many AppKit views
+/// advertise the action and implement it as a no-op, so success alone does
+/// not mean a menu opened (#3808): `menu_opened` reports whether one did.
+pub(super) fn show_menu_outcome(
+    err: AXError,
+    menu_opened: impl FnOnce() -> Option<bool>,
+) -> ShowMenu {
+    if err != kAXErrorSuccess {
+        return ShowMenu::NotShown(format!("AXShowMenu returned {err}"));
+    }
+    match menu_opened() {
+        Some(true) => ShowMenu::Opened,
+        Some(false) => ShowMenu::NotShown("AXShowMenu returned success but no menu opened".into()),
+        None => ShowMenu::Unconfirmed,
+    }
+}
+
+/// Performs `AXShowMenu` on `element` and waits for its menu window.
+/// `menus_before` is the pid's menu windows from before the action, `None`
+/// when they could not be read.
+fn perform_show_menu(element: AXUIElementRef, pid: i32, menus_before: Option<&[u32]>) -> ShowMenu {
+    let err = unsafe { perform_action(element, "AXShowMenu") };
+    show_menu_outcome(err, || {
+        menus_before.and_then(|before| crate::windows::wait_for_new_menu(pid, before))
+    })
+}
+
+/// A real pixel right-click at `element`'s on-screen center, delivered to the
+/// backgrounded window through the window-local primitive. Returns the point.
+pub(super) fn right_click_element_center(
+    element: AXUIElementRef,
+    pid: i32,
+    wid: u32,
+) -> anyhow::Result<Option<(f64, f64)>> {
+    let Some((cx, cy)) = (unsafe { crate::ax::bindings::element_screen_center(element) }) else {
+        return Ok(None);
+    };
+    let (wx, wy) = crate::windows::window_bounds_by_id(wid)
+        .map(|b| (cx - b.x, cy - b.y))
+        .unwrap_or((cx, cy));
+    crate::input::mouse::right_click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, &[])?;
+    Ok(Some((cx, cy)))
+}
+
 fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
@@ -347,33 +404,71 @@ fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::R
     // center and synthesize a REAL pixel right-click there — the same actuation
     // a user performs, delivered to backgrounded windows via the window-local
     // primitive. This makes "right-click element N" land on any element, not
-    // just ones with a native context-menu AX action.
-    if advertised.iter().any(|a| a == "AXShowMenu") {
-        let err = unsafe { perform_action(element, "AXShowMenu") };
-        if err == kAXErrorSuccess {
-            return Ok(format!(
-                "Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."
-            ));
+    // just ones with a native context-menu AX action. The same fallback runs
+    // when the action fails or succeeds without opening a menu.
+    let reason = if advertised.iter().any(|a| a == "AXShowMenu") {
+        let menus_before = crate::windows::menu_window_ids(pid);
+        match perform_show_menu(element, pid, menus_before.as_deref()) {
+            ShowMenu::Opened => {
+                return Ok(format!(
+                    "Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu); its menu is on \
+                     screen."
+                ));
+            }
+            ShowMenu::Unconfirmed => {
+                return Ok(format!(
+                    "Performed AXShowMenu on [{idx}] {role} \"{title}\"; the window list could \
+                     not be read, so whether a menu opened is unconfirmed. Take a screenshot \
+                     before choosing an item."
+                ));
+            }
+            ShowMenu::NotShown(reason) => {
+                tracing::debug!("{reason} for [{idx}]; falling back to pixel right-click");
+                reason
+            }
         }
-        // Advertised but the action failed — fall through to the pixel path
-        // rather than erroring out.
-        tracing::debug!("AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click");
-    }
+    } else {
+        "element advertises no AXShowMenu".to_owned()
+    };
 
-    // Pixel right-click at the element's screen-space center.
-    let (cx, cy) =
-        unsafe { crate::ax::bindings::element_screen_center(element) }.ok_or_else(|| {
-            anyhow::anyhow!(
-                "[{idx}] {role} \"{title}\" advertises no AXShowMenu and has no resolvable \
-             on-screen center for a pixel right-click. Pass x, y directly."
-            )
-        })?;
-    let (wx, wy) = crate::windows::window_bounds_by_id(wid)
-        .map(|b| (cx - b.x, cy - b.y))
-        .unwrap_or((cx, cy));
-    crate::input::mouse::right_click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, &[])?;
+    let (cx, cy) = right_click_element_center(element, pid, wid)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "[{idx}] {role} \"{title}\": {reason}, and it has no resolvable on-screen center \
+             for a pixel right-click. Pass x, y directly."
+        )
+    })?;
     Ok(format!(
         "Right-clicked [{idx}] {role} \"{title}\" at element center ({cx:.0}, {cy:.0}) \
-         (pixel right-click; element advertises no AXShowMenu)."
+         (pixel right-click; {reason})."
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_show_menu_that_opens_no_menu_is_not_reported_as_shown() {
+        assert_eq!(
+            show_menu_outcome(kAXErrorSuccess, || Some(false)),
+            ShowMenu::NotShown("AXShowMenu returned success but no menu opened".into())
+        );
+        assert_eq!(
+            show_menu_outcome(kAXErrorSuccess, || Some(true)),
+            ShowMenu::Opened
+        );
+        assert_eq!(
+            show_menu_outcome(kAXErrorSuccess, || None),
+            ShowMenu::Unconfirmed
+        );
+    }
+
+    #[test]
+    fn a_failed_show_menu_does_not_wait_for_a_menu() {
+        let err = crate::ax::bindings::kAXErrorCannotComplete;
+        assert_eq!(
+            show_menu_outcome(err, || panic!("waited after a failed AXShowMenu")),
+            ShowMenu::NotShown(format!("AXShowMenu returned {err}"))
+        );
+    }
 }

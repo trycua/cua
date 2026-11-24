@@ -1640,6 +1640,12 @@
                     "null"
                   ]
                 },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "value": {
                   "type": [
                     "string",

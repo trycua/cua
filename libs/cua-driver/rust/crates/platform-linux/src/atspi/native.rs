@@ -2091,6 +2091,9 @@ async fn collect_visited_bounded_opts<'a>(
             }
         }
         if descend && !closed_menu {
+            if !matches!(children_r, Some(Ok(_))) && scoped_frame == Some(frame_ordinal) {
+                scope_children_unread = true;
+            }
             match children_r {
                 Some(Ok(children)) => {
                     if role_lower == "menu bar" {
@@ -2104,9 +2107,6 @@ async fn collect_visited_bounded_opts<'a>(
                 }
                 Some(Err(error)) => dlog!("  get_children failed: {error:#}"),
                 None => dlog!("  get_children timed out"),
-            }
-            if !matches!(children_r, Some(Ok(_))) && scoped_frame == Some(frame_ordinal) {
-                scope_children_unread = true;
             }
         }
 

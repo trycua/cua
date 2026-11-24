@@ -922,7 +922,7 @@ fn termination_signal() -> std::io::Result<impl std::future::Future<Output = ()>
 }
 
 #[cfg(unix)]
-fn signal_is_ignored(signal: libc::c_int) -> bool {
+pub(crate) fn signal_is_ignored(signal: libc::c_int) -> bool {
     let mut action = std::mem::MaybeUninit::<libc::sigaction>::uninit();
     unsafe {
         libc::sigaction(signal, std::ptr::null(), action.as_mut_ptr()) == 0

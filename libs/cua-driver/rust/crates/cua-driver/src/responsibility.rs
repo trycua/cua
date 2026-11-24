@@ -173,6 +173,7 @@ pub fn reexec_disclaimed_if_needed(socket_lock: Option<&std::fs::File>) {
         tracing::debug!("responsibility disclaim skipped: posix_spawn failed: {spawn_result}");
         return;
     }
+    relay_termination_signals(child_pid);
 
     // The disclaimed child is the real `serve` process. Block on it and mirror
     // its exit status so the launch keeps its original foreground semantics:
@@ -205,6 +206,39 @@ pub fn reexec_disclaimed_if_needed(socket_lock: Option<&std::fs::File>) {
         0
     };
     std::process::exit(code);
+}
+
+#[cfg(target_os = "macos")]
+static SERVE_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+#[cfg(target_os = "macos")]
+extern "C" fn relay_to_serve_child(signal: libc::c_int) {
+    let child = SERVE_CHILD.load(std::sync::atomic::Ordering::SeqCst);
+    if child > 0 {
+        unsafe {
+            libc::kill(child, signal);
+        }
+    }
+}
+
+/// Relay SIGTERM, SIGINT and SIGHUP sent to this launcher to `child`, so
+/// stopping either pid stops the daemon. A signal inherited as ignored stays
+/// ignored, as it does in the child.
+#[cfg(target_os = "macos")]
+fn relay_termination_signals(child: libc::pid_t) {
+    SERVE_CHILD.store(child, std::sync::atomic::Ordering::SeqCst);
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        if crate::serve::signal_is_ignored(signal) {
+            continue;
+        }
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction =
+            relay_to_serve_child as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        unsafe {
+            libc::sigaction(signal, &action, std::ptr::null_mut());
+        }
+    }
 }
 
 /// A descriptor left open across the disclaimed spawn, closed on `exec`

@@ -347,10 +347,12 @@ raw background PX possible on a standard compositor.
   image that no other user can write.
 - **Helper API and window capture.** Standard window screenshots use the
   helper's `CaptureWindow` on API 9 or later, which captures the window's own
-  content even when another window covers it. With an older helper, the
-  window image is a crop of the Shell stage and shows whatever covers the
-  window. Shell loads a new helper version only at the next login, so query
-  the running helper's version, not the files on disk:
+  content even when another window covers it. With an older helper or one
+  that does not report its API version, `get_window_state` returns no window
+  image and sets `screenshot_error.code` to `surface_identity_unproven`
+  instead of cropping the stage. Shell loads a new helper version only at
+  the next login, so query the running helper's version, not the files on
+  disk:
   `gdbus call --session --dest org.cua.WinRects --object-path /org/cua/WinRects --method org.cua.WinRects.GetVersion`.
 - **Window scope.** AT-SPI publishes one tree per process and can omit a
   window the Shell has mapped. Element tokens, pixel hit-tests and element

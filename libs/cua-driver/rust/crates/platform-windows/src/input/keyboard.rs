@@ -997,6 +997,16 @@ struct InputQueueAttachment {
     /// Records the messages other threads send this thread while attached,
     /// so a stall names them.
     sent_log: Option<SentMessageLog>,
+    /// This thread's `GetQueueStatus` before and right after attaching.
+    queue_before: u32,
+    queue_attached: u32,
+}
+
+/// The calling thread's queue status (high word: kinds queued now; low word:
+/// kinds added since the last check), for stall evidence.
+fn own_queue_status() -> u32 {
+    use windows::Win32::UI::WindowsAndMessaging::{GetQueueStatus, QS_ALLINPUT};
+    unsafe { GetQueueStatus(QS_ALLINPUT) }
 }
 
 thread_local! {
@@ -1091,6 +1101,7 @@ impl InputQueueAttachment {
         if target_thread == 0 || target_thread == own_thread {
             return None;
         }
+        let before = own_queue_status();
         unsafe { AttachThreadInput(own_thread, target_thread, true) }
             .as_bool()
             .then(|| Self {
@@ -1098,6 +1109,8 @@ impl InputQueueAttachment {
                 target_thread,
                 serviced: std::cell::Cell::new(0),
                 sent_log: SentMessageLog::install(),
+                queue_before: before,
+                queue_attached: own_queue_status(),
             })
     }
 
@@ -1155,7 +1168,8 @@ impl InputQueueAttachment {
         format!(
             "Driver thread ({apartment}) answered {} sent-message batch(es) while attached \
              [{sent}]; target thread {} WM_NULL within 200 ms; its queue's active HWND {:?}, \
-             focus HWND {:?}, caption {}.",
+             focus HWND {:?}, caption {}; driver queue status 0x{:08x} before attach, \
+             0x{:08x} attached, 0x{:08x} now.",
             self.serviced.get(),
             if responsive {
                 "answered"
@@ -1169,6 +1183,9 @@ impl InputQueueAttachment {
             } else {
                 "inactive"
             },
+            self.queue_before,
+            self.queue_attached,
+            own_queue_status(),
             apartment = own_apartment(),
         )
     }
@@ -2251,6 +2268,40 @@ mod busy_target_activation_tests {
         let typed = String::from_utf16_lossy(&TYPED.lock().unwrap());
         eprintln!(
             "[busy-target] self-activated result={:?} typed={typed:?} after {:?}",
+            result.as_ref().map_err(|e| e.to_string()),
+            started.elapsed()
+        );
+        drop(other);
+        drop(target);
+        result.expect("foreground text delivery");
+        assert_eq!(typed, "abc");
+    }
+
+    /// The window the driver takes the foreground from belongs to a thread
+    /// that is busy (not reading its queue) during the switch.
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_a_target_when_the_previous_foreground_is_busy() {
+        let target = UiThread::spawn(100);
+        let other = UiThread::spawn(500);
+        bring_forward(target.hwnd);
+        assert!(wait_caption(target.hwnd, true), "target never activated");
+        bring_forward(other.hwnd);
+        assert!(wait_caption(target.hwnd, false), "target never deactivated");
+        other.block();
+        TYPED.lock().unwrap().clear();
+        let hwnd = target.hwnd.0 as usize as u64;
+        let started = Instant::now();
+        let result = send_text_synthesized(hwnd, "abc");
+        state("previous busy, after typing", target.hwnd);
+        other.unblock();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && TYPED.lock().unwrap().len() < 3 {
+            sleep(Duration::from_millis(10));
+        }
+        let typed = String::from_utf16_lossy(&TYPED.lock().unwrap());
+        eprintln!(
+            "[busy-target] previous busy result={:?} typed={typed:?} after {:?}",
             result.as_ref().map_err(|e| e.to_string()),
             started.elapsed()
         );

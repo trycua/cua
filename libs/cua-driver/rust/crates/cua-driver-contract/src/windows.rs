@@ -297,7 +297,8 @@ pub struct WindowElement {
     pub min: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
-    /// Navigation target of a link element, when the platform exposes one.
+    /// macOS only: a link's navigation target, from `AXURL`. Windows and
+    /// Linux omit this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }

@@ -32,6 +32,9 @@ struct RunVMRequest: Codable {
     /// Leave the clipboard-sharing device out of the VM and turn off
     /// clipboard sync; cannot be combined with `clipboard: true`.
     var noClipboardDevice: Bool? = nil
+    /// Vsock port on which the host serves its UTC time to the guest
+    /// ([`GuestTimeService`]); absent leaves the service off.
+    var timeVsockPort: UInt32? = nil
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -85,6 +88,15 @@ struct RunVMRequest: Codable {
             clipboard: !(noClipboardDevice ?? false))
         try options.validate(clipboardSync: clipboard ?? false)
         return options
+    }
+
+    func validatedTimeVsockPort() throws -> UInt32? {
+        guard let timeVsockPort else { return nil }
+        guard GuestTimeService.isValidPort(timeVsockPort) else {
+            throw ValidationError(
+                "Invalid timeVsockPort \(timeVsockPort). Expected 1 to \(GuestTimeService.validPorts.upperBound).")
+        }
+        return timeVsockPort
     }
 
     func validatedVNCPolicy(noDisplayDefault: Bool) throws -> VNCPolicy {

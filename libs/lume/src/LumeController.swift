@@ -1354,6 +1354,7 @@ final class LumeController {
         vncPolicy: VNCPolicy = .enabled,
         forwards: [UInt16] = [],
         hostDevices: HostDeviceOptions = .all,
+        guestTimePort: UInt32? = nil,
         telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
@@ -1521,7 +1522,8 @@ final class LumeController {
                 clipboard: clipboard,
                 vncPolicy: vncPolicy,
                 forwards: forwards,
-                hostDevices: hostDevices)
+                hostDevices: hostDevices,
+                guestTimePort: guestTimePort)
             // `run` returns once the guest has stopped, including when it shut
             // itself down, so the VM no longer runs in this process.
             SharedVM.shared.removeVM(name: normalizedName, ifSame: vm)

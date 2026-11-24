@@ -437,6 +437,7 @@ enum CommandDocExtractor {
                 OptionDoc(name: "disk-path", shortName: nil, help: "Use this disk image instead of disk.img in the VM directory", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "nvram-path", shortName: nil, help: "Use this NVRAM file instead of nvram.bin in the VM directory", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "network", shortName: nil, help: "Network override for this run: nat, bridged, or bridged:<interface> (default: the VM's configured mode)", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "time-vsock", shortName: nil, help: "Serve the host's UTC time to the guest on this vsock port, for guests with no clock to read at boot. Each connection receives one line, time-v1 <seconds> <nanoseconds>. Off by default", type: "Int", defaultValue: nil, isOptional: true),
             ],
             flags: [
                 FlagDoc(name: "no-display", shortName: "d", help: "Compatibility alias for --display none", defaultValue: false),
@@ -451,6 +452,7 @@ enum CommandDocExtractor {
                 ExampleDoc("lume run my-vm --shared-dir ~/src:ro --display none", "Headless, with a read-only shared folder"),
                 ExampleDoc("lume run my-vm --detach --display none --vnc disabled", "In the background with no VNC listener"),
                 ExampleDoc("lume run my-vm --no-audio-device --no-clipboard-device", "With no audio or clipboard-sharing device"),
+                ExampleDoc("lume run my-vm --time-vsock 5000", "Serve the host's time to the guest on vsock port 5000"),
             ]
         )
     }

@@ -601,6 +601,7 @@ extension Server {
             let vncPolicy = try request.validatedVNCPolicy(noDisplayDefault: false)
             let noDisplay = request.noDisplay ?? false
             let hostDevices = try request.validatedHostDevices()
+            let guestTimePort = try request.validatedTimeVsockPort()
 
             // Virtualization.framework runs at most two macOS guests per host
             // and fails a third start only after the async start was accepted,
@@ -634,7 +635,8 @@ extension Server {
                 clipboard: request.clipboard ?? false,
                 vncPolicy: vncPolicy,
                 forwards: request.forwards ?? [],
-                hostDevices: hostDevices
+                hostDevices: hostDevices,
+                guestTimePort: guestTimePort
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -1113,7 +1115,8 @@ extension Server {
         clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled,
         forwards: [UInt16] = [],
-        hostDevices: HostDeviceOptions = .all
+        hostDevices: HostDeviceOptions = .all,
+        guestTimePort: UInt32? = nil
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -1151,6 +1154,7 @@ extension Server {
                     vncPolicy: vncPolicy,
                     forwards: forwards,
                     hostDevices: hostDevices,
+                    guestTimePort: guestTimePort,
                     telemetryTransport: .http
                 )
                 Logger.info("VM run ended in background task", metadata: ["name": name])

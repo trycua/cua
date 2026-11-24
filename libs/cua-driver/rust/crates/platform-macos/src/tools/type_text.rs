@@ -688,15 +688,16 @@ fn applies_write_before_axvalue_updates(bundle_id: &str) -> bool {
     bundle_id.starts_with("org.mozilla.") || GECKO_BUNDLE_IDS.contains(&bundle_id)
 }
 
-/// `progress` is `None` when the write was refused. `write_applies_late` is
-/// an accepted write into a Gecko browser's `AXWebArea`, whose read-back
-/// proves nothing either way until the page applies it.
+/// `progress` is `None` when the write was refused. `may_have_landed` is an
+/// accepted write whose read-back cannot prove the field untouched: one into
+/// a Gecko browser's `AXWebArea`, which proves nothing until the page applies
+/// it, or one that showed a partial and settled on a different value.
 fn after_unlanded_ax_write(
     progress: Option<TypedProgress>,
-    write_applies_late: bool,
+    may_have_landed: bool,
 ) -> UnlandedAxWrite {
     match progress {
-        Some(TypedProgress::Unchanged | TypedProgress::Unverifiable) if write_applies_late => {
+        Some(TypedProgress::Unchanged | TypedProgress::Unverifiable) if may_have_landed => {
             UnlandedAxWrite::MayHaveLanded
         }
         Some(TypedProgress::Unchanged) => UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged),
@@ -1489,16 +1490,21 @@ fn await_typed_delivery(
     }
 }
 
-/// Poll the target's read-back until it proves complete delivery or the
-/// deadline passes, and report the value the field settled on.
-///
-/// Both delivery rungs need this: neither a posted keystroke nor an accepted
-/// `AXSelectedText` write is applied by the time the call that sent it
-/// returns. Chromium acknowledges the posting process with a long tail still
-/// queued, and an AppKit field rebuilds its editor around the insertion:
-/// measured in Contacts, where the value read microseconds after the write
-/// held "(408) " of "(408) 961-1560" and was complete ~20 ms later. Sampling
-/// once turns that window into a false partial.
+/// Whether a write that first read back as a partial settled at a length
+/// that counts as `Unchanged` without restoring the pre-write value, as a
+/// selection the write replaced does. Typing it again as keys would repeat
+/// whatever of it landed.
+fn partial_left_field_changed(
+    first: TypedProgress,
+    settled: Option<TypedProgress>,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    matches!(first, TypedProgress::Partial(_))
+        && settled == Some(TypedProgress::Unchanged)
+        && before != after
+}
+
 /// The AX rung's verdict on an accepted write, from its first read-back.
 ///
 /// Only a partial is drained: an unchanged or unreadable field already
@@ -1526,6 +1532,16 @@ fn settled_ax_progress(
     }
 }
 
+/// Poll the target's read-back until it proves complete delivery or the
+/// deadline passes, and report the value the field settled on.
+///
+/// Both delivery rungs need this: neither a posted keystroke nor an accepted
+/// `AXSelectedText` write is applied by the time the call that sent it
+/// returns. Chromium acknowledges the posting process with a long tail still
+/// queued, and an AppKit field rebuilds its editor around the insertion:
+/// measured in Contacts, where the value read microseconds after the write
+/// held "(408) " of "(408) 961-1560" and was complete ~20 ms later. Sampling
+/// once turns that window into a false partial.
 fn await_typed_progress(
     before: Option<&str>,
     text: &str,
@@ -1964,16 +1980,12 @@ fn type_text_in_key_window(
         // that read is settled through the keystroke rung's drain before it
         // is reported as a partial insertion.
         let mut after = unsafe { copy_string_attr(element, "AXValue") };
+        let first = typed_progress(before.as_deref(), after.as_deref(), ax_text);
         let ax_progress = (err == kAXErrorSuccess).then(|| {
-            settled_ax_progress(
-                typed_progress(before.as_deref(), after.as_deref(), ax_text),
-                before.as_deref(),
-                ax_text,
-                || {
-                    after = unsafe { copy_string_attr(element, "AXValue") };
-                    after.clone()
-                },
-            )
+            settled_ax_progress(first, before.as_deref(), ax_text, || {
+                after = unsafe { copy_string_attr(element, "AXValue") };
+                after.clone()
+            })
         });
         // AXValue is not renderer evidence in web content. An unchanged or
         // unreadable echo there cannot prove that zero characters landed, so
@@ -1986,6 +1998,8 @@ fn type_text_in_key_window(
                 && crate::apps::bundle_id_for_pid(pid)
                     .as_deref()
                     .is_some_and(applies_write_before_axvalue_updates);
+        let may_have_landed = write_applies_late
+            || partial_left_field_changed(first, ax_progress, before.as_deref(), after.as_deref());
         // An AX insert bypasses NSTextView's edit model, so a document is
         // not marked edited and would never save the new text (DS-07).
         let document = if ax_progress == Some(TypedProgress::Complete) {
@@ -2079,9 +2093,10 @@ fn type_text_in_key_window(
                 delivered_chars: Some(delivered_chars),
             }));
         }
-        ax_attempt = match after_unlanded_ax_write(ax_progress, write_applies_late) {
+        ax_attempt = match after_unlanded_ax_write(ax_progress, may_have_landed) {
             UnlandedAxWrite::TypeKeys(attempt) => attempt,
-            // Firefox accepts the write but updates AXValue later (#5383).
+            // Firefox accepts the write but updates AXValue later (#5383),
+            // and a native field can settle on a value no count describes.
             UnlandedAxWrite::MayHaveLanded => {
                 let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
                 let return_note = if submit_body.is_some() {
@@ -2091,9 +2106,9 @@ fn type_text_in_key_window(
                 };
                 return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                     detail: format!(
-                        " via AX write into{idx_str} {role} \"{title}\", which the page \
-                         accepted but has not read back yet, so it was not typed again \
-                         as keys{return_note}; read the field before retrying"
+                        " via AX write into{idx_str} {role} \"{title}\", which the target \
+                         accepted but has not read back as inserted, so it was not typed \
+                         again as keys{return_note}; read the field before retrying"
                     ),
                     path: PATH_AX,
                     verified: false,
@@ -2843,6 +2858,36 @@ mod tests {
         let first = typed_progress(Some(""), Some("(408) "), "(408) 961-1560");
         let progress = settled_ax_progress(first, Some(""), "(408) 961-1560", || None);
         assert_eq!(progress, TypedProgress::Partial(6));
+    }
+
+    #[test]
+    fn a_partial_is_typed_again_only_over_the_restored_value() {
+        use TypedProgress::{Partial, Unchanged};
+        // The field discarded the write and holds its old value again.
+        assert!(!partial_left_field_changed(
+            Partial(2),
+            Some(Unchanged),
+            Some("abc"),
+            Some("abc")
+        ));
+        // The write replaced a selection: same length, different value.
+        assert!(partial_left_field_changed(
+            Partial(2),
+            Some(Unchanged),
+            Some("abc"),
+            Some("ade")
+        ));
+        // No partial was ever seen: an unchanged write still takes keys.
+        assert!(!partial_left_field_changed(
+            Unchanged,
+            Some(Unchanged),
+            Some("abc"),
+            Some("abc")
+        ));
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unchanged), true),
+            UnlandedAxWrite::MayHaveLanded
+        );
     }
 
     #[test]

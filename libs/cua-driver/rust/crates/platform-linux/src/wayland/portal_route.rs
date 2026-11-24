@@ -630,7 +630,7 @@ pub(crate) fn conf_candidates(dirs: &[PathBuf], desktops: &[String]) -> Vec<Path
 pub(crate) fn read_conf(candidates: &[PathBuf], languages: &[String]) -> ConfSearch {
     let mut search = ConfSearch::default();
     for path in candidates {
-        match std::fs::read(path) {
+        match read_regular(path) {
             Ok(text) => {
                 if let Some(conf) = parse_conf(path, &text, languages) {
                     search.active = Some(conf);
@@ -642,6 +642,23 @@ pub(crate) fn read_conf(candidates: &[PathBuf], languages: &[String]) -> ConfSea
         }
     }
     search
+}
+
+/// Read a regular file. Anything else, such as a FIFO a config generator
+/// left behind, is not opened for reading, so it cannot block doctor.
+fn read_regular(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    let mut out = Vec::new();
+    file.read_to_end(&mut out)?;
+    Ok(out)
 }
 
 /// Installed `.portal` files; the first directory wins for a name.
@@ -662,7 +679,7 @@ pub(crate) fn read_portal_files(dirs: &[PathBuf], languages: &[String]) -> Vec<P
             if out.iter().any(|p| p.name == name) {
                 continue;
             }
-            if let Some(file) = std::fs::read(&path)
+            if let Some(file) = read_regular(&path)
                 .ok()
                 .and_then(|text| parse_portal_file(name, &text, languages))
             {
@@ -679,15 +696,23 @@ pub(crate) async fn backend_exports(
     dbus_name: &str,
     interface: &str,
 ) -> Option<bool> {
-    let proxy = zbus::fdo::IntrospectableProxy::builder(connection)
-        .destination(dbus_name.to_owned())
-        .ok()?
-        .path(BACKEND_OBJECT_PATH)
-        .ok()?
-        .build()
+    let proxy = zbus::Proxy::new(
+        connection,
+        dbus_name.to_owned(),
+        BACKEND_OBJECT_PATH,
+        "org.freedesktop.DBus.Introspectable",
+    )
+    .await
+    .ok()?;
+    // A backend that is not running is not started just to be asked.
+    let xml: String = proxy
+        .call_with_flags(
+            "Introspect",
+            zbus::proxy::MethodFlags::NoAutoStart.into(),
+            &(),
+        )
         .await
-        .ok()?;
-    let xml = proxy.introspect().await.ok()?;
+        .ok()??;
     Some(xml_declares_interface(&xml, interface))
 }
 
@@ -809,6 +834,55 @@ fn portal_file_paths(dirs: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// What one candidate build reads: config dirs, config candidates, the
+/// config search, `.portal` dirs and the parsed `.portal` files.
+type BuildRead = (
+    Vec<PathBuf>,
+    Vec<PathBuf>,
+    ConfSearch,
+    Vec<PathBuf>,
+    Vec<PortalFile>,
+);
+
+/// The paths whose change after the frontend started makes the files on
+/// disk an unreliable picture of what it loaded: every config and `.portal`
+/// path of every build, the search roots themselves (replacing a whole
+/// `XDG_CONFIG_HOME` changes only its own times), and, for a search
+/// directory that is missing, its nearest existing ancestor.
+fn watched_paths(reads: &[BuildRead]) -> Vec<PathBuf> {
+    let mut watched: Vec<PathBuf> = Vec::new();
+    let mut add = |path: &Path| {
+        if !watched.iter().any(|w| w == path) {
+            watched.push(path.to_owned());
+        }
+    };
+    for (dirs, candidates, _, portal_dirs, _) in reads {
+        for path in dirs.iter().chain(candidates).chain(portal_dirs) {
+            add(path);
+        }
+        for path in portal_file_paths(portal_dirs) {
+            add(&path);
+        }
+        // `<root>/xdg-desktop-portal` and `<root>/xdg-desktop-portal/portals`.
+        let roots = dirs
+            .iter()
+            .filter_map(|d| d.parent())
+            .chain(portal_dirs.iter().filter_map(|d| d.parent()))
+            .chain(portal_dirs.iter().filter_map(|d| d.parent()?.parent()));
+        for root in roots {
+            add(root);
+        }
+        for dir in dirs.iter().chain(portal_dirs) {
+            if !dir.exists() {
+                if let Some(ancestor) = dir.ancestors().skip(1).find(|a| a.exists()) {
+                    add(ancestor);
+                }
+            }
+        }
+    }
+    watched
+}
+
 /// Read the config and `.portal` files the running frontend would, then
 /// introspect the chosen backend. `frontend_exports` is whether the running
 /// frontend exports RemoteDesktop, when known.
@@ -848,7 +922,7 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
         sort_portals(&mut portals, &desktops);
         (dirs, candidates, search, portal_dirs, portals)
     };
-    let reads: Vec<_> = builds.iter().map(read).collect();
+    let reads: Vec<BuildRead> = builds.iter().map(read).collect();
     let builds_agree = reads
         .iter()
         .map(|(_, _, search, _, portals)| outcome(search.active.as_ref(), portals, &desktops))
@@ -870,6 +944,27 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
             .join("xdg-desktop-portal"),
     }
     .join(pin_name);
+    // Everything that makes the prediction untrustworthy is checked before
+    // any backend is asked.
+    let same_filesystem = pid.is_some_and(|pid| {
+        let ns = |p: &str| std::fs::read_link(format!("/proc/{p}/ns/mnt")).ok();
+        let theirs = ns(&pid.to_string());
+        theirs.is_some() && theirs == ns("self")
+    });
+    let started = pid.and_then(process_started);
+    let stale = match started {
+        Some(started) => changed_since(&watched_paths(&reads), started),
+        None => Vec::new(),
+    };
+    // Without the frontend's environment, its home, its filesystem view,
+    // its start time, or agreement between the builds it may be, the
+    // prediction may read other files than the frontend did.
+    let trusted = environ.is_some()
+        && env.raw("HOME").is_some_and(|h| !h.is_empty())
+        && same_filesystem
+        && started.is_some()
+        && stale.is_empty()
+        && builds_agree;
     let mut diagnosis = resolve(
         search,
         portals,
@@ -877,6 +972,9 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
         pin_file,
         frontend_exports,
         |backend| {
+            if !trusted {
+                return None;
+            }
             rt.as_ref()?.block_on(async {
                 tokio::time::timeout(super::portal::PROBE_TIMEOUT, async {
                     let connection = super::portal::fresh_session_connection().await.ok()?;
@@ -888,39 +986,10 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
             })
         },
     );
-    // Without the frontend's environment, its home, or agreement between
-    // the builds it may be, the prediction may read other files than the
-    // frontend did.
-    if environ.is_none() || env.config_home().is_none() || !builds_agree {
+    if !trusted {
         diagnosis.route = Route::Unknown;
     }
-    if let Some(started) = pid.and_then(process_started) {
-        // A directory's time changes when a file in it is added, renamed or
-        // removed. For a directory that is missing, its nearest existing
-        // ancestor's time shows whether it was moved away.
-        let mut watched: Vec<PathBuf> = Vec::new();
-        for (dirs, candidates, _, portal_dirs, _) in &reads {
-            let portal_files = portal_file_paths(portal_dirs);
-            for path in dirs
-                .iter()
-                .chain(candidates)
-                .chain(portal_dirs)
-                .chain(&portal_files)
-            {
-                if !watched.contains(path) {
-                    watched.push(path.clone());
-                }
-            }
-            for dir in dirs.iter().chain(portal_dirs) {
-                if let Some(ancestor) = dir.ancestors().skip(1).find(|a| a.exists()) {
-                    if !dir.exists() && !watched.iter().any(|w| w == ancestor) {
-                        watched.push(ancestor.to_owned());
-                    }
-                }
-            }
-        }
-        diagnosis.mark_stale(changed_since(&watched, started));
-    }
+    diagnosis.mark_stale(stale);
     diagnosis
 }
 
@@ -2053,6 +2122,50 @@ mod tests {
         let empty = PortalEnv::from_environ(b"XDG_DESKTOP_PORTAL_DIR=\0", None);
         assert!(empty.portal_file_dirs(&builds[0]).is_empty());
         assert_eq!(empty.config_home(), None);
+    }
+
+    #[test]
+    fn a_fifo_in_place_of_a_config_is_skipped_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("gnome-portals.conf");
+        let path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let used = dir.path().join("portals.conf");
+        std::fs::write(&used, "[preferred]\ndefault=gnome\n").unwrap();
+        let search = read_conf_c(&[fifo.clone(), used.clone()]);
+        assert_eq!(search.unreadable.len(), 1);
+        assert_eq!(search.unreadable[0].0, fifo);
+        assert_eq!(search.active.map(|c| c.path), Some(used));
+    }
+
+    #[test]
+    fn search_roots_and_ancestors_of_missing_directories_are_watched() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_home = dir.path().join("config");
+        std::fs::create_dir_all(config_home.join("xdg-desktop-portal")).unwrap();
+        let data = dir.path().join("data");
+        std::fs::create_dir(&data).unwrap();
+        let conf_dir = config_home.join("xdg-desktop-portal");
+        let portal_dir = data.join("xdg-desktop-portal/portals");
+        let read: BuildRead = (
+            vec![conf_dir.clone()],
+            vec![conf_dir.join("portals.conf")],
+            ConfSearch::default(),
+            vec![portal_dir.clone()],
+            Vec::new(),
+        );
+        let watched = watched_paths(&[read]);
+        for path in [
+            &conf_dir,
+            &config_home,
+            &portal_dir,
+            &data.join("xdg-desktop-portal"),
+            &data,
+        ] {
+            assert!(watched.contains(path), "{path:?} in {watched:?}");
+        }
+        assert!(!watched.contains(&dir.path().to_owned()), "{watched:?}");
     }
 
     #[test]

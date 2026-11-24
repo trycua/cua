@@ -415,22 +415,21 @@ async fn check_wayland_backend() -> CheckEntry {
             );
         }
     };
-    let remote_desktop_portal_reachable = if portal_input_enabled() {
+    let frontend_exports = if portal_input_enabled() {
         tokio::task::spawn_blocking(probe_portal_remote_desktop)
             .await
             .ok()
             .and_then(|r| r.ok())
-            .unwrap_or(false)
     } else {
-        false
+        Some(false)
     };
-    let route_problem = if portal_input_enabled() {
-        tokio::task::spawn_blocking(probe_remote_desktop_route)
+    let remote_desktop_portal_reachable = frontend_exports.unwrap_or(false);
+    let (route_problem, route_note) = if portal_input_enabled() {
+        tokio::task::spawn_blocking(move || probe_remote_desktop_route(frontend_exports))
             .await
-            .ok()
-            .flatten()
+            .unwrap_or_default()
     } else {
-        None
+        (None, None)
     };
     let remote_desktop = match route_problem {
         Some((message, hint)) => RemoteDesktopPortal::Misrouted { message, hint },
@@ -443,6 +442,12 @@ async fn check_wayland_backend() -> CheckEntry {
         &remote_desktop,
         target_activation_available(),
     );
+    // A misrouted portal's message already carries the note.
+    if let Some(note) =
+        route_note.filter(|_| !matches!(remote_desktop, RemoteDesktopPortal::Misrouted { .. }))
+    {
+        entry.message = format!("{} {note}", entry.message);
+    }
     if let Some(note) = tokio::task::spawn_blocking(compositor_note)
         .await
         .ok()
@@ -775,16 +780,21 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
 }
 
 /// `(message, hint)` when the backend xdg-desktop-portal routes
-/// RemoteDesktop to cannot take input calls.
+/// RemoteDesktop to cannot take input calls, and a note when the config on
+/// disk may not be what the running portal uses.
 #[cfg(target_os = "linux")]
-fn probe_remote_desktop_route() -> Option<(String, String)> {
-    use crate::wayland::portal_route;
-    portal_route::probe().problem()
+fn probe_remote_desktop_route(
+    frontend_exports: Option<bool>,
+) -> (Option<(String, String)>, Option<String>) {
+    let diagnosis = crate::wayland::portal_route::probe(frontend_exports);
+    (diagnosis.problem(), diagnosis.note())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn probe_remote_desktop_route() -> Option<(String, String)> {
-    None
+fn probe_remote_desktop_route(
+    _frontend_exports: Option<bool>,
+) -> (Option<(String, String)>, Option<String>) {
+    (None, None)
 }
 
 /// Stub of `wayland::WaylandManagers` so off-Linux builds compile. Always

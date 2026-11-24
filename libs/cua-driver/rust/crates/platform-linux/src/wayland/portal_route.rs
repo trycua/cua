@@ -12,8 +12,14 @@
 //! backend the way the frontend does (`src/xdp-portal-impl.c` in
 //! xdg-desktop-portal 1.20), from `portals.conf` and the installed `.portal`
 //! files, and asks that backend whether it exports the interface.
+//!
+//! The frontend reads its config only when it starts, so the files on disk
+//! are a prediction. Doctor trusts it only when it agrees with what the
+//! running frontend exports, and says when a config file changed after the
+//! frontend started.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 pub(crate) const REMOTE_DESKTOP_IMPL: &str = "org.freedesktop.impl.portal.RemoteDesktop";
 const BACKEND_OBJECT_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -85,8 +91,9 @@ pub(crate) enum Route {
     Vetoed,
     /// No installed backend the frontend would pick declares RemoteDesktop.
     NoBackend,
-    /// No `.portal` files found, or the backend could not be asked (not
-    /// running and not activatable, timeout). Doctor keeps its earlier verdict.
+    /// The backend could not be asked (not running and not activatable,
+    /// timeout), or the prediction disagrees with what the running frontend
+    /// exports. Doctor keeps its earlier verdict.
     Unknown,
 }
 
@@ -100,6 +107,10 @@ pub(crate) struct Diagnosis {
     /// The highest-priority config file: `<desktop>-portals.conf` in the
     /// user's config directory.
     pub pin_file: PathBuf,
+    /// The prediction disagreed with the running frontend.
+    pub mismatch: bool,
+    /// Config files changed after the running frontend started.
+    pub stale: Vec<PathBuf>,
 }
 
 impl Diagnosis {
@@ -149,7 +160,25 @@ impl Diagnosis {
             ". Keep the file readable (mode 644), then restart xdg-desktop-portal or log \
              out and back in.",
         );
-        Some((format!("{message}{skipped}"), hint))
+        let note = self.note().map(|n| format!(" {n}")).unwrap_or_default();
+        Some((format!("{message}{skipped}{note}"), hint))
+    }
+
+    /// Why the files on disk may not describe the running frontend.
+    pub(crate) fn note(&self) -> Option<String> {
+        let restart = "restart xdg-desktop-portal (`systemctl --user restart \
+                       xdg-desktop-portal`) or log out and back in";
+        if let Some(path) = self.stale.first() {
+            return Some(format!(
+                "xdg-desktop-portal reads its config only when it starts, and {} changed \
+                 after it started, so the running portal may not use what is on disk; \
+                 {restart}.",
+                path.display()
+            ));
+        }
+        self.mismatch.then(|| {
+            format!("The running xdg-desktop-portal does not match its config on disk; {restart}.")
+        })
     }
 
     fn conf_note(&self) -> String {
@@ -162,25 +191,27 @@ impl Diagnosis {
 
 /// Parse a `.portal` file's `[portal]` group. `name` is the file stem.
 /// `None` when the frontend would reject the file.
-pub(crate) fn parse_portal_file(name: &str, text: &str) -> Option<PortalFile> {
-    let groups = parse_key_file(text)?;
+pub(crate) fn parse_portal_file(name: &str, text: impl AsRef<[u8]>) -> Option<PortalFile> {
+    let groups = parse_key_file(text.as_ref())?;
     let group = key_file_group(&groups, "portal").unwrap_or_default();
     let get = |key: &str| {
         group
             .iter()
             .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+            .and_then(|(_, v)| v.as_deref())
     };
+    let dbus_name = get("DBusName")?;
     let interfaces = parse_list(get("Interfaces")?)?;
-    if !interfaces
-        .iter()
-        .all(|i| i.starts_with("org.freedesktop.impl.portal."))
+    if !is_bus_name(dbus_name)
+        || !interfaces
+            .iter()
+            .all(|i| is_interface_name(i) && i.starts_with("org.freedesktop.impl.portal."))
     {
         return None;
     }
     Some(PortalFile {
         name: name.to_owned(),
-        dbus_name: get("DBusName")?.to_owned(),
+        dbus_name: dbus_name.to_owned(),
         interfaces,
         // The frontend registers a backend whose UseIn it cannot read.
         use_in: get("UseIn").and_then(parse_list).unwrap_or_default(),
@@ -191,16 +222,18 @@ pub(crate) fn parse_portal_file(name: &str, text: &str) -> Option<PortalFile> {
 /// move on to the next one: GLib rejects it, it has no `[preferred]` group,
 /// or a value is not a valid list. An empty `[preferred]` group still ends
 /// the search.
-pub(crate) fn parse_conf(path: &Path, text: &str) -> Option<PortalConf> {
-    let groups = parse_key_file(text)?;
+pub(crate) fn parse_conf(path: &Path, text: impl AsRef<[u8]>) -> Option<PortalConf> {
+    let groups = parse_key_file(text.as_ref())?;
     let group = key_file_group(&groups, "preferred")?;
     let mut conf = PortalConf {
         path: path.to_owned(),
         interfaces: Vec::new(),
         default: None,
     };
+    // The frontend reads every key as a list, and drops the file when one
+    // cannot be read.
     for (key, value) in group {
-        let list = parse_list(value)?;
+        let list = parse_list(value.as_deref()?)?;
         if key == "default" {
             conf.default = Some(list);
         } else {
@@ -288,13 +321,17 @@ fn choose<'a>(
 }
 
 /// Resolve where RemoteDesktop goes. `portals` must be sorted with
-/// [`sort_portals`]. `exports` asks a backend whether it exports the
-/// interface; `None` means it could not be asked.
+/// [`sort_portals`]. `frontend_exports` is whether the running frontend
+/// exports RemoteDesktop, when known: it does for a chosen backend and not
+/// for `none` or no backend, so a prediction that disagrees is not trusted.
+/// `exports` asks a backend whether it exports the interface; `None` means
+/// it could not be asked.
 pub(crate) fn resolve(
     search: &ConfSearch,
     portals: &[PortalFile],
     desktops: &[String],
     pin_file: PathBuf,
+    frontend_exports: Option<bool>,
     exports: impl FnOnce(&PortalFile) -> Option<bool>,
 ) -> Diagnosis {
     let conf = search.active.as_ref();
@@ -303,9 +340,14 @@ pub(crate) fn resolve(
         Choice::Backend(p) => Some(p.name.as_str()),
         _ => None,
     };
+    let predicted = matches!(choice, Choice::Backend(_));
+    let mismatch = frontend_exports.is_some_and(|live| live != predicted);
     let route = match choice {
+        _ if mismatch => Route::Unknown,
+        // An empty scan may be directories doctor cannot see, unless the
+        // frontend confirms it has no backend.
+        Choice::None if portals.is_empty() && frontend_exports != Some(false) => Route::Unknown,
         Choice::Vetoed => Route::Vetoed,
-        Choice::None if portals.is_empty() => Route::Unknown,
         Choice::None => Route::NoBackend,
         Choice::Backend(p) => match exports(p) {
             Some(true) => Route::Served {
@@ -326,6 +368,8 @@ pub(crate) fn resolve(
             .find(|p| p.declares(REMOTE_DESKTOP_IMPL) && Some(p.name.as_str()) != chosen)
             .map(|p| p.name.clone()),
         pin_file,
+        mismatch,
+        stale: Vec::new(),
     }
 }
 
@@ -364,7 +408,7 @@ pub(crate) fn conf_candidates(dirs: &[PathBuf], desktops: &[String]) -> Vec<Path
 pub(crate) fn read_conf(candidates: &[PathBuf]) -> ConfSearch {
     let mut search = ConfSearch::default();
     for path in candidates {
-        match std::fs::read_to_string(path) {
+        match std::fs::read(path) {
             Ok(text) => {
                 if let Some(conf) = parse_conf(path, &text) {
                     search.active = Some(conf);
@@ -396,7 +440,7 @@ pub(crate) fn read_portal_files(dirs: &[PathBuf]) -> Vec<PortalFile> {
             if out.iter().any(|p| p.name == name) {
                 continue;
             }
-            if let Some(file) = std::fs::read_to_string(&path)
+            if let Some(file) = std::fs::read(&path)
                 .ok()
                 .and_then(|text| parse_portal_file(name, &text))
             {
@@ -426,9 +470,17 @@ fn data_roots() -> Vec<PathBuf> {
     roots
 }
 
+/// `XDG_DESKTOP_PORTAL_DIR` replaces every config and `.portal` directory.
+fn portal_dir_override() -> Option<PathBuf> {
+    std::env::var_os("XDG_DESKTOP_PORTAL_DIR").map(PathBuf::from)
+}
+
 /// Config directories in the frontend's order: XDG_CONFIG_HOME,
 /// XDG_CONFIG_DIRS, /etc, XDG_DATA_HOME, XDG_DATA_DIRS, /usr/share.
 pub(crate) fn conf_dirs() -> Vec<PathBuf> {
+    if let Some(dir) = portal_dir_override() {
+        return vec![dir];
+    }
     let mut roots = Vec::new();
     roots.extend(dirs::config_dir());
     roots.extend(env_dirs("XDG_CONFIG_DIRS", "/etc/xdg"));
@@ -441,6 +493,9 @@ pub(crate) fn conf_dirs() -> Vec<PathBuf> {
 }
 
 pub(crate) fn portal_file_dirs() -> Vec<PathBuf> {
+    if let Some(dir) = portal_dir_override() {
+        return vec![dir];
+    }
     data_roots()
         .into_iter()
         .map(|r| r.join("xdg-desktop-portal").join("portals"))
@@ -462,13 +517,76 @@ pub(crate) async fn backend_exports(
         .await
         .ok()?;
     let xml = proxy.introspect().await.ok()?;
-    Some(xml.contains(&format!("\"{interface}\"")))
+    Some(xml_declares_interface(&xml, interface))
+}
+
+/// Whether introspection XML has `<interface name="…">` for `interface`,
+/// with either quote style.
+fn xml_declares_interface(xml: &str, interface: &str) -> bool {
+    xml.split("<interface")
+        .skip(1)
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_whitespace()))
+        .filter_map(|rest| rest.split('>').next())
+        .any(|tag| {
+            let mut rest = tag;
+            while let Some(at) = rest.find("name") {
+                let before = rest[..at].chars().last();
+                let after = rest[at + 4..].trim_start();
+                rest = &rest[at + 4..];
+                if !before.is_some_and(|c| c.is_ascii_whitespace()) {
+                    continue;
+                }
+                let Some(value) = after.strip_prefix('=').map(str::trim_start) else {
+                    continue;
+                };
+                let Some(quote) = value.chars().next().filter(|q| matches!(q, '"' | '\'')) else {
+                    continue;
+                };
+                return value[1..].split(quote).next() == Some(interface);
+            }
+            false
+        })
+}
+
+/// When the process that owns `org.freedesktop.portal.Desktop` started.
+async fn frontend_started(connection: &zbus::Connection) -> Option<SystemTime> {
+    let proxy = zbus::fdo::DBusProxy::new(connection).await.ok()?;
+    let name = zbus::names::BusName::try_from("org.freedesktop.portal.Desktop").ok()?;
+    let pid = proxy.get_connection_unix_process_id(name).await.ok()?;
+    let ticks = crate::proc_fs::process_instance_id(pid)?;
+    // SAFETY: sysconf has no preconditions.
+    let per_second = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok()?;
+    let boot: u64 = std::fs::read_to_string("/proc/stat")
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("btime "))?
+        .trim()
+        .parse()
+        .ok()?;
+    let since_boot = Duration::from_secs_f64(ticks as f64 / per_second.max(1) as f64);
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(boot) + since_boot)
+}
+
+/// Existing candidates modified after `started`.
+fn changed_since(candidates: &[PathBuf], started: SystemTime) -> Vec<PathBuf> {
+    candidates
+        .iter()
+        .filter(|path| {
+            std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .is_ok_and(|modified| modified > started)
+        })
+        .cloned()
+        .collect()
 }
 
 /// Read the config and `.portal` files, then introspect the chosen backend.
-pub(crate) fn probe() -> Diagnosis {
+/// `frontend_exports` is whether the running frontend exports RemoteDesktop,
+/// when known.
+pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
     let desktops = current_desktops();
-    let search = read_conf(&conf_candidates(&conf_dirs(), &desktops));
+    let candidates = conf_candidates(&conf_dirs(), &desktops);
+    let search = read_conf(&candidates);
     let mut portals = read_portal_files(&portal_file_dirs());
     sort_portals(&mut portals, &desktops);
     let pin_name = match desktops.first() {
@@ -483,70 +601,122 @@ pub(crate) fn probe() -> Diagnosis {
         .enable_all()
         .build()
         .ok();
-    resolve(&search, &portals, &desktops, pin_file, |backend| {
-        rt.as_ref()?.block_on(async {
+    let mut diagnosis = resolve(
+        &search,
+        &portals,
+        &desktops,
+        pin_file,
+        frontend_exports,
+        |backend| {
+            rt.as_ref()?.block_on(async {
+                tokio::time::timeout(super::portal::PROBE_TIMEOUT, async {
+                    let connection = super::portal::fresh_session_connection().await.ok()?;
+                    backend_exports(&connection, &backend.dbus_name, REMOTE_DESKTOP_IMPL).await
+                })
+                .await
+                .ok()
+                .flatten()
+            })
+        },
+    );
+    let started = rt.as_ref().and_then(|rt| {
+        rt.block_on(async {
             tokio::time::timeout(super::portal::PROBE_TIMEOUT, async {
                 let connection = super::portal::fresh_session_connection().await.ok()?;
-                backend_exports(&connection, &backend.dbus_name, REMOTE_DESKTOP_IMPL).await
+                frontend_started(&connection).await
             })
             .await
             .ok()
             .flatten()
         })
-    })
+    });
+    if let Some(started) = started {
+        diagnosis.stale = changed_since(&candidates, started);
+    }
+    diagnosis
 }
 
-type KeyFileGroups = Vec<(String, Vec<(String, String)>)>;
+/// Each group's keys, with a value that is `None` when it is not UTF-8.
+type KeyFileGroups = Vec<(String, Vec<(String, Option<String>)>)>;
 
-/// Groups of a key file, parsed as GLib's `GKeyFile` does: comments and
-/// blank lines skipped, repeated groups merged, a repeated key's last value
-/// kept, locale keys (`Key[de]`) left out, and the value's leading (not
-/// trailing) whitespace dropped. `None` when GLib rejects the file.
-fn parse_key_file(text: &str) -> Option<KeyFileGroups> {
+/// Groups of a key file, parsed as GLib's `GKeyFile` does: each line ends
+/// at its first NUL, comments and blank lines are skipped, repeated groups
+/// merged, a repeated key's last value kept, locale keys (`Key[de]`) left
+/// out, and the value's leading (not trailing) whitespace dropped. `None`
+/// when GLib rejects the file.
+fn parse_key_file(text: &[u8]) -> Option<KeyFileGroups> {
     let mut groups: KeyFileGroups = Vec::new();
     let mut current = None;
-    let lines: Vec<&str> = text.split('\n').collect();
+    let lines: Vec<&[u8]> = text.split(|&b| b == b'\n').collect();
     for (at, line) in lines.iter().enumerate() {
         // One CR before an LF ends the line; a CR anywhere else is content.
-        let line = match line.strip_suffix('\r') {
+        let line = match line.strip_suffix(b"\r") {
             Some(stripped) if at + 1 < lines.len() => stripped,
             _ => line,
         };
-        let line = line.trim_start_matches(glib_space);
-        if line.is_empty() || line.starts_with('#') {
+        let line = line.split(|&b| b == 0).next().unwrap_or_default();
+        let start = line
+            .iter()
+            .position(|&b| !glib_space(b))
+            .unwrap_or(line.len());
+        let line = &line[start..];
+        if line.is_empty() || line[0] == b'#' {
             continue;
         }
-        if let Some(rest) = line.strip_prefix('[') {
-            let name = rest.trim_end_matches([' ', '\t']).strip_suffix(']')?;
+        if let Some(rest) = line.strip_prefix(b"[") {
+            let end = rest
+                .iter()
+                .rposition(|&b| b != b' ' && b != b'\t')
+                .map_or(0, |i| i + 1);
+            let name = rest[..end].strip_suffix(b"]")?;
             if name.is_empty()
-                || name.contains(['[', ']'])
-                || name.contains(|c: char| c.is_ascii_control())
+                || name
+                    .iter()
+                    .any(|&b| b == b'[' || b == b']' || b.is_ascii_control())
             {
                 return None;
             }
-            current = Some(match groups.iter().position(|(g, _)| g == name) {
+            let name = String::from_utf8_lossy(name).into_owned();
+            current = Some(match groups.iter().position(|(g, _)| *g == name) {
                 Some(at) => at,
                 None => {
-                    groups.push((name.to_owned(), Vec::new()));
+                    groups.push((name, Vec::new()));
                     groups.len() - 1
                 }
             });
             continue;
         }
-        let (key, value) = line.split_once('=')?;
-        let key = key.trim_end_matches(glib_space);
+        let eq = line.iter().position(|&b| b == b'=')?;
+        let key = &line[..eq];
+        let key_end = key
+            .iter()
+            .rposition(|&b| !glib_space(b))
+            .map_or(0, |i| i + 1);
+        let key = String::from_utf8_lossy(&key[..key_end]).into_owned();
+        let value = &line[eq + 1..];
+        let value_start = value
+            .iter()
+            .position(|&b| !glib_space(b))
+            .unwrap_or(value.len());
+        let value = std::str::from_utf8(&value[value_start..])
+            .ok()
+            .map(str::to_owned);
         let (_, pairs) = &mut groups[current?];
-        match key_kind(key)? {
+        match key_kind(&key)? {
             KeyKind::Plain => {}
             KeyKind::Localized => continue,
         }
-        let value = value.trim_start_matches(glib_space).to_owned();
-        if current == Some(0) && key == "Encoding" && !value.eq_ignore_ascii_case("UTF-8") {
+        if current == Some(0)
+            && key == "Encoding"
+            && !value
+                .as_deref()
+                .is_some_and(|v| v.eq_ignore_ascii_case("UTF-8"))
+        {
             return None;
         }
-        match pairs.iter_mut().find(|(k, _)| k == key) {
+        match pairs.iter_mut().find(|(k, _)| *k == key) {
             Some(pair) => pair.1 = value,
-            None => pairs.push((key.to_owned(), value)),
+            None => pairs.push((key, value)),
         }
     }
     Some(groups)
@@ -583,11 +753,43 @@ fn key_kind(key: &str) -> Option<KeyKind> {
 }
 
 /// `g_ascii_isspace`: ASCII only, and no vertical tab.
-fn glib_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c')
+fn glib_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
 }
 
-fn key_file_group<'a>(groups: &'a KeyFileGroups, name: &str) -> Option<&'a [(String, String)]> {
+/// `g_dbus_is_interface_name`.
+fn is_interface_name(name: &str) -> bool {
+    name.len() <= 255
+        && name.split('.').count() >= 2
+        && name.split('.').all(|element| {
+            let mut chars = element.chars();
+            chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+}
+
+/// `g_dbus_is_name`: a unique (`:1.42`) or well-known bus name.
+fn is_bus_name(name: &str) -> bool {
+    let (unique, body) = match name.strip_prefix(':') {
+        Some(body) => (true, body),
+        None => (false, name),
+    };
+    name.len() <= 255
+        && body.split('.').count() >= 2
+        && body.split('.').all(|element| {
+            let mut chars = element.chars();
+            chars.next().is_some_and(|c| {
+                c.is_ascii_alphabetic() || c == '_' || c == '-' || (unique && c.is_ascii_digit())
+            }) && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
+}
+
+fn key_file_group<'a>(
+    groups: &'a KeyFileGroups,
+    name: &str,
+) -> Option<&'a [(String, Option<String>)]> {
     groups
         .iter()
         .find(|(g, _)| g == name)
@@ -673,6 +875,7 @@ mod tests {
             &portals(&gnome()),
             &gnome(),
             PathBuf::from(PIN_PATH),
+            None,
             mutter,
         )
     }
@@ -725,6 +928,7 @@ mod tests {
             &portals(&desktops),
             &desktops,
             PathBuf::from(PIN_PATH),
+            None,
             mutter,
         );
         assert_eq!(
@@ -788,6 +992,7 @@ mod tests {
             &portals(&desktops),
             &desktops,
             PathBuf::from(PIN_PATH),
+            None,
             mutter,
         );
         assert_eq!(
@@ -806,6 +1011,7 @@ mod tests {
             &portals(&desktops),
             &desktops,
             PathBuf::from(PIN_PATH),
+            None,
             mutter,
         );
         assert_eq!(diagnosis.route, Route::NoBackend);
@@ -868,6 +1074,7 @@ mod tests {
             &portals(&gnome()),
             &gnome(),
             PathBuf::from(PIN_PATH),
+            None,
             |_| None,
         );
         assert_eq!(diagnosis.route, Route::Unknown);
@@ -1027,6 +1234,7 @@ mod tests {
             &[],
             &gnome(),
             PathBuf::from(PIN_PATH),
+            None,
             mutter,
         );
         assert_eq!(diagnosis.route, Route::Vetoed);
@@ -1035,6 +1243,7 @@ mod tests {
             &[],
             &gnome(),
             PathBuf::from(PIN_PATH),
+            None,
             mutter,
         );
         assert_eq!(empty.route, Route::Unknown);
@@ -1057,6 +1266,157 @@ mod tests {
         ] {
             assert_eq!(parse_portal_file("x", text), None, "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_prediction_the_running_frontend_contradicts_is_not_trusted() {
+        let resolve_live = |search: &ConfSearch, portals: &[PortalFile], live| {
+            resolve(
+                search,
+                portals,
+                &gnome(),
+                PathBuf::from(PIN_PATH),
+                Some(live),
+                mutter,
+            )
+        };
+        let all = portals(&gnome());
+        // Edited to `none` after the frontend started: it still exports
+        // RemoteDesktop, so the veto on disk is not the running state.
+        let vetoed = resolve_live(&conf("[preferred]\ndefault=none\n"), &all, true);
+        assert_eq!(vetoed.route, Route::Unknown);
+        assert!(vetoed.mismatch && vetoed.problem().is_none());
+        assert!(
+            vetoed
+                .note()
+                .unwrap()
+                .contains("does not match its config on disk"),
+            "{vetoed:?}"
+        );
+        // A kde route the frontend does not export is not reported either.
+        let kde = resolve_live(&conf("[preferred]\ndefault=kde\n"), &all, false);
+        assert_eq!(kde.route, Route::Unknown);
+        // Agreement keeps the verdict.
+        let kde = resolve_live(&conf("[preferred]\ndefault=kde\n"), &all, true);
+        assert_eq!(
+            kde.route,
+            Route::NotExported {
+                backend: "kde".into()
+            }
+        );
+        assert!(!kde.mismatch);
+        // No installed backend: the frontend agrees when it hides RemoteDesktop.
+        assert_eq!(
+            resolve_live(&ConfSearch::default(), &[], false).route,
+            Route::NoBackend
+        );
+        assert_eq!(
+            resolve_live(&ConfSearch::default(), &[], true).route,
+            Route::Unknown
+        );
+    }
+
+    #[test]
+    fn a_config_changed_after_the_frontend_started_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("portals.conf");
+        std::fs::write(&conf_path, "[preferred]\ndefault=gnome\n").unwrap();
+        let missing = dir.path().join("gnome-portals.conf");
+        let candidates = [missing, conf_path.clone()];
+        let before = SystemTime::now() - Duration::from_secs(3600);
+        assert_eq!(changed_since(&candidates, before), vec![conf_path.clone()]);
+        let after = SystemTime::now() + Duration::from_secs(3600);
+        assert!(changed_since(&candidates, after).is_empty());
+
+        let mut diagnosis = diagnose(&conf("[preferred]\ndefault=kde\n"));
+        diagnosis.stale = vec![conf_path.clone()];
+        let (message, _) = diagnosis.problem().unwrap();
+        assert!(
+            message.ends_with(&format!(
+                " xdg-desktop-portal reads its config only when it starts, and {} changed \
+                 after it started, so the running portal may not use what is on disk; \
+                 restart xdg-desktop-portal (`systemctl --user restart xdg-desktop-portal`) \
+                 or log out and back in.",
+                conf_path.display()
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn introspection_matches_interface_elements_only() {
+        let rd = REMOTE_DESKTOP_IMPL;
+        assert!(xml_declares_interface(
+            &format!("<node><interface name=\"{rd}\"><method name=\"Start\"/></interface></node>"),
+            rd
+        ));
+        assert!(xml_declares_interface(
+            &format!("<node>\n <interface\n   name = '{rd}' >\n</interface></node>"),
+            rd
+        ));
+        assert!(!xml_declares_interface(
+            &format!(
+                "<node><interface name=\"org.x.Y\"><annotation name=\"a\" value=\"{rd}\"/>\
+                 </interface></node>"
+            ),
+            rd
+        ));
+        assert!(!xml_declares_interface(
+            &format!("<node><interfaces name=\"{rd}\"/><interface xname=\"{rd}\"/></node>"),
+            rd
+        ));
+    }
+
+    #[test]
+    fn portal_files_need_valid_bus_and_interface_names() {
+        let file = |dbus_name: &str, interfaces: &str| {
+            parse_portal_file(
+                "x",
+                format!("[portal]\nDBusName={dbus_name}\nInterfaces={interfaces}\n"),
+            )
+        };
+        let rd = REMOTE_DESKTOP_IMPL;
+        assert!(file("org.freedesktop.impl.portal.desktop.x", rd).is_some());
+        assert!(file(":1.42", rd).is_some());
+        for (dbus_name, interfaces) in [
+            ("org.freedesktop.impl.portal.desktop.x ", rd.to_owned()),
+            ("single", rd.to_owned()),
+            ("org.1x", rd.to_owned()),
+            ("org..x", rd.to_owned()),
+            (
+                "org.freedesktop.impl.portal.desktop.x",
+                format!("{rd};org.freedesktop.impl.portal.FileChooser "),
+            ),
+            (
+                "org.freedesktop.impl.portal.desktop.x",
+                "org.freedesktop.impl.portal.1x".to_owned(),
+            ),
+        ] {
+            assert_eq!(
+                file(dbus_name, &interfaces),
+                None,
+                "{dbus_name:?} {interfaces:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn conf_bytes_are_read_as_glib_reads_them() {
+        let path = Path::new(CONF_PATH);
+        let defaults = |text: &[u8]| parse_conf(path, text).and_then(|c| c.default);
+        // Invalid UTF-8 in a comment or in another group is fine.
+        assert_eq!(
+            defaults(b"# \xff\n[preferred]\ndefault=gnome\n[o]\nk=\xff\n"),
+            Some(vec!["gnome".to_owned()])
+        );
+        // In a [preferred] value the frontend cannot read it and skips the file.
+        assert_eq!(parse_conf(path, b"[preferred]\ndefault=\xff\n"), None);
+        // A line ends at its first NUL.
+        assert_eq!(
+            defaults(b"[preferred]\ndefault=none\x00x\n\x00[x]\n"),
+            Some(vec!["none".to_owned()])
+        );
+        assert_eq!(parse_conf(path, b"[preferred]\nde\x00fault=none\n"), None);
     }
 
     #[test]

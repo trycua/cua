@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/trycua/cua/compare/lume-v0.7.2...lume-v0.8.0) (2026-11-23)
+
+
+### Features
+
+* **lume:** optional runs without audio or clipboard devices ([#8624](https://github.com/trycua/cua/issues/8624)) ([1b5bf6b](https://github.com/trycua/cua/commit/1b5bf6b7f3ecea0698023d60b9e87d756d2d81bb))
+
 ## [0.7.2](https://github.com/trycua/cua/compare/lume-v0.7.1...lume-v0.7.2) (2026-11-12)
 
 

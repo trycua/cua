@@ -337,6 +337,18 @@ fn choose<'a>(
     }
 }
 
+/// The name of the backend the frontend picks for RemoteDesktop, if any.
+fn chosen_backend(
+    conf: Option<&PortalConf>,
+    portals: &[PortalFile],
+    desktops: &[String],
+) -> Option<String> {
+    match choose(conf, portals, desktops, REMOTE_DESKTOP_IMPL) {
+        Choice::Backend(p) => Some(p.name.clone()),
+        Choice::Vetoed | Choice::None => None,
+    }
+}
+
 /// Resolve where RemoteDesktop goes. `portals` must be sorted with
 /// [`sort_portals`]. `frontend_exports` is whether the running frontend
 /// exports RemoteDesktop, when known: it does for a chosen backend and not
@@ -465,11 +477,11 @@ impl PortalEnv {
         self.home_dir("XDG_CONFIG_HOME", ".config")
     }
 
-    fn data_roots(&self) -> Vec<PathBuf> {
+    fn data_roots(&self, build: &FrontendBuild) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         roots.extend(self.home_dir("XDG_DATA_HOME", ".local/share"));
         roots.extend(self.dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
-        roots.push(PathBuf::from("/usr/share"));
+        roots.push(build.datadir.clone());
         roots
     }
 
@@ -480,28 +492,35 @@ impl PortalEnv {
     }
 
     /// Config directories in the frontend's order: XDG_CONFIG_HOME,
-    /// XDG_CONFIG_DIRS, /etc, XDG_DATA_HOME, XDG_DATA_DIRS, /usr/share.
-    /// `XDG_DESKTOP_PORTAL_DIR` replaces them all.
-    pub(crate) fn conf_dirs(&self) -> Vec<PathBuf> {
+    /// XDG_CONFIG_DIRS, its sysconfdir, XDG_DATA_HOME, XDG_DATA_DIRS, its
+    /// datadir. `XDG_DESKTOP_PORTAL_DIR` replaces them all.
+    pub(crate) fn conf_dirs(&self, build: &FrontendBuild) -> Vec<PathBuf> {
         if let Some(dir) = self.raw("XDG_DESKTOP_PORTAL_DIR") {
             return vec![self.path(dir)];
         }
         let mut roots = Vec::new();
         roots.extend(self.config_home());
         roots.extend(self.dirs("XDG_CONFIG_DIRS", "/etc/xdg"));
-        roots.push(PathBuf::from("/etc"));
-        roots.extend(self.data_roots());
+        roots.push(build.sysconfdir.clone());
+        roots.extend(self.data_roots(build));
         roots
             .into_iter()
             .map(|r| r.join("xdg-desktop-portal"))
             .collect()
     }
 
-    pub(crate) fn portal_file_dirs(&self) -> Vec<PathBuf> {
+    /// Where the frontend reads `.portal` files. Up to 1.20.0 that is only
+    /// its datadir; 1.20.1 added XDG_DATA_HOME and XDG_DATA_DIRS.
+    pub(crate) fn portal_file_dirs(&self, build: &FrontendBuild, newer: bool) -> Vec<PathBuf> {
         if let Some(dir) = self.raw("XDG_DESKTOP_PORTAL_DIR") {
             return vec![self.path(dir)];
         }
-        self.data_roots()
+        let roots = if newer {
+            self.data_roots(build)
+        } else {
+            vec![build.datadir.clone()]
+        };
+        roots
             .into_iter()
             .map(|r| r.join("xdg-desktop-portal").join("portals"))
             .collect()
@@ -524,6 +543,95 @@ impl PortalEnv {
         names.push("C".to_owned());
         names
     }
+}
+
+/// What the frontend was built with: its version and the `DATADIR` and
+/// `SYSCONFDIR` compiled into it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FrontendBuild {
+    pub version: Option<(u32, u32, u32)>,
+    pub datadir: PathBuf,
+    pub sysconfdir: PathBuf,
+}
+
+impl Default for FrontendBuild {
+    fn default() -> Self {
+        Self::from_prefix(Path::new("/usr"), None)
+    }
+}
+
+impl FrontendBuild {
+    /// Meson's defaults for a prefix: `share`, and `/etc` for `/usr`.
+    fn from_prefix(prefix: &Path, version: Option<(u32, u32, u32)>) -> Self {
+        let sysconfdir = if prefix == Path::new("/usr") {
+            PathBuf::from("/etc")
+        } else {
+            prefix.join("etc")
+        };
+        Self {
+            version,
+            datadir: prefix.join("share"),
+            sysconfdir,
+        }
+    }
+
+    /// From the frontend's executable (`<prefix>/libexec/xdg-desktop-portal`)
+    /// and its `--version` output.
+    fn of_executable(exe: &Path) -> Self {
+        let prefix = exe
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(Path::new("/usr"));
+        Self::from_prefix(prefix, executable_version(exe))
+    }
+
+    /// Whether this version reads `.portal` files from the XDG data
+    /// directories too, when known.
+    fn reads_xdg_data_dirs(&self) -> Option<bool> {
+        self.version.map(|v| v >= (1, 20, 1))
+    }
+}
+
+/// `xdg-desktop-portal --version` prints `xdg-desktop-portal 1.20.3` and
+/// exits before doing anything else. Only that executable is run.
+fn executable_version(exe: &Path) -> Option<(u32, u32, u32)> {
+    if exe.file_name()? != "xdg-desktop-portal" {
+        return None;
+    }
+    let mut child = std::process::Command::new(exe)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + super::portal::PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
+    parse_version(&out)
+}
+
+fn parse_version(out: &str) -> Option<(u32, u32, u32)> {
+    let version = out.split_ascii_whitespace().nth(1)?;
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+    Some((
+        parts.next()??,
+        parts.next()??,
+        parts.next().flatten().unwrap_or(0),
+    ))
 }
 
 fn parse_desktops(value: &str) -> Vec<String> {
@@ -763,21 +871,39 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
     let aliases = std::fs::read_to_string("/usr/share/locale/locale.alias").unwrap_or_default();
     let languages = env.languages(&aliases);
     let desktops = env.desktops();
-    let dirs = env.conf_dirs();
+    let exe = pid.and_then(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok());
+    let build = exe
+        .as_deref()
+        .map(FrontendBuild::of_executable)
+        .unwrap_or_default();
+    let dirs = env.conf_dirs(&build);
     let candidates = conf_candidates(&dirs, &desktops);
     let search = read_conf(&candidates, &languages);
-    let portal_dirs = env.portal_file_dirs();
+    let newer = build.reads_xdg_data_dirs();
+    let portal_dirs = env.portal_file_dirs(&build, newer.unwrap_or(true));
     let mut portals = read_portal_files(&portal_dirs, &languages);
     sort_portals(&mut portals, &desktops);
+    // With the version unknown, both search rules must pick the same backend.
+    let version_decides = newer.is_none() && {
+        let mut older = read_portal_files(&env.portal_file_dirs(&build, false), &languages);
+        sort_portals(&mut older, &desktops);
+        chosen_backend(search.active.as_ref(), &older, &desktops)
+            != chosen_backend(search.active.as_ref(), &portals, &desktops)
+    };
     let pin_name = match desktops.first() {
         Some(desktop) => format!("{desktop}-portals.conf"),
         None => "portals.conf".to_owned(),
     };
-    let pin_file = env
-        .config_home()
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("xdg-desktop-portal")
-        .join(pin_name);
+    // With XDG_DESKTOP_PORTAL_DIR set, the frontend reads only that
+    // directory, so that is where a pin has to go.
+    let pin_file = match env.raw("XDG_DESKTOP_PORTAL_DIR") {
+        Some(dir) => env.path(dir),
+        None => env
+            .config_home()
+            .unwrap_or_else(|| PathBuf::from("~/.config"))
+            .join("xdg-desktop-portal"),
+    }
+    .join(pin_name);
     let mut diagnosis = resolve(
         &search,
         &portals,
@@ -798,7 +924,7 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
     );
     // Without the frontend's environment the prediction may use other
     // directories or desktops than the frontend does.
-    if environ.is_none() {
+    if environ.is_none() || version_decides {
         diagnosis.route = Route::Unknown;
     }
     if let Some(started) = pid.and_then(process_started) {
@@ -1770,7 +1896,7 @@ mod tests {
         );
         assert_eq!(env.desktops(), ["ubuntu", "gnome"]);
         assert_eq!(
-            env.conf_dirs(),
+            env.conf_dirs(&FrontendBuild::default()),
             [
                 "/home/u/.config",
                 "/etc/xdg/a",
@@ -1788,12 +1914,21 @@ mod tests {
             ["de_DE.ISO-8859-1", "de_DE", "de.ISO-8859-1", "de", "C"]
         );
         let overridden = PortalEnv::from_environ(b"XDG_DESKTOP_PORTAL_DIR=/opt/x\0", None);
-        assert_eq!(overridden.conf_dirs(), [PathBuf::from("/opt/x")]);
-        assert_eq!(overridden.portal_file_dirs(), [PathBuf::from("/opt/x")]);
+        assert_eq!(
+            overridden.conf_dirs(&FrontendBuild::default()),
+            [PathBuf::from("/opt/x")]
+        );
+        assert_eq!(
+            overridden.portal_file_dirs(&FrontendBuild::default(), true),
+            [PathBuf::from("/opt/x")]
+        );
         // `g_getenv` returns an empty value, and the frontend uses it: the
         // working directory.
         let empty = PortalEnv::from_environ(b"XDG_DESKTOP_PORTAL_DIR=\0", Some("/run/x".into()));
-        assert_eq!(empty.conf_dirs(), [PathBuf::from("/run/x")]);
+        assert_eq!(
+            empty.conf_dirs(&FrontendBuild::default()),
+            [PathBuf::from("/run/x")]
+        );
         // Empty and relative search entries resolve against the frontend's
         // working directory; non-UTF-8 paths are kept.
         let relative = PortalEnv::from_environ(
@@ -1802,7 +1937,7 @@ mod tests {
         );
         use std::os::unix::ffi::OsStrExt;
         assert_eq!(
-            relative.conf_dirs()[1..4],
+            relative.conf_dirs(&FrontendBuild::default())[1..4],
             [
                 PathBuf::from("/run/x/rel/xdg-desktop-portal"),
                 PathBuf::from("/run/x/xdg-desktop-portal"),
@@ -1852,6 +1987,55 @@ mod tests {
             changed_since(std::slice::from_ref(&watched), started),
             vec![watched]
         );
+    }
+
+    #[test]
+    fn the_backend_choice_changes_with_the_portal_files_it_sees() {
+        let all = portals(&gnome());
+        let system_only: Vec<PortalFile> =
+            all.iter().filter(|p| p.name != "gnome").cloned().collect();
+        let search = conf("[preferred]\ndefault=gnome;kde\n");
+        assert_eq!(
+            chosen_backend(search.active.as_ref(), &all, &gnome()).as_deref(),
+            Some("gnome")
+        );
+        assert_eq!(
+            chosen_backend(search.active.as_ref(), &system_only, &gnome()).as_deref(),
+            Some("kde")
+        );
+    }
+
+    #[test]
+    fn the_frontend_build_sets_its_directories_and_portal_search() {
+        let nix = Path::new("/nix/store/abc-xdg-desktop-portal-1.20.0/libexec/xdg-desktop-portal");
+        let prefix = nix.parent().unwrap().parent().unwrap();
+        let build =
+            FrontendBuild::from_prefix(prefix, parse_version("xdg-desktop-portal 1.20.0\n"));
+        assert_eq!(build.datadir, prefix.join("share"));
+        assert_eq!(build.sysconfdir, prefix.join("etc"));
+        assert_eq!(build.reads_xdg_data_dirs(), Some(false));
+        let env = PortalEnv::from_environ(b"HOME=/home/u\0XDG_DATA_DIRS=/run/sw/share\0", None);
+        assert_eq!(
+            env.portal_file_dirs(&build, false),
+            [prefix.join("share/xdg-desktop-portal/portals")]
+        );
+        assert_eq!(
+            env.portal_file_dirs(&build, true),
+            ["/home/u/.local/share", "/run/sw/share"]
+                .map(PathBuf::from)
+                .into_iter()
+                .chain([prefix.join("share")])
+                .map(|r| r.join("xdg-desktop-portal/portals"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(parse_version("xdg-desktop-portal 1.20.3"), Some((1, 20, 3)));
+        assert_eq!(
+            FrontendBuild::from_prefix(Path::new("/usr"), parse_version("xdg-desktop-portal 1.21"))
+                .reads_xdg_data_dirs(),
+            Some(true)
+        );
+        assert_eq!(FrontendBuild::default().sysconfdir, PathBuf::from("/etc"));
+        assert_eq!(FrontendBuild::default().reads_xdg_data_dirs(), None);
     }
 
     #[test]

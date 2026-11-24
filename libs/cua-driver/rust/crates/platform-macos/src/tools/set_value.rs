@@ -700,19 +700,25 @@ fn set_value_blocking(
             document_edited: None,
         })
     } else {
-        // Default path: write AXValue directly. Numeric controls (AXSlider /
-        // AXStepper) reject a CFString with -25201 and need a CFNumber; text
-        // fields take a CFString. Try numeric first when the value parses as a
-        // number, then fall back to a string write.
-        // Numeric target carried through so we can step toward it if the
-        // direct writes are rejected (SwiftUI AXSlider rejects every AXValue
-        // write with -25200 yet exposes a readable AXValue + increment/decrement
-        // actions).
-        let numeric_target = value.trim().parse::<f64>().ok();
+        // Default path: write AXValue directly.
         // Read the value before writing so an unchanged field can be reported as
         // idempotent rather than silently indistinguishable from a fresh write.
         unsafe { crate::ax::enablement::flush_pending_web_updates_for_element(pid, element) };
         let before = unsafe { copy_string_attr(element, "AXValue") };
+        // Numeric controls (AXSlider / AXStepper) reject a CFString with
+        // -25201 and need a CFNumber; a Chromium text input reports success
+        // for a CFNumber write and empties itself. So the value goes as a
+        // number only to an element that holds one, with a string write as
+        // the fallback.
+        // Numeric target carried through so we can step toward it if the
+        // direct writes are rejected (SwiftUI AXSlider rejects every AXValue
+        // write with -25200 yet exposes a readable AXValue + increment/decrement
+        // actions).
+        let numeric_target = value
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|_| unsafe { holds_number(element) });
         let err = match numeric_target {
             Some(n) => {
                 let e = unsafe { set_number_attr(element, "AXValue", n) };
@@ -839,6 +845,12 @@ fn set_value_blocking(
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+/// Whether `element`'s AXValue is a CFNumber or CFBoolean (sliders, steppers,
+/// checkboxes), so a write must be a CFNumber too.
+unsafe fn holds_number(element: AXUIElementRef) -> bool {
+    copy_bool_attr(element, "AXValue").is_some()
 }
 
 /// How long a written field must keep its read-back value before the result

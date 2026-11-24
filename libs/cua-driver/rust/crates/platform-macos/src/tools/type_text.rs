@@ -1503,7 +1503,9 @@ fn await_typed_delivery(
 ///
 /// Only a partial is drained: an unchanged or unreadable field already
 /// decides the next rung, and draining it would delay every write a web
-/// view ignores by [`UNCHANGED_GIVE_UP`] before its keystrokes go out.
+/// view ignores by [`UNCHANGED_GIVE_UP`] before its keystrokes go out. A
+/// drain that never reads the field again keeps the first partial, so the
+/// keystroke rung does not type the landed prefix a second time.
 fn settled_ax_progress(
     first: TypedProgress,
     before: Option<&str>,
@@ -1511,12 +1513,15 @@ fn settled_ax_progress(
     read_value: impl FnMut() -> Option<String>,
 ) -> TypedProgress {
     match first {
-        TypedProgress::Partial(_) => await_typed_progress(
+        TypedProgress::Partial(_) => match await_typed_progress(
             before,
             text,
             std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT,
             read_value,
-        ),
+        ) {
+            TypedProgress::Unverifiable => first,
+            settled => settled,
+        },
         settled => settled,
     }
 }
@@ -2831,6 +2836,13 @@ mod tests {
         });
         assert_eq!(progress, TypedProgress::Complete);
         assert_eq!(reads, 1);
+    }
+
+    #[test]
+    fn an_ax_prefix_followed_by_unreadable_reads_stays_partial() {
+        let first = typed_progress(Some(""), Some("(408) "), "(408) 961-1560");
+        let progress = settled_ax_progress(first, Some(""), "(408) 961-1560", || None);
+        assert_eq!(progress, TypedProgress::Partial(6));
     }
 
     #[test]

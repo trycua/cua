@@ -1259,6 +1259,46 @@ mod tests {
     }
 
     #[test]
+    fn a_save_that_timed_out_at_the_consent_prompt_is_refused_as_unavailable() {
+        use crate::apple_events::{save_result, AutomationPermission, ScriptRefusal};
+        let timed_out = |permission: AutomationPermission| {
+            let refusal = save_result(
+                Err(ScriptRefusal {
+                    code: "automation_timeout",
+                    reason: "no answer".into(),
+                }),
+                || permission,
+                "TextEdit",
+                std::path::Path::new("/tmp/a.txt"),
+            )
+            .expect_err("a timeout fails the save");
+            save_failure(
+                "",
+                "invoke_menu: File > Save is disabled",
+                "TextEdit",
+                &refusal,
+            )
+        };
+        let text = |result: &ToolResult| match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text.clone(),
+            _ => panic!("a text reply"),
+        };
+        for pending in [
+            AutomationPermission::NeedsConsent,
+            AutomationPermission::Unknown(-50),
+        ] {
+            let refused = timed_out(pending);
+            assert!(text(&refused).contains("invoke_menu does not activate a background app"));
+            let data = refused.structured_content.expect("structured refusal");
+            assert_eq!(data["code"], "background_unavailable");
+        }
+        let granted = timed_out(AutomationPermission::Granted);
+        assert!(!text(&granted).contains("invoke_menu does not activate a background app"));
+        let data = granted.structured_content.expect("structured result");
+        assert_eq!(data["code"], "save_indeterminate");
+    }
+
+    #[test]
     fn a_background_menu_refusal_names_the_code_and_the_route() {
         let result = background_unavailable("invoke_menu: path segment 1 is disabled".into());
         assert_eq!(result.is_error, Some(true));

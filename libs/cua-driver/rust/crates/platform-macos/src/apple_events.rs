@@ -419,17 +419,33 @@ pub fn save_document(
         &[&path_text, bundle_id],
         Duration::from_secs(30),
     );
-    save_result(result, app_name, path)?;
+    save_result(result, || automation_permission(bundle_id), app_name, path)?;
     let file_written = wait_for_new_mtime(path, before, Duration::from_millis(1500));
     Ok(SavedDocument { file_written })
 }
 
 pub(crate) fn save_result(
     result: Result<String, ScriptRefusal>,
+    permission: impl FnOnce() -> AutomationPermission,
     app_name: &str,
     path: &Path,
 ) -> Result<(), ScriptRefusal> {
-    match result?.as_str() {
+    let answer = match result {
+        Err(refusal) if refusal.code == "automation_timeout" => {
+            if permission() == AutomationPermission::Granted {
+                return Err(refusal);
+            }
+            return Err(ScriptRefusal {
+                code: "automation_consent_pending",
+                reason: format!(
+                    "Cua Driver still has no Automation permission for {app_name} (a macOS \
+                     consent prompt may be waiting for the user), so no save reached it"
+                ),
+            });
+        }
+        result => result?,
+    };
+    match answer.as_str() {
         "false" => Ok(()),
         "true" => Err(ScriptRefusal {
             code: "save_unconfirmed",
@@ -503,16 +519,20 @@ mod tests {
     fn a_save_whose_modified_flag_cannot_be_read_is_unconfirmed() {
         assert!(SAVE_DOCUMENT_SCRIPT.contains("on error\n\t\t\t\t\treturn \"saved-unread\""));
         let path = Path::new("/tmp/a.txt");
-        let unread = save_result(Ok("saved-unread".into()), "TextEdit", path)
+        let granted = || AutomationPermission::Granted;
+        let unread = save_result(Ok("saved-unread".into()), granted, "TextEdit", path)
             .expect_err("an unread flag does not confirm the save");
         assert_eq!(unread.code, "save_unconfirmed");
-        assert_eq!(save_result(Ok("false".into()), "TextEdit", path), Ok(()));
+        assert_eq!(
+            save_result(Ok("false".into()), granted, "TextEdit", path),
+            Ok(())
+        );
         let failed = ScriptRefusal {
             code: "automation_failed",
             reason: "the save raised".into(),
         };
         assert_eq!(
-            save_result(Err(failed.clone()), "TextEdit", path),
+            save_result(Err(failed.clone()), granted, "TextEdit", path),
             Err(failed)
         );
     }

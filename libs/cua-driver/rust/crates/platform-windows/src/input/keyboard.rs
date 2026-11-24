@@ -1906,6 +1906,7 @@ mod busy_target_activation_tests {
     use windows::Win32::Foundation::LRESULT;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         GetWindowInfo, PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage, MSG,
@@ -2080,6 +2081,71 @@ mod busy_target_activation_tests {
             sleep(Duration::from_millis(10));
         }
         false
+    }
+
+    /// Diagnostic only: what the attached driver thread sees while the
+    /// target's activation is pending.
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn probe_attached_queue_with_pending_activation() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetQueueStatus, PeekMessageW, PM_NOREMOVE, QS_ALLINPUT,
+        };
+        let target = UiThread::spawn(100);
+        let other = UiThread::spawn(500);
+        bring_forward(target.hwnd);
+        assert!(wait_caption(target.hwnd, true), "target never activated");
+        bring_forward(other.hwnd);
+        assert!(wait_caption(target.hwnd, false), "target never deactivated");
+        target.block();
+        TYPED.lock().unwrap().clear();
+        let _ = unsafe { crate::input::force_foreground_assisted(target.hwnd) };
+        state("probe: fg set, target busy", target.hwnd);
+        let attachment = InputQueueAttachment::attach(target.hwnd).expect("attach");
+        state("probe: attached, target busy", target.hwnd);
+        target.unblock();
+        sleep(Duration::from_millis(200));
+        state("probe: attached, target released 200ms", target.hwnd);
+        let events = batch_events(&text_units("ab"));
+        let before = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
+        let sent = unsafe { SendInput(&events, std::mem::size_of::<INPUT>() as i32) };
+        eprintln!("[busy-target] probe: sent {sent} of {}", events.len());
+        let started = Instant::now();
+        let mut last = String::new();
+        while started.elapsed() < Duration::from_millis(1500) {
+            let status = unsafe { GetQueueStatus(QS_ALLINPUT) };
+            let mut msg = MSG::default();
+            let peeked = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) }.as_bool();
+            let key = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) };
+            let line = format!(
+                "status=0x{status:08x} peeked={peeked} msg=0x{:04x} hwnd={:?} wparam=0x{:x} \
+                 sentinel_toggled={} typed={:?} caption_active={}",
+                if peeked { msg.message } else { 0 },
+                msg.hwnd.0,
+                msg.wParam.0,
+                (key & 1) != before,
+                String::from_utf16_lossy(&TYPED.lock().unwrap()),
+                caption_active(target.hwnd),
+            );
+            if line != last {
+                eprintln!("[busy-target] probe +{:?}: {line}", started.elapsed());
+                last = line;
+            }
+            attachment.idle(Duration::from_millis(5));
+        }
+        eprintln!(
+            "[busy-target] probe: serviced {} sent-message batches",
+            attachment.serviced.get()
+        );
+        drop(attachment);
+        sleep(Duration::from_millis(300));
+        state("probe: detached 300ms", target.hwnd);
+        eprintln!(
+            "[busy-target] probe: typed after detach {:?}",
+            String::from_utf16_lossy(&TYPED.lock().unwrap())
+        );
+        drop(other);
+        drop(target);
     }
 
     #[test]

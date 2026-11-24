@@ -587,15 +587,32 @@ async fn frontend_started(connection: &zbus::Connection) -> Option<SystemTime> {
 }
 
 /// Existing candidates modified after `started`.
-fn changed_since(candidates: &[PathBuf], started: SystemTime) -> Vec<PathBuf> {
-    candidates
+/// Existing paths modified or renamed after `started`. The change time
+/// counts too: a rename or a `chmod` changes it but not the modification
+/// time.
+fn changed_since(paths: &[PathBuf], started: SystemTime) -> Vec<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    paths
         .iter()
         .filter(|path| {
-            std::fs::metadata(path)
-                .and_then(|m| m.modified())
-                .is_ok_and(|modified| modified > started)
+            std::fs::metadata(path).is_ok_and(|m| {
+                let changed = u64::try_from(m.ctime()).ok().map(|secs| {
+                    SystemTime::UNIX_EPOCH
+                        + Duration::new(secs, u32::try_from(m.ctime_nsec()).unwrap_or(0))
+                });
+                m.modified().is_ok_and(|t| t > started) || changed.is_some_and(|t| t > started)
+            })
         })
         .cloned()
+        .collect()
+}
+
+/// The `.portal` files in `dirs`.
+fn portal_file_paths(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    dirs.iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.flatten().map(|e| e.path()))
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("portal"))
         .collect()
 }
 
@@ -607,7 +624,8 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
     let dirs = conf_dirs();
     let candidates = conf_candidates(&dirs, &desktops);
     let search = read_conf(&candidates);
-    let mut portals = read_portal_files(&portal_file_dirs());
+    let portal_dirs = portal_file_dirs();
+    let mut portals = read_portal_files(&portal_dirs);
     sort_portals(&mut portals, &desktops);
     let pin_name = match desktops.first() {
         Some(desktop) => format!("{desktop}-portals.conf"),
@@ -651,9 +669,15 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
         })
     });
     if let Some(started) = started {
-        // A directory's time changes when a config in it is added, renamed
-        // or removed.
-        let watched: Vec<PathBuf> = dirs.into_iter().chain(candidates).collect();
+        // A directory's time changes when a file in it is added, renamed or
+        // removed.
+        let portal_files = portal_file_paths(&portal_dirs);
+        let watched: Vec<PathBuf> = dirs
+            .into_iter()
+            .chain(candidates)
+            .chain(portal_dirs)
+            .chain(portal_files)
+            .collect();
         diagnosis.mark_stale(changed_since(&watched, started));
     }
     diagnosis
@@ -761,10 +785,40 @@ fn language_names() -> &'static [String] {
             .iter()
             .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
             .unwrap_or_default();
-        let mut names: Vec<String> = value.split(':').flat_map(locale_variants).collect();
+        let aliases = std::fs::read_to_string("/usr/share/locale/locale.alias").unwrap_or_default();
+        let mut names: Vec<String> = value
+            .split(':')
+            .map(|lang| unalias_lang(&aliases, lang))
+            .flat_map(|lang| locale_variants(&lang))
+            .collect();
         names.push("C".to_owned());
         names
     })
+}
+
+/// GLib's `unalias_lang`: follow `locale.alias` entries (`german` becomes
+/// `de_DE.ISO-8859-1`), at most 31 times.
+fn unalias_lang(aliases: &str, lang: &str) -> String {
+    let lookup = |name: &str| {
+        aliases
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .find_map(|line| {
+                let mut fields = line.split_ascii_whitespace();
+                (fields.next() == Some(name))
+                    .then(|| fields.next())
+                    .flatten()
+            })
+            .map(str::to_owned)
+    };
+    let mut lang = lang.to_owned();
+    for _ in 0..31 {
+        match lookup(&lang) {
+            Some(next) if next != lang => lang = next,
+            _ => break,
+        }
+    }
+    lang
 }
 
 /// `g_get_locale_variants`: `lang[_TERRITORY][.CODESET][@MODIFIER]` with
@@ -1410,6 +1464,20 @@ mod tests {
         assert_eq!(changed_since(&candidates, before), vec![conf_path.clone()]);
         let after = SystemTime::now() + Duration::from_secs(3600);
         assert!(changed_since(&candidates, after).is_empty());
+        // Setting an old modification time is itself a metadata change, as a
+        // chmod or rename is: only the change time moves.
+        let started = SystemTime::now() - Duration::from_secs(1);
+        let old = SystemTime::now() - Duration::from_secs(7200);
+        std::fs::File::options()
+            .write(true)
+            .open(&conf_path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert_eq!(
+            changed_since(std::slice::from_ref(&conf_path), started).len(),
+            1
+        );
         // Removing a config leaves no file to check, but changes its directory.
         let dir_path = dir.path().to_owned();
         let started = SystemTime::now() - Duration::from_secs(1);
@@ -1539,6 +1607,9 @@ mod tests {
         expected.sort();
         assert_eq!(variants, expected);
         assert_eq!(locale_variants("C.UTF-8"), ["C.UTF-8", "C"]);
+        let aliases = "# comment\ngerman\t\tde_DE.ISO-8859-1\nbokmal nb_NO.ISO-8859-1\n";
+        assert_eq!(unalias_lang(aliases, "german"), "de_DE.ISO-8859-1");
+        assert_eq!(unalias_lang(aliases, "de_DE"), "de_DE");
         assert!(language_names().iter().any(|n| n == "C"));
         // `Key[C]` is always one of the keys GLib lists.
         let conf = parse_conf(Path::new(CONF_PATH), "[preferred]\nk[C]=x\n").unwrap();

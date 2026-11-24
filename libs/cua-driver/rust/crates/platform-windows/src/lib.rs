@@ -41,6 +41,10 @@ pub mod tools;
 // where the multi-monitor normalization bug was diagnosable by pure math.
 pub mod virtualdesk;
 
+// Cross-platform: refuses window-local pointer coordinates that fall outside
+// the target window (#3613), so its tests run on any host.
+mod window_point;
+
 #[cfg(any(target_os = "windows", test))]
 mod keycodes;
 

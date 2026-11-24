@@ -164,7 +164,7 @@ impl Diagnosis {
 /// `None` when the frontend would reject the file.
 pub(crate) fn parse_portal_file(name: &str, text: &str) -> Option<PortalFile> {
     let groups = parse_key_file(text)?;
-    let group = key_file_group(&groups, "portal");
+    let group = key_file_group(&groups, "portal").unwrap_or_default();
     let get = |key: &str| {
         group
             .iter()
@@ -183,14 +183,12 @@ pub(crate) fn parse_portal_file(name: &str, text: &str) -> Option<PortalFile> {
 }
 
 /// Parse `portals.conf`. `None` when the frontend would skip the file and
-/// move on to the next one: GLib rejects it, `[preferred]` has no keys, or a
-/// value is not a valid list.
+/// move on to the next one: GLib rejects it, it has no `[preferred]` group,
+/// or a value is not a valid list. An empty `[preferred]` group still ends
+/// the search.
 pub(crate) fn parse_conf(path: &Path, text: &str) -> Option<PortalConf> {
     let groups = parse_key_file(text)?;
-    let group = key_file_group(&groups, "preferred");
-    if group.is_empty() {
-        return None;
-    }
+    let group = key_file_group(&groups, "preferred")?;
     let mut conf = PortalConf {
         path: path.to_owned(),
         interfaces: Vec::new(),
@@ -503,13 +501,16 @@ fn parse_key_file(text: &str) -> Option<KeyFileGroups> {
     let mut groups: KeyFileGroups = Vec::new();
     let mut current = None;
     for line in text.split('\n') {
-        let line = line.strip_suffix('\r').unwrap_or(line).trim_start();
+        let line = line
+            .strip_suffix('\r')
+            .unwrap_or(line)
+            .trim_start_matches(glib_space);
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         if let Some(rest) = line.strip_prefix('[') {
-            let name = rest.trim_end().strip_suffix(']')?;
-            if name.is_empty() || name.contains(['[', ']']) {
+            let name = rest.trim_end_matches([' ', '\t']).strip_suffix(']')?;
+            if name.is_empty() || name.contains(['[', ']']) || name.contains(char::is_control) {
                 return None;
             }
             current = Some(match groups.iter().position(|(g, _)| g == name) {
@@ -522,15 +523,13 @@ fn parse_key_file(text: &str) -> Option<KeyFileGroups> {
             continue;
         }
         let (key, value) = line.split_once('=')?;
-        let key = key.trim_end();
-        if key.is_empty() {
-            return None;
-        }
+        let key = key.trim_end_matches(glib_space);
         let (_, pairs) = &mut groups[current?];
-        if key.contains('[') {
-            continue;
+        match key_kind(key)? {
+            KeyKind::Plain => {}
+            KeyKind::Localized => continue,
         }
-        let value = value.trim_start().to_owned();
+        let value = value.trim_start_matches(glib_space).to_owned();
         match pairs.iter_mut().find(|(k, _)| k == key) {
             Some(pair) => pair.1 = value,
             None => pairs.push((key.to_owned(), value)),
@@ -539,12 +538,46 @@ fn parse_key_file(text: &str) -> Option<KeyFileGroups> {
     Some(groups)
 }
 
-fn key_file_group<'a>(groups: &'a KeyFileGroups, name: &str) -> &'a [(String, String)] {
+enum KeyKind {
+    Plain,
+    /// `Key[locale]`, which `g_key_file_get_keys` leaves out.
+    Localized,
+}
+
+/// `g_key_file_is_key_name`: `None` for a key GLib rejects the file over.
+fn key_kind(key: &str) -> Option<KeyKind> {
+    let (name, locale) = match key.split_once('[') {
+        Some((name, rest)) => (name, Some(rest.strip_suffix(']')?)),
+        None => (key, None),
+    };
+    if name.is_empty() || name.contains(']') || name.starts_with(' ') || name.ends_with(' ') {
+        return None;
+    }
+    match locale {
+        None => Some(KeyKind::Plain),
+        Some(locale)
+            if !locale
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '@')) =>
+        {
+            None
+        }
+        // GLib lists `Key[]` as a key of its own.
+        Some("") => Some(KeyKind::Plain),
+        Some(_) => Some(KeyKind::Localized),
+    }
+}
+
+/// `g_ascii_isspace`: ASCII only, and no vertical tab.
+fn glib_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c')
+}
+
+fn key_file_group<'a>(groups: &'a KeyFileGroups, name: &str) -> Option<&'a [(String, String)]> {
     groups
         .iter()
         .find(|(g, _)| g == name)
         .map(|(_, pairs)| pairs.as_slice())
-        .unwrap_or_default()
 }
 
 /// A `;`-separated list as `g_key_file_get_string_list` reads it: escapes
@@ -846,21 +879,24 @@ mod tests {
     }
 
     #[test]
-    fn read_conf_skips_missing_files_and_files_without_preferences() {
+    fn read_conf_skips_missing_files_and_files_without_a_preferred_group() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("gnome-portals.conf");
-        let empty = dir.path().join("portals.conf");
-        let used = dir.path().join("other.conf");
-        std::fs::write(&empty, "# nothing\n").unwrap();
-        std::fs::write(&used, "[preferred]\ndefault=kde\n").unwrap();
-        let search = read_conf(&[missing, empty, used.clone()]);
+        let no_group = dir.path().join("portals.conf");
+        let empty_group = dir.path().join("empty.conf");
+        let lower = dir.path().join("lower.conf");
+        std::fs::write(&no_group, "# nothing\n[other]\na=b\n").unwrap();
+        std::fs::write(&empty_group, "[preferred]\n").unwrap();
+        std::fs::write(&lower, "[preferred]\ndefault=none\n").unwrap();
+        let search = read_conf(&[missing, no_group, empty_group.clone(), lower]);
         assert!(search.unreadable.is_empty());
+        // An empty `[preferred]` group is a config: the frontend stops there.
         assert_eq!(
             search.active,
             Some(PortalConf {
-                path: used,
+                path: empty_group,
                 interfaces: Vec::new(),
-                default: Some(vec!["kde".into()]),
+                default: None,
             })
         );
     }
@@ -906,8 +942,23 @@ mod tests {
             defaults("[preferred]\ndefault=x\n[other]\na=b\n[preferred]\ndefault=kde\n"),
             Some(vec!["kde".to_owned()])
         );
-        let locale = parse_conf(path, "[preferred]\ndefault=gnome\nkey[de]=x\n").unwrap();
+        let locale = parse_conf(
+            path,
+            "[preferred]\ndefault=gnome\nkey[de_DE.UTF-8@euro]=x\ndefault[en]=none\n",
+        )
+        .unwrap();
         assert!(locale.interfaces.is_empty(), "{locale:?}");
+        assert_eq!(locale.default, Some(vec!["gnome".to_owned()]));
+        let empty_locale = parse_conf(path, "[preferred]\nk[]=x\n").unwrap();
+        assert_eq!(
+            empty_locale.interfaces,
+            [("k[]".to_owned(), vec!["x".to_owned()])]
+        );
+        // Only ASCII whitespace is trimmed, so this is not `none`.
+        assert_eq!(
+            defaults("[preferred]\ndefault=\u{a0}none\n"),
+            Some(vec!["\u{a0}none".to_owned()])
+        );
     }
 
     #[test]
@@ -919,6 +970,13 @@ mod tests {
             "[preferred\ndefault=none\n",
             "[preferred]x\ndefault=none\n",
             "[preferred]\ndefault=none;\\\n",
+            "[preferred]\ndefault=none;\\q\n",
+            "[preferred]\ndefault=none\nbad[key=gnome\n",
+            "[preferred]\ndefault=none\nbad]=gnome\n",
+            "[preferred]\ndefault=none\n[bad\tgroup]\nfoo=x",
+            "[preferred]\x0c\ndefault=none\n",
+            "[preferred]\ndefault=none\nk [de]=x\n",
+            "[preferred]\ndefault=none\nk[d e]=x\n",
         ] {
             assert_eq!(parse_conf(Path::new(CONF_PATH), text), None, "{text:?}");
         }

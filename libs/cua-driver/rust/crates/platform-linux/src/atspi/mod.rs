@@ -262,15 +262,18 @@ pub fn walk_tree_bounded_within(
                 // keep waiting on the degenerate case, and accept it anyway on the
                 // final attempt rather than discarding a (minimal) valid result.
                 // A truncated walk is never the cold-registry symptom — retrying
-                // it would only burn the budget again.
+                // it would only burn the budget again — except a child list the
+                // bridge could not yet return, which is that symptom.
                 let is_last = attempt == MAX_ATTEMPTS - 1
                     || timeout.saturating_sub(started.elapsed()) <= RETRY_BACKOFF;
-                if !walked.markdown.is_empty()
-                    && (walked.nodes.len() > 1 || walked.truncation.is_some() || is_last)
-                {
+                let cut_short = walked
+                    .truncation
+                    .as_ref()
+                    .is_some_and(|cut| cut.reason != "children_unread");
+                if !walked.markdown.is_empty() && (walked.nodes.len() > 1 || cut_short || is_last) {
                     return AtspiTreeResult::from_walked(walked, query);
                 }
-                if walked.truncation.is_some() {
+                if cut_short {
                     // Out of time before the application even answered.
                     last_partial = Some(walked);
                     break;

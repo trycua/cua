@@ -504,6 +504,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
         "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
         | "set_agent_cursor_theme"
+        | "set_agent_cursor_badge"
         | "get_agent_cursor_state" => return None,
         _ => return None,
     };

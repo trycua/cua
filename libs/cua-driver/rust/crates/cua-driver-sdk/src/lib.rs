@@ -14,9 +14,10 @@ use cua_driver_contract::{
     GetScreenSizeInput, GetSessionInput, GetWindowStateInput, HotkeyInput, InvokeMenuInput,
     ListAppsInput, ListAppsOutput, ListSessionsInput, ListSessionsOutput, ListWindowsInput,
     ListWindowsOutput, MoveCursorInput, ParseVisualRegionsInput, PressKeyInput, ScrollInput,
-    SessionOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
-    ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
+    SessionOutput, SetAgentCursorBadgeInput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput,
+    SetAgentCursorThemeInput, SetWindowFrameInput, SnapshotImage, StartSessionInput,
+    StartSessionOutput, ToolInput, ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
+    WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -715,6 +716,7 @@ macro_rules! desktop_tool_methods {
             set_agent_cursor_enabled: SetAgentCursorEnabledInput,
             set_agent_cursor_motion: SetAgentCursorMotionInput,
             set_agent_cursor_theme: SetAgentCursorThemeInput,
+            set_agent_cursor_badge: SetAgentCursorBadgeInput,
             get_agent_cursor_state: GetAgentCursorStateInput,
         }
     };

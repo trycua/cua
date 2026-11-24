@@ -1067,6 +1067,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "set_agent_cursor_enabled" => &["agent_cursor.set_enabled"],
         "set_agent_cursor_motion" => &["agent_cursor.set_motion"],
         "set_agent_cursor_theme" => &["agent_cursor.set_theme"],
+        "set_agent_cursor_badge" => &["agent_cursor.set_badge"],
         "get_agent_cursor_state" => &["agent_cursor.state"],
 
         // ── recording / replay ───────────────────────────────────────
@@ -8030,6 +8031,7 @@ mod capability_tests {
         "set_agent_cursor_enabled",
         "set_agent_cursor_motion",
         "set_agent_cursor_theme",
+        "set_agent_cursor_badge",
         "get_agent_cursor_state",
         // recording / replay
         "start_recording",

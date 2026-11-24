@@ -306,6 +306,9 @@ pub fn init(cfg: CursorConfig) {
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
+                CursorEvent::SetSessionLabelVisible { session, visible } => {
+                    (session, OverlayCommand::SetSessionLabelVisible(visible))
+                }
             };
             send_command(session, cmd);
         },
@@ -435,6 +438,10 @@ pub fn is_visible_for_session(key: &str) -> bool {
 /// `"default"` cursor's motion when that key has no own entry yet.
 pub fn current_motion(key: &str) -> MotionConfig {
     read_render(|map| map.motion(key)).unwrap_or_default()
+}
+
+pub fn current_show_session_label(key: &str) -> bool {
+    read_render(|map| map.show_session_label(key)).unwrap_or(true)
 }
 
 pub fn current_theme_state(key: &str) -> Option<cursor_overlay::CursorThemeState> {

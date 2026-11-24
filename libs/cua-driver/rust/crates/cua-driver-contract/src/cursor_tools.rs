@@ -3,9 +3,10 @@
 
 use crate::{
     GetAgentCursorStateInput, GetAgentCursorStateOutput, Platform, SchemaMode,
-    SetAgentCursorEnabledInput, SetAgentCursorEnabledOutput, SetAgentCursorMotionInput,
-    SetAgentCursorMotionOutput, SetAgentCursorThemeInput, SetAgentCursorThemeOutput,
-    ToolAnnotations, ToolContract, ToolInput, ToolOutput,
+    SetAgentCursorBadgeInput, SetAgentCursorBadgeOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorEnabledOutput, SetAgentCursorMotionInput, SetAgentCursorMotionOutput,
+    SetAgentCursorThemeInput, SetAgentCursorThemeOutput, ToolAnnotations, ToolContract, ToolInput,
+    ToolOutput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -30,9 +31,15 @@ pub fn contracts() -> Vec<ToolContract> {
             &["agent_cursor.set_theme"],
             false,
         ),
+        contract::<SetAgentCursorBadgeInput, SetAgentCursorBadgeOutput>(
+            "set_agent_cursor_badge",
+            "Show or hide the session label text beneath a session's cursor.",
+            &["agent_cursor.set_badge"],
+            false,
+        ),
         contract::<GetAgentCursorStateInput, GetAgentCursorStateOutput>(
             "get_agent_cursor_state",
-            "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+            "Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings.",
             &["agent_cursor.state"],
             true,
         ),

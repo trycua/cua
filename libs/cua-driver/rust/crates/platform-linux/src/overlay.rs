@@ -405,6 +405,9 @@ pub fn init(cfg: CursorConfig) {
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
+                CursorEvent::SetSessionLabelVisible { session, visible } => {
+                    (session, OverlayCommand::SetSessionLabelVisible(visible))
+                }
             };
             send_command_for(session, cmd);
         },
@@ -562,6 +565,53 @@ struct ShellHelperPoses {
 #[cfg(target_os = "linux")]
 static SHELL_HELPER_POSES: Mutex<Option<ShellHelperPoses>> = Mutex::new(None);
 
+/// Each session's label and whether it may show, for the GNOME helper,
+/// which paints its own badge outside the render map. Tracked for every
+/// session, not only the one drawing, so a session keeps its setting when
+/// it takes the helper's single cursor over.
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_LABELS: Mutex<Option<HashMap<CursorKey, (Option<String>, bool)>>> =
+    Mutex::new(None);
+
+/// Record a label change and return the text the helper should paint for
+/// `key` now, or `None` when `msg` changes no label.
+#[cfg(target_os = "linux")]
+fn shell_helper_label_update(msg: &OverlayMsg) -> Option<String> {
+    let mut guard = SHELL_HELPER_LABELS.lock().unwrap();
+    let labels = guard.get_or_insert_with(Default::default);
+    let (key, cmd) = match msg {
+        OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => (key, cmd),
+        OverlayMsg::Remove(key) => {
+            labels.remove(key);
+            return None;
+        }
+        OverlayMsg::Revive(_) | OverlayMsg::Wake => return None,
+    };
+    let entry = match cmd {
+        OverlayCommand::SetSessionLabel(label) => {
+            let entry = labels.entry(key.clone()).or_insert((None, true));
+            entry.0 = cursor_overlay::sanitize_session_label(label);
+            entry
+        }
+        OverlayCommand::SetSessionLabelVisible(show) => {
+            let entry = labels.entry(key.clone()).or_insert((None, true));
+            entry.1 = *show;
+            entry
+        }
+        _ => return None,
+    };
+    // The helper has no hover reveal and draws one cursor, so the minimal
+    // badge never shows the name there.
+    let verbose = cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
+    Some(
+        entry
+            .0
+            .clone()
+            .filter(|_| entry.1 && verbose)
+            .unwrap_or_default(),
+    )
+}
+
 /// Whether the helper plays pose tracks. Checked once, like the backend.
 #[cfg(target_os = "linux")]
 fn shell_helper_plays_poses() -> bool {
@@ -648,6 +698,7 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
             let now = Instant::now();
+            let label = shell_helper_label_update(msg);
             let reach = shell_helper_surface_event(msg, now);
             let poses = (semantic && shell_helper_plays_poses()).then(|| {
                 // Read the launch template before taking the pose lock.
@@ -672,6 +723,9 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
                 return false;
             };
             dispatch_shell_helper_command(&command.key, &command.cmd, semantic, poses.as_ref());
+            if let Some(label) = label.filter(|_| semantic) {
+                crate::wayland::shell_helper::set_session_label(&label);
+            }
             poses
                 .and_then(|update| update.arrival)
                 .is_some_and(|(wait, seq)| {
@@ -736,17 +790,6 @@ fn dispatch_shell_helper_command(
         OverlayCommand::EndAction(action) if semantic => {
             crate::wayland::shell_helper::set_cursor_state(action.as_str(), "", "", false);
         }
-        OverlayCommand::SetSessionLabel(label) if semantic => {
-            // The helper has no hover reveal and draws one cursor, so the
-            // minimal badge never shows the name there.
-            let shown = cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
-            crate::wayland::shell_helper::set_session_label(
-                cursor_overlay::sanitize_session_label(label)
-                    .filter(|_| shown)
-                    .as_deref()
-                    .unwrap_or(""),
-            );
-        }
         OverlayCommand::SetEnabled(false) => crate::wayland::shell_helper::hide_cursor(),
         _ => {}
     }
@@ -782,6 +825,10 @@ pub fn current_position_for(key: &str) -> Option<(f64, f64)> {
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
     read_render(|map| map.motion(key)).unwrap_or_default()
+}
+
+pub fn current_show_session_label_for(key: &str) -> bool {
+    read_render(|map| map.show_session_label(key)).unwrap_or(true)
 }
 
 pub fn current_theme_state_for(key: &str) -> Option<cursor_overlay::CursorThemeState> {

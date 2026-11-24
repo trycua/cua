@@ -1514,6 +1514,9 @@ pub fn register_all(
     registry.register(Box::new(cursor_tools::SetAgentCursorThemeTool::new(
         state.clone(),
     )));
+    registry.register(Box::new(cursor_tools::SetAgentCursorBadgeTool::new(
+        state.clone(),
+    )));
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(
         state.clone(),
     )));

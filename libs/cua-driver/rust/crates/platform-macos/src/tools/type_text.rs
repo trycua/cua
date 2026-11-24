@@ -1385,10 +1385,11 @@ fn cgevent_type_verified(
     }
     // AppKit edits an addressed NSTextField through a field editor, and some
     // apps re-create the edited row, so the pointer resolved before typing can
-    // keep its pre-edit value while the text lands. The window's focused
-    // element is read alongside it, from a baseline taken just before the keys.
+    // keep its pre-edit value while the text lands. The addressed element was
+    // just confirmed to hold focus, so the window's focused field now is the
+    // one the keys reach; it is read alongside the pointer, from this baseline.
     let focus_in_window = || match (element_ptr_and_idx, window_id) {
-        (Some(_), Some(_)) => read_axvalue_bound(pid, None, window_id),
+        (Some(_), Some(wid)) => focused_field_in_window(pid, wid),
         _ => None,
     };
     let focus_before = focus_in_window();
@@ -1399,7 +1400,7 @@ fn cgevent_type_verified(
                 read_axvalue_bound(pid, element_ptr_and_idx, window_id).as_deref(),
                 text,
             ),
-            || focused_progress(focus_before.as_deref(), focus_in_window().as_deref(), text),
+            || focused_progress(focus_before.as_ref(), focus_in_window().as_ref(), text),
         )
     };
     let sent = send(text, delay_ms)?;
@@ -1482,14 +1483,66 @@ fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: u
         .is_some_and(|added| added.chars().eq(text.chars().take(done)))
 }
 
-/// The read-back of the window's focused element is evidence only once it
-/// changed from its value just before the keys: a field that already held the
-/// text proves nothing about this delivery.
-fn focused_progress(before: Option<&str>, after: Option<&str>, text: &str) -> TypedProgress {
-    match after {
-        Some(_) if before.is_some() && after != before => typed_progress(before, after, text),
-        _ => TypedProgress::Unverifiable,
+/// The window's focused field: its role and frame identify it across reads,
+/// including a re-created row that takes the same place.
+#[derive(Debug)]
+struct FocusedField {
+    role: String,
+    frame: [f64; 4],
+    value: Option<String>,
+}
+
+fn focused_field_in_window(pid: i32, window_id: u32) -> Option<FocusedField> {
+    unsafe {
+        let element = crate::ax::exact_target::focused_element_in_window(pid, window_id)?;
+        let role = copy_string_attr(element, "AXRole");
+        let frame = crate::ax::bindings::element_screen_rect(element);
+        let value = copy_string_attr(element, "AXValue");
+        CFRelease(element as _);
+        Some(FocusedField {
+            role: role?,
+            frame: frame?,
+            value,
+        })
     }
+}
+
+/// Progress read off the window's focused field. It is evidence only while
+/// the focused field is the one that held focus when the keys went out, and
+/// only once its value changed. Completion needs the payload inserted into
+/// the baseline value (at the caret, or over a selection): a field that
+/// already held the text, or gained only its last characters, proves nothing.
+fn focused_progress(
+    before: Option<&FocusedField>,
+    after: Option<&FocusedField>,
+    text: &str,
+) -> TypedProgress {
+    let (Some(before), Some(after)) = (before, after) else {
+        return TypedProgress::Unverifiable;
+    };
+    let (Some(old), Some(new)) = (before.value.as_deref(), after.value.as_deref()) else {
+        return TypedProgress::Unverifiable;
+    };
+    if before.role != after.role || before.frame != after.frame || old == new {
+        return TypedProgress::Unverifiable;
+    }
+    if inserts(old, new, text) {
+        return TypedProgress::Complete;
+    }
+    match typed_progress(Some(old), Some(new), text) {
+        TypedProgress::Complete => TypedProgress::Unverifiable,
+        progress => progress,
+    }
+}
+
+/// Whether `after` is `before` with one range replaced by `text`.
+fn inserts(before: &str, after: &str, text: &str) -> bool {
+    after.match_indices(text).any(|(at, _)| {
+        let (head, tail) = (&after[..at], &after[at + text.len()..]);
+        head.len() + tail.len() <= before.len()
+            && before.starts_with(head)
+            && before.ends_with(tail)
+    })
 }
 
 /// The addressed element's progress, unless the window's focused element shows
@@ -2723,18 +2776,31 @@ mod tests {
         assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
     }
 
+    fn field(role: &str, frame: [f64; 4], value: &str) -> FocusedField {
+        FocusedField {
+            role: role.to_owned(),
+            frame,
+            value: Some(value.to_owned()),
+        }
+    }
+
     #[test]
     fn a_replaced_element_is_confirmed_by_the_windows_focused_field() {
         use TypedProgress::*;
         let text = "555-1234";
+        let row = [10.0, 20.0, 200.0, 22.0];
         // Contacts: the addressed row keeps its pre-edit value while the field
-        // editor that took the keys holds the whole text.
+        // that took the keys (or the row re-created in its place) holds the text.
+        let (before, after) = (
+            field("AXTextField", row, ""),
+            field("AXTextField", row, text),
+        );
         let delivery = await_typed_delivery(
             text,
             std::time::Instant::now(),
             || {
                 best_progress(typed_progress(Some(""), Some(""), text), || {
-                    focused_progress(Some(""), Some(text), text)
+                    focused_progress(Some(&before), Some(&after), text)
                 })
             },
             || false,
@@ -2763,25 +2829,78 @@ mod tests {
     }
 
     #[test]
-    fn the_focused_field_counts_only_once_it_changed() {
+    fn the_focused_field_counts_only_as_the_field_that_took_the_keys() {
         use TypedProgress::*;
-        // A focused field that already held the text proves nothing.
+        let text = "555-1234";
+        let row = [10.0, 20.0, 200.0, 22.0];
+        let other = [10.0, 50.0, 200.0, 22.0];
+        let progress = |before: FocusedField, after: FocusedField| {
+            focused_progress(Some(&before), Some(&after), text)
+        };
+        // Focus moved to a prefilled field of the same window.
         assert_eq!(
-            focused_progress(Some("555-1234"), Some("555-1234"), "555-1234"),
+            progress(
+                field("AXTextField", row, "555"),
+                field("AXTextField", other, text)
+            ),
             Unverifiable
         );
         assert_eq!(
-            focused_progress(None, Some("555-1234"), "555-1234"),
+            progress(
+                field("AXTextField", row, ""),
+                field("AXTextArea", row, text)
+            ),
             Unverifiable
         );
-        assert_eq!(focused_progress(Some(""), None, "555-1234"), Unverifiable);
+        // A field that already held the text proves nothing.
         assert_eq!(
-            focused_progress(Some("x"), Some("x555"), "555-1234"),
+            progress(
+                field("AXTextField", row, text),
+                field("AXTextField", row, text)
+            ),
+            Unverifiable
+        );
+        // One added character does not complete a payload already present.
+        assert_eq!(
+            progress(
+                field("AXTextField", row, text),
+                field("AXTextField", row, "555-12345")
+            ),
+            Partial(1)
+        );
+        assert_eq!(
+            progress(
+                field("AXTextField", row, "x"),
+                field("AXTextField", row, "x555")
+            ),
             Partial(3)
         );
+        // Inserted at the caret, or typed over a selection.
         assert_eq!(
-            focused_progress(Some("x"), Some("x555-1234"), "555-1234"),
+            progress(
+                field("AXTextField", row, "ab"),
+                field("AXTextField", row, "a555-1234b")
+            ),
             Complete
+        );
+        assert_eq!(
+            progress(
+                field("AXTextField", row, "old"),
+                field("AXTextField", row, text)
+            ),
+            Complete
+        );
+        assert_eq!(
+            focused_progress(None, Some(&field("AXTextField", row, text)), text),
+            Unverifiable
+        );
+        let unreadable = FocusedField {
+            value: None,
+            ..field("AXTextField", row, "")
+        };
+        assert_eq!(
+            progress(unreadable, field("AXTextField", row, text)),
+            Unverifiable
         );
     }
 

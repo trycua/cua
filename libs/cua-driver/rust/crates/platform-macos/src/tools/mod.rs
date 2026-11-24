@@ -777,7 +777,7 @@ pub(crate) async fn finish_window_observation(
 /// type_text or Cmd+V. Otherwise prefer non-destructive AX focus; the
 /// foreground rung falls back to a real pixel click when needed.
 /// Reuses ClickTool's exact coordinate translation and delivery mode.
-/// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
+/// `Ok(false)` when the point's element already held the focus, `Ok(true)` when a focus action ran; `Err(ToolResult)` short-circuits the caller.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn focus_by_pixel(
     state: &Arc<ToolState>,

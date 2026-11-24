@@ -2866,7 +2866,7 @@ mod tests {
                 field("AXTextField", row, text),
                 field("AXTextField", row, "555-12345")
             ),
-            Partial(1)
+            Unverifiable
         );
         assert_eq!(
             progress(

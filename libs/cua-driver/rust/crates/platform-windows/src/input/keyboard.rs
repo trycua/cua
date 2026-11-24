@@ -2100,10 +2100,8 @@ mod busy_target_activation_tests {
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                     if msg.hwnd.0.is_null() && msg.message == WM_SELF_ACTIVATE {
-                        // What a UI framework does when it activates its own
-                        // window from the background: Windows refuses the
-                        // foreground but activates the window in its queue.
-                        let _ = SetForegroundWindow(hwnd);
+                        // A window its own thread activates while another
+                        // app is foreground: active in its queue only.
                         let _ = SetActiveWindow(hwnd);
                         let _ = SetFocus(Some(hwnd));
                         busy_tx.send(()).expect("self-activated");
@@ -2213,6 +2211,16 @@ mod busy_target_activation_tests {
     #[test]
     #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
     fn foreground_text_reaches_a_target_that_activated_itself_in_the_background() {
+        self_activated_case(true);
+    }
+
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_an_idle_target_that_activated_itself_in_the_background() {
+        self_activated_case(false);
+    }
+
+    fn self_activated_case(busy: bool) {
         let target = UiThread::spawn(100);
         let other = UiThread::spawn(500);
         bring_forward(target.hwnd);
@@ -2222,7 +2230,9 @@ mod busy_target_activation_tests {
         target.activate_itself();
         state("target self-activated in background", target.hwnd);
 
-        target.block();
+        if busy {
+            target.block();
+        }
         TYPED.lock().unwrap().clear();
         let hwnd = target.hwnd.0 as usize as u64;
         let typing = std::thread::spawn(move || send_text_synthesized(hwnd, "abc"));

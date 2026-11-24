@@ -15,8 +15,8 @@
 //!
 //! The frontend reads its config only when it starts, so the files on disk
 //! are a prediction. Doctor trusts it only when it agrees with what the
-//! running frontend exports, and says when a config file changed after the
-//! frontend started.
+//! running frontend exports and no config file changed after the frontend
+//! started; otherwise it keeps its earlier verdict and says to restart.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -92,8 +92,9 @@ pub(crate) enum Route {
     /// No installed backend the frontend would pick declares RemoteDesktop.
     NoBackend,
     /// The backend could not be asked (not running and not activatable,
-    /// timeout), or the prediction disagrees with what the running frontend
-    /// exports. Doctor keeps its earlier verdict.
+    /// timeout), the prediction disagrees with what the running frontend
+    /// exports, or a config changed after the frontend started. Doctor
+    /// keeps its earlier verdict.
     Unknown,
 }
 
@@ -160,8 +161,16 @@ impl Diagnosis {
             ". Keep the file readable (mode 644), then restart xdg-desktop-portal or log \
              out and back in.",
         );
-        let note = self.note().map(|n| format!(" {n}")).unwrap_or_default();
-        Some((format!("{message}{skipped}{note}"), hint))
+        Some((format!("{message}{skipped}"), hint))
+    }
+
+    /// Record config files changed after the running frontend started. It
+    /// may still use the old config, so the prediction is not trusted.
+    pub(crate) fn mark_stale(&mut self, stale: Vec<PathBuf>) {
+        if !stale.is_empty() {
+            self.route = Route::Unknown;
+        }
+        self.stale = stale;
     }
 
     /// Why the files on disk may not describe the running frontend.
@@ -521,9 +530,19 @@ pub(crate) async fn backend_exports(
 }
 
 /// Whether introspection XML has `<interface name="…">` for `interface`,
-/// with either quote style.
+/// with either quote style, outside comments.
 fn xml_declares_interface(xml: &str, interface: &str) -> bool {
-    xml.split("<interface")
+    let mut uncommented = String::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<!--") {
+        uncommented.push_str(&rest[..start]);
+        rest = rest[start..]
+            .find("-->")
+            .map_or("", |end| &rest[start + end + 3..]);
+    }
+    uncommented.push_str(rest);
+    uncommented
+        .split("<interface")
         .skip(1)
         .filter(|rest| rest.starts_with(|c: char| c.is_ascii_whitespace()))
         .filter_map(|rest| rest.split('>').next())
@@ -631,7 +650,7 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
         })
     });
     if let Some(started) = started {
-        diagnosis.stale = changed_since(&candidates, started);
+        diagnosis.mark_stale(changed_since(&candidates, started));
     }
     diagnosis
 }
@@ -1328,19 +1347,26 @@ mod tests {
         let after = SystemTime::now() + Duration::from_secs(3600);
         assert!(changed_since(&candidates, after).is_empty());
 
+        // A kde pin written after the frontend started: the running portal
+        // may still route to gnome, so doctor does not fail it.
         let mut diagnosis = diagnose(&conf("[preferred]\ndefault=kde\n"));
-        diagnosis.stale = vec![conf_path.clone()];
-        let (message, _) = diagnosis.problem().unwrap();
-        assert!(
-            message.ends_with(&format!(
-                " xdg-desktop-portal reads its config only when it starts, and {} changed \
+        assert!(diagnosis.problem().is_some());
+        diagnosis.mark_stale(vec![conf_path.clone()]);
+        assert_eq!(diagnosis.route, Route::Unknown);
+        assert!(diagnosis.problem().is_none());
+        assert_eq!(
+            diagnosis.note().unwrap(),
+            format!(
+                "xdg-desktop-portal reads its config only when it starts, and {} changed \
                  after it started, so the running portal may not use what is on disk; \
                  restart xdg-desktop-portal (`systemctl --user restart xdg-desktop-portal`) \
                  or log out and back in.",
                 conf_path.display()
-            )),
-            "{message}"
+            )
         );
+        let mut fresh = diagnose(&conf("[preferred]\ndefault=kde\n"));
+        fresh.mark_stale(Vec::new());
+        assert!(fresh.problem().is_some());
     }
 
     #[test]
@@ -1363,6 +1389,10 @@ mod tests {
         ));
         assert!(!xml_declares_interface(
             &format!("<node><interfaces name=\"{rd}\"/><interface xname=\"{rd}\"/></node>"),
+            rd
+        ));
+        assert!(!xml_declares_interface(
+            &format!("<node><!-- <interface name=\"{rd}\"> --></node>"),
             rd
         ));
     }

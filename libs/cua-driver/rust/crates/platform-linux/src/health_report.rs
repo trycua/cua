@@ -442,10 +442,7 @@ async fn check_wayland_backend() -> CheckEntry {
         &remote_desktop,
         target_activation_available(),
     );
-    // A misrouted portal's message already carries the note.
-    if let Some(note) =
-        route_note.filter(|_| !matches!(remote_desktop, RemoteDesktopPortal::Misrouted { .. }))
-    {
+    if let Some(note) = route_note {
         entry.message = format!("{} {note}", entry.message);
     }
     if let Some(note) = tokio::task::spawn_blocking(compositor_note)
@@ -754,6 +751,15 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
             match probe {
                 Err(_) => Err(anyhow::anyhow!("portal RemoteDesktop probe timed out")),
                 Ok(Ok(_)) => Ok(true),
+                // The frontend runs but does not export RemoteDesktop.
+                Ok(Err(e))
+                    if matches!(
+                        e.downcast_ref::<ashpd::Error>(),
+                        Some(ashpd::Error::PortalNotFound(_))
+                    ) =>
+                {
+                    Ok(false)
+                }
                 Ok(Err(e)) => {
                     let msg = format!("{e}");
                     if msg.contains("ServiceUnknown")

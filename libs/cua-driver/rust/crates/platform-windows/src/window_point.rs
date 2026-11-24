@@ -25,16 +25,23 @@ pub(crate) struct WindowFrame {
     pub height: i32,
 }
 
-/// Map window-local `(px, py)` to screen pixels, or refuse it when it lies
-/// outside `frame`.
+/// Map window-local `(px, py)` to the screen pixel that contains it, or refuse
+/// it when it lies outside `frame`. The check runs on the unrounded point, so a
+/// fraction just past an edge is refused rather than rounded or truncated
+/// back onto that edge, and pixel `i` covers `[i, i + 1)`.
 pub(crate) fn window_point_to_screen(
     hwnd: u64,
     frame: WindowFrame,
-    px: i32,
-    py: i32,
+    px: f64,
+    py: f64,
 ) -> Result<(i32, i32), ToolResult> {
-    let inside = (0..frame.width).contains(&px) && (0..frame.height).contains(&py);
-    let screen = (frame.left.saturating_add(px), frame.top.saturating_add(py));
+    let inside =
+        px >= 0.0 && py >= 0.0 && px < f64::from(frame.width) && py < f64::from(frame.height);
+    // `as` saturates out-of-range and NaN values, which only reach the refusal.
+    let screen = (
+        frame.left.saturating_add(px.floor() as i32),
+        frame.top.saturating_add(py.floor() as i32),
+    );
     if inside {
         return Ok(screen);
     }
@@ -47,7 +54,8 @@ pub(crate) fn window_point_to_screen(
     let hint = format!(
         "x/y are window-local pixels of window {hwnd} (0..{width} x 0..{height}, its top-left \
          is at screen ({left}, {top})). Pass window-local coordinates from get_window_state's \
-         screenshot, or screen pixels with scope:\"desktop\" and no pid/window_id."
+         screenshot, or click with scope:\"desktop\" and no pid/window_id for screen pixels \
+         (count:2 for a double-click, button:\"right\" for a right-click)."
     );
     Err(ToolResult::error(format!(
         "window-local point ({px}, {py}) of window {hwnd} resolves to screen ({}, {}), outside \
@@ -81,15 +89,15 @@ mod tests {
     #[test]
     fn point_inside_the_window_maps_by_the_frame_origin() {
         assert_eq!(
-            window_point_to_screen(0x130cb4, SECONDARY, 1308, 770).ok(),
+            window_point_to_screen(0x130cb4, SECONDARY, 1308.0, 770.0).ok(),
             Some((3228, 770))
         );
         assert_eq!(
-            window_point_to_screen(0x130cb4, SECONDARY, 0, 0).ok(),
+            window_point_to_screen(0x130cb4, SECONDARY, 0.0, 0.0).ok(),
             Some((1920, 0))
         );
         assert_eq!(
-            window_point_to_screen(0x130cb4, SECONDARY, 1919, 1031).ok(),
+            window_point_to_screen(0x130cb4, SECONDARY, 1919.75, 1031.5).ok(),
             Some((3839, 1031))
         );
     }
@@ -97,17 +105,28 @@ mod tests {
     #[test]
     fn screen_pixels_passed_as_window_pixels_are_refused() {
         // The reporter's screen point (3228, 770), sent as window-local x/y.
-        let refusal = window_point_to_screen(0x130cb4, SECONDARY, 3228, 770).unwrap_err();
+        let refusal = window_point_to_screen(0x130cb4, SECONDARY, 3228.0, 770.0).unwrap_err();
         let structured = refusal.structured_content.expect("structured refusal");
         assert_eq!(structured["code"], "point_outside_window");
         assert_eq!(structured["effect"], "refused");
         assert_eq!(structured["screen_point"], json!([5148, 770]));
-        assert_eq!(structured["window_point"], json!([3228, 770]));
+        assert_eq!(structured["window_point"], json!([3228.0, 770.0]));
     }
 
     #[test]
     fn every_edge_past_the_frame_is_refused() {
-        for (px, py) in [(-1, 0), (0, -1), (1920, 0), (0, 1032)] {
+        // Fractions just past an edge too: neither truncation nor rounding
+        // may pull them back inside.
+        for (px, py) in [
+            (-1.0, 0.0),
+            (0.0, -1.0),
+            (1920.0, 0.0),
+            (0.0, 1032.0),
+            (-0.25, 0.0),
+            (0.0, -0.25),
+            (1919.0, 1032.25),
+            (f64::NAN, 0.0),
+        ] {
             let refusal = window_point_to_screen(1, SECONDARY, px, py).unwrap_err();
             assert_eq!(
                 refusal.structured_content.expect("structured")["code"],

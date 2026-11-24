@@ -1054,13 +1054,11 @@ impl Tool for ClickTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if let Some((mapped_x, mapped_y)) = capture_point {
-                let (mapped_x, mapped_y) =
-                    match crate::capture_admission::round_action_point(mapped_x, mapped_y) {
-                        Ok(point) => point,
-                        Err(error) => return capture_admission_refusal(error),
-                    };
-                px = f64::from(mapped_x);
-                py = f64::from(mapped_y);
+                // Admission checked these against the capture; keep the
+                // fraction so the window mapping picks the containing pixel
+                // instead of rounding a last-half-pixel point past the edge.
+                px = mapped_x;
+                py = mapped_y;
             } else if from_zoom {
                 match self.state.zoom_context(&args, pid, Some(hwnd)) {
                     Ok(ctx) => {
@@ -1080,7 +1078,7 @@ impl Tool for ClickTool {
             }
             // px/py are bitmap pixels — see `bitmap_to_screen` for the
             // mapping (DWM-frame top-left + 1-px inset, NOT ClientToScreen).
-            let (sx_i, sy_i) = match bitmap_to_screen_in_window(hwnd, px as i32, py as i32) {
+            let (sx_i, sy_i) = match bitmap_to_screen_in_window(hwnd, px, py) {
                 Ok(point) => point,
                 Err(refusal) => return refusal,
             };

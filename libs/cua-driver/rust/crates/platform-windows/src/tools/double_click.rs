@@ -283,7 +283,7 @@ impl Tool for DoubleClickTool {
             }
             // bitmap pixels -> screen via DWM-frame origin (see
             // `bitmap_to_screen` doc for why ClientToScreen is wrong).
-            let (sx_i, sy_i) = match bitmap_to_screen_in_window(hwnd, px as i32, py as i32) {
+            let (sx_i, sy_i) = match bitmap_to_screen_in_window(hwnd, px, py) {
                 Ok(point) => point,
                 Err(refusal) => return refusal,
             };

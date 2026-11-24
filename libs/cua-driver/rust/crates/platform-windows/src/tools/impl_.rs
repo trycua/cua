@@ -290,12 +290,12 @@ pub(crate) fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
 /// [`bitmap_to_screen`] does.
 pub(crate) fn bitmap_to_screen_in_window(
     hwnd: u64,
-    px: i32,
-    py: i32,
+    px: f64,
+    py: f64,
 ) -> Result<(i32, i32), ToolResult> {
     match crate::capture::window_capture_frame(hwnd) {
         Some(frame) => crate::window_point::window_point_to_screen(hwnd, frame, px, py),
-        None => Ok((px, py)),
+        None => Ok((px as i32, py as i32)),
     }
 }
 

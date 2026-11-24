@@ -64,7 +64,8 @@ fn def() -> &'static ToolDef {
         name: "type_text".into(),
         description: "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\
             \n\
-            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.".into(),
+            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.\n\
+            When key events are needed, an `element_token` target whose keyboard focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key sent.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["text"],
@@ -896,11 +897,6 @@ const UNCHANGED_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
-/// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
-/// an app that installs its own first responder just after activation is
-/// observable, which would otherwise clobber the first write.
-const FOCUS_REAPPLY_DELAY: std::time::Duration = std::time::Duration::from_millis(30);
-
 /// Keyboard-rung policy for one window-addressed background insert, decided
 /// once by the pure exact-target core before any input is posted.
 #[derive(Clone, Debug)]
@@ -1350,20 +1346,29 @@ fn cgevent_type_verified(
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
-    // wrong field). AXFocused is best-effort — harmless when unsupported.
+    // wrong field).
     //
     // Ordering matters as much as the write itself. `with_foreground_assist` has
     // already waited for the activation to land, so AppKit has installed the
     // window's remembered first responder by now and this write lands *after*
-    // it rather than being clobbered by it. Re-applying once on a failed
-    // read-back covers apps that install their responder slightly late.
-    if let Some((ptr, _)) = element_ptr_and_idx {
-        let _ = crate::input::ax_actions::focus_element(ptr);
-        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
-            std::thread::sleep(FOCUS_REAPPLY_DELAY);
+    // it rather than being clobbered by it. The focus write is re-applied for up
+    // to 200ms, which covers apps that install their responder slightly late.
+    //
+    // Keystrokes go to whatever holds the app's keyboard focus, not to the
+    // target. A target that cannot take focus (a toolbar button) is refused
+    // before any key is posted, exactly as press_key refuses it: typing anyway
+    // put the text into the field that did hold focus (Chrome's address bar),
+    // and the target's unchanged read-back then asked for a retype or a
+    // foreground retry that typed it there a second time.
+    crate::input::ax_actions::with_confirmed_key_focus(
+        element_ptr_and_idx.map(|(ptr, _)| ptr),
+        |ptr| {
             let _ = crate::input::ax_actions::focus_element(ptr);
-        }
-    }
+            Ok(())
+        },
+        |ptr| crate::input::ax_actions::element_has_keyboard_focus(pid, ptr),
+        || Ok(()),
+    )?;
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
     // Even once the window is front and the element focused, the surface isn't
     // ready to accept input for a few tens of ms, so the FIRST synthesized

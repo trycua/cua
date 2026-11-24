@@ -424,17 +424,18 @@ async fn check_wayland_backend() -> CheckEntry {
     } else {
         false
     };
-    let remote_desktop = if !remote_desktop_portal_reachable {
-        RemoteDesktopPortal::Unreachable
-    } else {
-        match tokio::task::spawn_blocking(probe_remote_desktop_route)
+    let route_problem = if portal_input_enabled() {
+        tokio::task::spawn_blocking(probe_remote_desktop_route)
             .await
             .ok()
             .flatten()
-        {
-            Some((message, hint)) => RemoteDesktopPortal::Misrouted { message, hint },
-            None => RemoteDesktopPortal::Reachable,
-        }
+    } else {
+        None
+    };
+    let remote_desktop = match route_problem {
+        Some((message, hint)) => RemoteDesktopPortal::Misrouted { message, hint },
+        None if remote_desktop_portal_reachable => RemoteDesktopPortal::Reachable,
+        None => RemoteDesktopPortal::Unreachable,
     };
     let mut entry = classify_wayland_backend(
         &snap,
@@ -457,8 +458,8 @@ async fn check_wayland_backend() -> CheckEntry {
 enum RemoteDesktopPortal {
     Unreachable,
     Reachable,
-    /// The frontend answers, but the backend it routes RemoteDesktop to
-    /// cannot take input calls (#3638).
+    /// The backend xdg-desktop-portal routes RemoteDesktop to cannot take
+    /// input calls, or the config disables it (#3638).
     Misrouted {
         message: String,
         hint: String,
@@ -778,7 +779,7 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
 #[cfg(target_os = "linux")]
 fn probe_remote_desktop_route() -> Option<(String, String)> {
     use crate::wayland::portal_route;
-    portal_route::probe().problem(&portal_route::current_desktops())
+    portal_route::probe().problem()
 }
 
 #[cfg(not(target_os = "linux"))]

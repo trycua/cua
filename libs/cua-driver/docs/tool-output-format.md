@@ -56,6 +56,15 @@ Internal `verify_state` reads also remain incomplete while the Windows
 structured projection omits display-only UIA nodes. A complete native walk
 does not make that projection exhaustive.
 
+On macOS, `get_window_state.elements_complete` is true only when the requested
+window resolved and the unprojected accessibility walk gave nothing up: no
+`max_elements` or timeout stop (`truncated: true` names that one), no node
+past `max_depth`, no node whose `AXChildren` read failed, and no closed menu
+left collapsed. A plain read collapses the menu bar's closed menus, so it
+reports `false` for any window with a menu bar; a `query` or
+`full_output: true` read walks the menus. As on Windows, `query` projects the
+returned rows without changing `elements_complete`.
+
 `elements` holds addressable rows only. With `tree_format: "elements"` or
 `"both"`, `get_window_state` also returns `observations`: the display-only
 rows of the same walk (static text, labels, read-only values) with `role`,

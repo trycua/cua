@@ -740,12 +740,8 @@ fn menu_route_result(
     if vcl {
         return None;
     }
-    if let (Some(focused), Some(cua_driver_core::protocol::Content::Text { text, .. })) =
-        (focused, result.content.first_mut())
-    {
-        text.push_str(&format!(
-            " Before the menu command, the call wrote the keyboard focus to {focused}."
-        ));
+    if let Some(focused) = focused {
+        note_focus(&mut result, focused);
     }
     if let Some(structured) = result.structured_content.as_mut() {
         structured["escalation"] = serde_json::json!({
@@ -756,6 +752,23 @@ fn menu_route_result(
         });
     }
     Some(result)
+}
+
+fn note_focus(result: &mut ToolResult, focused: &str) {
+    let note = format!(" Before the menu command, the call wrote the keyboard focus to {focused}.");
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&note);
+    }
+    if let Some(message) = result
+        .structured_content
+        .as_mut()
+        .and_then(|structured| structured.pointer_mut("/refusal/message"))
+    {
+        if let Some(text) = message.as_str() {
+            *message = format!("{text}{note}").into();
+        }
+    }
 }
 
 fn delivered_structured(foreground: bool, chromium_embedder: bool) -> Value {
@@ -843,16 +856,20 @@ mod tests {
         let unavailable = || {
             ToolResult::error("disabled").with_structured(serde_json::json!({
                 "code": "background_unavailable",
+                "refusal": { "code": "background_unavailable", "message": "disabled" },
             }))
         };
-        let focused =
-            text(menu_route_result(unavailable(), false, Some("element [3]")).expect("refused"));
-        assert!(
-            focused.ends_with(
-                " Before the menu command, the call wrote the keyboard focus to element [3]."
-            ),
-            "{focused}"
-        );
+        let note = " Before the menu command, the call wrote the keyboard focus to element [3].";
+        let refused =
+            menu_route_result(unavailable(), false, Some("element [3]")).expect("refused");
+        let message = refused.structured_content.as_ref().expect("structured")["refusal"]
+            ["message"]
+            .as_str()
+            .expect("message")
+            .to_owned();
+        let focused = text(refused);
+        assert!(focused.ends_with(note), "{focused}");
+        assert_eq!(message, focused, "the text and the refusal message match");
         let unfocused = text(menu_route_result(unavailable(), false, None).expect("refused"));
         assert_eq!(unfocused, "disabled");
     }

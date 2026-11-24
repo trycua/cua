@@ -1175,6 +1175,72 @@ fn harness_wpf_deferred_type_text_requires_fresh_snapshot_before_retry() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_wpf_type_text_refuses_to_replace_an_unreadable_value() {
+    let case = background_case("unreadable-value-type-text", DriverRoute::UiaValue)
+        .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    let cell_id = case.cell_id.clone();
+
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("create WPF fixture state directory");
+        let state_path = state_dir.path().join("state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("main window");
+        assert_eq!(stable_text(&state_path, "txt-unreadable-input"), "prefill-");
+
+        let snap = snapshot(&mut driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "txt-unreadable-input")
+            .expect("txt-unreadable-input not in snapshot");
+        let (response, mut passed) = observe_background(&mut driver, pid, wid, |driver| {
+            driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": snap.element_token(idx),
+                    "text": "typed",
+                    "delivery_mode": "background"
+                }),
+            )
+        });
+        println!("type_text: {}", response.text());
+        assert_eq!(
+            stable_text(&state_path, "txt-unreadable-input"),
+            "prefill-",
+            "type_text rewrote a field whose value it could not read: {}",
+            response.text()
+        );
+        assert!(
+            response.is_error(),
+            "type_text reported a write it could not make: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["code"].as_str(),
+            Some("background_unavailable"),
+            "type_text returned the wrong refusal: {}",
+            response.text()
+        );
+
+        passed.push(OracleKind::FixtureState);
+        passed.sort();
+        passed.dedup();
+        Observation::refused(
+            RefusalCode::BackgroundUnavailable,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}
+
 // In test-batch mode (many harnesses launched/killed in sequence) the WPF
 // window's input pump occasionally misses background PostMessage events —
 // reproducibly passes in isolation, intermittently fails in batch.

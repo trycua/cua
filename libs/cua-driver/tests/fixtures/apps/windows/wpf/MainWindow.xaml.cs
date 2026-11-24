@@ -186,6 +186,11 @@ public partial class MainWindow : Window
         ScheduleFixtureStatePublish();
     }
 
+    private void OnUnreadableInputChanged(object sender, TextChangedEventArgs e)
+    {
+        ScheduleFixtureStatePublish();
+    }
+
     private void OnTargetLeftDown(object sender, MouseButtonEventArgs e)
     {
         _targetPointerSeen = true;
@@ -252,6 +257,7 @@ public partial class MainWindow : Window
             ["lbl-click-count"] = new { text = LblClickCount?.Text ?? "clicks=0" },
             ["txt-input"] = new { text = TxtInput?.Text ?? "" },
             ["txt-deferred-input"] = new { text = TxtDeferredInput?.Text ?? "" },
+            ["txt-unreadable-input"] = new { text = TxtUnreadableInput?.Text ?? "" },
             ["txt-multiline-input"] = new { text = TxtMultilineInput?.Text ?? "" },
         };
         try

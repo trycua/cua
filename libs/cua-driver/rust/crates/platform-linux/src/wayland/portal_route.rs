@@ -604,7 +604,8 @@ fn changed_since(candidates: &[PathBuf], started: SystemTime) -> Vec<PathBuf> {
 /// when known.
 pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
     let desktops = current_desktops();
-    let candidates = conf_candidates(&conf_dirs(), &desktops);
+    let dirs = conf_dirs();
+    let candidates = conf_candidates(&dirs, &desktops);
     let search = read_conf(&candidates);
     let mut portals = read_portal_files(&portal_file_dirs());
     sort_portals(&mut portals, &desktops);
@@ -650,7 +651,10 @@ pub(crate) fn probe(frontend_exports: Option<bool>) -> Diagnosis {
         })
     });
     if let Some(started) = started {
-        diagnosis.mark_stale(changed_since(&candidates, started));
+        // A directory's time changes when a config in it is added, renamed
+        // or removed.
+        let watched: Vec<PathBuf> = dirs.into_iter().chain(candidates).collect();
+        diagnosis.mark_stale(changed_since(&watched, started));
     }
     diagnosis
 }
@@ -743,8 +747,65 @@ fn parse_key_file(text: &[u8]) -> Option<KeyFileGroups> {
 
 enum KeyKind {
     Plain,
-    /// `Key[locale]`, which `g_key_file_get_keys` leaves out.
+    /// `Key[locale]` for a locale not in [`language_names`], which
+    /// `g_key_file_get_keys` leaves out.
     Localized,
+}
+
+/// `g_get_language_names`: the first of `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`
+/// and `LANG` that is set, each entry with its variants, then `C`.
+fn language_names() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let value = ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
+            .unwrap_or_default();
+        let mut names: Vec<String> = value.split(':').flat_map(locale_variants).collect();
+        names.push("C".to_owned());
+        names
+    })
+}
+
+/// `g_get_locale_variants`: `lang[_TERRITORY][.CODESET][@MODIFIER]` with
+/// every combination of the optional parts.
+fn locale_variants(locale: &str) -> Vec<String> {
+    let (rest, modifier) = match locale.split_once('@') {
+        Some((rest, m)) => (rest, Some(m)),
+        None => (locale, None),
+    };
+    let (rest, codeset) = match rest.split_once('.') {
+        Some((rest, c)) => (rest, Some(c)),
+        None => (rest, None),
+    };
+    let (lang, territory) = match rest.split_once('_') {
+        Some((lang, t)) => (lang, Some(t)),
+        None => (rest, None),
+    };
+    if lang.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for t in territory.into_iter().map(Some).chain([None]) {
+        for c in codeset.into_iter().map(Some).chain([None]) {
+            for m in modifier.into_iter().map(Some).chain([None]) {
+                let mut name = lang.to_owned();
+                if let Some(t) = t {
+                    name = format!("{name}_{t}");
+                }
+                if let Some(c) = c {
+                    name = format!("{name}.{c}");
+                }
+                if let Some(m) = m {
+                    name = format!("{name}@{m}");
+                }
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// `g_key_file_is_key_name`: `None` for a key GLib rejects the file over.
@@ -765,8 +826,11 @@ fn key_kind(key: &str) -> Option<KeyKind> {
         {
             None
         }
-        // GLib lists `Key[]` as a key of its own.
-        Some("") => Some(KeyKind::Plain),
+        // GLib lists `Key[]`, and keys for the current locales, as keys of
+        // their own.
+        Some(locale) if locale.is_empty() || language_names().iter().any(|n| n == locale) => {
+            Some(KeyKind::Plain)
+        }
         Some(_) => Some(KeyKind::Localized),
     }
 }
@@ -1346,6 +1410,14 @@ mod tests {
         assert_eq!(changed_since(&candidates, before), vec![conf_path.clone()]);
         let after = SystemTime::now() + Duration::from_secs(3600);
         assert!(changed_since(&candidates, after).is_empty());
+        // Removing a config leaves no file to check, but changes its directory.
+        let dir_path = dir.path().to_owned();
+        let started = SystemTime::now() - Duration::from_secs(1);
+        std::fs::remove_file(&conf_path).unwrap();
+        assert_eq!(
+            changed_since(std::slice::from_ref(&dir_path), started),
+            vec![dir_path]
+        );
 
         // A kde pin written after the frontend started: the running portal
         // may still route to gnome, so doctor does not fail it.
@@ -1447,6 +1519,30 @@ mod tests {
             Some(vec!["none".to_owned()])
         );
         assert_eq!(parse_conf(path, b"[preferred]\nde\x00fault=none\n"), None);
+    }
+
+    #[test]
+    fn locale_variants_cover_every_optional_part() {
+        let mut variants = locale_variants("de_DE.UTF-8@euro");
+        variants.sort();
+        let mut expected = [
+            "de_DE.UTF-8@euro",
+            "de_DE@euro",
+            "de.UTF-8@euro",
+            "de@euro",
+            "de_DE.UTF-8",
+            "de_DE",
+            "de.UTF-8",
+            "de",
+        ]
+        .map(str::to_owned);
+        expected.sort();
+        assert_eq!(variants, expected);
+        assert_eq!(locale_variants("C.UTF-8"), ["C.UTF-8", "C"]);
+        assert!(language_names().iter().any(|n| n == "C"));
+        // `Key[C]` is always one of the keys GLib lists.
+        let conf = parse_conf(Path::new(CONF_PATH), "[preferred]\nk[C]=x\n").unwrap();
+        assert_eq!(conf.interfaces, [("k[C]".to_owned(), vec!["x".to_owned()])]);
     }
 
     #[test]

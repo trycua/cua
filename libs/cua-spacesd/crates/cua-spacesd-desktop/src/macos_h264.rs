@@ -759,7 +759,12 @@ fn encoded_annex_b(sample: &CMSampleBuffer) -> Option<(Vec<u8>, bool)> {
                 return None;
             }
             config.extend_from_slice(&[0, 0, 0, 1]);
-            config.extend_from_slice(unsafe { std::slice::from_raw_parts(pointer, size) });
+            // VideoToolbox's SPS has no VUI, so it never says that this
+            // session does not reorder; see h264_low_latency_sps.
+            let parameter_set = unsafe { std::slice::from_raw_parts(pointer, size) };
+            config.extend_from_slice(&cua_media_codec::bitstream::h264_low_latency_sps(
+                parameter_set,
+            ));
         }
         config.append(&mut annex_b);
         annex_b = config;
@@ -899,6 +904,17 @@ mod tests {
         assert!(nal_types.contains(&7), "keyframe omitted SPS");
         assert!(nal_types.contains(&8), "keyframe omitted PPS");
         assert!(nal_types.contains(&5), "keyframe omitted IDR");
+        // The SPS carries a VUI saying no frame is reordered, so decoders
+        // that follow the spec output each frame at once.
+        for nal in cua_media_codec::bitstream::annex_b_nals(&encoded.bytes) {
+            assert!(
+                matches!(
+                    cua_media_codec::bitstream::h264_low_latency_sps(nal),
+                    std::borrow::Cow::Borrowed(_)
+                ),
+                "keyframe SPS has no VUI"
+            );
+        }
 
         encoder.request_keyframe();
         let recovered = rx

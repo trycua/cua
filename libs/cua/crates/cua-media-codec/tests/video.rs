@@ -9,12 +9,13 @@
 
 mod common;
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use common::*;
 use cua_media_codec::backends::{open_decoder, open_encoder, EncoderFactory};
-use cua_media_codec::bitstream::has_parameter_sets;
+use cua_media_codec::bitstream::{annex_b_nals, h264_low_latency_sps, has_parameter_sets};
 use cua_media_codec::probe::{EncoderInfo, ProbeStatus};
 use cua_media_codec::select::{
     select, ClientDecoder, DecoderKind, FallbackEncoder, FallbackPolicy, SelectionPrefs,
@@ -155,6 +156,14 @@ fn keyframe_and_epoch_behaviour(backend: Backend) {
         has_parameter_sets(VideoCodec::H264, &first.data),
         "first AU lacks SPS/PPS"
     );
+    // Every SPS carries a VUI, which is where it says no frame is reordered;
+    // without one, spec-following decoders hold frames back.
+    for nal in annex_b_nals(&first.data) {
+        assert!(
+            matches!(h264_low_latency_sps(nal), Cow::Borrowed(_)),
+            "{backend:?}: SPS without a VUI"
+        );
+    }
     for i in 1..10 {
         let au = encode(&mut enc, 320, 240, i);
         assert!(

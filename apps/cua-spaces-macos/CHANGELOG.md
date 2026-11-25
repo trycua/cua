@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.13](https://github.com/trycua/cua/compare/cua-spaces-v0.41.12...cua-spaces-v0.41.13) (2026-11-25)
+
+
+### Performance Improvements
+
+* **cua-sdk:** link the cua SDK release binaries with fat LTO to slow PyPI project growth ([#8715](https://github.com/trycua/cua/issues/8715)) ([53a43ed](https://github.com/trycua/cua/commit/53a43edb4e3b0b194d1f139e7ef942009eea935b))
+
 ## [0.41.12](https://github.com/trycua/cua/compare/cua-spaces-v0.41.11...cua-spaces-v0.41.12) (2026-11-25)
 
 

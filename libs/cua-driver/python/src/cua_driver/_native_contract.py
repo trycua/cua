@@ -8157,7 +8157,7 @@ class _UniffiFfiConverterOptionalTypeElementFrame(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowElement:
-    def __init__(self, *, element_index:int, role:str, depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], is_password:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], custom_actions:typing.Optional[typing.List[ElementCustomAction]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
+    def __init__(self, *, element_index:int, role:str, depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], is_password:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], custom_actions:typing.Optional[typing.List[ElementCustomAction]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float], url:typing.Optional[str]):
         self.element_index = element_index
         self.role = role
         self.depth = depth
@@ -8175,12 +8175,13 @@ class WindowElement:
         self.frame = frame
         self.min = min
         self.max = max
+        self.url = url
 
 
 
 
     def __str__(self):
-        return "WindowElement(element_index={}, role={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, is_password={}, in_web_content={}, actions={}, custom_actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.is_password, self.in_web_content, self.actions, self.custom_actions, self.parent_index, self.frame, self.min, self.max)
+        return "WindowElement(element_index={}, role={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, is_password={}, in_web_content={}, actions={}, custom_actions={}, parent_index={}, frame={}, min={}, max={}, url={})".format(self.element_index, self.role, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.is_password, self.in_web_content, self.actions, self.custom_actions, self.parent_index, self.frame, self.min, self.max, self.url)
     def __eq__(self, other):
         if self.element_index != other.element_index:
             return False
@@ -8216,6 +8217,8 @@ class WindowElement:
             return False
         if self.max != other.max:
             return False
+        if self.url != other.url:
+            return False
         return True
 
 class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
@@ -8239,6 +8242,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
             frame=_UniffiFfiConverterOptionalTypeElementFrame.read(buf),
             min=_UniffiFfiConverterOptionalFloat64.read(buf),
             max=_UniffiFfiConverterOptionalFloat64.read(buf),
+            url=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -8260,6 +8264,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeElementFrame.check_lower(value.frame)
         _UniffiFfiConverterOptionalFloat64.check_lower(value.min)
         _UniffiFfiConverterOptionalFloat64.check_lower(value.max)
+        _UniffiFfiConverterOptionalString.check_lower(value.url)
 
     @staticmethod
     def write(value, buf):
@@ -8280,6 +8285,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeElementFrame.write(value.frame, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.min, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.max, buf)
+        _UniffiFfiConverterOptionalString.write(value.url, buf)
 
 @dataclass
 class WindowObservation:

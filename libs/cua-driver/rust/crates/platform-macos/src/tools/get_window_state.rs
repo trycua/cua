@@ -30,7 +30,7 @@ const AX_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_se
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
-        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
+        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `url` on links, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
             \n\
             START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
@@ -1367,6 +1367,12 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     if node.in_web_content {
         entry["in_web_content"] = serde_json::Value::Bool(true);
     }
+    // A link's navigation target (AXURL). Without it a caller reading
+    // web content could see a link's text but not where it leads, and
+    // would have to press it to find out.
+    if let Some(url) = node.url.clone() {
+        entry["url"] = serde_json::Value::String(url);
+    }
     if let Some(frame) = frame {
         entry["frame"] = frame;
     }
@@ -1865,6 +1871,7 @@ mod tests {
             max_value: None,
             enabled: None,
             selected: None,
+            url: None,
             in_web_content: false,
         }
     }
@@ -2076,6 +2083,22 @@ mod tests {
     }
 
     #[test]
+    fn elements_surface_link_url() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXLink",
+            Some("Background mode"),
+            2,
+            None,
+            None,
+            vec!["AXPress".into()],
+        )];
+        nodes[0].url = Some("https://example.com/docs/guides/background".into());
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
+        assert_eq!(entry["url"], "https://example.com/docs/guides/background");
+    }
+
+    #[test]
     fn checkbox_value_state_normalizes_to_selected() {
         let mut nodes = vec![node(
             Some(0),
@@ -2096,7 +2119,14 @@ mod tests {
         // Stock behaviour is unchanged for elements without control state.
         let nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None, vec![])];
         let entry = &build_elements_array_with_token(&nodes, None)[0];
-        for key in ["value_description", "min", "max", "enabled", "selected"] {
+        for key in [
+            "value_description",
+            "min",
+            "max",
+            "enabled",
+            "selected",
+            "url",
+        ] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
         }
     }

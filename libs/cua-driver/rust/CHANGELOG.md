@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.62.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.62.0...cua-driver-rs-v0.62.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** pump the driver thread's own queue while attached to a Windows target ([#8693](https://github.com/trycua/cua/issues/8693)) ([89d4bf5](https://github.com/trycua/cua/commit/89d4bf53495dda1f243d050d78cdfcb9750892a3))
+
+## [0.62.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.4...cua-driver-rs-v0.62.0) (2026-11-24)
+
+
+### Features
+
+* **cua-driver:** expose link url in get_window_state elements ([#8674](https://github.com/trycua/cua/issues/8674)) ([dbbb4f9](https://github.com/trycua/cua/commit/dbbb4f9b4c64dea3c8fdb7ff7e23548011aaa5b7))
+
+
+### Bug Fixes
+
+* **cua-driver:** map DIP element frames onto X11 window screenshots ([#8373](https://github.com/trycua/cua/issues/8373)) ([a898f21](https://github.com/trycua/cua/commit/a898f21ba53a78ddcdef3f95e0f2c17b595a08d7))
+* **cua-driver:** refuse page query_dom selectors the macOS AX fallback cannot apply ([#7801](https://github.com/trycua/cua/issues/7801)) ([17846fe](https://github.com/trycua/cua/commit/17846fe4d9ca1f1c97107bf80afc42227a56d050))
+
+## [0.61.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.3...cua-driver-rs-v0.61.4) (2026-11-24)
+
+
+### Bug Fixes
+
+* **hyprland-plugin:** stop Hyprland refocus passes from cancelling foreground typing ([#8660](https://github.com/trycua/cua/issues/8660)) ([40152f7](https://github.com/trycua/cua/commit/40152f79323bf46fcae2afe9fbaede7d08792dbb))
+
+## [0.61.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.2...cua-driver-rs-v0.61.3) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep the Windows agent cursor overlay in its z-slot while idle ([#8642](https://github.com/trycua/cua/issues/8642)) ([c8fcf63](https://github.com/trycua/cua/commit/c8fcf6376ba8d0d1700d5bd2139aeea3d59741b3)), closes [#8566](https://github.com/trycua/cua/issues/8566)
+
 ## [0.61.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.61.1...cua-driver-rs-v0.61.2) (2026-11-24)
 
 

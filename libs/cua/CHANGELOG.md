@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/trycua/cua/compare/cua-sdk-v0.31.0...cua-sdk-v0.31.1) (2026-11-25)
+
+
+### Performance Improvements
+
+* **cua-sdk:** link the cua SDK release binaries with fat LTO to slow PyPI project growth ([#8715](https://github.com/trycua/cua/issues/8715)) ([53a43ed](https://github.com/trycua/cua/commit/53a43edb4e3b0b194d1f139e7ef942009eea935b))
+
 ## [0.31.0](https://github.com/trycua/cua/compare/cua-sdk-v0.30.1...cua-sdk-v0.31.0) (2026-11-21)
 
 

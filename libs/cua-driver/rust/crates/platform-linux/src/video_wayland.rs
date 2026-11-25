@@ -10,10 +10,9 @@
 //! - wlroots compositors advertise `zwlr_screencopy_manager_v1`, which
 //!   `wf-recorder` consumes directly.
 //! - Everything else (KDE/KWin, portal-only desktops) records through the
-//!   xdg-desktop-portal ScreenCast: the user grants a monitor unless the
-//!   portal accepts a grant saved by an earlier recording, the PipeWire
-//!   stream is paced to a constant frame rate, and FFmpeg encodes raw
-//!   frames into the same MP4 artifact. This route needs the
+//!   xdg-desktop-portal ScreenCast: the user grants a monitor once, the
+//!   PipeWire stream is paced to a constant frame rate, and FFmpeg encodes
+//!   raw frames into the same MP4 artifact. This route needs the
 //!   `portal-capture` feature; builds without it report the limitation.
 
 use std::io::Read;
@@ -404,14 +403,6 @@ mod portal_video {
     /// backend reports a successful start; ffmpeg rejects bad arguments or
     /// missing codecs within milliseconds.
     const ENCODER_PROBE: Duration = Duration::from_millis(1500);
-    /// Longest `start` waits for consent and the first encoded frame. Session
-    /// setup and the PipeWire remote are each bounded by PORTAL_CALL_TIMEOUT
-    /// on either side of the consent wait.
-    const START_DEADLINE: Duration = PORTAL_CALL_TIMEOUT
-        .saturating_mul(2)
-        .saturating_add(CONSENT_TIMEOUT)
-        .saturating_add(FIRST_FRAME_TIMEOUT)
-        .saturating_add(ENCODER_PROBE.saturating_mul(2));
     const ENCODER_SHUTDOWN: Duration = Duration::from_secs(10);
     /// Every frame a tick owes must be accepted by the encoder within this
     /// window. A consumer that cannot keep up fails the recording explicitly
@@ -470,7 +461,11 @@ mod portal_video {
                     result
                 }
             });
-            match ready_rx.recv_timeout(START_DEADLINE) {
+            // Session setup and the PipeWire remote are each bounded by
+            // PORTAL_CALL_TIMEOUT on either side of the consent wait.
+            let start_deadline =
+                PORTAL_CALL_TIMEOUT * 2 + CONSENT_TIMEOUT + FIRST_FRAME_TIMEOUT + ENCODER_PROBE * 2;
+            match ready_rx.recv_timeout(start_deadline) {
                 Ok(Ok(())) => Ok(Self {
                     stop,
                     worker,
@@ -485,7 +480,7 @@ mod portal_video {
                     let _ = worker.join();
                     anyhow::bail!(
                         "portal ScreenCast video did not start within {}s",
-                        START_DEADLINE.as_secs()
+                        start_deadline.as_secs()
                     )
                 }
             }

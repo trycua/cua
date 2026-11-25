@@ -124,18 +124,18 @@ crossbeam-channel = "0.5"
 # libei keymap fallback when the EIS server does NOT advertise `ei_text`
 # (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
 xkbcommon = "0.9"
-# Resolve `$XDG_CONFIG_HOME` (with platform fallback) for persisting the
-# ScreenCast and RemoteDesktop `restore_token`s, which let a desktop that
-# accepts them skip the consent dialog in later processes.
+# Resolve `$XDG_STATE_HOME` (with platform fallback) for persisting the
+# ScreenCast and RemoteDesktop `restore_token`s so users see the consent
+# dialog only once per install, not once per process.
 dirs = "5"
 
 [features]
 default = []
 linux-example = []
-# GNOME/KDE input is pure Rust plus libxkbcommon. Ashpd's RemoteDesktop API
-# exposes ScreenCast stream metadata, so its lightweight screencast module is
-# required here too. The PipeWire frame reader stays isolated in
-# portal-capture below so input-only builds need no PipeWire headers.
+# GNOME/KDE input is pure Rust plus libxkbcommon, which is available in the
+# Debian 11 release container. Ashpd's RemoteDesktop API exposes ScreenCast
+# stream metadata, so its lightweight screencast module is required here too.
+# The PipeWire frame reader remains isolated in portal-capture below.
 portal-input = [
     "ashpd/remote_desktop",
     "ashpd/screencast",

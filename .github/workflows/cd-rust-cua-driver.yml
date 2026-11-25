@@ -272,7 +272,7 @@ jobs:
     # That broke Debian 12 (glibc 2.36), Ubuntu 22.04 (2.35), and RHEL/Rocky
     # 9 (2.34). Debian 11's glibc is 2.31, so linking against it lowers the
     # floor to GLIBC_2.31 — covering Debian 11+, Ubuntu 20.04+, and RHEL/
-    # Rocky 9+. A container (rather than the retired ubuntu-20.04 runner
+    # Rocky 8+. A container (rather than the retired ubuntu-20.04 runner
     # label) keeps the floor deterministic regardless of GitHub's host image
     # churn. The debian:11 image is multi-arch, so the arm64 runner pulls the
     # aarch64 variant automatically and the glibc floor holds on both arches.

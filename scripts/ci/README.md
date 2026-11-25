@@ -91,8 +91,7 @@ on `PATH` must not change either result. The job removes only its fixture
 package and retains source, binary, toolchain, and test evidence.
 
 To reproduce it, build `cua-driver` and `release_channel_cli_test` with
-`--locked --features portal-input,portal-capture` in a disposable Arch
-guest/container (the `libpipewire` package provides the PipeWire headers). Run
+`--locked --features portal-input` in a disposable Arch guest/container. Run
 as root with Xvfb and a session bus:
 
 ```bash

@@ -81,6 +81,37 @@ pub fn list_running_apps() -> Vec<AppInfo> {
     apps
 }
 
+/// Every live process with exactly this bundle identifier, read from the
+/// process table, including the accessory and background-only applications
+/// `list_running_apps` leaves out.
+pub fn running_pids_for_bundle(bundle_id: &str) -> Vec<i32> {
+    let mut ids: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    let mut pids: Vec<i32> = all_pids()
+        .into_iter()
+        .filter(|pid| {
+            let Some(path) = path_of_pid(*pid) else {
+                return false;
+            };
+            let Some(app_path) = bundle_root_of_executable(&path) else {
+                return false;
+            };
+            ids.entry(app_path.to_owned())
+                .or_insert_with(|| bundle_id_for_app_path(app_path))
+                .as_deref()
+                == Some(bundle_id)
+        })
+        .collect();
+    pids.sort_unstable();
+    pids
+}
+
+/// The bundle identifier of the `.app` a live process runs from, read from
+/// the process table and the bundle's `Info.plist`.
+pub fn bundle_id_of_process(pid: i32) -> Option<String> {
+    bundle_id_for_app_path(bundle_root_of_executable(&path_of_pid(pid)?)?)
+}
+
 /// Every pid the kernel currently has, via `proc_listallpids` (libproc, in
 /// libSystem — no entitlement, no extra dependency).
 fn all_pids() -> Vec<i32> {

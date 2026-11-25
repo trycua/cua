@@ -262,7 +262,7 @@ fn failure_after_press(error: String, top: &str, closed: Option<bool>) -> String
     }
 }
 
-fn choose_action(actions: &[String], final_segment: bool) -> Option<&'static str> {
+pub(super) fn choose_action(actions: &[String], final_segment: bool) -> Option<&'static str> {
     let supports = |name: &str| actions.iter().any(|action| action == name);
     let order: &[&str] = if final_segment {
         &["AXPress", "AXPick", "AXConfirm"]

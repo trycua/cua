@@ -442,6 +442,15 @@
     }
    },
    {
+    "id": "status_item",
+    "kind": "menu_extra",
+    "description": "Opt-in (CUA_APPKIT_STATUS_ITEM=1): an NSStatusItem titled Cua Harness Extra in the menu bar extras. Its menu has Mark Done, two items both titled Twin, and a disabled Unavailable item. Tests read it with get_menu_extra_state and invoke Mark Done with invoke_menu_extra while another app stays in front; the main window's menu_action= label records status_item_done (#3301).",
+    "controls": {
+     "status_item_title": "Cua Harness Extra",
+     "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
     "id": "exit",
     "kind": "exit_button",
     "controls": {

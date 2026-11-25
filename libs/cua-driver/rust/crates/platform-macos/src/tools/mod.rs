@@ -19,6 +19,7 @@ mod launch_app;
 mod list_apps;
 mod list_windows;
 mod menu_equivalent;
+mod menu_extra;
 mod press_key;
 mod right_click;
 mod scroll;
@@ -1454,6 +1455,8 @@ pub fn register_all(
     ));
     registry.register(Box::new(set_window_frame::SetWindowFrameTool));
     registry.register(Box::new(invoke_menu::InvokeMenuTool));
+    registry.register(Box::new(menu_extra::GetMenuExtraStateTool));
+    registry.register(Box::new(menu_extra::InvokeMenuExtraTool));
     registry.register(pid_window_guarded(
         click::ClickTool::new(state.clone()),
         &pid_window_candidates,

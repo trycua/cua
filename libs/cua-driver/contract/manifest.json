@@ -1227,6 +1227,210 @@
       }
     },
     {
+      "name": "get_menu_extra_state",
+      "description": "Read one exact running application's bounded macOS accessibility extras-menu hierarchy without screenshots, action-cache writes, or pixel fallback.",
+      "platforms": [
+        "macos"
+      ],
+      "capabilities": [
+        "accessibility.menu_extra.observe"
+      ],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "observe"
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "Read one exact running application's macOS `AXExtrasMenuBar` hierarchy.",
+        "properties": {
+          "application": {
+            "description": "The running application whose extras menu bar is read, by `pid` or `bundle_id`.",
+            "oneOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "pid"
+                    ],
+                    "type": "string"
+                  },
+                  "pid": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pid"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "bundle_id": {
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "bundle_id"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "bundle_id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "max_depth": {
+            "description": "Deepest level to read below the menu bar (1 to 25, default 12).",
+            "maximum": 25,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_elements": {
+            "description": "Most accessibility elements to read (1 to 2000, default 500).",
+            "maximum": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session": {
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content_redacted_from_telemetry": {
+            "type": "boolean"
+          },
+          "node_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nodes": {
+            "items": {
+              "properties": {
+                "actions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "depth": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "description": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "role": {
+                  "type": "string"
+                },
+                "title": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "depth",
+                "role",
+                "label",
+                "title",
+                "description",
+                "enabled",
+                "actions"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "pid": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "privacy_sensitive": {
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pid",
+          "bundle_id",
+          "nodes",
+          "node_count",
+          "truncated",
+          "privacy_sensitive",
+          "content_redacted_from_telemetry"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "get_screen_size",
       "description": "Return the primary display dimensions and scale factor in the platform's desktop coordinate space.",
       "platforms": [
@@ -2232,6 +2436,272 @@
         "required": [
           "pid",
           "window_id",
+          "path"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "additionalProperties": false,
+            "properties": {
+              "delivered_count": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "background",
+                  "foreground",
+                  "not_applicable",
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "effect": {
+            "enum": [
+              "confirmed",
+              "partial",
+              "unverifiable",
+              "suspected_noop",
+              "refused"
+            ],
+            "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "escalation": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "enum": [
+                  "route_unavailable",
+                  "delivery_failed",
+                  "effect_unconfirmed",
+                  "suspected_noop",
+                  "permission_required"
+                ],
+                "type": "string"
+              },
+              "target": {
+                "enum": [
+                  "pixel",
+                  "foreground",
+                  "page",
+                  "session"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "reason"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "enum": [
+                    "value_readback",
+                    "window_change"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "route": {
+            "enum": [
+              "accessibility",
+              "synthetic_events",
+              "global_input",
+              "system_api",
+              "dom",
+              "trusted_input"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "effect",
+          "route"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "invoke_menu_extra",
+      "description": "Resolve an exact macOS accessibility extras-menu path, including a same-process popup surface opened by the menu extra, and invoke it without activating an application window or falling back to pixels.",
+      "platforms": [
+        "macos"
+      ],
+      "capabilities": [
+        "accessibility.menu_extra.invoke"
+      ],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "system"
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "Invoke an exact path through one running application's macOS\n`AXExtrasMenuBar` and any same-process popup surface it opens.",
+        "properties": {
+          "application": {
+            "description": "The running application that owns the menu extra, by `pid` or `bundle_id`.",
+            "oneOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "pid"
+                    ],
+                    "type": "string"
+                  },
+                  "pid": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pid"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "bundle_id": {
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "bundle_id"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "bundle_id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "path": {
+            "description": "Exact labels from the menu extra to the item, e.g. `[\"Wi-Fi\", \"Wi-Fi Settings...\"]`\n(1 to 16 labels).",
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "session": {
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application",
           "path"
         ],
         "type": "object"

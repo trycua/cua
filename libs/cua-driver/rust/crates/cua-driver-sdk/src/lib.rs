@@ -11,12 +11,13 @@
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
     EndSessionOutput, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, GetSessionInput, GetWindowStateInput, HotkeyInput, InvokeMenuInput,
-    ListAppsInput, ListAppsOutput, ListSessionsInput, ListSessionsOutput, ListWindowsInput,
-    ListWindowsOutput, MoveCursorInput, ParseVisualRegionsInput, PressKeyInput, ScrollInput,
-    SessionOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
-    ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
+    GetMenuExtraStateInput, GetScreenSizeInput, GetSessionInput, GetWindowStateInput, HotkeyInput,
+    InvokeMenuExtraInput, InvokeMenuInput, ListAppsInput, ListAppsOutput, ListSessionsInput,
+    ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
+    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, SnapshotImage,
+    StartSessionInput, StartSessionOutput, ToolInput, ToolOutput, TypeTextInput, VerifyStateInput,
+    VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -705,6 +706,8 @@ macro_rules! desktop_tool_methods {
             move_cursor: MoveCursorInput,
             set_window_frame: SetWindowFrameInput,
             invoke_menu: InvokeMenuInput,
+            get_menu_extra_state: GetMenuExtraStateInput,
+            invoke_menu_extra: InvokeMenuExtraInput,
             drag: DragInput,
             scroll: ScrollInput,
             clipboard_read: ClipboardReadInput,

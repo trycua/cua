@@ -119,6 +119,11 @@ impl Harness {
         .presented()
     }
 
+    /// Launch with the opt-in menu extra (`status_item` scenario).
+    fn launch_with_status_item() -> Self {
+        Self::spawn(None, None, false, None, &[("CUA_APPKIT_STATUS_ITEM", "1")]).presented()
+    }
+
     /// Launch with the opt-in Save sheet button (`save_sheet` scenario).
     fn launch_with_save_sheet() -> Self {
         Self::spawn(None, None, false, None, &[("CUA_APPKIT_SAVE_SHEET", "1")]).presented()
@@ -1401,6 +1406,114 @@ fn harness_appkit_invoke_menu_failed_path_leaves_no_menu_open() {
                 refused.raw
             );
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
+/// invoke_menu_extra reads and invokes the fixture's menu extra by exact
+/// labels, with no window target and another app in front (#3301). A
+/// duplicated or disabled item refuses with its own code and leaves no menu
+/// open, and the action changes only the fixture's own state.
+#[test]
+#[ignore]
+fn harness_appkit_invoke_menu_extra_exact_path_background() {
+    const EXTRA: &str = "Cua Harness Extra";
+    run_case_with(
+        native_background_case(
+            "appkit",
+            "invoke_menu_extra",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        Harness::launch_with_status_item,
+        |pid, wid, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| {
+                    let application = serde_json::json!({
+                        "kind": "bundle_id",
+                        "bundle_id": "com.trycua.harness.appkit"
+                    });
+                    let state = driver.call(
+                        "get_menu_extra_state",
+                        serde_json::json!({"application": application}),
+                    );
+                    assert!(!state.is_error(), "{}", state.raw);
+                    let observed = state.structured();
+                    assert_eq!(observed["pid"], pid, "{}", state.raw);
+                    assert!(
+                        observed["nodes"].as_array().is_some_and(|nodes| nodes
+                            .iter()
+                            .any(|node| node["label"] == EXTRA && node["depth"] == 0)),
+                        "the fixture's menu extra was not observed: {}",
+                        state.raw
+                    );
+
+                    for (label, code) in [
+                        ("Twin", "menu_path_ambiguous"),
+                        ("Unavailable", "menu_path_disabled"),
+                    ] {
+                        let refused = driver.call(
+                            "invoke_menu_extra",
+                            serde_json::json!({
+                                "application": {"kind": "pid", "pid": pid},
+                                "path": [EXTRA, label]
+                            }),
+                        );
+                        assert!(refused.is_error(), "{label} was invoked: {}", refused.raw);
+                        assert_eq!(
+                            refused.structured()["refusal"]["code"],
+                            code,
+                            "{}",
+                            refused.raw
+                        );
+                        assert!(
+                            refused.structured()["refusal"]["message"]
+                                .as_str()
+                                .is_some_and(|message| message
+                                    .ends_with("No window this call opened is still on screen.")),
+                            "{}",
+                            refused.raw
+                        );
+                    }
+                    assert!(snapshot_elements(driver, pid, wid)
+                        .tree_text()
+                        .contains("menu_action=none"));
+
+                    let invoked = driver.call(
+                        "invoke_menu_extra",
+                        serde_json::json!({
+                            "application": application,
+                            "path": [EXTRA, "Mark Done"]
+                        }),
+                    );
+                    assert!(!invoked.is_error(), "{}", invoked.raw);
+                    assert_eq!(
+                        invoked.action_effect(),
+                        Some("unverifiable"),
+                        "{}",
+                        invoked.raw
+                    );
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while !snapshot_elements(driver, pid, wid)
+                        .tree_text()
+                        .contains("menu_action=status_item_done")
+                    {
+                        assert!(
+                            Instant::now() < deadline,
+                            "Mark Done did not reach the fixture: {}",
+                            invoked.raw
+                        );
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                },
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
         },
     );
 }

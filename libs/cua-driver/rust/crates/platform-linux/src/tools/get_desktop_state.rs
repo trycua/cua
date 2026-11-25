@@ -36,7 +36,8 @@ impl Tool for GetDesktopStateTool {
             input_schema: json!({"type":"object","properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."},
-                "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
+                "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema(),
+                "exclude_window_ids": cua_driver_core::tool_schema::desktop_exclude_window_ids_schema()
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,
         })
@@ -48,6 +49,12 @@ impl Tool for GetDesktopStateTool {
             Ok(input) => input,
             Err(result) => return result,
         };
+        if let Err(refused) = cua_driver_core::tool_schema::refuse_desktop_window_exclusion(
+            input.exclude_window_ids.as_deref(),
+            "X11 and Wayland display capture has no per-window exclusion",
+        ) {
+            return refused;
+        }
         let out_file = input.screenshot_out_file;
         let max_image_dimension = input.max_image_dimension;
         let capture_service = self.state.capture_service.clone();

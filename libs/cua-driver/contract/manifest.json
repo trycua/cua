@@ -1120,6 +1120,14 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "exclude_window_ids": {
+            "description": "Windows to leave out of the capture, by the `window_id` that\n`list_windows` reports. Only macOS supports this; other platforms\nrefuse a non-empty list with `window_exclusion_unsupported`. When the\nwindows cannot be left out, the call fails and returns no image.",
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "max_image_dimension": {
             "description": "Optional long-edge cap for the returned PNG, in pixels. Omitted or 0\nreturns the full-size capture. When the cap downsizes the image,\ndesktop-scope x/y taken from it are mapped back automatically.",
             "minimum": 0,

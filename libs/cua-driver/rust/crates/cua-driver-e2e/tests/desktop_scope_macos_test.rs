@@ -546,3 +546,116 @@ fn window_scope_rejects_windowless_click() {
         Observation::delivered(vec![OracleKind::Protocol], Evidence::default())
     });
 }
+
+fn window_bounds(driver: &mut McpDriver, wid: u64) -> (f64, f64, f64, f64) {
+    let listed = driver.call("list_windows", serde_json::json!({}));
+    let window = listed.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["window_id"].as_u64() == Some(wid))
+        })
+        .unwrap_or_else(|| panic!("list_windows lost harness window {wid}"));
+    let bounds = &window["bounds"];
+    (
+        bounds["x"].as_f64().unwrap(),
+        bounds["y"].as_f64().unwrap(),
+        bounds["width"].as_f64().unwrap(),
+        bounds["height"].as_f64().unwrap(),
+    )
+}
+
+fn desktop_png(
+    driver: &mut McpDriver,
+    session: &str,
+    path: &std::path::Path,
+    exclude_window_ids: &[u64],
+) -> (cua_driver_testkit::ToolResponse, image::RgbaImage) {
+    let mut args = serde_json::json!({ "session": session, "screenshot_out_file": path });
+    if !exclude_window_ids.is_empty() {
+        args["exclude_window_ids"] = serde_json::json!(exclude_window_ids);
+    }
+    let response = driver.call("get_desktop_state", args);
+    assert!(
+        !response.is_error(),
+        "get_desktop_state errored: {}",
+        response.text()
+    );
+    let image = image::open(path)
+        .expect("decode the desktop PNG")
+        .to_rgba8();
+    (response, image)
+}
+
+/// `exclude_window_ids` keeps a window's pixels out of the desktop capture:
+/// the frontmost harness window's interior shows what is behind it, and an
+/// unknown window id fails without an image instead of capturing it anyway.
+#[test]
+#[ignore]
+fn desktop_state_leaves_excluded_window_out() {
+    let label = "macos-desktop-state-exclude-window";
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named(label)
+        .expect("start installed macOS daemon proxy");
+    let session = format!("{label}-desktop");
+    start_scope(&mut driver, &session, "desktop");
+    let (pid, wid) = launch(&mut driver).expect("required AppKit harness did not launch");
+    activate_pid(pid);
+
+    let output = tempfile::tempdir_in("/tmp").unwrap();
+    let (with_window, shown) =
+        desktop_png(&mut driver, &session, &output.path().join("shown.png"), &[]);
+    let (without_window, hidden) = desktop_png(
+        &mut driver,
+        &session,
+        &output.path().join("hidden.png"),
+        &[wid],
+    );
+    assert_eq!(
+        without_window.structured()["excluded_window_ids"],
+        serde_json::json!([wid])
+    );
+    assert_eq!(shown.dimensions(), hidden.dimensions());
+
+    // Sample the window's interior, inset from the frame and title bar, in
+    // capture pixels.
+    let scale = f64::from(shown.width())
+        / with_window.structured()["screen_width"]
+            .as_f64()
+            .expect("screen_width");
+    let (x, y, w, h) = window_bounds(&mut driver, wid);
+    let (left, top) = (((x + 16.0) * scale) as u32, ((y + 40.0) * scale) as u32);
+    let (right, bottom) = (
+        (((x + w - 16.0) * scale) as u32).min(shown.width()),
+        (((y + h - 16.0) * scale) as u32).min(shown.height()),
+    );
+    assert!(
+        left < right && top < bottom,
+        "harness window has no interior"
+    );
+    let (mut sampled, mut changed) = (0u32, 0u32);
+    for py in (top..bottom).step_by(4) {
+        for px in (left..right).step_by(4) {
+            sampled += 1;
+            if shown.get_pixel(px, py) != hidden.get_pixel(px, py) {
+                changed += 1;
+            }
+        }
+    }
+    println!("[desktop-mac] {changed}/{sampled} interior pixels changed when excluded");
+    assert!(
+        changed * 2 > sampled,
+        "excluding window {wid} left its interior mostly unchanged: {changed}/{sampled}"
+    );
+
+    let refused = driver.call(
+        "get_desktop_state",
+        serde_json::json!({ "session": session, "exclude_window_ids": [u64::from(u32::MAX)] }),
+    );
+    assert!(
+        refused.is_error()
+            && refused.structured()["code"].as_str() == Some("excluded_window_not_found"),
+        "unknown excluded window was not refused: {}",
+        refused.text()
+    );
+}

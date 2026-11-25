@@ -4144,27 +4144,81 @@ class _UniffiFfiConverterTypeGetCursorPositionInput(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
+class _UniffiFfiConverterSequenceUInt64(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterUInt64.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterUInt64.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterUInt64.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterOptionalSequenceUInt64(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterSequenceUInt64.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterSequenceUInt64.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterSequenceUInt64.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class GetDesktopStateInput:
-    def __init__(self, *, session:typing.Optional[str], screenshot_out_file:typing.Optional[str], max_image_dimension:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, session:typing.Optional[str], screenshot_out_file:typing.Optional[str], max_image_dimension:typing.Optional[int] = _DEFAULT, exclude_window_ids:typing.Optional[typing.List[int]] = _DEFAULT):
         self.session = session
         self.screenshot_out_file = screenshot_out_file
         if max_image_dimension is _DEFAULT:
             self.max_image_dimension = None
         else:
             self.max_image_dimension = max_image_dimension
+        if exclude_window_ids is _DEFAULT:
+            self.exclude_window_ids = None
+        else:
+            self.exclude_window_ids = exclude_window_ids
 
 
 
 
     def __str__(self):
-        return "GetDesktopStateInput(session={}, screenshot_out_file={}, max_image_dimension={})".format(self.session, self.screenshot_out_file, self.max_image_dimension)
+        return "GetDesktopStateInput(session={}, screenshot_out_file={}, max_image_dimension={}, exclude_window_ids={})".format(self.session, self.screenshot_out_file, self.max_image_dimension, self.exclude_window_ids)
     def __eq__(self, other):
         if self.session != other.session:
             return False
         if self.screenshot_out_file != other.screenshot_out_file:
             return False
         if self.max_image_dimension != other.max_image_dimension:
+            return False
+        if self.exclude_window_ids != other.exclude_window_ids:
             return False
         return True
 
@@ -4175,6 +4229,7 @@ class _UniffiFfiConverterTypeGetDesktopStateInput(_UniffiConverterRustBuffer):
             session=_UniffiFfiConverterOptionalString.read(buf),
             screenshot_out_file=_UniffiFfiConverterOptionalString.read(buf),
             max_image_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
+            exclude_window_ids=_UniffiFfiConverterOptionalSequenceUInt64.read(buf),
         )
 
     @staticmethod
@@ -4182,12 +4237,14 @@ class _UniffiFfiConverterTypeGetDesktopStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalString.check_lower(value.screenshot_out_file)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_image_dimension)
+        _UniffiFfiConverterOptionalSequenceUInt64.check_lower(value.exclude_window_ids)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalString.write(value.screenshot_out_file, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_image_dimension, buf)
+        _UniffiFfiConverterOptionalSequenceUInt64.write(value.exclude_window_ids, buf)
 
 @dataclass
 class GetScreenSizeInput:
@@ -5090,54 +5147,6 @@ class _UniffiFfiConverterOptionalInt32(_UniffiConverterRustBuffer):
             return None
         elif flag == 1:
             return _UniffiFfiConverterInt32.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-class _UniffiFfiConverterSequenceUInt64(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterUInt64.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterUInt64.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterUInt64.read(buf) for i in range(count)
-        ]
-
-class _UniffiFfiConverterOptionalSequenceUInt64(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterSequenceUInt64.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterSequenceUInt64.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterSequenceUInt64.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 

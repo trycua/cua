@@ -2737,7 +2737,14 @@ export type GetDesktopStateInput = {
      * returns the full-size capture. When the cap downsizes the image,
      * desktop-scope x/y taken from it are mapped back automatically.
      */
-    maxImageDimension?: number
+    maxImageDimension?: number,
+    /**
+     * Windows to leave out of the capture, by the `window_id` that
+     * `list_windows` reports. Only macOS supports this; other platforms
+     * refuse a non-empty list with `window_exclusion_unsupported`. When the
+     * windows cannot be left out, the call fails and returns no image.
+     */
+    excludeWindowIds?: Array<bigint>
 }
 
 /**
@@ -2745,7 +2752,8 @@ export type GetDesktopStateInput = {
  */
 export const GetDesktopStateInput = (() => {
     const defaults = () => ({
-        maxImageDimension: undefined
+        maxImageDimension: undefined,
+        excludeWindowIds: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<GetDesktopStateInput, ReturnType<typeof defaults>>(defaults);
@@ -2764,18 +2772,21 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
             return {
                 session: FfiConverterOptionalString.read(from),
                 screenshotOutFile: FfiConverterOptionalString.read(from),
-                maxImageDimension: FfiConverterOptionalUInt32.read(from)
+                maxImageDimension: FfiConverterOptionalUInt32.read(from),
+                excludeWindowIds: FfiConverterOptionalSequenceUInt64.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalString.write(value.screenshotOutFile, into);
             FfiConverterOptionalUInt32.write(value.maxImageDimension, into);
+            FfiConverterOptionalSequenceUInt64.write(value.excludeWindowIds, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalString.allocationSize(value.screenshotOutFile) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxImageDimension);
+             FfiConverterOptionalUInt32.allocationSize(value.maxImageDimension) +
+             FfiConverterOptionalSequenceUInt64.allocationSize(value.excludeWindowIds);
 
         }
     };
@@ -6711,6 +6722,12 @@ const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
 
+// FfiConverter for Array<bigint>
+const FfiConverterSequenceUInt64 = new FfiConverterArray(FfiConverterUInt64);
+
+// FfiConverter for Array<bigint> | undefined
+const FfiConverterOptionalSequenceUInt64 = new FfiConverterOptional(FfiConverterSequenceUInt64);
+
 // FfiConverter for InputDeliveryMode | undefined
 const FfiConverterOptionalTypeInputDeliveryMode = new FfiConverterOptional(FfiConverterTypeInputDeliveryMode);
 
@@ -6725,12 +6742,6 @@ const FfiConverterOptionalInt64 = new FfiConverterOptional(FfiConverterInt64);
 
 // FfiConverter for number | undefined
 const FfiConverterOptionalInt32 = new FfiConverterOptional(FfiConverterInt32);
-
-// FfiConverter for Array<bigint>
-const FfiConverterSequenceUInt64 = new FfiConverterArray(FfiConverterUInt64);
-
-// FfiConverter for Array<bigint> | undefined
-const FfiConverterOptionalSequenceUInt64 = new FfiConverterOptional(FfiConverterSequenceUInt64);
 
 // FfiConverter for Array<WindowInfo>
 const FfiConverterSequenceTypeWindowInfo = new FfiConverterArray(FfiConverterTypeWindowInfo);

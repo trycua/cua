@@ -2209,6 +2209,7 @@ mod tests {
                     session: Some("dpi-embedded-abi".into()),
                     screenshot_out_file: Some(output.to_string_lossy().into_owned()),
                     max_image_dimension: None,
+                    exclude_window_ids: None,
                 })
                 .await
                 .unwrap();
@@ -3140,6 +3141,7 @@ mod tests {
                 session: Some("run-1".into()),
                 screenshot_out_file: None,
                 max_image_dimension: None,
+                exclude_window_ids: None,
             })
             .await
             .unwrap();

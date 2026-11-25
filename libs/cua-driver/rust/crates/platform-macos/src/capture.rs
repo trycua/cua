@@ -40,7 +40,8 @@
 //! desktop capture instead uses a ScreenCaptureKit display filter that leaves
 //! the Driver's cursor overlay window out
 //! ([`screenshot_display_bytes_excluding_overlay`]); `screencapture` remains
-//! its fallback and reports that it could not exclude the overlay.
+//! its fallback and reports that it could not exclude the overlay. Windows the
+//! caller asks to leave out have no fallback: the capture fails instead.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 pub use cua_driver_core::image_utils::{CapturedImage, RgbaFrame};
@@ -1098,23 +1099,69 @@ impl cursor_overlay::capture_exclusion::OverlayCaptureExcluder for OverlayExclud
     fn restore(&self, _window_id: u32) {}
 }
 
+/// Why the display could not be captured with the caller's
+/// `exclude_window_ids` left out. No image is returned in either case.
+#[derive(Debug, thiserror::Error)]
+pub enum WindowExclusionError {
+    #[error(
+        "window {0} is not listed by ScreenCaptureKit, so it cannot be left out of the \
+         capture; pass a window_id from list_windows"
+    )]
+    WindowNotFound(u32),
+    #[error(
+        "ScreenCaptureKit could not capture the display with the requested windows left \
+         out ({0}); no image was taken because the fallback would include them"
+    )]
+    Unavailable(String),
+}
+
+impl WindowExclusionError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::WindowNotFound(_) => "excluded_window_not_found",
+            Self::Unavailable(_) => "window_exclusion_unavailable",
+        }
+    }
+}
+
 /// Capture the main display for the agent with the Driver's cursor overlay
-/// window left out, and report how that went.
+/// window and the caller's `exclude_window_ids` left out, and report how the
+/// overlay exclusion went.
 ///
 /// `screencapture` cannot leave a window out and costs a process and a file,
-/// so it is only the fallback when ScreenCaptureKit fails.
-pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
+/// so it is only the fallback when ScreenCaptureKit fails and the caller asked
+/// for no windows to be left out. Otherwise the error is a
+/// [`WindowExclusionError`].
+pub fn screenshot_display_bytes_excluding_overlay(
+    exclude_window_ids: &[u32],
+) -> anyhow::Result<(
     Vec<u8>,
     cursor_overlay::capture_exclusion::AgentOverlayCapture,
 )> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
     refuse_without_direct_capture_consent()?;
     capture_excluding_overlays(&OverlayExcluder, |overlay| {
+        if !exclude_window_ids.is_empty() {
+            let overlay = overlay.copied();
+            let excluded = exclude_window_ids.to_vec();
+            let bytes = run_native_capture_worker(
+                display_capture_gate(),
+                DISPLAY_CAPTURE_NATIVE_TIMEOUT,
+                move || screenshot_main_display_sck(overlay, &excluded),
+            )
+            .map_err(|error| match error.downcast::<WindowExclusionError>() {
+                Ok(error) => anyhow::Error::new(error),
+                Err(error) => {
+                    anyhow::Error::new(WindowExclusionError::Unavailable(format!("{error:#}")))
+                }
+            })?;
+            return Ok((bytes, ResidualCheck::Clean));
+        }
         let Some(&overlay_window_id) = overlay else {
             return match run_native_capture_worker(
                 display_capture_gate(),
                 DISPLAY_CAPTURE_NATIVE_TIMEOUT,
-                || screenshot_main_display_sck(None),
+                || screenshot_main_display_sck(None, &[]),
             ) {
                 Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
                 Err(error) => {
@@ -1126,7 +1173,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
         match run_native_capture_worker(
             display_capture_gate(),
             DISPLAY_CAPTURE_NATIVE_TIMEOUT,
-            move || screenshot_main_display_sck(Some(overlay_window_id)),
+            move || screenshot_main_display_sck(Some(overlay_window_id), &[]),
         ) {
             Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
             Err(error) => {
@@ -1150,13 +1197,18 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
 }
 
 /// Main display at native pixel size through a ScreenCaptureKit display
-/// filter, with `excluded_window_id` (the overlay) left out. Requires macOS 14
-/// for `SCScreenshotManager`.
+/// filter, with `overlay_window_id` and `caller_window_ids` left out. A caller
+/// window ScreenCaptureKit does not list is a
+/// [`WindowExclusionError::WindowNotFound`]. Requires macOS 14 for
+/// `SCScreenshotManager`.
 ///
 /// `SCScreenshotManager.captureImage(in:)` would skip the shareable-content
 /// query, but macOS keeps the `CGImage` and `IOSurface` of every call alive
 /// for the life of the process.
-fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Result<Vec<u8>> {
+fn screenshot_main_display_sck(
+    overlay_window_id: Option<u32>,
+    caller_window_ids: &[u32],
+) -> anyhow::Result<Vec<u8>> {
     use core_graphics::display::CGMainDisplayID;
     use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
     use screencapturekit::screenshot_manager::SCScreenshotManager;
@@ -1172,21 +1224,26 @@ fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Resul
         .ok_or_else(|| {
             anyhow::anyhow!("ScreenCaptureKit does not list the main display {main_display_id}")
         })?;
-    let overlay = excluded_window_id
-        .map(|window_id| {
-            content
-                .windows()
-                .into_iter()
-                .find(|window| window.window_id() == window_id)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("ScreenCaptureKit does not list the overlay window {window_id}")
-                })
-        })
-        .transpose()?;
+    let windows = content.windows();
+    let find_window = |window_id: u32| {
+        windows
+            .iter()
+            .find(|window| window.window_id() == window_id)
+    };
+    let mut excluded = Vec::with_capacity(caller_window_ids.len() + 1);
+    if let Some(window_id) = overlay_window_id {
+        excluded.push(find_window(window_id).ok_or_else(|| {
+            anyhow::anyhow!("ScreenCaptureKit does not list the overlay window {window_id}")
+        })?);
+    }
+    for &window_id in caller_window_ids {
+        excluded
+            .push(find_window(window_id).ok_or(WindowExclusionError::WindowNotFound(window_id))?);
+    }
 
     let mut filter = SCContentFilter::create()
         .with_display(&display)
-        .with_excluding_windows(&overlay.iter().collect::<Vec<_>>())
+        .with_excluding_windows(&excluded)
         .build();
     // `screencapture` includes the menu bar; keep the same image.
     filter.set_include_menu_bar(true);

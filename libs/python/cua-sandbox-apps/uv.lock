@@ -375,7 +375,7 @@ wheels = [
 
 [[package]]
 name = "cua"
-version = "0.31.0"
+version = "0.31.1"
 source = { editable = "../../cua/python" }
 
 [package.metadata]

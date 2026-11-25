@@ -859,6 +859,13 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
             .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
             .or_insert_with(crate::post_action_wait::schema);
     }
+    // Dispatch checks `ui_tree_revision` before delivery (see
+    // `crate::ui_tree_revision`).
+    if crate::ui_tree_revision::accepts(tool_name) {
+        properties
+            .entry(crate::ui_tree_revision::UI_TREE_REVISION_ARG)
+            .or_insert_with(crate::ui_tree_revision::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -1036,6 +1043,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "launch_app" => &["app.launch"],
         "list_apps" => &["app.list"],
         "kill_app" => &["app.kill"],
+        "agent_display" => &["display.virtual"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
         "set_window_frame" => &["window.frame.set"],
@@ -2335,6 +2343,18 @@ impl ToolRegistry {
                 &format!("{resolved_name}: unknown {detail}"),
             );
         }
+        let planned_revision = if crate::ui_tree_revision::accepts(resolved_name) {
+            let revision = match crate::ui_tree_revision::parse(resolved_name, &args) {
+                Ok(revision) => revision,
+                Err(refusal) => return refusal,
+            };
+            if let Some(arguments) = args.as_object_mut() {
+                arguments.remove(crate::ui_tree_revision::UI_TREE_REVISION_ARG);
+            }
+            revision
+        } else {
+            None
+        };
 
         // Resource adapters run at the same canonical boundary as policy and
         // manifest admission, after session capture-scope validation but
@@ -2646,6 +2666,13 @@ impl ToolRegistry {
         } else {
             None
         };
+        // Checked once the action holds its input lanes, so a read that
+        // finished while it waited for them is seen.
+        let lane_refusal = lane_refusal.or_else(|| {
+            planned_revision.and_then(|expected| {
+                crate::ui_tree_revision::check(resolved_name, expected, &args).err()
+            })
+        });
         let pending_turn = should_record
             .then(|| {
                 // Use the same trusted identities the recording owner was minted from.
@@ -5662,6 +5689,74 @@ resources:
     }
 
     #[tokio::test]
+    async fn dispatch_refuses_a_stale_ui_tree_revision_before_delivery() {
+        use crate::ui_tree_revision::{record, UI_TREE_REVISION_ARG, UI_TREE_REVISION_TOOLS};
+        use crate::window_state_view::ViewKey;
+        use serde_json::json;
+        let schema = json!({
+            "type": "object",
+            "properties": {"element_token": {"type": "string"}},
+            "additionalProperties": false
+        });
+        for tool in UI_TREE_REVISION_TOOLS {
+            let advertised = super::advertised_runtime_input_schema(tool, &schema);
+            assert!(
+                advertised["properties"].get(UI_TREE_REVISION_ARG).is_some(),
+                "{tool}"
+            );
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: schema,
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let view = ViewKey {
+            query: None,
+            max_elements: 250,
+            max_depth: None,
+        };
+        let planned = record(9301, 5, &view, Some("s0000d301"), "- [1] Button \"OK\"");
+        let result = registry
+            .invoke_with_context(
+                "click",
+                json!({"element_token": "s0000d301:1", "ui_tree_revision": planned}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+
+        record(9301, 5, &view, Some("s0000d302"), "- [1] Button \"Done\"");
+        let result = registry
+            .invoke_with_context(
+                "click",
+                json!({"element_token": "s0000d301:1", "ui_tree_revision": planned}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["refusal"]["code"], "stale_revision");
+        assert_eq!(structured["refusal"]["reason"], "changed");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "a refused action is not delivered"
+        );
+    }
+
+    #[tokio::test]
     async fn dispatch_runs_the_action_under_its_post_action_wait() {
         use crate::post_action_wait::{
             current, PostActionWait, POST_ACTION_WAIT_ARG, POST_ACTION_WAIT_TOOLS, SKIP_SUPPORTED,
@@ -7963,6 +8058,7 @@ mod capability_tests {
         "history_status",
         "history_query",
         "parse_visual_regions",
+        "agent_display",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -8006,6 +8102,7 @@ mod capability_tests {
         "app.launch",
         "app.list",
         "app.kill",
+        "display.virtual",
         "window.list",
         "window.activate",
         "window.frame.set",

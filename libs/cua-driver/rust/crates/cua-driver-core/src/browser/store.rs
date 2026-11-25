@@ -184,11 +184,19 @@ pub struct SnapshotRecord {
     pub(crate) continuations: HashMap<String, SemanticContinuation>,
 }
 
+/// The root of a subtree read: a backend node id in the tab's own renderer
+/// (`oopif_target_id` unset) or in one OOPIF target, whose ids can collide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticScope {
+    pub oopif_target_id: Option<String>,
+    pub backend_node_id: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SemanticContinuation {
     pub offset: usize,
     pub query: Option<String>,
-    pub scope_backend_node_id: Option<i64>,
+    pub scope: Option<SemanticScope>,
     pub oopif_supported: bool,
     pub oopif_frames: usize,
 }

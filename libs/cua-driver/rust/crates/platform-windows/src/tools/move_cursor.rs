@@ -73,6 +73,7 @@ impl Tool for MoveCursorTool {
                 .cursor_registry
                 .update_position(&cursor_key, x, y);
         }
+        crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::Unpin);
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so
         // the cursor settles to the natural macOS-style pose.

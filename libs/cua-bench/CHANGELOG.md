@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.4.23](https://github.com/trycua/cua/compare/bench-v0.4.22...bench-v0.4.23) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.62 ([#8679](https://github.com/trycua/cua/issues/8679)) ([6feb735](https://github.com/trycua/cua/commit/6feb735385f8d9ef5e347129ce9f2d0256caedce))
+
+## [0.4.22](https://github.com/trycua/cua/compare/bench-v0.4.21...bench-v0.4.22) (2026-11-23)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.61 ([#8617](https://github.com/trycua/cua/issues/8617)) ([d475fb1](https://github.com/trycua/cua/commit/d475fb11673750f5a85d5dc5aaa4e089525fdc6d))
+
+## [0.4.21](https://github.com/trycua/cua/compare/bench-v0.4.20...bench-v0.4.21) (2026-11-23)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.60 ([#8601](https://github.com/trycua/cua/issues/8601)) ([6e4dfc0](https://github.com/trycua/cua/commit/6e4dfc0a7089eade7fe92eec8e2f495b5825c960))
+
+## [0.4.20](https://github.com/trycua/cua/compare/bench-v0.4.19...bench-v0.4.20) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.59 ([#8531](https://github.com/trycua/cua/issues/8531)) ([fc65652](https://github.com/trycua/cua/commit/fc6565225647eee294e38f40191454f39d7c81aa))
+
+## [0.4.19](https://github.com/trycua/cua/compare/bench-v0.4.18...bench-v0.4.19) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-bench:** correct "successfully" spelling in file-removal log ([#8201](https://github.com/trycua/cua/issues/8201)) ([0887c9b](https://github.com/trycua/cua/commit/0887c9b9fad653f3a026708c035932ef7e142e93))
+
+## [0.4.18](https://github.com/trycua/cua/compare/bench-v0.4.17...bench-v0.4.18) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.58 ([#8502](https://github.com/trycua/cua/issues/8502)) ([2a15e14](https://github.com/trycua/cua/commit/2a15e141e23d72eb3c73df9a289d2cf079033516))
+
+## [0.4.17](https://github.com/trycua/cua/compare/bench-v0.4.16...bench-v0.4.17) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.57 ([#8496](https://github.com/trycua/cua/issues/8496)) ([559d62c](https://github.com/trycua/cua/commit/559d62cff589da10caef3f7e868fc6bd8e621212))
+
 ## [0.4.16](https://github.com/trycua/cua/compare/bench-v0.4.15...bench-v0.4.16) (2026-11-20)
 
 

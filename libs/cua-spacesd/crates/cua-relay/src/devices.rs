@@ -76,7 +76,7 @@
 //! file next to the devices file; see [`AuditLog`]).
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead as _, Write as _};
+use std::io::BufRead as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -84,6 +84,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use crate::assertion::{now_secs, remove_stale_temps, write_private, write_private_with};
+use crate::persist::{Durable, MapUndo, StateFile};
 use crate::storage::{store, Storage};
 
 /// Header carrying the device session token.
@@ -639,18 +640,14 @@ struct AuditLineIn {
 /// startup after a torn final line.
 #[derive(Debug, Default)]
 struct AuditLog {
+    /// The file (written by [`DeviceStore::audit_file`] once open).
     path: Option<PathBuf>,
-    /// Append handle, opened on first use.
-    file: Option<std::fs::File>,
     logs: BTreeMap<String, Vec<AuditEntry>>,
     /// Entries in `logs`.
     retained: usize,
     /// Lines in the file.
     lines: usize,
     compact_slack: usize,
-    /// The outcome of the last compaction since it was last taken
-    /// ([`DeviceStore::audit`] reports it).
-    compacted: Option<std::io::Result<()>>,
 }
 
 impl AuditLog {
@@ -674,7 +671,6 @@ impl AuditLog {
         if dropped > 0 {
             self.logs.retain(|_, log| !log.is_empty());
             self.retained -= dropped;
-            self.compacted = Some(self.compact());
         }
         dropped
     }
@@ -739,73 +735,69 @@ impl AuditLog {
         }
     }
 
-    /// Chains `event` onto `account`'s log and appends it to the file. On
-    /// a write error nothing is recorded (the file is cut back to where it
-    /// was, so no torn line stays in it).
+    /// Chains `event` onto `account`'s log. Returns the line to append to
+    /// the file (`None` in memory); nothing is recorded when it cannot be
+    /// encoded.
     fn append(
         &mut self,
         account: &str,
         event: AuditEvent,
         audit_key: &[u8; 32],
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<Option<Vec<u8>>> {
         let entry = chain_next(
             self.logs.get(account).map(Vec::as_slice).unwrap_or(&[]),
             event,
             audit_key,
         );
+        let mut line = None;
         if self.path.is_some() {
-            let mut line = serde_json::to_vec(&AuditLineOut {
+            let mut l = serde_json::to_vec(&AuditLineOut {
                 account,
                 entry: &entry,
             })?;
-            line.push(b'\n');
-            self.write_line(&line)?;
+            l.push(b'\n');
             self.lines += 1;
+            line = Some(l);
         }
         self.insert(account.to_owned(), entry);
-        if self.lines > self.retained.saturating_add(self.compact_slack) {
-            self.compacted = Some(self.compact());
+        Ok(line)
+    }
+
+    /// The file holds enough dropped lines to be rewritten.
+    fn needs_compaction(&self) -> bool {
+        self.lines > self.retained.saturating_add(self.compact_slack)
+    }
+
+    /// Writes the retained entries as journal lines.
+    fn write_entries(
+        out: &mut dyn std::io::Write,
+        logs: &BTreeMap<String, Vec<AuditEntry>>,
+    ) -> std::io::Result<()> {
+        for (account, entries) in logs {
+            for entry in entries {
+                serde_json::to_writer(&mut *out, &AuditLineOut { account, entry })?;
+                out.write_all(b"\n")?;
+            }
         }
         Ok(())
     }
 
-    fn write_line(&mut self, line: &[u8]) -> std::io::Result<()> {
-        let path = self.path.as_ref().expect("persisted audit log");
-        if self.file.is_none() {
-            let mut options = std::fs::OpenOptions::new();
-            options.append(true).create(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt as _;
-                options.mode(0o600);
-            }
-            self.file = Some(options.open(path)?);
-        }
-        let file = self.file.as_mut().expect("open");
-        let before = file.metadata()?.len();
-        let written = file.write_all(line).and_then(|()| file.sync_data());
-        if written.is_err() {
-            let _ = file.set_len(before);
-        }
-        written
+    /// The whole file as it should be now, for the writer thread (the
+    /// retained entries are copied: the lock is not held while it writes).
+    fn snapshot(&mut self) -> impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send {
+        self.lines = self.retained;
+        let logs = self.logs.clone();
+        move |out| Self::write_entries(out, &logs)
     }
 
-    /// Rewrites the file with only the retained entries.
+    /// Rewrites the file with only the retained entries, now (at load,
+    /// before the writer thread runs).
     fn compact(&mut self) -> std::io::Result<()> {
         let Some(path) = self.path.clone() else {
             return Ok(());
         };
-        self.file = None;
         let logs = &self.logs;
-        write_private_with(&path, |out| {
-            for (account, entries) in logs {
-                for entry in entries {
-                    serde_json::to_writer(&mut *out, &AuditLineOut { account, entry })?;
-                    out.write_all(b"\n")?;
-                }
-            }
-            Ok(())
-        })?;
+        write_private_with(&path, |out| Self::write_entries(out, logs))?;
         self.lines = self.retained;
         Ok(())
     }
@@ -840,7 +832,6 @@ enum SessionLine {
 #[derive(Debug)]
 struct SessionLog {
     path: Option<PathBuf>,
-    file: Option<std::fs::File>,
     lines: usize,
     compact_slack: usize,
 }
@@ -849,7 +840,6 @@ impl Default for SessionLog {
     fn default() -> Self {
         Self {
             path: None,
-            file: None,
             lines: 0,
             compact_slack: SESSIONS_COMPACT_SLACK,
         }
@@ -917,56 +907,55 @@ impl SessionLog {
         Ok((log, sessions))
     }
 
-    fn append(&mut self, lines: &[SessionLine]) -> std::io::Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
+    /// The journal lines for `lines` (empty in memory).
+    fn append(&mut self, lines: &[SessionLine]) -> std::io::Result<Vec<u8>> {
+        if self.path.is_none() {
+            return Ok(Vec::new());
+        }
         let mut buf = Vec::new();
         for l in lines {
             serde_json::to_writer(&mut buf, l)?;
             buf.push(b'\n');
         }
-        if self.file.is_none() {
-            let mut options = std::fs::OpenOptions::new();
-            options.append(true).create(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt as _;
-                options.mode(0o600);
-            }
-            self.file = Some(options.open(path)?);
-        }
-        let file = self.file.as_mut().expect("open");
-        let before = file.metadata()?.len();
-        let written = file.write_all(&buf).and_then(|()| file.sync_data());
-        if written.is_err() {
-            // No torn line stays behind.
-            let _ = file.set_len(before);
-        }
-        written?;
         self.lines += lines.len();
+        Ok(buf)
+    }
+
+    /// Writes `live` as `open` lines.
+    fn write_live(
+        out: &mut dyn std::io::Write,
+        live: &HashMap<String, Session>,
+    ) -> std::io::Result<()> {
+        for (hash, session) in live {
+            serde_json::to_writer(
+                &mut *out,
+                &SessionLine::Open {
+                    open: hash.clone(),
+                    session: session.clone(),
+                },
+            )?;
+            out.write_all(b"\n")?;
+        }
         Ok(())
     }
 
-    /// Rewrites the journal with only `live`.
+    /// The journal as it should be now (only `live`), for the writer
+    /// thread.
+    fn snapshot(
+        &mut self,
+        live: &HashMap<String, Session>,
+    ) -> impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send {
+        self.lines = live.len();
+        let live = live.clone();
+        move |out| Self::write_live(out, &live)
+    }
+
+    /// Rewrites the journal with only `live`, now (at load).
     fn compact(&mut self, live: &HashMap<String, Session>) -> std::io::Result<()> {
         let Some(path) = self.path.clone() else {
             return Ok(());
         };
-        self.file = None;
-        write_private_with(&path, |out| {
-            for (hash, session) in live {
-                serde_json::to_writer(
-                    &mut *out,
-                    &SessionLine::Open {
-                        open: hash.clone(),
-                        session: session.clone(),
-                    },
-                )?;
-                out.write_all(b"\n")?;
-            }
-            Ok(())
-        })?;
+        write_private_with(&path, |out| Self::write_live(out, live))?;
         self.lines = live.len();
         Ok(())
     }
@@ -1161,7 +1150,12 @@ pub struct DeviceErase {
 /// The device store.
 #[derive(Debug)]
 pub struct DeviceStore {
-    path: Option<PathBuf>,
+    /// The devices file, written off the request path.
+    file: StateFile,
+    /// The audit log journal.
+    audit_file: StateFile,
+    /// The session journal.
+    sessions_file: StateFile,
     policy: DevicePolicy,
     state: Mutex<State>,
     /// Live sessions by the SHA-256 of their token (never the token), and
@@ -1275,6 +1269,7 @@ impl DeviceStore {
             },
             random_audit_key(),
             AuditLog::in_memory(),
+            Arc::default(),
         )
     }
 
@@ -1284,9 +1279,20 @@ impl DeviceStore {
         state: State,
         audit_key: [u8; 32],
         audit: AuditLog,
+        storage: Arc<Storage>,
     ) -> Self {
+        let sibling = |suffix: &str| {
+            path.as_ref()
+                .map(|p| PathBuf::from(format!("{}{suffix}", p.display())))
+        };
         Self {
-            path,
+            file: StateFile::new(path.clone(), store::DEVICES, storage.clone()),
+            audit_file: StateFile::new(sibling(AUDIT_FILE_SUFFIX), store::AUDIT, storage.clone()),
+            sessions_file: StateFile::new(
+                sibling(SESSIONS_FILE_SUFFIX),
+                store::SESSIONS,
+                storage.clone(),
+            ),
             policy,
             state: Mutex::new(state),
             sessions: Mutex::default(),
@@ -1294,7 +1300,7 @@ impl DeviceStore {
             throttle: Mutex::default(),
             audit_key,
             audit: Mutex::new(audit),
-            storage: Arc::default(),
+            storage,
         }
     }
 
@@ -1372,17 +1378,18 @@ impl DeviceStore {
             &PathBuf::from(format!("{}{LEGACY_SESSIONS_FILE_SUFFIX}", path.display())),
             now_secs(),
         )?;
-        let mut store = Self::with_state(Some(path), policy, state, audit_key, audit);
+        let mut store = Self::with_state(Some(path), policy, state, audit_key, audit, storage);
         *store.sessions.get_mut().expect("sessions") = (sessions.1, sessions.0);
-        store.storage = storage;
         if fresh || moved || backfilled {
-            let mut state = store.state.lock().expect("devices");
-            if fresh {
-                state.grace_started_at = now_secs();
-            }
-            store
-                .persist(&state)
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let written = {
+                let mut state = store.state.lock().expect("devices");
+                if fresh {
+                    state.grace_started_at = now_secs();
+                }
+                store.persist(&state)
+            };
+            // At start, before anything is served.
+            written.wait_blocking()?;
         }
         Ok(store)
     }
@@ -1406,23 +1413,42 @@ impl DeviceStore {
         now < self.enforce_after()
     }
 
-    /// Writes the devices file: compact JSON, streamed to a temp file
-    /// that replaces it (never held in memory whole). A failure is the
-    /// caller's error: the change it was for is not made.
-    fn persist(&self, state: &State) -> Result<(), DeviceError> {
-        let Some(path) = &self.path else {
-            return Ok(());
+    /// Queues the devices file's new content (compact JSON, streamed by the
+    /// writer thread to a temp file that replaces it). Never blocks on the
+    /// disk.
+    fn persist(&self, state: &State) -> Durable {
+        if !self.file.is_persisted() {
+            return Durable::ready();
+        }
+        let snapshot = State {
+            grace_started_at: state.grace_started_at,
+            devices: state.devices.clone(),
+            pending_audit: Vec::new(),
         };
-        let written = (|| {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            write_private_with(path, |out| {
-                serde_json::to_writer(&mut *out, state).map_err(std::io::Error::other)
-            })
-        })();
-        self.storage.record(store::DEVICES, &written);
-        written.map_err(|e| DeviceError::Storage(e.to_string()))
+        self.file.replace(move |out| {
+            serde_json::to_writer(&mut *out, &snapshot).map_err(std::io::Error::other)
+        })
+    }
+
+    /// Waits until the devices file, the audit log and the session journal
+    /// hold every change made so far (tests).
+    #[cfg(test)]
+    pub(crate) fn flush(&self) {
+        for f in [&self.file, &self.audit_file, &self.sessions_file] {
+            assert!(f.flush_blocking(std::time::Duration::from_secs(10)));
+        }
+    }
+
+    /// Holds the session journal's writer as a hung disk would (tests).
+    #[cfg(test)]
+    pub(crate) fn stall_sessions(&self) -> crate::persist::StallGuard<'_> {
+        self.sessions_file.stall()
+    }
+
+    /// Holds the audit log's writer as a hung disk would (tests).
+    #[cfg(test)]
+    pub(crate) fn stall_audit(&self) -> crate::persist::StallGuard<'_> {
+        self.audit_file.stall()
     }
 
     /// Whether the devices file, the audit log and the session journal are
@@ -1436,20 +1462,37 @@ impl DeviceStore {
             .all(|s| self.storage.store_ok(s))
     }
 
-    /// Applies `change` to a copy of the state and persists it before
-    /// making it current, then records the audit events `change` queued.
-    fn mutate<T>(
+    /// Applies `change` to a copy of the state, makes it current and
+    /// waits (with no lock held, never blocking a worker) until it is on
+    /// disk; then records the audit events `change` queued. On a failed
+    /// write the change is undone (unless another change replaced it since)
+    /// and the caller gets the error.
+    async fn mutate<T>(
         &self,
         change: impl FnOnce(&mut State) -> Result<T, DeviceError>,
     ) -> Result<T, DeviceError> {
-        let mut state = self.state.lock().expect("devices");
-        let mut next = state.clone();
-        let out = change(&mut next)?;
-        self.persist(&next)?;
-        let events = std::mem::take(&mut next.pending_audit);
-        *state = next;
-        // Still under the state lock, so the log follows the order of the
-        // changes.
+        let (out, events, undo, durable) = {
+            let mut state = self.state.lock().expect("devices");
+            let mut next = state.clone();
+            let out = change(&mut next)?;
+            let events = std::mem::take(&mut next.pending_audit);
+            let undo = MapUndo::diff(&state.devices, &next.devices);
+            let durable = if undo.is_empty() && next.grace_started_at == state.grace_started_at {
+                Durable::ready()
+            } else {
+                self.persist(&next)
+            };
+            *state = next;
+            (out, events, undo, durable)
+        };
+        if let Err(e) = durable.await {
+            let mut state = self.state.lock().expect("devices");
+            // Re-queued only if a later write may carry the change.
+            if undo.undo(&mut state.devices) && self.file.last_ok() {
+                self.persist(&state).detach();
+            }
+            return Err(DeviceError::Storage(e.to_string()));
+        }
         for (account, event) in events {
             self.audit(&account, event);
         }
@@ -1462,21 +1505,26 @@ impl DeviceStore {
         state.pending_audit.push((account.to_owned(), event));
     }
 
-    /// Records `event` in `account`'s audit log (best effort: a failed
-    /// write drops the event, counted as `audit_events_dropped` and logged
-    /// as `state persist failed`, store `audit`).
+    /// Records `event` in `account`'s audit log and queues its line for
+    /// the writer thread (never waits for the disk). A failed write is
+    /// logged as `state persist failed`, store `audit`; the event stays in
+    /// memory and the next event rewrites the whole log, so the chain on
+    /// disk never has a gap.
     pub fn audit(&self, account: &str, event: AuditEvent) {
         let mut audit = self.audit.lock().expect("audit");
-        let appended = audit.append(account, event, &self.audit_key);
-        if self.path.is_none() {
-            return;
-        }
-        self.storage.record(store::AUDIT, &appended);
-        if appended.is_err() {
-            self.storage.audit_dropped();
-        }
-        if let Some(compacted) = audit.compacted.take() {
-            self.storage.record(store::AUDIT, &compacted);
+        let line = match audit.append(account, event, &self.audit_key) {
+            Ok(Some(line)) => line,
+            Ok(None) => return,
+            Err(e) => {
+                self.storage.failed(store::AUDIT, &e.to_string());
+                self.storage.audit_dropped();
+                return;
+            }
+        };
+        // Queued under the audit lock, so the file follows the chain's
+        // order; written by the writer thread.
+        if audit.needs_compaction() || self.audit_file.append(&line).is_err() {
+            self.audit_file.replace(audit.snapshot()).detach();
         }
     }
 
@@ -1490,10 +1538,8 @@ impl DeviceStore {
         let cutoff = now_secs().saturating_sub(days.saturating_mul(86_400));
         let mut audit = self.audit.lock().expect("audit");
         let dropped = audit.trim_before(cutoff);
-        if let Some(compacted) = audit.compacted.take() {
-            if self.path.is_some() {
-                self.storage.record(store::AUDIT, &compacted);
-            }
+        if dropped > 0 && audit.path.is_some() {
+            self.audit_file.replace(audit.snapshot()).detach();
         }
         dropped
     }
@@ -1645,9 +1691,10 @@ impl DeviceStore {
         }
     }
 
-    /// Appends to the session journal, compacting it when it grew (best
-    /// effort: a lost write only means clients open new sessions after the
-    /// next restart, and an ended device's sessions are refused anyway).
+    /// Queues lines for the session journal, or the whole journal when it
+    /// grew or its writer asks for a rewrite (best effort: a lost write
+    /// only means clients open new sessions after the next restart, and an
+    /// ended device's sessions are refused anyway).
     fn journal_sessions(
         &self,
         sessions: &HashMap<String, Session>,
@@ -1657,11 +1704,15 @@ impl DeviceStore {
         if log.path.is_none() {
             return;
         }
-        let written = log.append(lines);
-        self.storage.record(store::SESSIONS, &written);
-        if log.needs_compaction(sessions.len()) {
-            let compacted = log.compact(sessions);
-            self.storage.record(store::SESSIONS, &compacted);
+        let bytes = match log.append(lines) {
+            Ok(b) => b,
+            Err(e) => {
+                self.storage.failed(store::SESSIONS, &e.to_string());
+                return;
+            }
+        };
+        if log.needs_compaction(sessions.len()) || self.sessions_file.append(&bytes).is_err() {
+            self.sessions_file.replace(log.snapshot(sessions)).detach();
         }
     }
 
@@ -1681,7 +1732,7 @@ impl DeviceStore {
     /// - Else the device is (again) pending with a fresh one-time code.
     ///
     /// An enrollment replaces the older devices of the same machine.
-    pub fn register(&self, r: &Registration<'_>) -> Result<Registered, DeviceError> {
+    pub async fn register(&self, r: &Registration<'_>) -> Result<Registered, DeviceError> {
         let account = r.account;
         let raw = decode_public_key(r.public_key).map_err(DeviceError::Invalid)?;
         let id = device_id(&raw);
@@ -1904,7 +1955,7 @@ impl DeviceStore {
                 code: Some(code),
                 superseded: Vec::new(),
             })
-        })?;
+        }).await?;
         self.end_sessions(&out.superseded);
         Ok(out)
     }
@@ -1912,7 +1963,7 @@ impl DeviceStore {
     /// `approver` (an enrolled device of `account`) approves the pending or
     /// expired device named by `code` or `target`. A code that is a device
     /// id (`dev_…`) names that device.
-    pub fn approve(
+    pub async fn approve(
         &self,
         account: &str,
         approver: &str,
@@ -2007,7 +2058,7 @@ impl DeviceStore {
                 now,
             );
             Ok((approved, superseded))
-        })?;
+        }).await?;
         self.end_sessions(&superseded);
         Ok(approved)
     }
@@ -2020,7 +2071,7 @@ impl DeviceStore {
     /// than [`RENEW_STEP_SECS`] (at most half the TTL), so a device in use
     /// does not expire. An expired, pending or revoked device gets no
     /// session and is not renewed.
-    pub fn open_session(
+    pub async fn open_session(
         &self,
         account: &str,
         device: &str,
@@ -2113,6 +2164,7 @@ impl DeviceStore {
                 );
                 Ok(until)
             })
+            .await
             .unwrap_or(until)
         };
         let expires = (now + self.policy.session_ttl_secs).min(until);
@@ -2170,7 +2222,7 @@ impl DeviceStore {
     }
 
     /// Renames `id`.
-    pub fn rename(
+    pub async fn rename(
         &self,
         account: &str,
         actor: &str,
@@ -2199,6 +2251,7 @@ impl DeviceStore {
             );
             Ok(renamed)
         })
+        .await
     }
 
     /// Erases everything this store holds for `account` (account deletion):
@@ -2207,7 +2260,7 @@ impl DeviceStore {
     /// dropped (other accounts' chains are separate and still verify) and
     /// its access-throttle entries forgotten. Idempotent; every file is
     /// rewritten each call so a retry after a failed write finishes the job.
-    pub fn erase_account(
+    pub async fn erase_account(
         &self,
         account: &str,
         emails: &[String],
@@ -2228,24 +2281,28 @@ impl DeviceStore {
                     state.devices.remove(id);
                 }
                 Ok(())
-            })?;
+            })
+            .await?;
             ids.extend(gone);
         }
         out.devices = ids.len();
         // Sessions of those devices (and any other of the account's).
-        {
+        let sessions_written = {
             let mut guard = self.sessions.lock().expect("sessions");
             let (sessions, log) = &mut *guard;
             let before = sessions.len();
             sessions.retain(|_, s| s.account != account && !ids.contains(&s.device));
             out.sessions = before - sessions.len();
+            // Rewrite the journal: its old `open` lines carry the account.
             if log.path.is_some() {
-                // Rewrite the journal: its old `open` lines carry the account.
-                let compacted = log.compact(sessions);
-                self.storage.record(store::SESSIONS, &compacted);
-                compacted.map_err(|e| DeviceError::Storage(e.to_string()))?;
+                self.sessions_file.replace(log.snapshot(sessions))
+            } else {
+                Durable::ready()
             }
-        }
+        };
+        sessions_written
+            .await
+            .map_err(|e| DeviceError::Storage(e.to_string()))?;
         // Proof fingerprints are hashes of signatures, not tied to an
         // account, and expire in minutes; the access throttle keys are.
         self.throttle
@@ -2253,7 +2310,7 @@ impl DeviceStore {
             .expect("throttle")
             .retain(|k, _| !k.contains(account));
         // The account's own audit chain.
-        {
+        let audit_written = {
             let mut audit = self.audit.lock().expect("audit");
             if let Some(log) = audit.logs.remove(account) {
                 audit.retained -= log.len();
@@ -2266,16 +2323,19 @@ impl DeviceStore {
                 out.audit_rewritten += rewrite_audit(log, account, emails, &key);
             }
             if audit.path.is_some() {
-                let compacted = audit.compact();
-                self.storage.record(store::AUDIT, &compacted);
-                compacted.map_err(|e| DeviceError::Storage(e.to_string()))?;
+                self.audit_file.replace(audit.snapshot())
+            } else {
+                Durable::ready()
             }
-        }
+        };
+        audit_written
+            .await
+            .map_err(|e| DeviceError::Storage(e.to_string()))?;
         Ok(out)
     }
 
     /// Revokes `id` and ends its sessions.
-    pub fn revoke(
+    pub async fn revoke(
         &self,
         account: &str,
         actor: &str,
@@ -2310,7 +2370,7 @@ impl DeviceStore {
                     .subject(id),
             );
             Ok(revoked)
-        })?;
+        }).await?;
         self.end_sessions(&[id.to_owned()]);
         Ok(revoked)
     }
@@ -2353,7 +2413,7 @@ pub(crate) mod tests {
 
     /// Registers `key` with an unverified email (the rules before a
     /// verified email let a fresh sign-in enroll further devices).
-    fn register(
+    async fn register(
         store: &DeviceStore,
         account: &str,
         key: &TestKey,
@@ -2363,10 +2423,11 @@ pub(crate) mod tests {
         register_on(
             store, account, key, bootstrap, auth_time, false, None, false,
         )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn register_on(
+    async fn register_on(
         store: &DeviceStore,
         account: &str,
         key: &TestKey,
@@ -2379,25 +2440,31 @@ pub(crate) mod tests {
         let ts = now_secs();
         let public = key.public();
         let sig = key.sign(&register_message(&key.id(), ts));
-        store.register(&Registration {
-            account,
-            user: account,
-            public_key: &public,
-            name: "laptop",
-            platform: "macos",
-            machine_id,
-            ts,
-            sig: &sig,
-            bootstrap,
-            auth_time,
-            email_verified,
-            mfa,
-            phone: false,
-            capabilities: None,
-        })
+        store
+            .register(&Registration {
+                account,
+                user: account,
+                public_key: &public,
+                name: "laptop",
+                platform: "macos",
+                machine_id,
+                ts,
+                sig: &sig,
+                bootstrap,
+                auth_time,
+                email_verified,
+                mfa,
+                phone: false,
+                capabilities: None,
+            })
+            .await
     }
 
-    fn session(store: &DeviceStore, account: &str, key: &TestKey) -> Result<String, DeviceError> {
+    async fn session(
+        store: &DeviceStore,
+        account: &str,
+        key: &TestKey,
+    ) -> Result<String, DeviceError> {
         let ts = now_secs();
         store
             .open_session(
@@ -2406,6 +2473,7 @@ pub(crate) mod tests {
                 ts,
                 &key.sign(&session_message(&key.id(), ts)),
             )
+            .await
             .map(|(t, _)| t)
     }
 
@@ -2419,8 +2487,8 @@ pub(crate) mod tests {
     /// A device enrolled as an iPhone before phones were a class carries no
     /// mark. It is a phone all the same: by its platform at once, and marked
     /// (and written back) when the store is opened.
-    #[test]
-    fn a_device_enrolled_as_an_iphone_before_the_mark_is_a_phone() {
+    #[tokio::test]
+    async fn a_device_enrolled_as_an_iphone_before_the_mark_is_a_phone() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
@@ -2446,6 +2514,7 @@ pub(crate) mod tests {
                 phone: false,
                 capabilities: None,
             })
+            .await
             .unwrap();
         assert!(!store.get(&key.id()).unwrap().phone, "no mark was written");
         assert!(store.get(&key.id()).unwrap().is_phone());
@@ -2457,7 +2526,9 @@ pub(crate) mod tests {
         assert!(raw.contains("\"phone\":true"), "{raw}");
         // A computer is not made one.
         let laptop = TestKey::new();
-        register(&reopened, "acct", &laptop, true, Some(now_secs())).unwrap();
+        register(&reopened, "acct", &laptop, true, Some(now_secs()))
+            .await
+            .unwrap();
         assert!(!reopened.is_phone(&laptop.id()));
     }
 
@@ -2470,25 +2541,29 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn first_device_bootstraps_only_with_a_fresh_sign_in_after_the_grace_period() {
+    #[tokio::test]
+    async fn first_device_bootstraps_only_with_a_fresh_sign_in_after_the_grace_period() {
         let store = DeviceStore::in_memory(enforcing());
         let first = TestKey::new();
         // A stale sign-in (a long-lived session) is not enough.
-        let stale = register(&store, "acct", &first, true, Some(now_secs() - 3600)).unwrap();
+        let stale = register(&store, "acct", &first, true, Some(now_secs() - 3600))
+            .await
+            .unwrap();
         assert_eq!(stale.device.state(now_secs()), DeviceState::Pending);
         assert!(stale.code.is_some());
-        assert!(session(&store, "acct", &first).is_err());
+        assert!(session(&store, "acct", &first).await.is_err());
         // No auth_time claim at all: not enough either.
-        let first_again = register(&store, "acct", &first, true, None).unwrap();
+        let first_again = register(&store, "acct", &first, true, None).await.unwrap();
         assert!(first_again.code.is_some());
-        let fresh = register(&store, "acct", &first, true, Some(now_secs() - 5)).unwrap();
+        let fresh = register(&store, "acct", &first, true, Some(now_secs() - 5))
+            .await
+            .unwrap();
         assert_eq!(fresh.device.state(now_secs()), DeviceState::Enrolled);
         assert_eq!(
             fresh.device.enrolled_by.as_deref(),
             Some("bootstrap:fresh-sign-in")
         );
-        let token = session(&store, "acct", &first).unwrap();
+        let token = session(&store, "acct", &first).await.unwrap();
         assert_eq!(
             store.session_device("acct", &token).as_deref(),
             Some(first.id().as_str())
@@ -2498,16 +2573,22 @@ pub(crate) mod tests {
 
         // On a long-lived session a second device cannot bootstrap.
         let second = TestKey::new();
-        let pending = register(&store, "acct", &second, true, Some(now_secs() - 3600)).unwrap();
+        let pending = register(&store, "acct", &second, true, Some(now_secs() - 3600))
+            .await
+            .unwrap();
         assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
         let code = pending.code.unwrap();
         // ...until an enrolled device confirms its code.
         assert!(matches!(
-            store.approve("acct", &second.id(), Some(&code), None, true),
+            store
+                .approve("acct", &second.id(), Some(&code), None, true)
+                .await,
             Err(DeviceError::Forbidden(_))
         ));
         assert!(matches!(
-            store.approve("other", &first.id(), Some(&code), None, true),
+            store
+                .approve("other", &first.id(), Some(&code), None, true)
+                .await,
             Err(DeviceError::Forbidden(_))
         ));
         let approved = store
@@ -2518,12 +2599,14 @@ pub(crate) mod tests {
                 None,
                 true,
             )
+            .await
             .unwrap();
         assert_eq!(approved.enrolled_by.as_deref(), Some(first.id().as_str()));
-        assert!(session(&store, "acct", &second).is_ok());
+        assert!(session(&store, "acct", &second).await.is_ok());
         // The code is single use.
         assert!(store
             .approve("acct", &first.id(), Some(&code), None, true)
+            .await
             .is_err());
 
         let kinds: Vec<_> = store
@@ -2537,12 +2620,12 @@ pub(crate) mod tests {
         assert!(store.audit_log("other", 100).is_empty());
     }
 
-    #[test]
-    fn grace_period_lets_the_first_device_bootstrap_without_a_fresh_sign_in() {
+    #[tokio::test]
+    async fn grace_period_lets_the_first_device_bootstrap_without_a_fresh_sign_in() {
         let store = DeviceStore::in_memory(with_grace());
         assert!(store.in_grace(now_secs()));
         let key = TestKey::new();
-        let r = register(&store, "acct", &key, true, None).unwrap();
+        let r = register(&store, "acct", &key, true, None).await.unwrap();
         assert_eq!(r.device.enrolled_by.as_deref(), Some("bootstrap:grace"));
         // The platform the device reported is kept (cleaned).
         assert_eq!(r.device.platform, "macos");
@@ -2551,13 +2634,14 @@ pub(crate) mod tests {
         // Only the first one.
         let other = TestKey::new();
         assert!(register(&store, "acct", &other, true, None)
+            .await
             .unwrap()
             .code
             .is_some());
     }
 
-    #[test]
-    fn a_fresh_sign_in_recovers_from_devices_enrolled_on_the_grace_periods_word() {
+    #[tokio::test]
+    async fn a_fresh_sign_in_recovers_from_devices_enrolled_on_the_grace_periods_word() {
         // During the grace period someone with a stolen session enrolls
         // first. (Strict policy: by default a fresh sign-in enrolls any
         // device, so the last step below is strict-only.)
@@ -2566,49 +2650,61 @@ pub(crate) mod tests {
             ..with_grace()
         });
         let thief = TestKey::new();
-        let r = register(&store, "acct", &thief, true, None).unwrap();
+        let r = register(&store, "acct", &thief, true, None).await.unwrap();
         assert_eq!(r.device.enrolled_by.as_deref(), Some("bootstrap:grace"));
         assert!(!r.device.strong);
         // Devices it approves are not strong either.
         let accomplice = TestKey::new();
         let code = register(&store, "acct", &accomplice, false, None)
+            .await
             .unwrap()
             .code
             .unwrap();
         assert!(
             !store
                 .approve("acct", &thief.id(), Some(&code), None, true)
+                .await
                 .unwrap()
                 .strong
         );
         // The owner signs in freshly and still bootstraps, then revokes them.
         let owner = TestKey::new();
-        let r = register(&store, "acct", &owner, true, Some(now_secs())).unwrap();
+        let r = register(&store, "acct", &owner, true, Some(now_secs()))
+            .await
+            .unwrap();
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
         assert!(r.device.strong);
         store
             .revoke("acct", &owner.id(), &thief.id(), true)
+            .await
             .unwrap();
         store
             .revoke("acct", &owner.id(), &accomplice.id(), true)
+            .await
             .unwrap();
         // Now a strong device exists: a fresh sign-in alone no longer
         // enrolls another one.
         let next = TestKey::new();
         assert!(register(&store, "acct", &next, true, Some(now_secs()))
+            .await
             .unwrap()
             .code
             .is_some());
     }
 
-    #[test]
-    fn a_malleated_signature_is_still_a_replay() {
+    #[tokio::test]
+    async fn a_malleated_signature_is_still_a_replay() {
         let store = DeviceStore::in_memory(enforcing());
         let key = TestKey::new();
-        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &key, true, Some(now_secs()))
+            .await
+            .unwrap();
         let ts = now_secs();
         let sig = key.sign(&session_message(&key.id(), ts));
-        store.open_session("acct", &key.id(), ts, &sig).unwrap();
+        store
+            .open_session("acct", &key.id(), ts, &sig)
+            .await
+            .unwrap();
         // (r, n - s) verifies too.
         let raw = b64().decode(&sig).unwrap();
         const N: [u8; 32] = [
@@ -2633,55 +2729,68 @@ pub(crate) mod tests {
             &malleated
         ));
         assert!(matches!(
-            store.open_session("acct", &key.id(), ts, &malleated),
+            store.open_session("acct", &key.id(), ts, &malleated).await,
             Err(DeviceError::Proof(_))
         ));
     }
 
-    #[test]
-    fn proofs_are_bound_fresh_and_single_use() {
+    #[tokio::test]
+    async fn proofs_are_bound_fresh_and_single_use() {
         let store = DeviceStore::in_memory(enforcing());
         let key = TestKey::new();
-        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &key, true, Some(now_secs()))
+            .await
+            .unwrap();
         let ts = now_secs();
         let sig = key.sign(&session_message(&key.id(), ts));
-        assert!(store.open_session("acct", &key.id(), ts, &sig).is_ok());
+        assert!(store
+            .open_session("acct", &key.id(), ts, &sig)
+            .await
+            .is_ok());
         // Replayed.
         assert!(matches!(
-            store.open_session("acct", &key.id(), ts, &sig),
+            store.open_session("acct", &key.id(), ts, &sig).await,
             Err(DeviceError::Proof(_))
         ));
         // Stale.
         let old = ts - 3600;
         let sig = key.sign(&session_message(&key.id(), old));
-        assert!(store.open_session("acct", &key.id(), old, &sig).is_err());
+        assert!(store
+            .open_session("acct", &key.id(), old, &sig)
+            .await
+            .is_err());
         // Another key's signature.
         let intruder = TestKey::new();
         let sig = intruder.sign(&session_message(&key.id(), ts));
-        assert!(store.open_session("acct", &key.id(), ts, &sig).is_err());
+        assert!(store
+            .open_session("acct", &key.id(), ts, &sig)
+            .await
+            .is_err());
         // A key registered to one account cannot join another.
         let ts = now_secs();
         let sig = key.sign(&register_message(&key.id(), ts));
         let public = key.public();
         assert!(matches!(
-            store.register(&Registration {
-                account: "other",
-                user: "other",
-                public_key: &public,
-                name: "x",
-                ts,
-                sig: &sig,
-                bootstrap: true,
-                auth_time: Some(ts),
-                email_verified: true,
-                ..Registration::default()
-            }),
+            store
+                .register(&Registration {
+                    account: "other",
+                    user: "other",
+                    public_key: &public,
+                    name: "x",
+                    ts,
+                    sig: &sig,
+                    bootstrap: true,
+                    auth_time: Some(ts),
+                    email_verified: true,
+                    ..Registration::default()
+                })
+                .await,
             Err(DeviceError::Conflict(_))
         ));
     }
 
-    #[test]
-    fn expiry_needs_one_approval_and_revocation_ends_sessions() {
+    #[tokio::test]
+    async fn expiry_needs_one_approval_and_revocation_ends_sessions() {
         let store = DeviceStore::in_memory(DevicePolicy {
             grace_secs: 0,
             ttl_secs: 1,
@@ -2689,44 +2798,53 @@ pub(crate) mod tests {
         });
         let a = TestKey::new();
         let b = TestKey::new();
-        register(&store, "acct", &a, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &a, true, Some(now_secs()))
+            .await
+            .unwrap();
         let code = register(&store, "acct", &b, false, None)
+            .await
             .unwrap()
             .code
             .unwrap();
         store
             .approve("acct", &a.id(), Some(&code), None, true)
+            .await
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2100));
         assert_eq!(
             store.get(&a.id()).unwrap().state(now_secs()),
             DeviceState::Expired
         );
-        assert!(session(&store, "acct", &a).is_err());
+        assert!(session(&store, "acct", &a).await.is_err());
         // With no enrolled device left, a fresh sign-in re-verifies.
-        let again = register(&store, "acct", &a, true, Some(now_secs())).unwrap();
+        let again = register(&store, "acct", &a, true, Some(now_secs()))
+            .await
+            .unwrap();
         assert_eq!(again.device.state(now_secs()), DeviceState::Enrolled);
         // b (expired) needs an approval from a; by id this time.
         store
             .approve("acct", &a.id(), None, Some(&b.id()), true)
+            .await
             .unwrap();
-        let token = session(&store, "acct", &b).unwrap();
-        store.revoke("acct", &a.id(), &b.id(), true).unwrap();
+        let token = session(&store, "acct", &b).await.unwrap();
+        store.revoke("acct", &a.id(), &b.id(), true).await.unwrap();
         assert!(store.session_device("acct", &token).is_none());
-        assert!(session(&store, "acct", &b).is_err());
+        assert!(session(&store, "acct", &b).await.is_err());
         assert!(matches!(
-            register(&store, "acct", &b, false, None),
+            register(&store, "acct", &b, false, None).await,
             Err(DeviceError::Forbidden(_))
         ));
     }
 
-    #[test]
-    fn state_persists_with_the_grace_start() {
+    #[tokio::test]
+    async fn state_persists_with_the_grace_start() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
         let key = TestKey::new();
-        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &key, true, Some(now_secs()))
+            .await
+            .unwrap();
         let started = store.enforce_after();
         drop(store);
         let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
@@ -2881,13 +2999,16 @@ pub(crate) mod tests {
         assert_eq!(reopened.audit_log("other", 10).len(), 1);
     }
 
-    #[test]
-    fn an_audit_event_appends_a_line_and_leaves_the_devices_file_alone() {
+    #[tokio::test]
+    async fn an_audit_event_appends_a_line_and_leaves_the_devices_file_alone() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
         let key = TestKey::new();
-        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &key, true, Some(now_secs()))
+            .await
+            .unwrap();
+        store.flush();
         let devices = std::fs::read(&path).unwrap();
         let log_path = AuditLog::path_for(&path);
         let before = std::fs::read_to_string(&log_path).unwrap();
@@ -2897,6 +3018,7 @@ pub(crate) mod tests {
         for _ in 0..200 {
             store.audit("acct", AuditEvent::new("machine_access"));
         }
+        store.flush();
         assert_eq!(std::fs::read(&path).unwrap(), devices);
         let after = std::fs::read_to_string(&log_path).unwrap();
         assert!(
@@ -2993,6 +3115,7 @@ pub(crate) mod tests {
         assert!(store.verify_audit_chain("acct").is_ok());
         assert!(store.audit_log("gone", 10).is_empty());
         // The file no longer holds the expired lines, and survives a reopen.
+        store.flush();
         let lines = std::fs::read_to_string(AuditLog::path_for(&path)).unwrap();
         assert_eq!(lines.lines().count(), 2, "{lines}");
         drop(store);
@@ -3013,39 +3136,53 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("state");
         std::fs::create_dir(&state).unwrap();
-        let store = DeviceStore::open(state.join("devices.json"), enforcing()).unwrap();
+        let path = state.join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
         store.audit("acct", AuditEvent::new("device_registered"));
+        store.flush();
         assert!(store.writes_ok());
         // The volume goes read-only (or full): the next write fails.
-        store.audit.lock().unwrap().file = None;
-        std::fs::remove_file(AuditLog::path_for(&state.join("devices.json"))).unwrap();
+        std::fs::remove_file(AuditLog::path_for(&path)).unwrap();
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
         store.audit("acct", AuditEvent::new("machine_access"));
+        store.flush();
         let blocked = !store.writes_ok();
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         // Root ignores directory permissions; nothing to check then.
         if blocked {
             assert_eq!(
                 store.audit_log("acct", 10).len(),
-                1,
-                "a failed event is not recorded"
+                2,
+                "the event stays in memory, for the rewrite"
             );
             store.audit("acct", AuditEvent::new("machine_access"));
+            store.flush();
             assert!(store.writes_ok());
+            // The file was rewritten whole: no entry is missing from the
+            // chain on disk.
+            drop(store);
+            let reopened = DeviceStore::open(path, enforcing()).unwrap();
+            assert_eq!(reopened.audit_log("acct", 10).len(), 3);
+            assert!(reopened.verify_audit_chain("acct").is_ok());
         }
     }
 
-    #[test]
-    fn sessions_survive_a_restart_but_not_a_revocation() {
+    #[tokio::test]
+    async fn sessions_survive_a_restart_but_not_a_revocation() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
         let laptop = TestKey::new();
         let phone = TestKey::new();
-        register(&store, "acct", &laptop, true, Some(now_secs())).unwrap();
-        register(&store, "acct", &phone, true, Some(now_secs())).unwrap();
-        let laptop_session = session(&store, "acct", &laptop).unwrap();
-        let phone_session = session(&store, "acct", &phone).unwrap();
+        register(&store, "acct", &laptop, true, Some(now_secs()))
+            .await
+            .unwrap();
+        register(&store, "acct", &phone, true, Some(now_secs()))
+            .await
+            .unwrap();
+        let laptop_session = session(&store, "acct", &laptop).await.unwrap();
+        let phone_session = session(&store, "acct", &phone).await.unwrap();
+        store.flush();
         let saved =
             std::fs::read_to_string(format!("{}{SESSIONS_FILE_SUFFIX}", path.display())).unwrap();
         assert!(
@@ -3062,6 +3199,7 @@ pub(crate) mod tests {
         assert_eq!(reopened.session_device("other", &laptop_session), None);
         reopened
             .revoke("acct", &laptop.id(), &phone.id(), true)
+            .await
             .unwrap();
         assert_eq!(reopened.session_device("acct", &phone_session), None);
         drop(reopened);
@@ -3073,19 +3211,21 @@ pub(crate) mod tests {
         );
     }
 
-    #[test]
-    fn the_devices_file_is_compact_json() {
+    #[tokio::test]
+    async fn the_devices_file_is_compact_json() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
-        register(&store, "acct", &TestKey::new(), true, Some(now_secs())).unwrap();
+        register(&store, "acct", &TestKey::new(), true, Some(now_secs()))
+            .await
+            .unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains('\n'), "one line, no indentation: {raw}");
         assert!(raw.contains("\"devices\":{"));
     }
 
-    #[test]
-    fn the_session_journal_appends_compacts_and_replaces_the_old_map() {
+    #[tokio::test]
+    async fn the_session_journal_appends_compacts_and_replaces_the_old_map() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let journal = PathBuf::from(format!("{}{SESSIONS_FILE_SUFFIX}", path.display()));
@@ -3108,11 +3248,14 @@ pub(crate) mod tests {
             1
         );
         let key = TestKey::new();
-        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &key, true, Some(now_secs()))
+            .await
+            .unwrap();
         // Each session opened is one appended line.
         for _ in 0..3 {
-            session(&store, "acct", &key).unwrap();
+            session(&store, "acct", &key).await.unwrap();
         }
+        store.flush();
         assert_eq!(
             std::fs::read_to_string(&journal).unwrap().lines().count(),
             4
@@ -3122,7 +3265,7 @@ pub(crate) mod tests {
             .append(true)
             .open(&journal)
             .unwrap();
-        f.write_all(b"{\"open\":\"x").unwrap();
+        std::io::Write::write_all(&mut f, b"{\"open\":\"x").unwrap();
         drop(f);
         drop(store);
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
@@ -3132,13 +3275,19 @@ pub(crate) mod tests {
         // Sessions that end make the journal compact to the live ones.
         store.sessions.lock().unwrap().1.compact_slack = 8;
         let phone = TestKey::new();
-        register(&store, "acct", &phone, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &phone, true, Some(now_secs()))
+            .await
+            .unwrap();
         for _ in 0..40 {
-            session(&store, "acct", &phone).unwrap();
+            session(&store, "acct", &phone).await.unwrap();
         }
-        store.revoke("acct", &key.id(), &phone.id(), true).unwrap();
+        store
+            .revoke("acct", &key.id(), &phone.id(), true)
+            .await
+            .unwrap();
         let live = store.sessions.lock().unwrap().0.len();
         assert_eq!(live, 4);
+        store.flush();
         let lines = std::fs::read_to_string(&journal).unwrap().lines().count();
         assert_eq!(lines, live, "compacted to the live sessions");
         drop(store);
@@ -3147,8 +3296,8 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_dropped_audit_event_and_a_refused_change_are_counted() {
+    #[tokio::test]
+    async fn a_failed_audit_write_keeps_the_event_and_a_refused_change_is_undone() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("state");
@@ -3157,15 +3306,17 @@ pub(crate) mod tests {
         let path = state.join("devices.json");
         let store = DeviceStore::open_with(path.clone(), enforcing(), storage.clone()).unwrap();
         store.audit("acct", AuditEvent::new("device_registered"));
-        store.audit.lock().unwrap().file = None;
+        store.flush();
         std::fs::remove_file(AuditLog::path_for(&path)).unwrap();
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
         store.audit("acct", AuditEvent::new("machine_access"));
-        let registered = register(&store, "acct", &TestKey::new(), true, Some(now_secs()));
+        let registered = register(&store, "acct", &TestKey::new(), true, Some(now_secs())).await;
+        store.flush();
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         // Root ignores directory permissions; nothing to check then.
         if storage.failures(store::AUDIT) > 0 {
-            assert_eq!(storage.audit_dropped_total(), 1);
+            assert_eq!(storage.audit_dropped_total(), 0, "kept for the rewrite");
+            assert_eq!(store.audit_log("acct", 10).len(), 2);
             assert!(
                 matches!(registered, Err(DeviceError::Storage(_))),
                 "{registered:?}"
@@ -3178,7 +3329,7 @@ pub(crate) mod tests {
             );
             let (ready, body) = storage.report();
             assert!(!ready);
-            assert_eq!(body["audit_events_dropped"], 1);
+            assert_eq!(body["audit_events_dropped"], 0);
         }
     }
 
@@ -3193,17 +3344,21 @@ pub(crate) mod tests {
         drop(store);
     }
 
-    #[test]
-    fn erasing_an_account_drops_its_chain_and_leaves_other_chains_verifying() {
+    #[tokio::test]
+    async fn erasing_an_account_drops_its_chain_and_leaves_other_chains_verifying() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
         let (ada_key, bob_key) = (TestKey::new(), TestKey::new());
         let fresh = Some(now_secs() - 5);
-        register(&store, "ada-sub", &ada_key, true, fresh).unwrap();
-        register(&store, "bob-sub", &bob_key, true, fresh).unwrap();
-        let ada_session = session(&store, "ada-sub", &ada_key).unwrap();
-        let bob_session = session(&store, "bob-sub", &bob_key).unwrap();
+        register(&store, "ada-sub", &ada_key, true, fresh)
+            .await
+            .unwrap();
+        register(&store, "bob-sub", &bob_key, true, fresh)
+            .await
+            .unwrap();
+        let ada_session = session(&store, "ada-sub", &ada_key).await.unwrap();
+        let bob_session = session(&store, "bob-sub", &bob_key).await.unwrap();
         // Interleaved events: the two chains grow side by side in one file.
         for _ in 0..3 {
             store.audit(
@@ -3220,7 +3375,7 @@ pub(crate) mod tests {
         let bob_before = store.audit_log("bob-sub", 1000);
         assert!(store.verify_audit_chain("bob-sub").is_ok());
 
-        let erased = store.erase_account("ada-sub", &[]).unwrap();
+        let erased = store.erase_account("ada-sub", &[]).await.unwrap();
         assert_eq!(erased.devices, 1);
         assert_eq!(erased.sessions, 1);
         assert!(erased.audit_entries >= 7, "{erased:?}");
@@ -3248,11 +3403,11 @@ pub(crate) mod tests {
         }
         // Again: nothing to do, same answer; and it survives a restart.
         assert_eq!(
-            store.erase_account("ada-sub", &[]).unwrap(),
+            store.erase_account("ada-sub", &[]).await.unwrap(),
             DeviceErase::default()
         );
         assert_eq!(
-            store.erase_account("nobody", &[]).unwrap(),
+            store.erase_account("nobody", &[]).await.unwrap(),
             DeviceErase::default()
         );
         drop(store);
@@ -3266,8 +3421,8 @@ pub(crate) mod tests {
         assert!(again.verify_audit_chain("ada-sub").is_ok());
     }
 
-    #[test]
-    fn erasing_an_account_rewrites_the_entries_naming_it_in_other_chains() {
+    #[tokio::test]
+    async fn erasing_an_account_rewrites_the_entries_naming_it_in_other_chains() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
@@ -3285,7 +3440,7 @@ pub(crate) mod tests {
         let cy_before = store.audit_log("cy-sub", 100);
         let bob_before = store.audit_log("bob-sub", 100);
 
-        let erased = store.erase_account("ada-sub", &emails).unwrap();
+        let erased = store.erase_account("ada-sub", &emails).await.unwrap();
         assert_eq!(erased.audit_rewritten, 2);
         let bob = store.audit_log("bob-sub", 100);
         assert!(store.verify_audit_chain("bob-sub").is_ok());
@@ -3314,7 +3469,7 @@ pub(crate) mod tests {
             );
         }
         // Idempotent, and persisted: a restart loads a chain that verifies.
-        let again = store.erase_account("ada-sub", &emails).unwrap();
+        let again = store.erase_account("ada-sub", &emails).await.unwrap();
         assert_eq!(again, DeviceErase::default());
         assert_eq!(store.audit_log("bob-sub", 100), bob);
         drop(store);
@@ -3407,8 +3562,8 @@ pub(crate) mod tests {
         assert!(reopened.verify_audit_chain("acct").is_err());
     }
 
-    #[test]
-    fn a_fresh_sign_in_enrolls_another_device_but_a_stale_one_does_not() {
+    #[tokio::test]
+    async fn a_fresh_sign_in_enrolls_another_device_but_a_stale_one_does_not() {
         let store = DeviceStore::in_memory(enforcing());
         let first = TestKey::new();
         register_on(
@@ -3421,8 +3576,9 @@ pub(crate) mod tests {
             None,
             true,
         )
+        .await
         .unwrap();
-        // A long-lived session (signed in an hour ago) does not enroll a
+        // A long-lived session (signed in an hour ago).await does not enroll a
         // second device: it waits for an approval.
         let second = TestKey::new();
         let stale = register_on(
@@ -3435,6 +3591,7 @@ pub(crate) mod tests {
             None,
             true,
         )
+        .await
         .unwrap();
         assert_eq!(stale.device.state(now_secs()), DeviceState::Pending);
         assert!(stale.code.is_some());
@@ -3442,6 +3599,7 @@ pub(crate) mod tests {
         // ask to enroll.
         assert!(
             register_on(&store, "acct", &second, true, None, true, None, true)
+                .await
                 .unwrap()
                 .code
                 .is_some()
@@ -3456,6 +3614,7 @@ pub(crate) mod tests {
             None,
             true
         )
+        .await
         .unwrap()
         .code
         .is_some());
@@ -3470,12 +3629,13 @@ pub(crate) mod tests {
             None,
             true,
         )
+        .await
         .unwrap();
         assert_eq!(fresh.device.state(now_secs()), DeviceState::Enrolled);
         assert_eq!(fresh.device.enrolled_by.as_deref(), Some(BY_FRESH_SIGN_IN));
         assert!(fresh.device.strong);
         assert!(fresh.code.is_none());
-        assert!(session(&store, "acct", &second).is_ok());
+        assert!(session(&store, "acct", &second).await.is_ok());
         // Both devices stay: different machines (none reported).
         assert!(store.get(&first.id()).unwrap().revoked_at.is_none());
         // Audited as enrolled by a fresh sign-in.
@@ -3493,21 +3653,25 @@ pub(crate) mod tests {
     /// device of the account at once, whether or not the issuer marked the
     /// email verified or the token proves MFA (a social login on Keycloak:
     /// `acr` "1", no `amr`, `email_verified` false).
-    #[test]
-    fn a_fresh_sign_in_enrolls_a_second_device_without_verified_email_or_mfa() {
+    #[tokio::test]
+    async fn a_fresh_sign_in_enrolls_a_second_device_without_verified_email_or_mfa() {
         let store = DeviceStore::in_memory(enforcing());
         assert!(!store.policy().require_approval);
         let first = TestKey::new();
-        register(&store, "acct", &first, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &first, true, Some(now_secs()))
+            .await
+            .unwrap();
         assert!(store.get(&first.id()).unwrap().strong);
         // Seconds-old sign-in on a second Mac: enrolled, no code.
         let second = TestKey::new();
-        let r = register(&store, "acct", &second, true, Some(now_secs() - 5)).unwrap();
+        let r = register(&store, "acct", &second, true, Some(now_secs() - 5))
+            .await
+            .unwrap();
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
         assert_eq!(r.device.enrolled_by.as_deref(), Some(BY_FRESH_SIGN_IN));
         assert!(r.code.is_none());
         assert!(r.superseded.is_empty());
-        assert!(session(&store, "acct", &second).is_ok());
+        assert!(session(&store, "acct", &second).await.is_ok());
         assert!(store.get(&first.id()).unwrap().revoked_at.is_none());
         let log = store.audit_log("acct", 100);
         let enrolled = log.iter().rfind(|e| e.kind == "device_enrolled").unwrap();
@@ -3526,22 +3690,27 @@ pub(crate) mod tests {
         // A long-lived (refreshed) session still needs an approval, as does
         // a token without auth_time or a register that did not ask.
         let third = TestKey::new();
-        let stale = register(&store, "acct", &third, true, Some(now_secs() - 3600)).unwrap();
+        let stale = register(&store, "acct", &third, true, Some(now_secs() - 3600))
+            .await
+            .unwrap();
         assert_eq!(stale.device.state(now_secs()), DeviceState::Pending);
         assert!(stale.code.is_some());
         assert!(register(&store, "acct", &third, true, None)
+            .await
             .unwrap()
             .code
             .is_some());
         assert!(register(&store, "acct", &third, false, Some(now_secs()))
+            .await
             .unwrap()
             .code
             .is_some());
-        assert!(session(&store, "acct", &third).is_err());
+        assert!(session(&store, "acct", &third).await.is_err());
         // Just past the bootstrap window is stale too.
         let window = store.policy().bootstrap_max_auth_age_secs;
         assert!(
             register(&store, "acct", &third, true, Some(now_secs() - window - 5))
+                .await
                 .unwrap()
                 .code
                 .is_some()
@@ -3550,7 +3719,7 @@ pub(crate) mod tests {
 
     /// Registers `key` on a fresh sign-in (verified email) as a phone or a
     /// computer, as the relay does for a token issued to a phone client.
-    fn register_class(
+    async fn register_class(
         store: &DeviceStore,
         account: &str,
         key: &TestKey,
@@ -3578,6 +3747,7 @@ pub(crate) mod tests {
                 phone,
                 capabilities: None,
             })
+            .await
             .unwrap()
     }
 
@@ -3609,8 +3779,8 @@ pub(crate) mod tests {
     /// {mode} x {phone, computer} x {account already has an enrolled device,
     /// or not} x {MFA, or not}: whether a fresh sign-in enrolls the new
     /// device at once (`true`) or leaves it waiting for an approval.
-    #[test]
-    fn approval_mode_matrix_for_a_new_device() {
+    #[tokio::test]
+    async fn approval_mode_matrix_for_a_new_device() {
         // (require_approval, phones_only)
         let modes = [
             ("false", (false, false)),
@@ -3628,12 +3798,13 @@ pub(crate) mod tests {
                         });
                         if has_device {
                             let first = TestKey::new();
-                            let r = register_class(&store, "acct", &first, false, false, "macos");
+                            let r =
+                                register_class(&store, "acct", &first, false, false, "macos").await;
                             assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
                         }
                         let key = TestKey::new();
                         let platform = if phone { "ios" } else { "macos" };
-                        let r = register_class(&store, "acct", &key, phone, mfa, platform);
+                        let r = register_class(&store, "acct", &key, phone, mfa, platform).await;
                         let strict = require && (phone || !phones_only);
                         let expect = !has_device || !strict || mfa;
                         let got = r.device.state(now_secs()) == DeviceState::Enrolled;
@@ -3652,43 +3823,44 @@ pub(crate) mod tests {
     /// Under `phones` a phone must be approved by an enrolled device while a
     /// computer still enrolls on its fresh sign-in, and the approval then
     /// works as before.
-    #[test]
-    fn phones_scope_holds_a_new_phone_for_approval_but_not_a_computer() {
+    #[tokio::test]
+    async fn phones_scope_holds_a_new_phone_for_approval_but_not_a_computer() {
         let store = DeviceStore::in_memory(DevicePolicy {
             require_approval: true,
             approval_phones_only: true,
             ..enforcing()
         });
         let first = TestKey::new();
-        register_class(&store, "acct", &first, false, false, "macos");
+        register_class(&store, "acct", &first, false, false, "macos").await;
         let runner = TestKey::new();
-        let r = register_class(&store, "acct", &runner, false, false, "linux");
+        let r = register_class(&store, "acct", &runner, false, false, "linux").await;
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
-        assert!(session(&store, "acct", &runner).is_ok());
+        assert!(session(&store, "acct", &runner).await.is_ok());
         let phone = TestKey::new();
-        let r = register_class(&store, "acct", &phone, true, false, "ios");
+        let r = register_class(&store, "acct", &phone, true, false, "ios").await;
         let code = r.code.expect("waits for approval");
-        let err = session(&store, "acct", &phone).unwrap_err();
+        let err = session(&store, "acct", &phone).await.unwrap_err();
         assert!(
             matches!(&err, DeviceError::Forbidden(m) if m.contains("waiting for approval")),
             "{err:?}"
         );
         // A phone claim is sticky and registering again on a fresh sign-in
         // does not skip the approval.
-        let again = register_class(&store, "acct", &phone, true, false, "macos");
+        let again = register_class(&store, "acct", &phone, true, false, "macos").await;
         assert_eq!(again.device.state(now_secs()), DeviceState::Pending);
         assert_ne!(again.code.as_deref(), Some(code.as_str()), "a new code");
         store
             .approve("acct", &first.id(), again.code.as_deref(), None, true)
+            .await
             .unwrap();
-        assert!(session(&store, "acct", &phone).is_ok());
+        assert!(session(&store, "acct", &phone).await.is_ok());
     }
 
     /// The 30-day idle rule applies per class: after the enrollment ran
     /// out, a fresh sign-in re-verifies a computer under `phones` but not a
     /// phone, and the messages say what is needed.
-    #[test]
-    fn phones_scope_applies_the_idle_rule_to_phones_only() {
+    #[tokio::test]
+    async fn phones_scope_applies_the_idle_rule_to_phones_only() {
         let store = DeviceStore::in_memory(DevicePolicy {
             require_approval: true,
             approval_phones_only: true,
@@ -3696,16 +3868,18 @@ pub(crate) mod tests {
             ..enforcing()
         });
         let anchor = TestKey::new();
-        register_class(&store, "acct", &anchor, false, false, "macos");
+        register_class(&store, "acct", &anchor, false, false, "macos").await;
         let computer = TestKey::new();
         let phone = TestKey::new();
-        register_class(&store, "acct", &computer, false, false, "linux");
+        register_class(&store, "acct", &computer, false, false, "linux").await;
         // The phone enrolls through the anchor (approval), as in production.
         let code = register_class(&store, "acct", &phone, true, false, "ios")
+            .await
             .code
             .unwrap();
         store
             .approve("acct", &anchor.id(), Some(&code), None, false)
+            .await
             .unwrap();
         std::thread::sleep(std::time::Duration::from_secs(3));
         let now = now_secs();
@@ -3716,24 +3890,25 @@ pub(crate) mod tests {
         let live = TestKey::new();
         assert_eq!(
             register_class(&store, "acct", &live, false, false, "macos")
+                .await
                 .device
                 .state(now_secs()),
             DeviceState::Enrolled
         );
-        let r = register_class(&store, "acct", &computer, false, false, "linux");
+        let r = register_class(&store, "acct", &computer, false, false, "linux").await;
         assert_eq!(
             r.device.state(now_secs()),
             DeviceState::Enrolled,
             "computer re-verifies"
         );
-        let r = register_class(&store, "acct", &phone, true, false, "ios");
+        let r = register_class(&store, "acct", &phone, true, false, "ios").await;
         assert_eq!(
             r.device.state(now_secs()),
             DeviceState::Expired,
             "phone needs approval"
         );
         assert!(r.code.is_some());
-        let err = session(&store, "acct", &phone).unwrap_err();
+        let err = session(&store, "acct", &phone).await.unwrap_err();
         assert!(
             matches!(&err, DeviceError::Forbidden(m) if m.contains("needs re-verification")),
             "{err:?}"
@@ -3743,20 +3918,24 @@ pub(crate) mod tests {
     /// `require_approval` restores the strict rule: a fresh sign-in enrolls
     /// the first device, but a brand-new second one needs an approval
     /// unless the token proves MFA with a verified email.
-    #[test]
-    fn the_strict_switch_requires_approval_for_a_brand_new_device() {
+    #[tokio::test]
+    async fn the_strict_switch_requires_approval_for_a_brand_new_device() {
         let store = DeviceStore::in_memory(DevicePolicy {
             require_approval: true,
             ..enforcing()
         });
         let first = TestKey::new();
-        let r = register(&store, "acct", &first, true, Some(now_secs())).unwrap();
+        let r = register(&store, "acct", &first, true, Some(now_secs()))
+            .await
+            .unwrap();
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
         let second = TestKey::new();
-        let pending = register(&store, "acct", &second, true, Some(now_secs())).unwrap();
+        let pending = register(&store, "acct", &second, true, Some(now_secs()))
+            .await
+            .unwrap();
         assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
         assert!(pending.code.is_some());
-        let err = session(&store, "acct", &second).unwrap_err();
+        let err = session(&store, "acct", &second).await.unwrap_err();
         assert!(
             matches!(&err, DeviceError::Forbidden(m) if m.contains("waiting for approval")),
             "{err:?}"
@@ -3772,6 +3951,7 @@ pub(crate) mod tests {
             None,
             false,
         )
+        .await
         .unwrap();
         assert!(r.code.is_some());
         let r = register_on(
@@ -3784,30 +3964,35 @@ pub(crate) mod tests {
             None,
             true,
         )
+        .await
         .unwrap();
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
         // Or an approval from an enrolled device.
         let third = TestKey::new();
         let code = register(&store, "acct", &third, true, Some(now_secs()))
+            .await
             .unwrap()
             .code
             .unwrap();
         store
             .approve("acct", &first.id(), Some(&code), None, true)
+            .await
             .unwrap();
-        assert!(session(&store, "acct", &third).is_ok());
+        assert!(session(&store, "acct", &third).await.is_ok());
     }
 
     /// A session renews the enrollment (sliding), persisting only a move
     /// worth recording, and never revives an expired device.
-    #[test]
-    fn a_session_slides_the_enrollment_but_does_not_revive_an_expired_device() {
+    #[tokio::test]
+    async fn a_session_slides_the_enrollment_but_does_not_revive_an_expired_device() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
         let ttl = store.policy().ttl_secs;
         let key = TestKey::new();
-        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &key, true, Some(now_secs()))
+            .await
+            .unwrap();
         let set_until = |until: u64| {
             store
                 .state
@@ -3822,7 +4007,7 @@ pub(crate) mod tests {
         // Three days left: a session moves the end to a full TTL from now,
         // on disk too.
         set_until(now_secs() + 3 * 86_400);
-        session(&store, "acct", &key).unwrap();
+        session(&store, "acct", &key).await.unwrap();
         let renewed = until();
         assert!(renewed + 5 >= now_secs() + ttl, "{renewed}");
         let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
@@ -3834,12 +4019,12 @@ pub(crate) mod tests {
         // Within a day of a full TTL: left as it is.
         let near = now_secs() + ttl - 3600;
         set_until(near);
-        session(&store, "acct", &key).unwrap();
+        session(&store, "acct", &key).await.unwrap();
         assert_eq!(until(), near);
         // Expired: no session, no renewal; re-verification is still due.
         let past = now_secs() - 1;
         set_until(past);
-        let err = session(&store, "acct", &key).unwrap_err();
+        let err = session(&store, "acct", &key).await.unwrap_err();
         assert!(
             matches!(&err, DeviceError::Forbidden(m) if m.contains("sign in again")),
             "{err:?}"
@@ -3851,12 +4036,17 @@ pub(crate) mod tests {
         );
         // A revoked device is not renewed either.
         let other = TestKey::new();
-        register(&store, "acct", &other, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &other, true, Some(now_secs()))
+            .await
+            .unwrap();
         set_until(now_secs() + 3 * 86_400);
-        session(&store, "acct", &key).unwrap();
-        store.revoke("acct", &other.id(), &key.id(), true).unwrap();
+        session(&store, "acct", &key).await.unwrap();
+        store
+            .revoke("acct", &other.id(), &key.id(), true)
+            .await
+            .unwrap();
         let revoked_until = until();
-        assert!(session(&store, "acct", &key).is_err());
+        assert!(session(&store, "acct", &key).await.is_err());
         assert_eq!(until(), revoked_until);
     }
 
@@ -3865,18 +4055,20 @@ pub(crate) mod tests {
     /// full rewrite and fsync under the devices lock), and its audit line
     /// is throttled per device.
     #[cfg(unix)]
-    #[test]
-    fn a_session_that_renews_nothing_leaves_the_devices_file_alone() {
+    #[tokio::test]
+    async fn a_session_that_renews_nothing_leaves_the_devices_file_alone() {
         use std::os::unix::fs::MetadataExt as _;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("devices.json");
         let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
         let key = TestKey::new();
-        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &key, true, Some(now_secs()))
+            .await
+            .unwrap();
         let before = std::fs::metadata(&path).unwrap().ino();
         let raw = std::fs::read(&path).unwrap();
         for _ in 0..5 {
-            session(&store, "acct", &key).unwrap();
+            session(&store, "acct", &key).await.unwrap();
         }
         assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
         assert_eq!(std::fs::read(&path).unwrap(), raw);
@@ -3889,8 +4081,9 @@ pub(crate) mod tests {
         assert_eq!(sessions, 1);
     }
 
-    #[test]
-    fn strict_a_brand_new_device_needs_mfa_or_approval_once_the_account_has_a_strong_device() {
+    #[tokio::test]
+    async fn strict_a_brand_new_device_needs_mfa_or_approval_once_the_account_has_a_strong_device()
+    {
         let store = DeviceStore::in_memory(DevicePolicy {
             require_approval: true,
             ..enforcing()
@@ -3906,6 +4099,7 @@ pub(crate) mod tests {
             None,
             true,
         )
+        .await
         .unwrap();
         assert!(store.get(&first.id()).unwrap().strong);
         // A second, unrelated device (no machine id in common): a fresh
@@ -3922,6 +4116,7 @@ pub(crate) mod tests {
             None,
             false,
         )
+        .await
         .unwrap();
         assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
         assert!(pending.code.is_some());
@@ -3936,6 +4131,7 @@ pub(crate) mod tests {
             None,
             true,
         )
+        .await
         .unwrap();
         assert_eq!(enrolled.device.state(now_secs()), DeviceState::Enrolled);
         assert_eq!(
@@ -3947,17 +4143,19 @@ pub(crate) mod tests {
         // still works, exactly like before.
         let third = TestKey::new();
         let code = register_on(&store, "acct", &third, false, None, true, None, false)
+            .await
             .unwrap()
             .code
             .unwrap();
         let approved = store
             .approve("acct", &first.id(), Some(&code), None, true)
+            .await
             .unwrap();
         assert_eq!(approved.state(now_secs()), DeviceState::Enrolled);
     }
 
-    #[test]
-    fn a_new_key_of_the_same_machine_replaces_the_old_record() {
+    #[tokio::test]
+    async fn a_new_key_of_the_same_machine_replaces_the_old_record() {
         let store = DeviceStore::in_memory(enforcing());
         let old = TestKey::new();
         let other_machine = TestKey::new();
@@ -3971,6 +4169,7 @@ pub(crate) mod tests {
             Some("hw-1"),
             true,
         )
+        .await
         .unwrap();
         register_on(
             &store,
@@ -3982,8 +4181,9 @@ pub(crate) mod tests {
             Some("hw-2"),
             true,
         )
+        .await
         .unwrap();
-        let old_session = session(&store, "acct", &old).unwrap();
+        let old_session = session(&store, "acct", &old).await.unwrap();
 
         // Another build on the same machine made a new key: registered
         // without a fresh sign-in it waits, and replaces nothing yet.
@@ -3998,6 +4198,7 @@ pub(crate) mod tests {
             Some("hw-1"),
             true,
         )
+        .await
         .unwrap();
         assert!(pending.code.is_some());
         assert!(pending.superseded.is_empty());
@@ -4017,6 +4218,7 @@ pub(crate) mod tests {
             Some(" hw-1 "),
             true,
         )
+        .await
         .unwrap();
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
         assert_eq!(r.superseded, vec![old.id()]);
@@ -4052,6 +4254,7 @@ pub(crate) mod tests {
             Some("hw-1"),
             true,
         )
+        .await
         .unwrap_err();
         assert!(
             matches!(&err, DeviceError::Forbidden(m) if m.contains("replaced by")),
@@ -4070,11 +4273,13 @@ pub(crate) mod tests {
             Some("hw-2"),
             true,
         )
+        .await
         .unwrap()
         .code
         .unwrap();
         store
             .approve("acct", &new.id(), Some(&code), None, true)
+            .await
             .unwrap();
         assert_eq!(
             store
@@ -4097,6 +4302,7 @@ pub(crate) mod tests {
             Some("hw-1"),
             true,
         )
+        .await
         .unwrap();
         assert!(r.superseded.is_empty());
         assert_ne!(
@@ -4107,8 +4313,8 @@ pub(crate) mod tests {
         assert!(machine_key("acct", &"x".repeat(200)).is_none());
     }
 
-    #[test]
-    fn a_fresh_sign_in_re_verifies_and_renews_only_once_per_sign_in() {
+    #[tokio::test]
+    async fn a_fresh_sign_in_re_verifies_and_renews_only_once_per_sign_in() {
         let store = DeviceStore::in_memory(DevicePolicy {
             grace_secs: 0,
             ttl_secs: 1,
@@ -4116,23 +4322,30 @@ pub(crate) mod tests {
         });
         let a = TestKey::new();
         let b = TestKey::new();
-        register_on(&store, "acct", &a, true, Some(now_secs()), true, None, true).unwrap();
-        register_on(&store, "acct", &b, true, Some(now_secs()), true, None, true).unwrap();
+        register_on(&store, "acct", &a, true, Some(now_secs()), true, None, true)
+            .await
+            .unwrap();
+        register_on(&store, "acct", &b, true, Some(now_secs()), true, None, true)
+            .await
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2100));
         // Both expired: re-verification is due (one approval, or a sign-in).
         assert_eq!(
             store.get(&b.id()).unwrap().state(now_secs()),
             DeviceState::Expired
         );
-        assert!(session(&store, "acct", &b).is_err());
+        assert!(session(&store, "acct", &b).await.is_err());
         // A new sign-in re-verifies it.
         let signed_in = now_secs();
-        let r = register_on(&store, "acct", &b, true, Some(signed_in), true, None, true).unwrap();
+        let r = register_on(&store, "acct", &b, true, Some(signed_in), true, None, true)
+            .await
+            .unwrap();
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
         let until = r.device.enrolled_until;
         // Registering again with the same sign-in keeps the enrollment.
-        let again =
-            register_on(&store, "acct", &b, true, Some(signed_in), true, None, true).unwrap();
+        let again = register_on(&store, "acct", &b, true, Some(signed_in), true, None, true)
+            .await
+            .unwrap();
         assert_eq!(again.device.enrolled_until, until);
         assert_eq!(
             store
@@ -4144,32 +4357,38 @@ pub(crate) mod tests {
         );
     }
 
-    #[test]
-    fn approve_takes_a_device_id_for_a_code_and_explains_an_unknown_code() {
+    #[tokio::test]
+    async fn approve_takes_a_device_id_for_a_code_and_explains_an_unknown_code() {
         let store = DeviceStore::in_memory(enforcing());
         let a = TestKey::new();
         let b = TestKey::new();
-        register(&store, "acct", &a, true, Some(now_secs())).unwrap();
-        register(&store, "acct", &b, false, None).unwrap();
+        register(&store, "acct", &a, true, Some(now_secs()))
+            .await
+            .unwrap();
+        register(&store, "acct", &b, false, None).await.unwrap();
         let err = store
             .approve("acct", &a.id(), Some("ZZZZ-ZZZZ"), None, true)
+            .await
             .unwrap_err();
         assert_eq!(err, DeviceError::CodeNotFound);
         assert!(err.to_string().contains("approve by id"), "{err}");
         // `cua devices approve dev_…` sends the id as the code.
         let approved = store
             .approve("acct", &a.id(), Some(&format!(" {} ", b.id())), None, true)
+            .await
             .unwrap();
         assert_eq!(approved.id, b.id());
         assert_eq!(approved.state(now_secs()), DeviceState::Enrolled);
         assert_eq!(
-            store.approve(
-                "acct",
-                &a.id(),
-                Some("dev_000000000000000000000000"),
-                None,
-                true
-            ),
+            store
+                .approve(
+                    "acct",
+                    &a.id(),
+                    Some("dev_000000000000000000000000"),
+                    None,
+                    true
+                )
+                .await,
             Err(DeviceError::NotFound)
         );
     }

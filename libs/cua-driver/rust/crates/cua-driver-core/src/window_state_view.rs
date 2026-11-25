@@ -72,6 +72,8 @@ pub struct ViewOptions {
     pub verbose: bool,
     pub full_output: bool,
     pub since: Option<String>,
+    /// False for a screenshot-only read (`include_accessibility_tree:false`).
+    pub tree_read: bool,
 }
 
 /// JSON schema fragments for the shared arguments, so every backend declares
@@ -85,7 +87,7 @@ pub fn schema_properties() -> Value {
         },
         "since": {
             "type": "string",
-            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise."
+            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change."
         },
         "verbose": {
             "type": "boolean",
@@ -202,6 +204,10 @@ impl ViewOptions {
             verbose: args.get("verbose").and_then(Value::as_bool) == Some(true),
             full_output,
             since: if full_output { None } else { since },
+            tree_read: args
+                .get("include_accessibility_tree")
+                .and_then(Value::as_bool)
+                != Some(false),
         })
     }
 
@@ -274,14 +280,40 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
+    // A tree read records its rows, none included, for the window's
+    // ui_tree_revision. A screenshot-only read leaves the revision alone.
+    let revision = structured
+        .get("tree_markdown")
+        .and_then(Value::as_str)
+        .filter(|_| opts.tree_read)
+        .map(|md| {
+            crate::ui_tree_revision::record(
+                ctx.pid,
+                ctx.window_id,
+                &ctx.key,
+                structured.get("snapshot_id").and_then(Value::as_str),
+                md,
+            )
+        });
+    if let Some(revision) = revision {
+        structured[crate::ui_tree_revision::UI_TREE_REVISION_ARG] = json!(revision);
+    }
     // Publish identity even for full_output and empty trees. It comes from the
     // completed structured result, never a guessed or not-yet-published id.
-    if let Some(sid) = structured.get("snapshot_id").and_then(Value::as_str) {
+    let sid = structured.get("snapshot_id").and_then(Value::as_str);
+    if sid.is_some() || revision.is_some() {
+        let mut identity = String::new();
+        if let Some(sid) = sid {
+            identity.push_str(&format!(" snapshot_id={sid}"));
+        }
+        if let Some(revision) = revision {
+            identity.push_str(&format!(" ui_tree_revision={revision}"));
+        }
         for part in content.iter_mut() {
             if let Content::Text { text, .. } = part {
                 if text.starts_with("window_id=") {
                     let end = text.find('\n').unwrap_or(text.len());
-                    text.insert_str(end, &format!(" snapshot_id={sid}"));
+                    text.insert_str(end, &identity);
                     break;
                 }
             }
@@ -1370,7 +1402,10 @@ mod tests {
         assert_eq!(s["tree_markdown"], OLD);
         assert_eq!(s["tree_format"], "markdown");
         let text = text_of(&content);
-        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000a1\n"));
+        let revision = s["ui_tree_revision"].as_u64().unwrap();
+        assert!(text.starts_with(&format!(
+            "window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000a1 ui_tree_revision={revision}\n"
+        )));
         assert!(text.contains("element_token for row [N] = s000000a1:N"));
         assert!(text.contains("row [1] is \"s000000a1:1\""));
         assert!(!text.contains("this read stops at row"));
@@ -1459,6 +1494,55 @@ mod tests {
         assert_eq!(s3["since"], "s000000f2");
     }
 
+    #[test]
+    fn ui_tree_revision_holds_on_no_change_and_moves_on_a_diff() {
+        let (mut c0, mut s0) = payload("s0000c3b0", OLD);
+        apply(&opts(json!({})), &ctx(7201), &mut c0, &mut s0);
+        let first = s0["ui_tree_revision"].as_u64().unwrap();
+
+        let (mut c1, mut s1) = payload("s0000c3b1", OLD);
+        apply(
+            &opts(json!({"since": "s0000c3b0"})),
+            &ctx(7201),
+            &mut c1,
+            &mut s1,
+        );
+        assert_eq!(s1["since_status"], "no_change");
+        assert_eq!(s1["ui_tree_revision"], first);
+
+        let edited = OLD.replace("\"a\"", "\"ab\"");
+        let (mut c2, mut s2) = payload("s0000c3b2", &edited);
+        apply(
+            &opts(json!({"since": "s0000c3b1"})),
+            &ctx(7201),
+            &mut c2,
+            &mut s2,
+        );
+        assert_eq!(s2["since_status"], "diff");
+        let moved = s2["ui_tree_revision"].as_u64().unwrap();
+        assert!(moved > first, "{moved} > {first}");
+        assert!(text_of(&c2).contains(&format!("ui_tree_revision={moved}")));
+    }
+
+    #[test]
+    fn a_tree_emptied_moves_the_revision_and_a_screenshot_only_read_does_not() {
+        let (mut c0, mut s0) = payload("s0000c3b3", OLD);
+        apply(&opts(json!({})), &ctx(7202), &mut c0, &mut s0);
+        let first = s0["ui_tree_revision"].as_u64().unwrap();
+
+        let (mut c1, mut s1) = payload("s0000c3b4", "");
+        let screenshot_only = opts(json!({"include_accessibility_tree": false}));
+        apply(&screenshot_only, &ctx(7202), &mut c1, &mut s1);
+        assert!(s1.get("ui_tree_revision").is_none());
+        assert!(!text_of(&c1).contains("ui_tree_revision"));
+        assert_eq!(crate::ui_tree_revision::current(9, 7202), Some(first));
+
+        let (mut c2, mut s2) = payload("s0000c3b5", "");
+        apply(&opts(json!({})), &ctx(7202), &mut c2, &mut s2);
+        let emptied = s2["ui_tree_revision"].as_u64().unwrap();
+        assert!(emptied > first, "{emptied} > {first}");
+    }
+
     fn query_ctx(window_id: u64, query: &str) -> ViewContext<'static> {
         let mut ctx = ctx(window_id);
         ctx.key.query = Some(query.into());
@@ -1477,7 +1561,10 @@ mod tests {
             &mut s,
         );
         let text = text_of(&content);
-        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000i1\n"));
+        let revision = s["ui_tree_revision"].as_u64().unwrap();
+        assert!(text.starts_with(&format!(
+            "window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000i1 ui_tree_revision={revision}\n"
+        )));
         assert!(
             text.contains("0 of 150 elements match query \"Build|Reload\"."),
             "{text}"
@@ -1512,6 +1599,7 @@ mod tests {
             &mut content,
             &mut s,
         );
+        s.as_object_mut().unwrap().remove("ui_tree_revision");
         assert_eq!(s, before);
         assert!(text_of(&content).ends_with("\n0 of 4 elements match query \"Build|Reload\". A query is a case-insensitive substring of a row's role, label, value or id; \"a|b\" matches either. Try a shorter or different word, or read without query."));
     }
@@ -1521,7 +1609,7 @@ mod tests {
         let mut content = vec![Content::text("window_id=7 pid=9 size=10x10")];
         let mut s = json!({"window_id": 7, "pid": 9, "tree_markdown": "", "element_count": 0});
         apply(
-            &opts(json!({})),
+            &opts(json!({"include_accessibility_tree": false})),
             &query_ctx(7034, "Settings"),
             &mut content,
             &mut s,
@@ -1636,10 +1724,19 @@ mod tests {
             &mut content,
             &mut s,
         );
+        let revision = s
+            .as_object_mut()
+            .unwrap()
+            .remove("ui_tree_revision")
+            .unwrap();
         assert_eq!(s, before);
         assert_eq!(
             text_of(&content),
-            text_before.replacen("elements=4", "elements=4 snapshot_id=s000000a2", 1)
+            text_before.replacen(
+                "elements=4",
+                &format!("elements=4 snapshot_id=s000000a2 ui_tree_revision={revision}"),
+                1
+            )
         );
         assert_eq!(s["elements"], before["elements"]);
         assert_eq!(s["_note"], before["_note"]);

@@ -583,7 +583,7 @@ provides-extras = ["computer", "openai", "anthropic", "qwen", "uitars", "uitars-
 
 [[package]]
 name = "cua-bench"
-version = "0.4.16"
+version = "0.4.23"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -765,7 +765,7 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.11.15"
+version = "0.11.18"
 source = { editable = "../python/cua-sandbox" }
 dependencies = [
     { name = "cua" },
@@ -783,7 +783,7 @@ dependencies = [
 requires-dist = [
     { name = "cua", editable = "../cua/python" },
     { name = "cua-core", specifier = ">=0.1.18,<0.4.0" },
-    { name = "cua-driver", marker = "extra == 'driver'", specifier = ">=0.37.0,<0.57" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = ">=0.37.0,<0.63" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.30.0" },

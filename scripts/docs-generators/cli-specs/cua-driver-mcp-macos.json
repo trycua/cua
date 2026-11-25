@@ -47,7 +47,7 @@
    "read_only": true
   },
   {
-   "description": "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\nSTART NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\nDIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\nA new snapshot of the same (pid, window_id) replaces this session's previous one and stales its tokens (`invalidated_snapshot_ids`); another session's read leaves them valid. `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\nRefusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.",
+   "description": "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `url` on links, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\nSTART NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\nDIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\nA new snapshot of the same (pid, window_id) replaces this session's previous one and stales its tokens (`invalidated_snapshot_ids`); another session's read leaves them valid. `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\nRefusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -128,7 +128,7 @@
       "type": "string"
      },
      "since": {
-      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise.",
+      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change.",
       "type": "string"
      },
      "timeout_ms": {
@@ -375,6 +375,51 @@
    "read_only": false
   },
   {
+   "description": "Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). `create` adds an extra display of width x height pixels owned by the calling session, removed by `remove`, when that session ends or idles out, or when the daemon exits; `list` returns the displays this daemon created; `remove` needs a display_id. Requires no TCC permissions.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "description": "create a display, list this daemon's displays, or remove one.",
+      "enum": [
+       "create",
+       "list",
+       "remove"
+      ],
+      "type": "string"
+     },
+     "display_id": {
+      "description": "remove: id returned by create or list.",
+      "type": "integer"
+     },
+     "height": {
+      "description": "create: pixels, default 1080.",
+      "type": "integer"
+     },
+     "name": {
+      "description": "create: display name, default \"Agent Desktop\".",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+      "type": "string"
+     },
+     "width": {
+      "description": "create: pixels, default 1920.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "agent_display",
+   "read_only": false
+  },
+  {
    "description": "Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. `exact_window_effect.unobstructed` is false when another ordinary (layer-0) window lies over part of the target, and `observed.occluding_window` names the frontmost one. It may intercept desktop pointer input at a covered point, even after a verified activation. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.",
    "destructive": false,
    "idempotent": true,
@@ -615,6 +660,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Target window ID. Omit with element_token.",
       "type": "integer"
@@ -669,6 +719,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
@@ -731,6 +786,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
@@ -867,6 +927,11 @@
       "description": "Drag-end Y in window-local screenshot pixels.",
       "type": "number"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "CGWindowID for the window the pixel coordinates were measured against. Optional only when pid owns exactly one eligible top-level window; otherwise the action refuses with ambiguous_window_target.",
       "type": "integer"
@@ -884,7 +949,7 @@
    "read_only": false
   },
   {
-   "description": "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\nWeb content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text. Several known actions: one `run_steps` (`get_guide({topic:\"batching\"})`).",
+   "description": "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\nWeb content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.\nWhen key events are needed, an `element_token` target whose keyboard focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key sent. Several known actions: one `run_steps` (`get_guide({topic:\"batching\"})`).",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -965,6 +1030,11 @@
      "text": {
       "description": "Text to insert.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window ID. Omit with element_token.",
@@ -1071,6 +1141,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Target window; required for foreground. Does not raise by itself.",
       "type": "integer"
@@ -1173,6 +1248,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode.",
       "type": "integer"
@@ -1221,6 +1301,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "value": {
       "description": "New value, coerced to the element's type.",
@@ -1335,6 +1420,11 @@
        "kind"
       ],
       "type": "object"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window ID. Required with x/y; optional with element_token.",
@@ -2060,7 +2150,7 @@
    "read_only": true
   },
   {
-   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.",
+   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text. The macOS AX fallback applies only `*` (or a blank selector) and bare tag selectors and refuses any other selector instead of returning every element.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2329,7 +2419,7 @@
       "type": "string"
      },
      "input_route": {
-      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.",
+      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Its effect is confirmed when the target's own state changes or the click's handlers change the page; otherwise refresh page state and verify the expected postcondition.",
       "enum": [
        "trusted",
        "dom_event"

@@ -342,7 +342,7 @@ async function execInContainer(
       // Run synchronously
       const { stdout, stderr } = await execAsync(
         buildDockerExecScriptCommand(getContainerName(), scriptPath, timeout),
-        { timeout: timeout + 5000 }
+        { timeout: timeout > 0 ? timeout + 5000 : 0 }
       );
 
       // Clean up script
@@ -762,14 +762,13 @@ const handlers: Record<string, Handler> = {
     };
   },
 
-  async bash(body: { command: string; run_in_background?: boolean; timeout?: number }) {
+  async bash(body: { command: string; run_in_background?: boolean; timeout?: number }): Promise<BashResult> {
     requireReady();
     await ensureContainer();
-    const { stdout, stderr, pid } = await execInContainer(body.command, {
+    return execInContainer(body.command, {
       runInBackground: body.run_in_background,
       timeout: body.timeout,
     });
-    return { stdout, stderr, pid };
   },
 
   async screenshot() {

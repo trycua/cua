@@ -310,7 +310,8 @@ Commands:
         const result = await client.bash(cmd);
         if (result.stdout) process.stdout.write(result.stdout);
         if (result.stderr) process.stderr.write(result.stderr);
-        process.exit(exitCodeForBashResult(result));
+        process.exitCode = exitCodeForBashResult(result);
+        return;
       }
 
       case '--click': {

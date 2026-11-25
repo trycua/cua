@@ -64,3 +64,8 @@ builds a week, every one on PyPI, `cua-driver` hit the cap on 10 Nov 2026 and
 `cua` was right behind it. Promoting weekly cuts PyPI uploads by over 90% while
 GitHub releases and the installers keep every build. Old releases are removed
 only under the PyPI retention rule (`docs/pypi-retention.md`).
+
+The `cua` wheels are the biggest uploads that remain (six wheels of 51 to 58
+MB a week). Both Rust workspaces that ship in wheels (`libs/cua-driver/rust`
+and `libs/cua`) build release binaries with symbols stripped and fat LTO, so
+keep `strip`, `lto` and `codegen-units = 1` in their `[profile.release]`.

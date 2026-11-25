@@ -1997,6 +1997,7 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
         "permissions" => match operation {
             "status" => "status",
             "grant" => "grant",
+            "vnc" => "vnc",
             _ => "other",
         },
         "config" => match operation {
@@ -2125,6 +2126,13 @@ fn build_payload(
 }
 
 fn spawn_payload(event_name: &'static str, payload: Value) {
+    // Unit tests run in one process, so a capture from any test (e.g. an MCP
+    // session started by an HTTP transport test) would hold PENDING_SENDS
+    // above zero while the flush test asserts it starts at zero. Payload shape
+    // is covered by the build_* tests; delivery is not.
+    if cfg!(test) {
+        return;
+    }
     PENDING_SENDS.fetch_add(1, Ordering::SeqCst);
     let task = move || {
         let _pending = PendingSendGuard;

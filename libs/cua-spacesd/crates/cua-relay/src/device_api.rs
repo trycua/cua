@@ -434,23 +434,27 @@ async fn register(
             return error(StatusCode::BAD_REQUEST, "invalid_capabilities", message);
         }
     }
-    match relay.devices.register(&Registration {
-        account: &who.account,
-        user: &who.user,
-        public_key: &body.public_key,
-        name: &body.name,
-        platform: &body.platform,
-        machine_id: body.machine_id.as_deref(),
-        ts: body.ts,
-        sig: &body.sig,
-        bootstrap: body.bootstrap,
-        auth_time: who.auth_time,
-        // The validator keeps an email only when the issuer verified it.
-        email_verified: who.email.is_some(),
-        mfa: who.mfa,
-        phone: is_phone_registration(&relay, &who, &body.platform),
-        capabilities: body.capabilities.clone(),
-    }) {
+    match relay
+        .devices
+        .register(&Registration {
+            account: &who.account,
+            user: &who.user,
+            public_key: &body.public_key,
+            name: &body.name,
+            platform: &body.platform,
+            machine_id: body.machine_id.as_deref(),
+            ts: body.ts,
+            sig: &body.sig,
+            bootstrap: body.bootstrap,
+            auth_time: who.auth_time,
+            // The validator keeps an email only when the issuer verified it.
+            email_verified: who.email.is_some(),
+            mfa: who.mfa,
+            phone: is_phone_registration(&relay, &who, &body.platform),
+            capabilities: body.capabilities.clone(),
+        })
+        .await
+    {
         Ok(r) => {
             let state = r.device.state(now_secs());
             tracing::info!(account = %crate::ident::tag(&who.account), device = %r.device.id, ?state, superseded = ?r.superseded, "device registered");
@@ -489,24 +493,12 @@ async fn session(
     if let Some(r) = too_many_calls(&relay, &who) {
         return r;
     }
-    // Off the async workers: opening a session appends to the fsynced
-    // session journal (CUA-2323).
-    let opened = {
-        let relay = relay.clone();
-        let account = who.account.clone();
-        let (device, sig) = (body.device_id.clone(), body.sig.clone());
-        tokio::task::spawn_blocking(move || {
-            relay.devices.open_session(&account, &device, body.ts, &sig)
-        })
-        .await
-    };
-    let Ok(opened) = opened else {
-        return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "the session could not be opened",
-        );
-    };
+    // The session journal and the devices file are written by their
+    // writer threads; this only awaits them (CUA-2323, CUA-4413).
+    let opened = relay
+        .devices
+        .open_session(&who.account, &body.device_id, body.ts, &body.sig)
+        .await;
     match opened {
         Ok((token, expires)) => Json(serde_json::json!({
             "session": token,
@@ -545,13 +537,17 @@ async fn approve(
         Ok(d) => d,
         Err(r) => return r,
     };
-    match relay.devices.approve(
-        &who.account,
-        &approver,
-        body.code.as_deref(),
-        body.device_id.as_deref(),
-        stepped_up(&who),
-    ) {
+    match relay
+        .devices
+        .approve(
+            &who.account,
+            &approver,
+            body.code.as_deref(),
+            body.device_id.as_deref(),
+            stepped_up(&who),
+        )
+        .await
+    {
         Ok(d) => {
             tracing::info!(account = %crate::ident::tag(&who.account), device = %d.id, approver = %approver, "device approved");
             Json(serde_json::json!({ "device": view(&d, Some(&approver)) })).into_response()
@@ -601,7 +597,11 @@ async fn rename(
         Ok(d) => d,
         Err(r) => return r,
     };
-    match relay.devices.rename(&who.account, &actor, &id, &body.name) {
+    match relay
+        .devices
+        .rename(&who.account, &actor, &id, &body.name)
+        .await
+    {
         Ok(d) => Json(view(&d, Some(&actor))).into_response(),
         Err(e) => device_error(e),
     }
@@ -623,6 +623,7 @@ async fn revoke(
     match relay
         .devices
         .revoke(&who.account, &actor, &id, stepped_up(&who))
+        .await
     {
         Ok(d) => {
             // Open streams and outstanding tickets of the revoked device's
@@ -667,6 +668,7 @@ async fn revoke_phones(State(relay): State<Relay>, headers: HeaderMap) -> Respon
         match relay
             .devices
             .revoke(&who.account, &actor, &d.id, stepped_up(&who))
+            .await
         {
             Ok(d) => {
                 if d.is_phone() {

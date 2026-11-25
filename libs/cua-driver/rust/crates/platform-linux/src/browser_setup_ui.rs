@@ -133,7 +133,7 @@ fn exact_setup_checkbox<'a>(
 
 fn setup_not_ready_message(descriptor: &BrowserSetupDescriptor) -> String {
     format!(
-        "the exact {} remote-debugging setup page did not become ready; on Linux, existing-profile setup requires the browser's complete AT-SPI tree (launch Chromium-family browsers with --force-renderer-accessibility, or use a screen reader that enables full renderer accessibility)",
+        "the exact {} remote-debugging setup page did not become ready; on Linux, existing-profile setup requires the browser's complete AT-SPI tree (turn the accessibility bus on and restart the browser, or launch it with --force-renderer-accessibility)",
         descriptor.product_name
     )
 }
@@ -600,7 +600,12 @@ fn set_remote_debugging(
                     return Ok(handle);
                 }
                 Some(_) if !handle.enable_attempted => {
-                    if let Err(error) = crate::atspi::perform_action_walked(pid, window_id, node) {
+                    // A toggle that failed after it was sent may have
+                    // switched remote debugging: read it back like a success,
+                    // so a rollback knows what to restore.
+                    if let Err(error) = crate::atspi::action_sent(
+                        crate::atspi::perform_action_walked(pid, window_id, node),
+                    ) {
                         return Err(handle.abort(BrowserRefusal::new(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
                             format!("the exact checkbox action failed: {error}"),

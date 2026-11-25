@@ -95,7 +95,10 @@ cua-driver permissions status --json
 Expect `accessibility: true`, `screen_recording: true`, and
 `source.attribution: "driver-daemon"`. If not, check that `diagnose` points at
 `/Applications/CuaDriver.app` and not an older copy or a terminal-owned
-process.
+process. `source.attribution: "caller"` with `source.responsible_bundle_id`
+set means another app started the daemon inside its own process tree, so
+macOS checks that app's grants instead of Cua Driver's. Run `cua-driver stop`,
+then `cua-driver permissions grant` to use Cua Driver's own.
 
 ## Known limits
 

@@ -59,7 +59,7 @@ List, launch, quit, front and arrange apps and windows. [Reference](/cua-driver/
 | <span id="kill_app"></span>[`kill_app`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#kill_app) | Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). | macOS, Linux, Windows |
 | <span id="bring_to_front"></span>[`bring_to_front`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#bring_to_front) | Persistently activate an app and leave it in the foreground. | macOS, Linux, Windows |
 | <span id="set_window_frame"></span>[`set_window_frame`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#set_window_frame) | Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback. | macOS, Linux, Windows |
-| <span id="invoke_menu"></span>[`invoke_menu`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#invoke_menu) | Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. | macOS, Linux, Windows |
+| <span id="invoke_menu"></span>[`invoke_menu`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#invoke_menu) | Resolve an exact application-menu path one live native level at a time and normally invoke its final item through accessibility APIs. | macOS, Linux, Windows |
 | <span id="debug_window_info"></span>[`debug_window_info`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
 
 ## Window state tools
@@ -75,7 +75,7 @@ Screenshots, accessibility trees, verification and visual regions of a window. [
 
 ## Screen tools
 
-The desktop, screen size, cursor position and zoomed crops. [Reference](/cua-driver/reference/mcp-tools/apps-windows-and-screen#screen-tools).
+The desktop, screen size, cursor position, zoomed crops and agent displays. [Reference](/cua-driver/reference/mcp-tools/apps-windows-and-screen#screen-tools).
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
@@ -83,6 +83,7 @@ The desktop, screen size, cursor position and zoomed crops. [Reference](/cua-dri
 | <span id="get_screen_size"></span>[`get_screen_size`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_screen_size) | Return the logical size of the main display in points plus its backing scale factor. | macOS, Linux, Windows |
 | <span id="get_cursor_position"></span>[`get_cursor_position`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
 | <span id="zoom"></span>[`zoom`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#zoom) | Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. | macOS, Linux, Windows |
+| <span id="agent_display"></span>[`agent_display`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#agent_display) | Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). | macOS |
 
 ## Click tool
 

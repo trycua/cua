@@ -34,8 +34,11 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
+
+use cua_driver_core::cursor_hook::{self, CursorHookEvent};
 
 #[cfg(target_os = "windows")]
 use cursor_overlay::SurfaceFit;
@@ -139,15 +142,111 @@ impl WinScreen {
 
 type RenderMap = cursor_overlay::RenderMap<RenderState, WinScreen>;
 
+struct PendingCursorEvent {
+    event: CursorHookEvent,
+    live: Arc<AtomicBool>,
+}
+
 /// Drain one message into the shared map, releasing a removed session's
 /// arrival waiter. Returns the commanded key (also recorded as the map's
 /// `last_active`).
-fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
+fn apply_msg(
+    map: &mut RenderMap,
+    msg: OverlayMsg,
+    events: &mut Vec<PendingCursorEvent>,
+) -> Option<CursorKey> {
+    let before = match &msg {
+        OverlayMsg::Cmd(command) if cursor_hook::cursor_hook_enabled() => {
+            map.cursors.get(&command.key).and_then(cursor_sample)
+        }
+        _ => None,
+    };
+    let press = matches!(
+        &msg,
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            cmd: OverlayCommand::ClickPulse { .. },
+            ..
+        })
+    );
     let outcome = map.apply_msg(msg);
     if let MsgOutcome::Removed { key, .. } = &outcome {
         arrival_cancel(key);
+        events.retain(|pending| &pending.event.cursor_id != key);
+    }
+    if let Some(key) = outcome.applied_key() {
+        queue_cursor_event(key, &map.cursors[key], before, press, events);
     }
     outcome.applied_key().cloned()
+}
+
+/// Observe the hotspot from the applied render state, never a move's target.
+fn cursor_sample(state: &RenderState) -> Option<(f64, f64, bool)> {
+    if !state.core.placed {
+        return None;
+    }
+    let (x, y) =
+        cursor_overlay::pointer_for_anchor(state.core.pos.0, state.core.pos.1, state.core.heading);
+    (x.is_finite() && y.is_finite()).then_some((
+        x,
+        y,
+        state.core.pressed || state.core.click_t.is_some(),
+    ))
+}
+
+fn queue_cursor_event(
+    key: &str,
+    state: &RenderState,
+    before: Option<(f64, f64, bool)>,
+    press: bool,
+    events: &mut Vec<PendingCursorEvent>,
+) {
+    if !cursor_hook::cursor_hook_enabled()
+        || !state.live.load(Ordering::Acquire)
+        || !draws_cursor(key)
+        || cua_driver_core::session::is_session_ended(key)
+    {
+        return;
+    }
+    if let Some((x, y, pressed)) = cursor_sample(state) {
+        // Consecutive click pulses remain separate press events, even at rest.
+        if press || before != Some((x, y, pressed)) {
+            events.push(PendingCursorEvent {
+                event: CursorHookEvent {
+                    cursor_id: key.to_owned(),
+                    x,
+                    y,
+                    pressed,
+                },
+                live: Arc::clone(&state.live),
+            });
+        }
+    }
+}
+
+fn tick_cursor(
+    key: &str,
+    state: &mut RenderState,
+    dt: f64,
+    events: &mut Vec<PendingCursorEvent>,
+) -> bool {
+    let before = cursor_hook::cursor_hook_enabled()
+        .then(|| cursor_sample(state))
+        .flatten();
+    let arrived = state.tick(dt);
+    queue_cursor_event(key, state, before, false, events);
+    arrived
+}
+
+/// Call embedders after releasing RENDER so a hook may inspect cursor state.
+fn publish_cursor_events(events: Vec<PendingCursorEvent>) {
+    for pending in events {
+        if pending.live.load(Ordering::Acquire)
+            && draws_cursor(&pending.event.cursor_id)
+            && !cua_driver_core::session::is_session_ended(&pending.event.cursor_id)
+        {
+            cursor_hook::push_cursor_event(pending.event);
+        }
+    }
 }
 
 pub fn init(cfg: CursorConfig) {
@@ -266,7 +365,7 @@ fn wake_overlay() {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::SetTimer;
         let hwnd = HWND(hwnd_isize as *mut _);
-        SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
+        SetTimer(Some(hwnd), TIMER_ID, TIMER_MS_ACTIVE, None);
     }
 }
 
@@ -439,11 +538,19 @@ pub fn run_on_thread() {
         return;
     }
 
+    let work = move || run_overlay_thread(cfg, rx);
+    #[cfg(target_os = "windows")]
+    let work = crate::dpi::owned_thread(work);
     std::thread::Builder::new()
         .name("cua-overlay-win".into())
         .spawn(move || {
             // Windows message loops must run on the same thread that created the window.
-            run_overlay_thread(cfg, rx);
+            #[cfg(target_os = "windows")]
+            if let Err(error) = work() {
+                tracing::error!("Windows overlay thread refused: {error}");
+            }
+            #[cfg(not(target_os = "windows"))]
+            work();
         })
         .expect("spawn overlay thread");
 }
@@ -456,12 +563,51 @@ pub fn run_on_thread() {
 
 struct RenderState {
     core: RenderStateCore,
+    live: Arc<AtomicBool>,
+    _session_end_hook: Option<cua_driver_core::session::SessionEndHookRegistration>,
+}
+
+impl Drop for RenderState {
+    fn drop(&mut self) {
+        self.live.store(false, Ordering::Release);
+    }
 }
 
 impl RenderEntry for RenderState {
     fn from_config(cfg: CursorConfig) -> Self {
+        let live = Arc::new(AtomicBool::new(true));
+        let key = cfg.cursor_id.clone();
+        let session_end_hook = (!key.is_empty() && key != "default").then(|| {
+            let ended = Arc::clone(&live);
+            let session = key.clone();
+            // End callbacks do not acquire RENDER. The entry owns this hook,
+            // and queued samples retain only its lifetime flag after removal.
+            cua_driver_core::session::register_scoped_session_end_hook(move |key| {
+                if key == session {
+                    ended.store(false, Ordering::Release);
+                }
+            })
+        });
+        // Register before checking lifecycle so an end cannot escape both.
+        // Retired runtime keys have no live record after tombstones are freed;
+        // queued commands must not create a new publication lifetime for them.
+        let active = if key.starts_with("__cua_runtime_") {
+            cua_driver_core::session::list_session_snapshots_with_prefix(
+                &key,
+                cua_driver_core::session::DEFAULT_SESSION_IDLE_TTL,
+            )
+            .iter()
+            .any(|session| session.runtime_id == key && !session.ending)
+        } else {
+            !cua_driver_core::session::is_session_ended(&key)
+        };
+        if !active {
+            live.store(false, Ordering::Release);
+        }
         RenderState {
             core: RenderStateCore::new(cfg),
+            live,
+            _session_end_hook: session_end_hook,
         }
     }
 
@@ -578,7 +724,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             virt_h,
             None,
             None,
-            hinstance,
+            Some(hinstance.into()),
             None,
         )
     };
@@ -599,7 +745,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // to the slow IDLE cadence as soon as every cursor goes quiescent and
     // re-arms ACTIVE the instant a command arrives (issue #1808).
     unsafe {
-        SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
+        SetTimer(Some(hwnd), TIMER_ID, TIMER_MS_ACTIVE, None);
     }
     TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, std::sync::atomic::Ordering::Relaxed);
     // Timer starts ACTIVE, so the 1 ms resolution is needed until the first
@@ -613,6 +759,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _ = Z_ORDER.set(WinZOrderEnforcer {
         hwnd_isize: hwnd.0 as isize,
     });
+    cursor_hook::declare_cursor_hook_emitter();
 
     // Standard Win32 message loop.
     let mut msg = MSG::default();
@@ -638,6 +785,8 @@ fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<Overlay
 static OVERLAY_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static CMD_RX_WIN: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static LAST_ZTICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Pin target (0 = none) the overlay's z-slot was last asserted for.
+static LAST_PIN_WID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
 
 // ── Scoped multimedia timer resolution ────────────────────────────────────
@@ -832,7 +981,7 @@ impl WinSurface {
 
         let pixmap = tiny_skia::Pixmap::new(w.max(1) as u32, h.max(1) as u32)?;
         let hdc_screen = GetDC(None);
-        let hdc_mem = CreateCompatibleDC(hdc_screen);
+        let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
         let bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -846,18 +995,18 @@ impl WinSurface {
             ..Default::default()
         };
         let mut bits_ptr = std::ptr::null_mut::<std::ffi::c_void>();
-        let hbmp = CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
+        let hbmp = CreateDIBSection(Some(hdc_mem), &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
         ReleaseDC(None, hdc_screen);
         let Ok(hbmp) = hbmp else {
             let _ = DeleteDC(hdc_mem);
             return None;
         };
         if bits_ptr.is_null() {
-            let _ = DeleteObject(hbmp);
+            let _ = DeleteObject(hbmp.into());
             let _ = DeleteDC(hdc_mem);
             return None;
         }
-        SelectObject(hdc_mem, hbmp);
+        SelectObject(hdc_mem, hbmp.into());
         Some(WinSurface {
             pixmap,
             hdc_mem: hdc_mem.0 as isize,
@@ -910,7 +1059,7 @@ impl Drop for WinSurface {
     fn drop(&mut self) {
         use windows::Win32::Graphics::Gdi::{DeleteDC, DeleteObject, HBITMAP, HDC};
         unsafe {
-            let _ = DeleteObject(HBITMAP(self.hbmp as *mut _));
+            let _ = DeleteObject(HBITMAP(self.hbmp as *mut _).into());
             let _ = DeleteDC(HDC(self.hdc_mem as *mut _));
         }
     }
@@ -1173,6 +1322,7 @@ unsafe extern "system" fn wnd_proc(
             // the slow IDLE cadence below.
             let was_active =
                 TIMER_PERIOD_MS.load(std::sync::atomic::Ordering::Relaxed) == TIMER_MS_ACTIVE;
+            let mut cursor_events = Vec::new();
             let (upload, arrived, pinned_wid, needs_tick, needs_hover_poll) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
@@ -1183,7 +1333,7 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
                                 had_msg = true;
-                                apply_msg(map, m);
+                                apply_msg(map, m, &mut cursor_events);
                             }
                         }
                     }
@@ -1213,7 +1363,7 @@ unsafe extern "system" fn wnd_proc(
                     // Tick every cursor; record the ones that just arrived.
                     let mut arrived: Vec<CursorKey> = Vec::new();
                     for (k, rs) in map.cursors.iter_mut() {
-                        if rs.tick(dt) {
+                        if tick_cursor(k, rs, dt, &mut cursor_events) {
                             arrived.push(k.clone());
                         }
                         // Idle-countdown wall-clock catch-up (render-gate fix):
@@ -1247,6 +1397,40 @@ unsafe extern "system" fn wnd_proc(
                         .values()
                         .any(|rs| rs.core.session_badge_needs_hover_poll());
 
+                    // Decide where to pin the single overlay window in z. This is
+                    // computed on every tick, rendered or not: z-order is a
+                    // property of the window stack, not of pixel changes, so a
+                    // quiescent overlay must still be able to notice that it
+                    // sits in the wrong slot.
+                    //
+                    // The overlay is ONE full-virtual-screen layered window,
+                    // so it can occupy only one z-slot. It must sit ABOVE
+                    // every window a live cursor is actuating, but NOT above
+                    // whatever sits above those (the user's foreground). The
+                    // right slot is therefore "just above the HIGHEST-z
+                    // actuating window": the overlay is full-screen, so being
+                    // above the topmost driven window puts it above all of
+                    // them while still below anything stacked above them.
+                    // Pinning above one fixed window (the old last-active
+                    // behaviour) instead let any other driven window stacked
+                    // above it occlude its cursors — the blink-out. NB: this
+                    // is a RELATIVE z move (insert above a specific window),
+                    // which works from this non-foreground thread; an
+                    // absolute HWND_TOP can be refused by the foreground lock
+                    // and sink the overlay behind everything.
+                    let mut driven: Vec<u64> = Vec::new();
+                    for rs in map.cursors.values() {
+                        if !rs.core.visible || rs.core.idle_alpha < 0.004 {
+                            continue;
+                        }
+                        if let Some(w) = rs.core.pinned_wid {
+                            if !driven.contains(&w) {
+                                driven.push(w);
+                            }
+                        }
+                    }
+                    let pinned = unsafe { topmost_of(&driven) };
+
                     // Render only when something can have changed pixels this
                     // frame: a fresh command, a still-running animation, or the
                     // final settle frame as the previous animation winds down
@@ -1256,38 +1440,8 @@ unsafe extern "system" fn wnd_proc(
                         had_msg || refit || hover_changed || needs_tick || was_active;
 
                     if !should_render {
-                        (None, arrived, None, needs_tick, needs_hover_poll)
+                        (None, arrived, pinned, needs_tick, needs_hover_poll)
                     } else {
-                        // Decide where to pin the single overlay window in z.
-                        //
-                        // The overlay is ONE full-virtual-screen layered window,
-                        // so it can occupy only one z-slot. It must sit ABOVE
-                        // every window a live cursor is actuating, but NOT above
-                        // whatever sits above those (the user's foreground). The
-                        // right slot is therefore "just above the HIGHEST-z
-                        // actuating window": the overlay is full-screen, so being
-                        // above the topmost driven window puts it above all of
-                        // them while still below anything stacked above them.
-                        // Pinning above one fixed window (the old last-active
-                        // behaviour) instead let any other driven window stacked
-                        // above it occlude its cursors — the blink-out. NB: this
-                        // is a RELATIVE z move (insert above a specific window),
-                        // which works from this non-foreground thread; an
-                        // absolute HWND_TOP can be refused by the foreground lock
-                        // and sink the overlay behind everything.
-                        let mut driven: Vec<u64> = Vec::new();
-                        for rs in map.cursors.values() {
-                            if !rs.core.visible || rs.core.idle_alpha < 0.004 {
-                                continue;
-                            }
-                            if let Some(w) = rs.core.pinned_wid {
-                                if !driven.contains(&w) {
-                                    driven.push(w);
-                                }
-                            }
-                        }
-                        let pinned = unsafe { topmost_of(&driven) };
-
                         // Dirty-rect composite: paint only the union of last
                         // frame's and this frame's cursor bounds into the
                         // persistent surface (see `composite_dirty`). The old
@@ -1310,20 +1464,36 @@ unsafe extern "system" fn wnd_proc(
 
             if let Some(dirty) = upload {
                 unsafe { present_surface(hwnd, dirty) };
+            }
 
-                // Z-order maintenance every 80ms — delegate to the cross-platform
-                // ZOrderEnforcer so the contract for "z+1 of the application under
-                // test" is documented once in `cursor_overlay::z_order`. Only run
-                // while we actually rendered: a quiescent overlay leaves its z-slot
-                // untouched until the next command wakes the loop.
+            // Z-order maintenance, delegated to the cross-platform
+            // ZOrderEnforcer so the contract for "z+1 of the application under
+            // test" is documented once in `cursor_overlay::z_order`.
+            //
+            // It runs independently of rendering. It used to run only on ticks
+            // that painted pixels, at most every 80 ms, with no trailing pass.
+            // A pin change that painted nothing, or whose last painted frame
+            // fell inside the throttle window, left the overlay in a stale slot
+            // until some later render, so a target-bound overlay was sometimes
+            // not directly above its target when the action returned.
+            //
+            // Reassert immediately when the pin target changes. Otherwise
+            // reassert (throttled to 80 ms) whenever the overlay is observably
+            // not in its slot, including on the slow idle heartbeat, and keep
+            // the old once-per-80ms refresh while rendering.
+            if let Some(enforcer) = Z_ORDER.get() {
+                let pin_key = pinned_wid.unwrap_or(0);
+                let pin_changed =
+                    LAST_PIN_WID.swap(pin_key, std::sync::atomic::Ordering::Relaxed) != pin_key;
                 let last = LAST_ZTICK.load(std::sync::atomic::Ordering::Relaxed);
-                if now_ms.wrapping_sub(last) >= 80 {
+                let due = now_ms.wrapping_sub(last) >= 80;
+                if pin_changed || (due && (upload.is_some() || !enforcer.is_settled(pinned_wid))) {
                     LAST_ZTICK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(enforcer) = Z_ORDER.get() {
-                        enforcer.reassert(pinned_wid);
-                    }
+                    enforcer.reassert(pinned_wid);
                 }
             }
+
+            publish_cursor_events(cursor_events);
 
             // Fire arrival oneshots for cursors whose path just ended — unblocks
             // each session's `animate_cursor_to(...).await` so the click action
@@ -1350,7 +1520,7 @@ unsafe extern "system" fn wnd_proc(
             if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms
             {
                 unsafe {
-                    SetTimer(hwnd, TIMER_ID, desired_ms, None);
+                    SetTimer(Some(hwnd), TIMER_ID, desired_ms, None);
                 }
                 if desired_ms == TIMER_MS_IDLE {
                     // Parked: free the render surface (pixmap + DIB, tens of
@@ -1407,6 +1577,41 @@ unsafe fn topmost_of(ids: &[u64]) -> Option<u64> {
     ids.first().copied()
 }
 
+impl WinZOrderEnforcer {
+    /// True when the overlay already satisfies the target-bound contract:
+    /// directly above `target` and outside the topmost band. Untargeted
+    /// overlays have no observable slot to verify, so they are reported
+    /// settled and rely on the periodic reassert while rendering. A target
+    /// that lives in the topmost band cannot be matched from the ordinary
+    /// band, so it is also reported settled rather than re-asserted forever.
+    fn is_settled(&self, target: Option<u64>) -> bool {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::*;
+            let Some(target) = target else { return true };
+            let target = HWND(target as *mut _);
+            if !IsWindow(Some(target)).as_bool() {
+                return true;
+            }
+            let overlay = HWND(self.hwnd_isize as *mut _);
+            let ex_style = |h: HWND| GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
+            if ex_style(target) & WS_EX_TOPMOST.0 != 0 {
+                return true;
+            }
+            if ex_style(overlay) & WS_EX_TOPMOST.0 != 0 {
+                return false;
+            }
+            GetWindow(target, GW_HWNDPREV).ok() == Some(overlay)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = target;
+            true
+        }
+    }
+}
+
 impl ZOrderEnforcer for WinZOrderEnforcer {
     fn reassert(&self, target: Option<u64>) {
         #[cfg(target_os = "windows")]
@@ -1418,7 +1623,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 
             let pinned_target = target.and_then(|wid| {
                 let h = HWND(wid as *mut _);
-                if IsWindow(h).as_bool() {
+                if IsWindow(Some(h)).as_bool() {
                     Some(h)
                 } else {
                     None
@@ -1456,7 +1661,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                     // topmost band, then insert exactly one slot above target.
                     let _ = SetWindowPos(
                         hwnd,
-                        HWND_NOTOPMOST,
+                        Some(HWND_NOTOPMOST),
                         0,
                         0,
                         0,
@@ -1467,7 +1672,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                     let insert_after = if !prev.0.is_null() { prev } else { HWND_TOP };
                     let _ = SetWindowPos(
                         hwnd,
-                        insert_after,
+                        Some(insert_after),
                         0,
                         0,
                         0,
@@ -1491,8 +1696,8 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                         | SWP_NOACTIVATE
                         | SWP_SHOWWINDOW
                         | SWP_NOOWNERZORDER;
-                    let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
-                    let _ = SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+                    let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+                    let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
                 }
             }
 
@@ -1675,6 +1880,257 @@ mod tests {
     }
 
     #[test]
+    fn cursor_hook_observes_applied_motion_press_edges_and_session_boundaries() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        use std::sync::Arc;
+
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        assert!(cursor_hook::set_cursor_hook_fn(move |event| {
+            // The observer may inspect the overlay; publication must not hold RENDER.
+            assert!(RENDER.try_lock().is_ok());
+            sink.lock().unwrap().push(event);
+        }));
+        let mut map = empty_map();
+        let mut events = Vec::new();
+        let key = "windows-cursor-hook-agent";
+        let command = |key: &str, cmd| {
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: key.to_owned(),
+                cmd,
+            })
+        };
+
+        // Seed near the first target. MoveTo plans a path; it does not report
+        // the endpoint until the real render state reaches that endpoint.
+        map.seed_start_if_unplaced(key, 80.0, 70.0, map.platform.frame());
+        let state = map.cursors.get_mut(key).unwrap();
+        state.core.visual.reduced_motion = cursor_overlay::ReducedMotion::Off;
+        state.core.motion.glide_duration_ms = 500.0;
+        apply_msg(&mut map, move_msg(key, 80.0, 70.0), &mut events);
+        let start = cursor_sample(&map.cursors[key]).unwrap();
+        assert_ne!((start.0, start.1), (80.0, 70.0));
+        tick_cursor(key, map.cursors.get_mut(key).unwrap(), 0.016, &mut events);
+        let moved = &events.last().unwrap().event;
+        let rendered = cursor_sample(&map.cursors[key]).unwrap();
+        assert_eq!((moved.x, moved.y, moved.pressed), rendered);
+        assert_ne!((moved.x, moved.y), (start.0, start.1));
+        assert_ne!((moved.x, moved.y), (80.0, 70.0));
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 80.0, y: 70.0 }),
+            &mut events,
+        );
+        assert!(events.last().unwrap().event.pressed);
+        let presses = events
+            .iter()
+            .filter(|pending| pending.event.pressed)
+            .count();
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 80.0, y: 70.0 }),
+            &mut events,
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|pending| pending.event.pressed)
+                .count(),
+            presses + 1
+        );
+        for _ in 0..200 {
+            tick_cursor(key, map.cursors.get_mut(key).unwrap(), 0.016, &mut events);
+        }
+        assert!(
+            !events.last().unwrap().event.pressed,
+            "click pulse releases"
+        );
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::SetPressed(true)),
+            &mut events,
+        );
+        assert!(events.last().unwrap().event.pressed);
+        apply_msg(
+            &mut map,
+            command(
+                key,
+                OverlayCommand::SnapTo {
+                    x: -900.0,
+                    y: 200.0,
+                    heading_radians: Some(0.0),
+                },
+            ),
+            &mut events,
+        );
+        assert!(
+            events.last().unwrap().event.pressed,
+            "drag motion keeps the hold"
+        );
+        let hotspot = cursor_overlay::pointer_for_anchor(-900.0, 200.0, 0.0);
+        assert_eq!(
+            (
+                events.last().unwrap().event.x,
+                events.last().unwrap().event.y
+            ),
+            hotspot
+        );
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::SetPressed(false)),
+            &mut events,
+        );
+        assert!(!events.last().unwrap().event.pressed);
+        publish_cursor_events(std::mem::take(&mut events));
+        assert!(!received.lock().unwrap().is_empty());
+
+        let human = "windows-cursor-hook-human";
+        set_input_origin(human, InputOrigin::Human);
+        apply_msg(
+            &mut map,
+            command(human, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        apply_msg(
+            &mut map,
+            command("", OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(events.is_empty());
+        set_input_origin(human, InputOrigin::Agent);
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(!events.is_empty());
+        apply_msg(&mut map, OverlayMsg::Remove(key.to_owned()), &mut events);
+        assert!(
+            events.is_empty(),
+            "removal discards this frame's queued samples"
+        );
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(
+            events.is_empty(),
+            "late commands cannot resurrect a removed cursor"
+        );
+
+        let ending = "windows-cursor-hook-ending";
+        apply_msg(
+            &mut map,
+            command(ending, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert_eq!(events.len(), 1);
+        cua_driver_core::session::fire_session_end(ending);
+        let count = received.lock().unwrap().len();
+        publish_cursor_events(std::mem::take(&mut events));
+        assert_eq!(
+            received.lock().unwrap().len(),
+            count,
+            "session end wins before publication"
+        );
+        apply_msg(
+            &mut map,
+            command(ending, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(events.is_empty());
+
+        let prefix = "__cua_runtime_windows-cursor-hook-retirement:";
+        let retired = format!("{prefix}named");
+        cua_driver_core::session::activate_session(
+            &retired,
+            Some("named"),
+            prefix,
+            false,
+            cua_driver_core::session::SessionTransport::Daemon,
+            cua_driver_core::session::SessionClientKind::Direct,
+        )
+        .unwrap();
+        apply_msg(
+            &mut map,
+            command(&retired, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert_eq!(events.len(), 1);
+        cua_driver_core::session::fire_session_end(&retired);
+        assert_eq!(
+            cua_driver_core::session::forget_ended_sessions_with_prefix(prefix),
+            1
+        );
+        let count = received.lock().unwrap().len();
+        publish_cursor_events(std::mem::take(&mut events));
+        assert_eq!(
+            received.lock().unwrap().len(),
+            count,
+            "runtime retirement invalidates samples after core tombstones are forgotten"
+        );
+
+        apply_msg(
+            &mut map,
+            command(&retired, OverlayCommand::ClickPulse { x: 9.0, y: 8.0 }),
+            &mut events,
+        );
+        assert!(
+            events.is_empty(),
+            "retired entries cannot queue new samples"
+        );
+        apply_msg(&mut map, OverlayMsg::Remove(retired.clone()), &mut events);
+        apply_msg(&mut map, OverlayMsg::Revive(retired.clone()), &mut events);
+        apply_msg(
+            &mut map,
+            command(&retired, OverlayCommand::ClickPulse { x: 9.0, y: 8.0 }),
+            &mut events,
+        );
+        assert!(
+            events.is_empty(),
+            "queued commands cannot recreate a retired runtime's publication lifetime"
+        );
+
+        let revived = "windows-cursor-hook-revived";
+        apply_msg(
+            &mut map,
+            command(revived, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        let stale = std::mem::take(&mut events);
+        cua_driver_core::session::fire_session_end(revived);
+        assert!(cua_driver_core::session::revive_session(revived));
+        apply_msg(
+            &mut map,
+            OverlayMsg::Remove(revived.to_owned()),
+            &mut events,
+        );
+        apply_msg(
+            &mut map,
+            OverlayMsg::Revive(revived.to_owned()),
+            &mut events,
+        );
+        apply_msg(
+            &mut map,
+            command(revived, OverlayCommand::ClickPulse { x: 9.0, y: 8.0 }),
+            &mut events,
+        );
+        assert_eq!(
+            events.len(),
+            1,
+            "revival creates a new publication lifetime"
+        );
+        publish_cursor_events(stale);
+        assert_eq!(received.lock().unwrap().len(), count);
+        publish_cursor_events(std::mem::take(&mut events));
+        assert_eq!(received.lock().unwrap().len(), count + 1);
+    }
+
+    #[test]
     fn default_dirty_envelope_covers_edge_clamped_session_badges() {
         assert!(
             CURSOR_PAD as f32 >= cursor_overlay::session_badge::BADGE_MAX_WIDTH + 8.0,
@@ -1752,12 +2208,17 @@ mod tests {
     #[test]
     fn removal_through_the_adapter_resolves_no_pin_key() {
         let mut map = empty_map();
+        let mut events = Vec::new();
         assert_eq!(
-            apply_msg(&mut map, move_msg("sessA", 10.0, 10.0)).as_deref(),
+            apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut events).as_deref(),
             Some("sessA")
         );
         assert_eq!(
-            apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned())),
+            apply_msg(
+                &mut map,
+                OverlayMsg::Remove("sessA".to_owned()),
+                &mut events
+            ),
             None
         );
         assert_eq!(map.last_active, None);
@@ -1772,7 +2233,7 @@ mod tests {
         map.seed_start_if_unplaced("sessA", 60.0, 60.0, map.platform.frame());
         map.cursors.get_mut("sessA").unwrap().core.options_override =
             Some(cursor_overlay::CursorOptions::default());
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut Vec::new());
         settle(&mut map);
         let rs = &map.cursors["sessA"];
         assert!(rs.core.trajectory.is_none());
@@ -1791,7 +2252,7 @@ mod tests {
             .core
             .visual
             .reduced_motion = cursor_overlay::ReducedMotion::On;
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut Vec::new());
         for _ in 0..2000 {
             map.tick_all(0.016);
             if !map.needs_frame_tick() {

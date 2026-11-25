@@ -37,10 +37,11 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use crate::assertion::{now_secs, remove_stale_temps, write_private_with};
+use crate::assertion::{now_secs, remove_stale_temps};
 use crate::devices::scrub;
 use crate::directory::MachineRecord;
 use crate::oidc::Identity;
+use crate::persist::{Durable, MapUndo, StateFile};
 use crate::storage::{store, Storage};
 
 /// Teams one account may own.
@@ -253,7 +254,7 @@ impl Team {
 
     /// Takes the machines `account` contributed off the team (they left or
     /// were removed), logging each.
-    fn drop_machines_of(&mut self, account: &str, actor: &Actor) {
+    fn drop_machines_of(&mut self, account: &str, actor: &Actor<'_>) {
         let theirs: Vec<String> = self
             .grants
             .iter()
@@ -426,10 +427,17 @@ struct State {
     teams: BTreeMap<String, Team>,
 }
 
+/// A change made in memory whose write is queued.
+struct Committed {
+    durable: Durable,
+    undo: MapUndo<String, Team>,
+}
+
 /// The team store.
 #[derive(Debug, Default)]
 pub struct Teams {
-    path: Option<PathBuf>,
+    /// The teams file, written off the request path.
+    file: StateFile,
     state: Mutex<State>,
     /// Last `machine_opened` audit per (account, device, machine).
     opened: Mutex<HashMap<String, u64>>,
@@ -461,7 +469,7 @@ impl Teams {
             Err(e) => return Err(e),
         };
         Ok(Self {
-            path: Some(path),
+            file: StateFile::new(Some(path), store::TEAMS, storage.clone()),
             state: Mutex::new(State { teams }),
             opened: Mutex::default(),
             storage,
@@ -474,47 +482,87 @@ impl Teams {
         self.storage.store_ok(store::TEAMS)
     }
 
-    /// Writes the teams file: compact JSON streamed to a temp file that
-    /// replaces it. Callers roll their change back when this fails.
-    fn persist(&self, state: &State) -> Result<(), TeamError> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        let written = (|| {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            write_private_with(path, |out| {
-                serde_json::to_writer(&mut *out, &state.teams.values().collect::<Vec<_>>())
-                    .map_err(std::io::Error::other)
-            })
-        })();
-        self.storage.record(store::TEAMS, &written);
-        written.map_err(|e| TeamError::Storage(e.to_string()))
+    /// Queues the teams file's new content (compact JSON, streamed by the
+    /// writer thread to a temp file that replaces it). Never blocks on the
+    /// disk.
+    fn persist(&self, state: &State) -> Durable {
+        if !self.file.is_persisted() {
+            return Durable::ready();
+        }
+        let snapshot: Vec<Team> = state.teams.values().cloned().collect();
+        self.file.replace(move |out| {
+            serde_json::to_writer(&mut *out, &snapshot).map_err(std::io::Error::other)
+        })
     }
 
-    /// Runs `change` on team `id` and persists it; a change that fails
-    /// leaves the team as it was.
-    fn change<T>(
+    /// Queues the write of a change `undo` describes (made under the lock).
+    fn commit(&self, state: &State, undo: MapUndo<String, Team>) -> Committed {
+        Committed {
+            durable: if undo.is_empty() {
+                Durable::ready()
+            } else {
+                self.persist(state)
+            },
+            undo,
+        }
+    }
+
+    /// Waits (no lock held, no worker blocked) until the change is on disk;
+    /// on a failed write undoes it (unless another change replaced it
+    /// since) and returns the error.
+    async fn settle(&self, c: Committed) -> Result<(), TeamError> {
+        match c.durable.await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let mut state = self.state.lock().expect("teams");
+                // Re-queued only if a later write may carry the change.
+                if c.undo.undo(&mut state.teams) && self.file.last_ok() {
+                    self.persist(&state).detach();
+                }
+                Err(TeamError::Storage(e.to_string()))
+            }
+        }
+    }
+
+    /// Runs `change` on team `id` in memory and queues its write.
+    fn apply<T>(
         &self,
         id: &str,
         change: impl FnOnce(&mut Team) -> Result<T, TeamError>,
-    ) -> Result<T, TeamError> {
+    ) -> Result<(T, Committed), TeamError> {
         let mut state = self.state.lock().expect("teams");
         let team = state.teams.get(id).ok_or_else(no_team)?;
         let mut next = team.clone();
         let out = change(&mut next)?;
         if &next == team {
-            return Ok(out);
+            return Ok((out, self.commit(&state, MapUndo::none())));
         }
-        let before = state.teams.insert(id.to_owned(), next);
-        if let Err(e) = self.persist(&state) {
-            if let Some(before) = before {
-                state.teams.insert(id.to_owned(), before);
-            }
-            return Err(e);
-        }
+        let before = state.teams.insert(id.to_owned(), next.clone());
+        let undo = MapUndo::one(id.to_owned(), before, Some(next));
+        Ok((out, self.commit(&state, undo)))
+    }
+
+    /// Runs `change` on team `id` and waits until it is on disk; a change
+    /// whose write fails leaves the team as it was.
+    async fn change<T>(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut Team) -> Result<T, TeamError>,
+    ) -> Result<T, TeamError> {
+        let (out, committed) = self.apply(id, change)?;
+        self.settle(committed).await?;
         Ok(out)
+    }
+
+    /// Runs `change` on team `id` and queues its write without waiting
+    /// (audit lines and device requests on the access path: a failed write
+    /// is counted, store `teams`, and the next write saves the change).
+    fn change_queued<T>(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut Team) -> Result<T, TeamError>,
+    ) -> Result<T, TeamError> {
+        self.apply(id, change).map(|(out, _)| out)
     }
 
     /// Team `id`, when `account` is in it.
@@ -581,51 +629,54 @@ impl Teams {
     }
 
     /// Creates a team owned by the actor.
-    pub fn create(&self, actor: &Actor, name: &str) -> Result<Team, TeamError> {
+    pub async fn create(&self, actor: &Actor<'_>, name: &str) -> Result<Team, TeamError> {
         let name = clean_name(name)?;
-        let mut state = self.state.lock().expect("teams");
-        let owned = state
-            .teams
-            .values()
-            .filter(|t| t.role_of(&actor.who.account) == Some(TeamRole::Owner))
-            .count();
-        if owned >= MAX_OWNED_TEAMS {
-            return Err(TeamError::Conflict(format!(
-                "an account can own at most {MAX_OWNED_TEAMS} teams"
-            )));
-        }
-        let id = format!("team-{}", random_hex(8));
-        let now = now_secs();
-        let mut team = Team {
-            id: id.clone(),
-            name,
-            created_at: now,
-            members: vec![Member {
-                account: actor.who.account.clone(),
-                email: actor.who.email.clone(),
-                name: actor.who.name.clone(),
-                role: TeamRole::Owner,
-                joined_at: now,
-            }],
-            invites: Vec::new(),
-            machines: Vec::new(),
-            grants: BTreeMap::new(),
-            devices: Vec::new(),
-            audit: Vec::new(),
+        let (committed, team) = {
+            let mut state = self.state.lock().expect("teams");
+            let owned = state
+                .teams
+                .values()
+                .filter(|t| t.role_of(&actor.who.account) == Some(TeamRole::Owner))
+                .count();
+            if owned >= MAX_OWNED_TEAMS {
+                return Err(TeamError::Conflict(format!(
+                    "an account can own at most {MAX_OWNED_TEAMS} teams"
+                )));
+            }
+            let id = format!("team-{}", random_hex(8));
+            let now = now_secs();
+            let mut team = Team {
+                id: id.clone(),
+                name,
+                created_at: now,
+                members: vec![Member {
+                    account: actor.who.account.clone(),
+                    email: actor.who.email.clone(),
+                    name: actor.who.name.clone(),
+                    role: TeamRole::Owner,
+                    joined_at: now,
+                }],
+                invites: Vec::new(),
+                machines: Vec::new(),
+                grants: BTreeMap::new(),
+                devices: Vec::new(),
+                audit: Vec::new(),
+            };
+            let mut e = actor.entry("team_created");
+            e.detail = Some(team.name.clone());
+            team.log(e);
+            state.teams.insert(id.clone(), team.clone());
+            (
+                self.commit(&state, MapUndo::one(id, None, Some(team.clone()))),
+                team,
+            )
         };
-        let mut e = actor.entry("team_created");
-        e.detail = Some(team.name.clone());
-        team.log(e);
-        state.teams.insert(id.clone(), team.clone());
-        if let Err(err) = self.persist(&state) {
-            state.teams.remove(&id);
-            return Err(err);
-        }
+        self.settle(committed).await?;
         Ok(team)
     }
 
     /// Renames a team (owner or admin).
-    pub fn rename(&self, id: &str, actor: &Actor, name: &str) -> Result<Team, TeamError> {
+    pub async fn rename(&self, id: &str, actor: &Actor<'_>, name: &str) -> Result<Team, TeamError> {
         let name = clean_name(name)?;
         self.change(id, |t| {
             Self::require_manager(t, &actor.who.account)?;
@@ -635,36 +686,41 @@ impl Teams {
             t.log(e);
             Ok(t.clone())
         })
+        .await
     }
 
     /// Deletes a team (owner only). Returns its machines (their open team
     /// clients should be cut).
-    pub fn delete(&self, id: &str, actor: &Actor) -> Result<Team, TeamError> {
-        let mut state = self.state.lock().expect("teams");
-        let team = state.teams.get(id).ok_or_else(no_team)?;
-        match team.role_of(&actor.who.account) {
-            Some(TeamRole::Owner) => {}
-            Some(_) => {
-                return Err(TeamError::Forbidden(
-                    "only the team's owner can delete it".into(),
-                ))
+    pub async fn delete(&self, id: &str, actor: &Actor<'_>) -> Result<Team, TeamError> {
+        let (committed, removed) = {
+            let mut state = self.state.lock().expect("teams");
+            let team = state.teams.get(id).ok_or_else(no_team)?;
+            match team.role_of(&actor.who.account) {
+                Some(TeamRole::Owner) => {}
+                Some(_) => {
+                    return Err(TeamError::Forbidden(
+                        "only the team's owner can delete it".into(),
+                    ))
+                }
+                None => return Err(no_team()),
             }
-            None => return Err(no_team()),
-        }
-        let removed = state.teams.remove(id).ok_or_else(no_team)?;
-        if let Err(e) = self.persist(&state) {
-            state.teams.insert(id.to_owned(), removed);
-            return Err(e);
-        }
+            let removed = state.teams.remove(id).ok_or_else(no_team)?;
+            let c = self.commit(
+                &state,
+                MapUndo::one(id.to_owned(), Some(removed.clone()), None),
+            );
+            (c, removed)
+        };
+        self.settle(committed).await?;
         Ok(removed)
     }
 
     /// Creates an invite: by `email` (only that verified email joins with
     /// it) or, without one, a link anyone holding the code can use.
-    pub fn invite(
+    pub async fn invite(
         &self,
         id: &str,
-        actor: &Actor,
+        actor: &Actor<'_>,
         email: Option<&str>,
         role: TeamRole,
         uses: Option<u32>,
@@ -731,10 +787,16 @@ impl Teams {
             t.log(e);
             Ok(NewInvite { invite, code })
         })
+        .await
     }
 
     /// Revokes an open invite.
-    pub fn revoke_invite(&self, id: &str, actor: &Actor, invite: &str) -> Result<(), TeamError> {
+    pub async fn revoke_invite(
+        &self,
+        id: &str,
+        actor: &Actor<'_>,
+        invite: &str,
+    ) -> Result<(), TeamError> {
         self.change(id, |t| {
             Self::require_manager(t, &actor.who.account)?;
             let before = t.invites.len();
@@ -747,15 +809,16 @@ impl Teams {
             t.log(e);
             Ok(())
         })
+        .await
     }
 
     /// Joins with an invite: `code` (a link or email invite's code), or
     /// without one, the open email invite for the caller's verified email
     /// in `team`. Joining from an enrolled device files that device's
     /// approval request. Returns the team and the role given.
-    pub fn join(
+    pub async fn join(
         &self,
-        actor: &Actor,
+        actor: &Actor<'_>,
         team: Option<&str>,
         code: Option<&str>,
         device_name: Option<&str>,
@@ -818,14 +881,14 @@ impl Teams {
                 Self::request_device(t, actor, device, device_name.unwrap_or(""), role)?;
             }
             Ok((t.clone(), role))
-        })
+        }).await
     }
 
     /// Accepts every open email invite for the actor's verified email (a
     /// signed-in, enrolled device listing its machines): the way an
     /// invited person joins with any client, including ones that predate
     /// teams. Returns the teams joined.
-    pub fn accept_email_invites(&self, actor: &Actor, device_name: &str) -> Vec<String> {
+    pub async fn accept_email_invites(&self, actor: &Actor<'_>, device_name: &str) -> Vec<String> {
         let Some(email) = actor.who.email.as_deref() else {
             return Vec::new();
         };
@@ -835,16 +898,14 @@ impl Teams {
             .filter(|(t, _)| t.role_of(&actor.who.account).is_none())
             .map(|(t, _)| t.id)
             .collect();
-        pending
-            .into_iter()
-            .filter(|id| {
-                self.join(actor, Some(id), None, Some(device_name))
-                    .map_err(
-                        |e| tracing::warn!(team = %id, error = %e, "email invite not accepted"),
-                    )
-                    .is_ok()
-            })
-            .collect()
+        let mut joined = Vec::new();
+        for id in pending {
+            match self.join(actor, Some(&id), None, Some(device_name)).await {
+                Ok(_) => joined.push(id),
+                Err(e) => tracing::warn!(team = %id, error = %e, "email invite not accepted"),
+            }
+        }
+        joined
     }
 
     /// Account deletion: removes `account` (and anything addressed to
@@ -855,108 +916,117 @@ impl Teams {
     /// their email or created by them are revoked, their device approvals
     /// are removed and their name or email in a team's audit log becomes
     /// "deleted account". Returns the number of teams changed. Idempotent.
-    pub fn erase_account(&self, account: &str, emails: &[String]) -> Result<usize, TeamError> {
+    pub async fn erase_account(
+        &self,
+        account: &str,
+        emails: &[String],
+    ) -> Result<usize, TeamError> {
         const GONE: &str = "deleted account";
         let is_me = |s: &str| s == account || emails.iter().any(|e| e.eq_ignore_ascii_case(s));
-        let mut state = self.state.lock().expect("teams");
-        let mut next = state.teams.clone();
-        let mut changed = 0;
-        let ids: Vec<String> = next.keys().cloned().collect();
-        for id in ids {
-            let team = next.get_mut(&id).expect("team");
-            let before = team.clone();
-            let role = team.role_of(account);
-            if role == Some(TeamRole::Owner) {
-                let heir = team
-                    .members
-                    .iter()
-                    .filter(|m| m.account != account)
-                    .min_by_key(|m| (m.role != TeamRole::Admin, m.joined_at))
-                    .map(|m| m.account.clone());
-                match heir {
-                    None => {
-                        next.remove(&id);
-                        changed += 1;
-                        continue;
-                    }
-                    Some(heir) => {
-                        if let Some(m) = team.members.iter_mut().find(|m| m.account == heir) {
-                            m.role = TeamRole::Owner;
+        let (committed, changed) = {
+            let mut state = self.state.lock().expect("teams");
+            let mut next = state.teams.clone();
+            let mut changed = 0;
+            let ids: Vec<String> = next.keys().cloned().collect();
+            for id in ids {
+                let team = next.get_mut(&id).expect("team");
+                let before = team.clone();
+                let role = team.role_of(account);
+                if role == Some(TeamRole::Owner) {
+                    let heir = team
+                        .members
+                        .iter()
+                        .filter(|m| m.account != account)
+                        .min_by_key(|m| (m.role != TeamRole::Admin, m.joined_at))
+                        .map(|m| m.account.clone());
+                    match heir {
+                        None => {
+                            next.remove(&id);
+                            changed += 1;
+                            continue;
                         }
-                        let e = TeamAudit {
-                            ts: now_secs(),
-                            kind: "role_changed".into(),
-                            actor: GONE.into(),
-                            device: None,
-                            subject: None,
-                            machine: None,
-                            detail: Some(
-                                "the owner's account was deleted; ownership passed on".into(),
-                            ),
-                        };
-                        team.log(e);
+                        Some(heir) => {
+                            if let Some(m) = team.members.iter_mut().find(|m| m.account == heir) {
+                                m.role = TeamRole::Owner;
+                            }
+                            let e = TeamAudit {
+                                ts: now_secs(),
+                                kind: "role_changed".into(),
+                                actor: GONE.into(),
+                                device: None,
+                                subject: None,
+                                machine: None,
+                                detail: Some(
+                                    "the owner's account was deleted; ownership passed on".into(),
+                                ),
+                            };
+                            team.log(e);
+                        }
                     }
                 }
-            }
-            if role.is_some() {
-                team.members.retain(|m| m.account != account);
-                team.log(TeamAudit {
-                    ts: now_secs(),
-                    kind: "member_left".into(),
-                    actor: GONE.into(),
-                    device: None,
-                    subject: None,
-                    machine: None,
-                    detail: Some("account deleted".into()),
-                });
-            }
-            team.devices.retain(|d| d.account != account);
-            // Machines it contributed (a deleted owner's machines are gone).
-            let theirs: Vec<String> = team
-                .grants
-                .iter()
-                .filter(|(_, g)| g.owner == account)
-                .map(|(m, _)| m.clone())
-                .collect();
-            for m in theirs {
-                team.drop_machine(&m);
-            }
-            team.invites
-                .retain(|i| i.created_by != account && !i.email.as_deref().is_some_and(is_me));
-            for e in &mut team.audit {
-                let by_me = is_me(&e.actor);
-                if by_me {
-                    // What they did keeps its place in the log, without who
-                    // or on what device (a device's name can be a person's).
-                    e.actor = GONE.into();
-                    e.device = None;
-                    e.detail = None;
+                if role.is_some() {
+                    team.members.retain(|m| m.account != account);
+                    team.log(TeamAudit {
+                        ts: now_secs(),
+                        kind: "member_left".into(),
+                        actor: GONE.into(),
+                        device: None,
+                        subject: None,
+                        machine: None,
+                        detail: Some("account deleted".into()),
+                    });
                 }
-                if e.subject.as_deref().is_some_and(is_me) {
-                    e.subject = Some(GONE.into());
-                    e.detail = None;
+                team.devices.retain(|d| d.account != account);
+                // Machines it contributed (a deleted owner's machines are gone).
+                let theirs: Vec<String> = team
+                    .grants
+                    .iter()
+                    .filter(|(_, g)| g.owner == account)
+                    .map(|(m, _)| m.clone())
+                    .collect();
+                for m in theirs {
+                    team.drop_machine(&m);
                 }
-                // Anywhere else their id or an address appears in a line.
-                if let Some(d) = &mut e.detail {
-                    *d = scrub(d, account, emails, GONE);
+                team.invites
+                    .retain(|i| i.created_by != account && !i.email.as_deref().is_some_and(is_me));
+                for e in &mut team.audit {
+                    let by_me = is_me(&e.actor);
+                    if by_me {
+                        // What they did keeps its place in the log, without who
+                        // or on what device (a device's name can be a person's).
+                        e.actor = GONE.into();
+                        e.device = None;
+                        e.detail = None;
+                    }
+                    if e.subject.as_deref().is_some_and(is_me) {
+                        e.subject = Some(GONE.into());
+                        e.detail = None;
+                    }
+                    // Anywhere else their id or an address appears in a line.
+                    if let Some(d) = &mut e.detail {
+                        *d = scrub(d, account, emails, GONE);
+                    }
+                    if let Some(d) = &mut e.subject {
+                        *d = scrub(d, account, emails, GONE);
+                    }
+                    e.actor = scrub(&e.actor, account, emails, GONE);
                 }
-                if let Some(d) = &mut e.subject {
-                    *d = scrub(d, account, emails, GONE);
+                if *team != before {
+                    changed += 1;
                 }
-                e.actor = scrub(&e.actor, account, emails, GONE);
             }
-            if *team != before {
-                changed += 1;
-            }
+            let committed = if next != state.teams {
+                let undo = MapUndo::diff(&state.teams, &next);
+                state.teams = next;
+                Some(self.commit(&state, undo))
+            } else {
+                None
+            };
+            (committed, changed)
+        };
+        if let Some(c) = committed {
+            self.settle(c).await?;
         }
-        if next != state.teams {
-            let before = std::mem::replace(&mut state.teams, next);
-            if let Err(e) = self.persist(&state) {
-                state.teams = before;
-                return Err(e);
-            }
-        }
-        drop(state);
         self.opened
             .lock()
             .expect("opened")
@@ -981,12 +1051,10 @@ impl Teams {
             dropped += n;
         }
         if dropped > 0 {
-            let before = std::mem::replace(&mut state.teams, next);
-            if let Err(e) = self.persist(&state) {
-                tracing::warn!(error = %e, "team audit retention not applied; will retry");
-                state.teams = before;
-                return 0;
-            }
+            // Queued, not awaited (an hourly sweep): a failed write is
+            // counted (store `teams`) and the next write saves the trim.
+            state.teams = next;
+            self.persist(&state).detach();
         }
         dropped
     }
@@ -1013,7 +1081,7 @@ impl Teams {
     }
 
     /// Leaves a team (not its owner).
-    pub fn leave(&self, id: &str, actor: &Actor) -> Result<Team, TeamError> {
+    pub async fn leave(&self, id: &str, actor: &Actor<'_>) -> Result<Team, TeamError> {
         self.change(id, |t| {
             match t.role_of(&actor.who.account) {
                 None => return Err(no_team()),
@@ -1030,6 +1098,7 @@ impl Teams {
             t.drop_machines_of(&actor.who.account, actor);
             Ok(t.clone())
         })
+        .await
     }
 
     /// The member `who` names: an account id or an email.
@@ -1044,7 +1113,12 @@ impl Teams {
 
     /// Removes a member: the owner removes anyone else, an admin removes
     /// members. Returns the removed member.
-    pub fn remove_member(&self, id: &str, actor: &Actor, who: &str) -> Result<Member, TeamError> {
+    pub async fn remove_member(
+        &self,
+        id: &str,
+        actor: &Actor<'_>,
+        who: &str,
+    ) -> Result<Member, TeamError> {
         self.change(id, |t| {
             let mine = Self::require_manager(t, &actor.who.account)?;
             let target = Self::find_member(t, who)
@@ -1070,13 +1144,14 @@ impl Teams {
             t.log(e);
             Ok(target)
         })
+        .await
     }
 
     /// Changes a member's role between `member` and `admin` (owner only).
-    pub fn set_role(
+    pub async fn set_role(
         &self,
         id: &str,
-        actor: &Actor,
+        actor: &Actor<'_>,
         who: &str,
         role: TeamRole,
     ) -> Result<Member, TeamError> {
@@ -1137,13 +1212,14 @@ impl Teams {
             }
             Ok(after)
         })
+        .await
     }
 
     /// Files (or keeps) `device`'s approval request; an owner's or admin's
     /// own device is approved at once.
     fn request_device(
         t: &mut Team,
-        actor: &Actor,
+        actor: &Actor<'_>,
         device: &str,
         name: &str,
         role: TeamRole,
@@ -1191,10 +1267,10 @@ impl Teams {
     }
 
     /// A member asks for its device to be approved (idempotent).
-    pub fn request_approval(
+    pub async fn request_approval(
         &self,
         id: &str,
-        actor: &Actor,
+        actor: &Actor<'_>,
         device_name: &str,
     ) -> Result<TeamDevice, TeamError> {
         let device = actor.device.ok_or_else(|| {
@@ -1207,14 +1283,15 @@ impl Teams {
                 .cloned()
                 .ok_or_else(|| TeamError::Storage("device request not kept".into()))
         })
+        .await
     }
 
     /// Approves or denies a member device (owner or admin). `device` is the
     /// relay device id; `account` disambiguates if two members share one.
-    pub fn decide_device(
+    pub async fn decide_device(
         &self,
         id: &str,
-        actor: &Actor,
+        actor: &Actor<'_>,
         device: &str,
         approve: bool,
     ) -> Result<TeamDevice, TeamError> {
@@ -1249,16 +1326,16 @@ impl Teams {
             ));
             t.log(e);
             Ok(out)
-        })
+        }).await
     }
 
     /// Adds a machine the actor owns to the team (owner or admin).
     /// `host` is the record of the host providing it, if any; `declared_os`
     /// is what the client says the Space runs.
-    pub fn add_machine(
+    pub async fn add_machine(
         &self,
         id: &str,
-        actor: &Actor,
+        actor: &Actor<'_>,
         record: &MachineRecord,
         _host: Option<&MachineRecord>,
         declared_os: Option<&str>,
@@ -1301,14 +1378,15 @@ impl Teams {
             t.log(e);
             Ok(t.clone())
         })
+        .await
     }
 
     /// Takes a machine off the team: an owner or admin, or the machine's
     /// own owner.
-    pub fn remove_machine(
+    pub async fn remove_machine(
         &self,
         id: &str,
-        actor: &Actor,
+        actor: &Actor<'_>,
         machine: &str,
         machine_owner: Option<&str>,
     ) -> Result<Team, TeamError> {
@@ -1336,6 +1414,7 @@ impl Teams {
             t.log(e);
             Ok(t.clone())
         })
+        .await
     }
 
     /// Forgets a machine removed from the directory (every team).
@@ -1360,9 +1439,7 @@ impl Teams {
         // failed write is counted (store `teams`); the next team write
         // saves it.
         if changed {
-            if let Err(e) = self.persist(&state) {
-                tracing::warn!(error = %e, "teams not persisted");
-            }
+            self.persist(&state).detach();
         }
     }
 
@@ -1478,7 +1555,7 @@ impl Teams {
             who,
             device: Some(device),
         };
-        let result = self.change(team, |t| {
+        let result = self.change_queued(team, |t| {
             let role = t.role_of(&who.account).ok_or_else(no_team)?;
             Self::request_device(t, &actor, device, "", role)?;
             let d = t
@@ -1535,7 +1612,7 @@ impl Teams {
             return;
         }
         let actor = Actor { who, device };
-        let _ = self.change(team, |t| {
+        let _ = self.change_queued(team, |t| {
             let mut e = actor.entry("machine_opened");
             e.machine = Some(machine.to_owned());
             t.log(e);
@@ -1598,8 +1675,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn roles_invites_devices_and_machines() {
+    #[tokio::test]
+    async fn roles_invites_devices_and_machines() {
         let teams = Teams::in_memory();
         let ada = who("ada", "ada@x.io");
         let bob = who("bob", "bob@x.io");
@@ -1616,19 +1693,21 @@ mod tests {
             who: &eve,
             device: Some("dev_eve"),
         };
-        let t = teams.create(&a, "AIGIS").unwrap();
+        let t = teams.create(&a, "AIGIS").await.unwrap();
 
         // Email invite: only that email joins, once.
         let inv = teams
             .invite(&t.id, &a, Some("Bob@x.io"), TeamRole::Member, None)
+            .await
             .unwrap();
         assert_eq!(inv.invite.email.as_deref(), Some("bob@x.io"));
         assert!(matches!(
-            teams.join(&e, None, Some(&inv.code), None),
+            teams.join(&e, None, Some(&inv.code), None).await,
             Err(TeamError::Forbidden(_))
         ));
         let (_, role) = teams
             .join(&b, None, Some(&inv.code), Some("bob mac"))
+            .await
             .unwrap();
         assert_eq!(role, TeamRole::Member);
         // Bob's joining device waits for approval.
@@ -1638,25 +1717,30 @@ mod tests {
 
         // A member cannot invite, add machines, or approve.
         assert!(matches!(
-            teams.invite(&t.id, &b, None, TeamRole::Member, None),
+            teams.invite(&t.id, &b, None, TeamRole::Member, None).await,
             Err(TeamError::Forbidden(_))
         ));
         assert!(matches!(
-            teams.decide_device(&t.id, &b, "dev_bob", true),
+            teams.decide_device(&t.id, &b, "dev_bob", true).await,
             Err(TeamError::Forbidden(_))
         ));
 
         // Link invite: anyone with the code joins.
         let link = teams
             .invite(&t.id, &a, None, TeamRole::Member, Some(2))
+            .await
             .unwrap();
-        teams.join(&e, None, Some(&link.code), None).unwrap();
-        assert!(teams.join(&e, None, Some("team-0.bad"), None).is_err());
+        teams.join(&e, None, Some(&link.code), None).await.unwrap();
+        assert!(teams
+            .join(&e, None, Some("team-0.bad"), None)
+            .await
+            .is_err());
 
         // Machines: the owner adds one it owns, whatever OS (Macs too).
         let linux = record("space-linux0001", "ada");
         teams
             .add_machine(&t.id, &a, &linux, None, Some("linux"))
+            .await
             .unwrap();
         teams
             .add_machine(
@@ -1666,6 +1750,7 @@ mod tests {
                 None,
                 Some("macos"),
             )
+            .await
             .unwrap();
         // A Space a Mac provides, and the whole Mac (a host).
         let mut on_mac = record("space-onmac0001", "ada");
@@ -1674,8 +1759,12 @@ mod tests {
         mac_host.meta.insert(META_HOST_OS.into(), "macos".into());
         teams
             .add_machine(&t.id, &a, &on_mac, Some(&mac_host), None)
+            .await
             .unwrap();
-        teams.add_machine(&t.id, &a, &mac_host, None, None).unwrap();
+        teams
+            .add_machine(&t.id, &a, &mac_host, None, None)
+            .await
+            .unwrap();
         // Not the owner of the machine: refused.
         assert!(teams
             .add_machine(
@@ -1685,6 +1774,7 @@ mod tests {
                 None,
                 Some("linux")
             )
+            .await
             .is_err());
 
         assert_eq!(teams.access(&linux, None, "bob")[0].1, TeamRole::Member);
@@ -1708,7 +1798,10 @@ mod tests {
             teams.check_device(&t.id, &bob, Some("dev_bob2"), "space-linux0001"),
             DeviceCheck::Refused(_)
         ));
-        teams.decide_device(&t.id, &a, "dev_bob", true).unwrap();
+        teams
+            .decide_device(&t.id, &a, "dev_bob", true)
+            .await
+            .unwrap();
         assert_eq!(
             teams.check_device(&t.id, &bob, Some("dev_bob"), "space-linux0001"),
             DeviceCheck::Approved
@@ -1726,17 +1819,28 @@ mod tests {
         // Roles: only the owner promotes; an admin cannot remove an admin.
         assert!(teams
             .set_role(&t.id, &b, "eve@x.io", TeamRole::Admin)
+            .await
             .is_err());
         teams
             .set_role(&t.id, &a, "eve@x.io", TeamRole::Admin)
+            .await
             .unwrap();
-        teams.set_role(&t.id, &a, "bob", TeamRole::Admin).unwrap();
-        assert!(teams.remove_member(&t.id, &e, "bob").is_err());
-        teams.set_role(&t.id, &a, "bob", TeamRole::Member).unwrap();
-        teams.remove_member(&t.id, &e, "bob@x.io").unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Admin)
+            .await
+            .unwrap();
+        assert!(teams.remove_member(&t.id, &e, "bob").await.is_err());
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Member)
+            .await
+            .unwrap();
+        teams.remove_member(&t.id, &e, "bob@x.io").await.unwrap();
         assert!(teams.access(&linux, None, "bob").is_empty());
-        assert!(teams.remove_member(&t.id, &e, "ada").is_err());
-        assert!(teams.leave(&t.id, &a).is_err(), "the owner deletes instead");
+        assert!(teams.remove_member(&t.id, &e, "ada").await.is_err());
+        assert!(
+            teams.leave(&t.id, &a).await.is_err(),
+            "the owner deletes instead"
+        );
 
         // The audit names every step.
         let kinds: Vec<_> = teams
@@ -1766,13 +1870,13 @@ mod tests {
 
         teams.forget_machine("space-linux0001");
         assert!(teams.access(&linux, None, "eve").is_empty());
-        assert!(teams.delete(&t.id, &e).is_err());
-        teams.delete(&t.id, &a).unwrap();
+        assert!(teams.delete(&t.id, &e).await.is_err());
+        teams.delete(&t.id, &a).await.unwrap();
         assert!(teams.teams_of("ada").is_empty());
     }
 
-    #[test]
-    fn demoting_an_admin_resets_only_the_devices_their_role_approved() {
+    #[tokio::test]
+    async fn demoting_an_admin_resets_only_the_devices_their_role_approved() {
         let teams = Teams::in_memory();
         let ada = who("ada", "ada@x.io");
         let bob = who("bob", "bob@x.io");
@@ -1780,10 +1884,11 @@ mod tests {
             who: &ada,
             device: Some("dev_ada"),
         };
-        let t = teams.create(&a, "Demote").unwrap();
-        teams.request_approval(&t.id, &a, "ada mac").unwrap();
+        let t = teams.create(&a, "Demote").await.unwrap();
+        teams.request_approval(&t.id, &a, "ada mac").await.unwrap();
         let inv = teams
             .invite(&t.id, &a, Some("bob@x.io"), TeamRole::Member, None)
+            .await
             .unwrap();
         let b = |device| Actor {
             who: &bob,
@@ -1791,13 +1896,21 @@ mod tests {
         };
         teams
             .join(&b("dev_bob_old"), None, Some(&inv.code), None)
+            .await
             .unwrap();
         // The owner approves Bob's first device by hand while he is a member.
-        teams.decide_device(&t.id, &a, "dev_bob_old", true).unwrap();
+        teams
+            .decide_device(&t.id, &a, "dev_bob_old", true)
+            .await
+            .unwrap();
         // Promoted: his next device is approved by the role alone.
-        teams.set_role(&t.id, &a, "bob", TeamRole::Admin).unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Admin)
+            .await
+            .unwrap();
         teams
             .request_approval(&t.id, &b("dev_bob_role"), "laptop")
+            .await
             .unwrap();
         let state_of = |id: &str| {
             let team = teams.get_for(&t.id, "ada").unwrap().0;
@@ -1810,7 +1923,10 @@ mod tests {
         assert_eq!(state_of("dev_bob_role").state, DeviceApproval::Approved);
         assert_eq!(state_of("dev_bob_role").decided_by.as_deref(), Some("auto"));
 
-        teams.set_role(&t.id, &a, "bob", TeamRole::Member).unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Member)
+            .await
+            .unwrap();
 
         let reset = state_of("dev_bob_role");
         assert_eq!(reset.state, DeviceApproval::Pending);
@@ -1832,14 +1948,21 @@ mod tests {
         // An admin approving the pending device again makes it explicit.
         teams
             .decide_device(&t.id, &a, "dev_bob_role", true)
+            .await
             .unwrap();
-        teams.set_role(&t.id, &a, "bob", TeamRole::Admin).unwrap();
-        teams.set_role(&t.id, &a, "bob", TeamRole::Member).unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Admin)
+            .await
+            .unwrap();
+        teams
+            .set_role(&t.id, &a, "bob", TeamRole::Member)
+            .await
+            .unwrap();
         assert_eq!(state_of("dev_bob_role").state, DeviceApproval::Approved);
     }
 
-    #[test]
-    fn persists_across_restarts() {
+    #[tokio::test]
+    async fn persists_across_restarts() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("teams.json");
         let ada = who("ada", "ada@x.io");
@@ -1849,9 +1972,10 @@ mod tests {
         };
         let id = {
             let teams = Teams::open(path.clone()).unwrap();
-            let t = teams.create(&a, "Persisted").unwrap();
+            let t = teams.create(&a, "Persisted").await.unwrap();
             teams
                 .invite(&t.id, &a, Some("bob@x.io"), TeamRole::Member, None)
+                .await
                 .unwrap();
             t.id
         };
@@ -1863,8 +1987,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_failed_write_is_counted_and_leaves_the_teams_as_they_were() {
+    #[tokio::test]
+    async fn a_failed_write_is_counted_and_leaves_the_teams_as_they_were() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("state");
@@ -1877,12 +2001,12 @@ mod tests {
             who: &ada,
             device: None,
         };
-        let t = teams.create(&a, "Kept").unwrap();
+        let t = teams.create(&a, "Kept").await.unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains('\n'), "compact JSON: {raw}");
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
-        let created = teams.create(&a, "Lost");
-        let renamed = teams.rename(&t.id, &a, "Renamed");
+        let created = teams.create(&a, "Lost").await;
+        let renamed = teams.rename(&t.id, &a, "Renamed").await;
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         // Root ignores directory permissions; nothing to check then.
         if storage.failures(store::TEAMS) > 0 {
@@ -1895,7 +2019,7 @@ mod tests {
             assert!(!ready);
             assert_eq!(body["failing"], serde_json::json!(["teams"]));
         }
-        teams.rename(&t.id, &a, "Renamed").unwrap();
+        teams.rename(&t.id, &a, "Renamed").await.unwrap();
         assert!(teams.writes_ok());
         let again = Teams::open(path).unwrap();
         assert_eq!(again.get_for(&t.id, "ada").unwrap().0.name, "Renamed");

@@ -25,7 +25,7 @@
     "additionalProperties": false,
     "properties": {
      "app": {
-      "description": "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
+      "description": "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
       "type": "string"
      },
      "on_screen_only": {
@@ -114,7 +114,7 @@
       "type": "string"
      },
      "since": {
-      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise.",
+      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change.",
       "type": "string"
      },
      "timeout_ms": {
@@ -125,7 +125,7 @@
       "type": "integer"
      },
      "tree_format": {
-      "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value). \"both\": the two together, as before; roughly doubles the size.",
+      "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value), plus `observations`: display-only rows such as static text, with role, label, value and frame but no element_token, for reading and verify_state only. \"both\": the two together, as before; roughly doubles the size.",
       "enum": [
        "markdown",
        "elements",
@@ -437,7 +437,7 @@
    "read_only": false
   },
   {
-   "description": "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels. Menu paths and refusals: `get_guide({topic:\"menus\"})`.",
+   "description": "Resolve an exact application-menu path one live native level at a time and normally invoke its final item through accessibility APIs. Missing, ambiguous, structurally mismatched, and other disabled segments fail closed; this tool never falls back to pixels. On macOS, a disabled Save (⌘S) in a background document window with a known document path is saved through the app’s scripting interface using Apple Events instead, without activating the app. This requires per-app Automation consent and may show macOS’s first-use consent prompt; denied permission refuses the save. Menu paths and refusals: `get_guide({topic:\"menus\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -596,6 +596,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
       "type": "integer"
@@ -659,6 +664,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
@@ -730,6 +740,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
@@ -870,6 +885,11 @@
      "to_y": {
       "description": "Drag end Y (same frame as from_x).",
       "type": "number"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Target window XID. Required.",
@@ -1249,6 +1269,11 @@
       "description": "Text to type.",
       "type": "string"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y; optional with element_token (the token carries it).",
       "type": "integer"
@@ -1355,6 +1380,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
       "type": "integer"
@@ -1450,6 +1480,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
       "type": "integer"
@@ -1499,6 +1534,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "value": {
       "description": "New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back.",
@@ -1618,6 +1658,11 @@
        "kind"
       ],
       "type": "object"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y; optional with element_token (the token carries it).",
@@ -2338,7 +2383,7 @@
    "read_only": true
   },
   {
-   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.",
+   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text. The macOS AX fallback applies only `*` (or a blank selector) and bare tag selectors and refuses any other selector instead of returning every element.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2607,7 +2652,7 @@
       "type": "string"
      },
      "input_route": {
-      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.",
+      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Its effect is confirmed when the target's own state changes or the click's handlers change the page; otherwise refresh page state and verify the expected postcondition.",
       "enum": [
        "trusted",
        "dom_event"
@@ -2649,7 +2694,7 @@
    "read_only": false
   },
   {
-   "description": "Type text into an exactly-bound tab via the Input domain. mode=\"insert_text\" (default) uses Input.insertText; mode=\"keystrokes\" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.",
+   "description": "Type text into an exactly-bound tab via the Input domain. mode=\"insert_text\" (default) uses Input.insertText; mode=\"keystrokes\" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. On a single-line input, a trailing newline is pressed as a real Enter (key, code, keyCode 13) after the text and the result reports enter_pressed; a textarea or contenteditable keeps it as content. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2684,7 +2729,7 @@
       "type": "string"
      },
      "text": {
-      "description": "Text to type.",
+      "description": "Text to type. End it with \\n to press Enter after the text on a single-line input.",
       "type": "string"
      }
     },
@@ -2975,7 +3020,7 @@
    "read_only": false
   },
   {
-   "description": "Start trajectory recording for the calling session. Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Without `session`, every call on the same connection is recorded, including named-session calls. Other connections and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.\n\nEach turn folder holds:\n\n- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.\n- `before.png` / `after.png` — target-window screenshots immediately before and after the action.\n- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.\n- `app_state.json` — post-action AX/UIA snapshot for the target pid.\n- `screenshot.png` — compatibility alias of `after.png`.\n- `action.json` — tool name, full input arguments, result summary, result-error flag, pid, click point (when applicable), ISO-8601 timestamp.\n- `click.png` — for dispatched click-family actions only, `before.png` with a red marker at the click point. A call refused before target resolution is explicitly not applicable instead.\n\nThe per-turn accessibility walk is bounded like `get_window_state`: `state_timeout_ms` (default 1000) caps each before/after walk, a walk that runs out of budget records the PARTIAL tree, and `evidence.json` carries `truncated`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `timeout_ms` for that phase. A provider that stops answering is abandoned after the budget plus a short grace and the phase is classified `state_capture_timeout`. Actions refused before dispatch (for example an unknown or expired `capture_id`) skip the state walk; their state is classified `not_applicable` / `action_refused_before_dispatch`. Pass `include_accessibility_tree: false` to record screenshots and actions without state.\n\nPass `redact_values` with any secret the session will type (for example a password): each occurrence in a turn's text files is replaced with `[redacted]`, and such turns are not replayed.\n\nTurn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.\n\n**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.\n\n**macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) under the daemon's Screen Recording grant, with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 (Tahoe), the first direct capture can also show a one-time consent asking to let Cua Driver bypass the system private window picker and directly access your screen and audio; choose Allow, or run `cua-driver permissions grant` beforehand to answer it up front. The recorder captures screen video only and does not enable system-audio capture.\n\n**Windows + Linux X11 use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.\n\n**Linux Wayland routes by compositor**: GNOME uses the trusted Shell helper's frames, wlroots compositors use `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) record the monitor the user grants through the xdg-desktop-portal ScreenCast (one consent dialog per install; requires a build with the `portal-capture` feature and ffmpeg on PATH). Unsupported combinations report the exact limitation in `last_error`.\n\nState persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.",
+   "description": "Start trajectory recording for the calling session. Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Without `session`, every call on the same connection is recorded, including named-session calls. Other connections and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.\n\nEach turn folder holds:\n\n- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.\n- `before.png` / `after.png` — target-window screenshots immediately before and after the action.\n- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.\n- `app_state.json` — post-action AX/UIA snapshot for the target pid.\n- `screenshot.png` — compatibility alias of `after.png`.\n- `action.json` — tool name, full input arguments, result summary, result-error flag, pid, click point (when applicable), ISO-8601 timestamp.\n- `click.png` — for dispatched click-family actions only, `before.png` with a red marker at the click point. A call refused before target resolution is explicitly not applicable instead.\n\nThe per-turn accessibility walk is bounded like `get_window_state`: `state_timeout_ms` (default 1000) caps each before/after walk, a walk that runs out of budget records the PARTIAL tree, and `evidence.json` carries `truncated`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `timeout_ms` for that phase. A provider that stops answering is abandoned after the budget plus a short grace and the phase is classified `state_capture_timeout`. Actions refused before dispatch (for example an unknown or expired `capture_id`) skip the state walk; their state is classified `not_applicable` / `action_refused_before_dispatch`. Pass `include_accessibility_tree: false` to record screenshots and actions without state.\n\nPass `redact_values` with any secret the session will type (for example a password): each occurrence in a turn's text files is replaced with `[redacted]`, and such turns are not replayed.\n\nTurn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.\n\n`<output_dir>/session.json` describes the whole recording: `schema_version`, `started_at_unix_ms` (the wall-clock start in Unix epoch milliseconds, unchanged when recording stops), `video` and `cursor`. `started_at_monotonic_ms` holds the same value for older readers; it is not a monotonic clock reading.\n\n**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.\n\n**macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) under the daemon's Screen Recording grant, with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 (Tahoe), the first direct capture can also show a one-time consent asking to let Cua Driver bypass the system private window picker and directly access your screen and audio; choose Allow, or run `cua-driver permissions grant` beforehand to answer it up front. The recorder captures screen video only and does not enable system-audio capture.\n\n**Windows + Linux X11 use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.\n\n**Linux Wayland routes by compositor**: GNOME uses the trusted Shell helper's frames, wlroots compositors use `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) record the monitor the user grants through the xdg-desktop-portal ScreenCast (one consent dialog per install; requires a build with the `portal-capture` feature and ffmpeg on PATH). Unsupported combinations report the exact limitation in `last_error`.\n\nState persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {

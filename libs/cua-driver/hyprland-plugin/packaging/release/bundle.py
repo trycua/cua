@@ -24,6 +24,7 @@ include/cua_hyprland/protocol.hpp
 include/cua_hyprland/session.hpp
 include/cua_hyprland/status.hpp
 src/drag_geometry.hpp
+src/external_pointer_motion.hpp
 src/foreground_route.hpp
 src/ime_popup_guard.cpp
 src/ime_popup_guard.hpp
@@ -42,10 +43,12 @@ src/primary_trace.hpp
 src/protocol.cpp
 src/seat_lifetime.hpp
 src/session.cpp
+src/session_availability.hpp
 src/status.cpp
 src/user_seat_guard.cpp
 src/user_seat_guard.hpp
 src/user_seat_policy.hpp
+src/wheel_steps.hpp
 tests/agent_key_repeat_test.py
 tests/cmake-api/CMakeLists.txt
 tests/cmake-api/include/src/Compositor.hpp
@@ -54,6 +57,7 @@ tests/cmake-api/include/src/plugins/PluginAPI.hpp
 tests/desktop_fault_policy_fixture.cpp
 tests/desktop_fault_policy_test.py
 tests/drag_geometry_test.cpp
+tests/external_pointer_motion_test.cpp
 tests/foreground_route_test.cpp
 tests/foreground_modifiers_test.py
 tests/input_grant_test.cpp
@@ -69,8 +73,10 @@ tests/plugin_api_test.cpp
 tests/plugin_input_lifetime_test.cpp
 tests/protocol_test.cpp
 tests/seat_lifetime_test.cpp
+tests/session_availability_test.cpp
 tests/status_test.cpp
 tests/transport_test.cpp
+tests/wheel_steps_test.cpp
 tests/user_seat_policy_test.cpp
 """.split()
 

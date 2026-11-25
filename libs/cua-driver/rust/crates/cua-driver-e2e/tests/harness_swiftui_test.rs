@@ -13,6 +13,8 @@
 //!   - text_body : Text with HARNESS_TEXT_MARKER_v1
 //!   - text_input: TextField with mirror Text
 //!   - popover   : .popover() — SwiftUI analogue of WinUI3 CommandBarFlyout
+//!   - menu_button: Menu (AXMenuButton) whose items appear after the press
+//!   - form_labels: grouped Form Toggle named only by AXTitleUIElement
 //!
 //! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_swiftui_test -- --ignored --nocapture
@@ -253,6 +255,67 @@ fn harness_swiftui_verify_state() {
     );
 }
 
+/// A grouped Form Toggle names its checkbox only through AXTitleUIElement
+/// (#6697): the row, `elements[].label`, `query` and a run_steps name lookup
+/// all read that label.
+#[test]
+#[ignore]
+fn harness_swiftui_form_toggle_label() {
+    run_case(
+        native_readonly_case(
+            "swiftui",
+            "form_toggle_label",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let snap = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "query": "Launch at login",
+                    "tree_format": "both",
+                    "include_screenshot": false,
+                    "timeout_ms": 10_000,
+                    "max_elements": 1_000
+                }),
+            );
+            assert!(
+                snap.tree_text().contains("AXCheckBox \"Launch at login\""),
+                "form toggle row is unlabelled:\n{}",
+                snap.tree_text()
+            );
+            let labelled = snap.structured()["elements"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|e| e["role"] == "AXCheckBox" && e["label"] == "Launch at login");
+            assert!(
+                labelled,
+                "no AXCheckBox element labelled \"Launch at login\": {}",
+                snap.structured()["elements"]
+            );
+
+            let found = driver.call(
+                "run_steps",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "steps": [{"wait_for": {"role": "checkbox", "name": "Launch at login"}}]
+                }),
+            );
+            assert!(
+                !found.is_error(),
+                "run_steps could not find the form toggle by name: {}",
+                found.text()
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_swiftui_counter_background() {
@@ -320,6 +383,54 @@ fn harness_swiftui_set_value_background() {
                     .tree_text()
                     .contains("swiftui-cua"),
                 "SwiftUI background AX value did not reach the field"
+            );
+        },
+    );
+}
+
+/// #6082: a background press on a SwiftUI `Menu` (AXMenuButton) returns once
+/// its menu is in the AX tree, so a snapshot taken right after it finds the
+/// items without a caller-side sleep.
+#[test]
+#[ignore]
+fn harness_swiftui_menu_button_background() {
+    run_background_case(
+        "menu_open",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            assert!(
+                !pre.tree_text().contains("New Item"),
+                "menu item present before the menu opened"
+            );
+            let index = element_index_by_id(pre.tree_text(), "menu-create")
+                .expect("menu-create element_index not found");
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": pre.element_token(index),
+                    "action": "press",
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "SwiftUI menu button press failed: {}",
+                response.text()
+            );
+            assert_eq!(
+                response.structured()["effect"],
+                "confirmed",
+                "menu press did not observe its menu: {}",
+                response.text()
+            );
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("New Item"),
+                "SwiftUI menu items absent from the snapshot taken right after the press"
             );
         },
     );

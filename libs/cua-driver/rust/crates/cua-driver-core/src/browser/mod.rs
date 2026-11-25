@@ -44,7 +44,9 @@ pub mod cdp_ws;
 pub mod download;
 pub mod engine;
 mod grant;
+mod input;
 mod keyed_gates;
+pub mod managed_policy;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 mod motion_policy;
@@ -68,11 +70,11 @@ pub use adapter_support::{
 };
 pub use engine::BrowserEngine;
 pub use platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    IsolatedBrowserProcess, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
-    PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects,
-    PrepareStrategy,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserForegroundWatch, BrowserPlatform,
+    BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareAttachment,
+    PrepareAttachmentKind, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
+    PrepareSideEffects, PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{

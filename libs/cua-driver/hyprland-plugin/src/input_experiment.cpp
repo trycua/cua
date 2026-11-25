@@ -1,6 +1,7 @@
 // Independent-seat design adapted from Dillon DuPont's Hyprland prototype.
 // TARGET uses independent resources; FOREGROUND_TARGET explicitly uses the primary seat.
 #include "input_experiment.hpp"
+#include "session_availability.hpp"
 #include "drag_geometry.hpp"
 #include "input_grant.hpp"
 #include "input_client_deadline.hpp"
@@ -10,6 +11,8 @@
 #include "owned_socket_path.hpp"
 #include "foreground_route.hpp"
 #include "keymap_equivalence.hpp"
+#include "wheel_steps.hpp"
+#include "external_pointer_motion.hpp"
 
 #include <src/Compositor.hpp>
 #include <src/devices/IKeyboard.hpp>
@@ -183,6 +186,21 @@ std::string refusal(std::string_view code) {
 std::string refusal(std::string_view code, ForegroundFailure failure) {
     return std::format(R"({{"ok":false,"code":"{}","detail":"{}"}})", code, failure.detail());
 }
+// One cursor, shared by both lanes and the desktop listeners.
+ExternalPointerMotion& pointer_motion() {
+    static ExternalPointerMotion motion;
+    return motion;
+}
+ExternalPointerMotion::Point cursor_position() {
+    const auto position = ::Pointer::mgr()->position();
+    return {position.x, position.y};
+}
+// The plugin's own warp is not the user's motion; a later refocus pass that
+// reports this position must not cancel the action that made it.
+void warp_pointer(const Vector2D& logical) {
+    ::Pointer::mgr()->warpTo(logical);
+    pointer_motion().rebase(cursor_position());
+}
 constexpr auto kDelivered = R"({"ok":true,"effect":"unverifiable","route":"synthetic_events"})";
 constexpr auto kForegroundDelivered = R"({"ok":true,"effect":"unverifiable","route":"primary_foreground"})";
 } // namespace
@@ -203,6 +221,9 @@ struct InputExperiment::Impl {
         InputRoute route = InputRoute::unbound;
         bool foreground_attempted = false;
         std::string challenge, token;
+        // Why the desktop, not this client, retired the bound target. The next
+        // action names it instead of calling a live window stale.
+        std::string cancelled_by;
         WP<Desktop::View::CWindow> window;
         WP<CWLSurfaceResource> surface;
         std::array<double, 6> geometry{};
@@ -498,10 +519,18 @@ struct InputExperiment::Impl {
         if (keymap_fd >= 0) close(keymap_fd);
     }
     std::uint32_t serial() const { return wl_display_next_serial(g_pCompositor->m_wlDisplay); }
-    bool available() const {
-        return !retired && !suspended && g_pCompositor->m_sessionActive && g_pCompositor->m_dpmsStateOn &&
-            !g_pCompositor->m_isShuttingDown && !g_pSessionLockManager->isSessionLocked();
+    SessionAvailability availability() const {
+        return {
+            .retired = retired,
+            .suspended = suspended,
+            .compositor_session_active = g_pCompositor->m_sessionActive,
+            .compositor_dpms_on = g_pCompositor->m_dpmsStateOn,
+            .shutting_down = g_pCompositor->m_isShuttingDown,
+            .session_locked = g_pSessionLockManager->isSessionLocked(),
+        };
     }
+    bool available() const { return availability().available(); }
+    std::string unavailable_refusal() const { return with_unavailable(refusal("session_unavailable"), availability()); }
     static void bind_seat(wl_client* client, void* data, std::uint32_t version, std::uint32_t id) {
         auto& self = *static_cast<Impl*>(data);
         if (self.seats.size() >= kMaxResources) { wl_client_post_no_memory(client); return; }
@@ -635,7 +664,7 @@ struct InputExperiment::Impl {
     void invalidate(Client& c, bool clear_pointer = true) {
         if (lease == &c || (clear_pointer && c.surface.lock() && pointer_target.surface() == c.surface.lock()))
             revoke("stale_target", !clear_pointer);
-        c.token.clear(); c.window.reset(); c.surface.reset();
+        c.token.clear(); c.window.reset(); c.surface.reset(); c.cancelled_by.clear();
         // Replay high-water belongs to the old target binding. A genuinely
         // new token may receive a shorter grant after Stop or target change.
         c.approved_deadline = 0;
@@ -705,12 +734,19 @@ struct InputExperiment::Impl {
         if (retain_pointer) release_pointer_button(); else leave_pointer();
         leave_keyboard(); retire_grant();
     }
-    void cancel_authority(std::string_view reason, bool retain_pointer = true) {
+    void cancel_authority(std::string_view reason, bool retain_pointer = true, bool report_reason = false) {
         revoke(reason, retain_pointer);
         // Invalidate pending authority as well as active work. This also makes
         // unused signed renewals unusable in experimental builds. Keep the lane
         // reservation; v3 requires fresh TARGET admission for the next action.
-        for (auto& c : clients) invalidate(*c, false);
+        for (auto& c : clients) {
+            // A later cancellation of an already retired binding keeps the
+            // first reason; only a bound target takes a new one.
+            const bool bound = !c->token.empty();
+            auto previous = std::move(c->cancelled_by);
+            invalidate(*c, false);
+            c->cancelled_by = report_reason && bound ? std::string(reason) : std::move(previous);
+        }
     }
     void desktop_transition() {
         // Signals can fire before Hyprland updates its aggregate state. Revoke
@@ -780,7 +816,12 @@ struct InputExperiment::Impl {
                 const bool started = c.foreground_attempted;
                 const bool drag_reply = self.drag && self.drag->client == &c;
                 self.revoke("foreground_partial_unknown", false, failure);
-                if (!drag_reply) self.send(c, refusal(ForegroundFailure::code(started), failure));
+                if (!drag_reply) {
+                    auto reply = refusal(ForegroundFailure::code(started), failure);
+                    if (failure.reason == ForegroundFailureReason::session_unavailable)
+                        reply = with_unavailable(std::move(reply), self.availability());
+                    self.send(c, reply);
+                }
             }
             catch (...) {
                 const bool foreground_partial = c.foreground_attempted;
@@ -819,7 +860,7 @@ struct InputExperiment::Impl {
         if (lease) { send(c, refusal("lease_busy")); return; }
         if (agent_conflict(**found)) { send(c, refusal("agent_target_busy")); return; }
         if (deadline <= (*found)->approved_deadline) { send(c, refusal("invalid_grant")); return; }
-        if (!available()) { send(c, refusal("session_unavailable")); return; }
+        if (!available()) { send(c, unavailable_refusal()); return; }
         // Bind steady-clock lifetime once; a clock change cannot extend a lease.
         lease = found->get(); capabilities = caps; expires = Clock::now() + std::chrono::milliseconds(deadline - now);
         lease->approved_deadline = deadline;
@@ -1009,7 +1050,7 @@ struct InputExperiment::Impl {
         if (focus_failure != ForegroundFailureReason::none) throw ForegroundFailure{focus_failure};
         if (!needs_pointer) { require_foreground(c); return; }
         foreground_activating = true;
-        ::Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
+        warp_pointer({x + c.geometry[0], y + c.geometry[1]});
         if (lease != &c) throw ForegroundFailure{ForegroundFailureReason::lease};
         const auto warp_failure = foreground_guard(c).dispatch_failure(false);
         if (warp_failure != ForegroundFailureReason::none) throw ForegroundFailure{warp_failure};
@@ -1022,7 +1063,7 @@ struct InputExperiment::Impl {
         require_foreground(c);
         const Vector2D local{x + c.geometry[0] - c.geometry[4], y + c.geometry[1] - c.geometry[5]};
         if (!point(c, x, y) || c.surface.lock()->at(local, true).first != c.surface.lock()) throw ForegroundFailure{ForegroundFailureReason::pointer_target};
-        ::Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
+        warp_pointer({x + c.geometry[0], y + c.geometry[1]});
         require_foreground(c);
         for (const auto& weak : foreground_pointers) {
             const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
@@ -1181,7 +1222,7 @@ struct InputExperiment::Impl {
             if (kProduction && (!InputGrant::single_operation(requested_cap) ||
                 (requested_cap == 16 && route != InputRoute::primary_foreground) ||
                 (requested_cap == 32 && route != InputRoute::independent))) { invalidate(c); send(c, refusal("unsupported")); return; }
-            if (kProduction && !available()) { invalidate(c, false); send(c, refusal("session_unavailable")); return; }
+            if (kProduction && !available()) { invalidate(c, false); send(c, unavailable_refusal()); return; }
             if (!input_layout_qualified(route, requested_cap == 2, layout_qualified())) { invalidate(c, false); send(c, refusal("unsupported_layout")); return; }
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
@@ -1241,9 +1282,13 @@ struct InputExperiment::Impl {
         const auto sequence = number(f[1]);
         if (sequence <= c.sequence) { send(c, refusal("replay")); return; }
         c.sequence = sequence;
-        if (c.token.empty() || f[2] != c.token || !refresh(c)) { send(c, refusal("stale_target")); return; }
+        if (c.token.empty() || f[2] != c.token || !refresh(c)) {
+            send(c, refusal(c.token.empty() && !c.cancelled_by.empty() ? std::string_view(c.cancelled_by) :
+                std::string_view("stale_target")));
+            return;
+        }
         if (number(f[3]) != c.revision) { if (kProduction) revoke("stale_geometry"); send(c, refusal("stale_geometry")); return; }
-        if (!available()) { revoke("session_unavailable", true); send(c, refusal("session_unavailable")); return; }
+        if (!available()) { revoke("session_unavailable", true); send(c, unavailable_refusal()); return; }
         if (!input_layout_qualified(c.route, cap == 2, layout_qualified())) { revoke("unsupported_layout", true); send(c, refusal("unsupported_layout")); return; }
         if (lease && Clock::now() >= expires) revoke("lease_expired");
         if (drag) { send(c, refusal("lease_busy")); return; }
@@ -1301,6 +1346,7 @@ struct InputExperiment::Impl {
                 for (auto& p : pointers) {
                     if (p->dead || !p->wl->resource() || !p->focus) continue;
                     if (p->wl->version() >= 5) p->wl->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
+                    send_wheel_steps(*p->wl, static_cast<wl_pointer_axis>(axis), value);
                     p->wl->sendAxis(event_ms(), static_cast<wl_pointer_axis>(axis), wl_fixed_from_double(value));
                     if (p->wl->version() >= 5) p->wl->sendFrame();
                 }
@@ -1370,6 +1416,7 @@ struct InputExperiment::Impl {
             for (const auto& weak : foreground_pointers) {
                 const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
                 p->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
+                send_wheel_steps(*p, static_cast<wl_pointer_axis>(axis), value);
                 p->sendAxis(event_ms(), static_cast<wl_pointer_axis>(axis), value); p->sendFrame();
             }
         } else if (command == "DRAG") {
@@ -1476,7 +1523,12 @@ struct InputExperiment::DesktopListeners {
             keyboard_focus = g_pSeatManager->m_events.keyboardFocusChange.listen([this] { primary_changed(); });
             // These notifications precede physical delivery. Retire our owned
             // press before the user's event can become held on the same resource.
-            mouse_move = Event::bus()->m_events.input.mouse.move.listen([this](Vector2D, Event::SCallbackInfo&) { external_input(); });
+            // Hyprland also emits mouse.move for its own refocus passes, with
+            // the cursor where it was. Only a moved cursor is the user's input.
+            pointer_motion().rebase(cursor_position());
+            mouse_move = Event::bus()->m_events.input.mouse.move.listen([this](Vector2D position, Event::SCallbackInfo&) {
+                if (pointer_motion().user_moved({position.x, position.y})) external_input();
+            });
             mouse_button = Event::bus()->m_events.input.mouse.button.listen([this](IPointer::SButtonEvent, Event::SCallbackInfo&) { external_input(); });
             mouse_axis = Event::bus()->m_events.input.mouse.axis.listen([this](IPointer::SAxisEvent, Event::SCallbackInfo&) { external_input(); });
             keyboard_key = Event::bus()->m_events.input.keyboard.key.listen([this](IKeyboard::SKeyEvent, Event::SCallbackInfo&) { external_input(); });
@@ -1499,13 +1551,13 @@ struct InputExperiment::DesktopListeners {
     void external_input() {
         for (auto& lane : owner.lanes_)
             if (lane->lease && lane->lease->route == InputRoute::primary_foreground)
-                lane->cancel_authority("foreground_interrupted", false);
+                lane->cancel_authority("foreground_interrupted", false, true);
     }
     void primary_changed() {
         for (auto& lane : owner.lanes_) {
             if ((lane->lease && lane->primary_conflict(*lane->lease)) ||
                 (lane->pointer_target.entered() && lane->primary_conflict(lane->pointer_target.surface())))
-                lane->cancel_authority("primary_target_busy", false);
+                lane->cancel_authority("primary_target_busy", false, true);
         }
     }
     void watch(PHLMONITOR monitor) {
@@ -1564,9 +1616,9 @@ std::string InputExperiment::status_json() const {
         if (!states.empty()) states += ',';
         const bool pointer_focus = std::ranges::any_of(lane->pointers, [](const auto& p) { return !p->dead && bool(p->focus); });
         const bool keyboard_focus = std::ranges::any_of(lane->keyboards, [](const auto& k) { return !k->dead && bool(k->focus); });
-        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{}}})",
+        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{},"availability":{}}})",
             lane->lane, lane->epoch, lane->desktop_generation, lane->reservation != nullptr, lane->socket_cleanup, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches,
-            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus);
+            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus, lane->availability().json());
     }
     // Aggregate legacy fields remain available to existing test probes.
     return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",

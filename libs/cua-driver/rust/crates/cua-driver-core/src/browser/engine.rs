@@ -58,7 +58,7 @@ use super::semantic::{
 };
 use super::store::{
     format_ref, BrowserStore, BrowserVisibility, FrameIdentity, FrameKind, FrameRef, RefEntry,
-    SemanticContinuation, SnapshotRecord, TabRecord, TargetRecord,
+    SemanticContinuation, SemanticScope, SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
@@ -1040,6 +1040,12 @@ impl BrowserEngine {
                             // consent. Cancel it before grant revocation so no
                             // socket-pool resource can outlive this refusal.
                             drop(reconnect);
+                            // The browser keeps the prompt of the connection
+                            // just abandoned; approving it would attach nothing.
+                            let _ = self
+                                .platform
+                                .dismiss_abandoned_existing_profile_consent(pid, grant.window_id)
+                                .await;
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;
@@ -2713,7 +2719,7 @@ impl BrowserEngine {
                 continuation.offset,
                 DEFAULT_SEMANTIC_NODE_BUDGET,
                 continuation.query.as_deref(),
-                continuation.scope_backend_node_id,
+                continuation.scope.as_ref(),
             );
             let start_index = snapshot
                 .refs
@@ -2753,7 +2759,7 @@ impl BrowserEngine {
                             SemanticContinuation {
                                 offset,
                                 query: continuation.query.clone(),
-                                scope_backend_node_id: continuation.scope_backend_node_id,
+                                scope: continuation.scope.clone(),
                                 oopif_supported: continuation.oopif_supported,
                                 oopif_frames: continuation.oopif_frames,
                             },
@@ -2764,12 +2770,16 @@ impl BrowserEngine {
             return Ok(outcome);
         }
 
-        let scope_backend_node_id = match scope_ref {
-            Some(external) => Some(
-                self.store
-                    .resolve_ref(session, target_id, tab_id, external)?
-                    .backend_node_id,
-            ),
+        let semantic_scope = match scope_ref {
+            Some(external) => {
+                let entry = self
+                    .store
+                    .resolve_ref(session, target_id, tab_id, external)?;
+                Some(SemanticScope {
+                    oopif_target_id: entry.frame.oopif_target_id,
+                    backend_node_id: entry.backend_node_id,
+                })
+            }
             None => None,
         };
         let record = self.store.get_target(session, target_id)?;
@@ -2905,7 +2915,7 @@ impl BrowserEngine {
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
             query,
-            scope_backend_node_id,
+            semantic_scope.as_ref(),
         );
         let next_offset = page.next_offset;
         let snapshot_id = self.store.mint_snapshot_id();
@@ -2939,7 +2949,7 @@ impl BrowserEngine {
                             SemanticContinuation {
                                 offset,
                                 query: query.map(str::to_owned),
-                                scope_backend_node_id,
+                                scope: semantic_scope.clone(),
                                 oopif_supported: matches!(oopif, OopifStatus::Attached(_)),
                                 oopif_frames: oopif.frames(),
                             },

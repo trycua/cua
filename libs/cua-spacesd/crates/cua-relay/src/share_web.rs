@@ -238,6 +238,7 @@ impl Default for ShareState {
             viewer: crate::viewer::ViewerLimits::default(),
             discovery: tokio::sync::OnceCell::new(),
             http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(3))
                 .timeout(Duration::from_secs(10))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()

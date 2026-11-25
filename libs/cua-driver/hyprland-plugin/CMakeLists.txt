@@ -115,6 +115,18 @@ if(BUILD_TESTING)
     target_compile_options(cua_hyprland_drag_geometry_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME cua_hyprland_drag_geometry_test COMMAND cua_hyprland_drag_geometry_test)
 
+    add_executable(cua_hyprland_external_pointer_motion_test tests/external_pointer_motion_test.cpp)
+    target_compile_features(cua_hyprland_external_pointer_motion_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_external_pointer_motion_test PRIVATE src)
+    target_compile_options(cua_hyprland_external_pointer_motion_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_external_pointer_motion_test COMMAND cua_hyprland_external_pointer_motion_test)
+
+    add_executable(cua_hyprland_wheel_steps_test tests/wheel_steps_test.cpp)
+    target_compile_features(cua_hyprland_wheel_steps_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_wheel_steps_test PRIVATE src)
+    target_compile_options(cua_hyprland_wheel_steps_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_wheel_steps_test COMMAND cua_hyprland_wheel_steps_test)
+
     add_test(NAME cua_hyprland_cmake_api_test
         COMMAND ${CMAKE_COMMAND}
             -S ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake-api
@@ -124,6 +136,12 @@ if(BUILD_TESTING)
     target_link_libraries(cua_hyprland_protocol_test PRIVATE cua_hyprland_protocol)
     target_compile_options(cua_hyprland_protocol_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME cua_hyprland_protocol_test COMMAND cua_hyprland_protocol_test)
+
+    add_executable(cua_hyprland_session_availability_test tests/session_availability_test.cpp)
+    target_compile_features(cua_hyprland_session_availability_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_session_availability_test PRIVATE src)
+    target_compile_options(cua_hyprland_session_availability_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_session_availability_test COMMAND cua_hyprland_session_availability_test)
 
     add_executable(cua_hyprland_status_test tests/status_test.cpp)
     target_link_libraries(cua_hyprland_status_test PRIVATE cua_hyprland_protocol)

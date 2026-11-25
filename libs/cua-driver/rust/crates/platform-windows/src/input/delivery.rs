@@ -331,8 +331,33 @@ pub fn background_unavailable_error_with_cause(
     kind: EventKind,
     cause: impl Into<String>,
 ) -> cua_driver_core::protocol::ToolResult {
+    refusal_with_cause(hwnd, kind, cause.into(), "refused")
+}
+
+/// Build the refusal for a failed background coordinate injection. A stroke
+/// that failed after it began may already have reached the target, so its
+/// effect is `unverifiable`; a failure before any input was sent stays
+/// `refused`.
+pub fn background_injection_error(
+    hwnd: u64,
+    kind: EventKind,
+    error: &anyhow::Error,
+) -> cua_driver_core::protocol::ToolResult {
+    let effect = if error.is::<crate::input::inject::StrokeInterrupted>() {
+        "unverifiable"
+    } else {
+        "refused"
+    };
+    refusal_with_cause(hwnd, kind, error.to_string(), effect)
+}
+
+fn refusal_with_cause(
+    hwnd: u64,
+    kind: EventKind,
+    cause: String,
+    effect: &str,
+) -> cua_driver_core::protocol::ToolResult {
     let class = read_class_name(hwnd);
-    let cause = cause.into();
     let cause_lower = cause.to_ascii_lowercase();
     let code = if cause_lower.contains("occluded") {
         "background_occluded"
@@ -357,6 +382,7 @@ pub fn background_unavailable_error_with_cause(
             "target_class": class,
             "event_kind": kind.name(),
             "cause": cause,
+            "effect": effect,
         }),
     )
 }
@@ -443,6 +469,23 @@ mod tests {
                 .as_ref()
                 .and_then(|v| v["code"].as_str()),
             Some("background_uipi_blocked")
+        );
+    }
+
+    #[test]
+    fn background_injection_error_reports_an_interrupted_stroke_as_unverifiable() {
+        let effect = |error: anyhow::Error| {
+            background_injection_error(0, EventKind::MouseMove, &error)
+                .structured_content
+                .and_then(|v| v["effect"].as_str().map(str::to_owned))
+        };
+        let interrupted = crate::input::inject::StrokeInterrupted(
+            "InjectSyntheticPointerInput(touch drag): failed".into(),
+        );
+        assert_eq!(effect(interrupted.into()).as_deref(), Some("unverifiable"));
+        assert_eq!(
+            effect(anyhow::anyhow!("target is occluded by another window")).as_deref(),
+            Some("refused")
         );
     }
 }

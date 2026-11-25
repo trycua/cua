@@ -577,7 +577,7 @@ impl Tool for LaunchAppTool {
                         unsafe {
                             CreateProcessW(
                                 PCWSTR(file_w.as_ptr()),
-                                PWSTR(command_line.as_mut_ptr()),
+                                Some(PWSTR(command_line.as_mut_ptr())),
                                 None,
                                 None,
                                 false,
@@ -808,10 +808,9 @@ impl Tool for LaunchAppTool {
             if !windows_json.is_empty() {
                 break;
             }
-            let wins =
-                tokio::task::spawn_blocking(move || crate::win32::list_windows_win32_first(pid))
-                    .await
-                    .unwrap_or_default();
+            let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                .await
+                .unwrap_or_default();
             if !wins.is_empty() {
                 let window_count = wins.len();
                 windows_json = wins.iter().enumerate().map(|(position, w)| json!({
@@ -869,7 +868,7 @@ impl Tool for LaunchAppTool {
                     for _ in 0..max_candidate_attempts {
                         total_attempts += 1;
                         let wins = tokio::task::spawn_blocking(move || {
-                            crate::win32::list_windows_win32_first(candidate_pid)
+                            crate::win32::list_windows(Some(candidate_pid))
                         })
                         .await
                         .unwrap_or_default();

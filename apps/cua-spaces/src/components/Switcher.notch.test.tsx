@@ -9,8 +9,24 @@ import type { SpacesListBridge } from "../native/spacesList";
 import { Switcher } from "./Switcher";
 
 const spaces: Space[] = [
-  { id: "this-mac", name: "This computer", os: "macos", status: "local", detail: "Local", lastUsedAt: 2, scene: "blank" },
-  { id: "direct:aurora", name: "Aurora", os: "linux", status: "running", detail: "Agent testing", lastUsedAt: 1, scene: "blank" },
+  {
+    id: "this-mac",
+    name: "This computer",
+    os: "macos",
+    status: "local",
+    detail: "Local",
+    lastUsedAt: 2,
+    scene: "blank",
+  },
+  {
+    id: "direct:aurora",
+    name: "Aurora",
+    os: "linux",
+    status: "running",
+    detail: "Agent testing",
+    lastUsedAt: 1,
+    scene: "blank",
+  },
 ];
 
 function fakeSpacesList(): SpacesListBridge {

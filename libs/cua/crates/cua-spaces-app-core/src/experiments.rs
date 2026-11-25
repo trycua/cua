@@ -6,16 +6,14 @@
 //!
 //! - Cua Volume ([`Experiment::CuaVolume`]): the first run's Volume page
 //!   (and its Done line) and Settings' Storage section;
-//! - Child Spaces ([`Experiment::ChildSpaces`]) and CI runners ([`Experiment::CiRunners`]): enforced, not only hidden. Their switches
-//!   are also kept in the cua home, where the daemon and `cua experiments`
-//!   read them; the shells load and save them through the app export
+//! - CI runners ([`Experiment::CiRunners`]): enforced, not only hidden. Its switch
+//!   is also kept in the cua home, where the daemon and `cua experiments`
+//!   read it; the shells load and save it through the app export
 //!   (`app_settings_load` and `app_settings_save`).
 //! - Public TCP shares ([`Experiment::TcpShares`]): enforced the same way.
-//! - Warm start ([`Experiment::WarmPools`]): enforced the same way. The cua
-//!   daemon keeps one prepared warm Space ready on this computer.
 //!
-//! Secure Spaces and Ask first used to be switches here; they are always on now, and a stored key
-//! of theirs is ignored (and gone after the next save).
+//! Secure Spaces, Ask first, Child Spaces and Warm start used to be switches here; they are
+//! always on now, and a stored key of theirs is ignored (and gone after the next save).
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -38,9 +36,6 @@ use crate::settings::{
 pub struct Experiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
-    /// on; the daemon enforces it (the switch is kept in the cua home).
-    pub child_spaces: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
     /// and the CI Runners page). Off unless turned on; the daemon and the
     /// `cua` command enforce it (the switch is kept in the cua home).
@@ -53,10 +48,6 @@ pub struct Experiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
-    /// Warm pools: one Linux Space kept ready, with its coding apps
-    /// installed, so the next Create from Home starts at once. Off unless
-    /// turned on; the daemon enforces it (the switch is kept in the cua home).
-    pub warm_pools: bool,
 }
 
 /// One experiment.
@@ -65,26 +56,20 @@ pub struct Experiments {
 pub enum Experiment {
     /// Cua Volume.
     CuaVolume,
-    /// Child Spaces.
-    ChildSpaces,
     /// CI runners.
     CiRunners,
     /// Public TCP shares.
     TcpShares,
     /// Mobile.
     Mobile,
-    /// Warm start.
-    WarmPools,
 }
 
 /// Every experiment, in the order Settings lists them.
-pub const ALL: [Experiment; 6] = [
+pub const ALL: [Experiment; 4] = [
     Experiment::CuaVolume,
-    Experiment::ChildSpaces,
     Experiment::CiRunners,
     Experiment::TcpShares,
     Experiment::Mobile,
-    Experiment::WarmPools,
 ];
 
 impl Experiment {
@@ -93,11 +78,9 @@ impl Experiment {
     pub fn id(self) -> &'static str {
         match self {
             Experiment::CuaVolume => "cua_volume",
-            Experiment::ChildSpaces => "child_spaces",
             Experiment::CiRunners => "ci_runners",
             Experiment::TcpShares => "tcp_shares",
             Experiment::Mobile => "mobile",
-            Experiment::WarmPools => "warm_pools",
         }
     }
 
@@ -110,11 +93,9 @@ impl Experiment {
     pub fn title(self) -> &'static str {
         match self {
             Experiment::CuaVolume => "Cua Volume",
-            Experiment::ChildSpaces => "Child Spaces",
             Experiment::CiRunners => "CI runners",
             Experiment::TcpShares => "Public TCP shares",
             Experiment::Mobile => "Phone app",
-            Experiment::WarmPools => "Warm start",
         }
     }
 
@@ -122,9 +103,6 @@ impl Experiment {
     pub fn description(self) -> &'static str {
         match self {
             Experiment::CuaVolume => "Memory and files your agents share across every Space.",
-            Experiment::ChildSpaces => {
-                "A Space can make Spaces of its own, inside a budget you set."
-            }
             Experiment::CiRunners => {
                 "Run GitHub Actions jobs in a fresh Space each, on this computer."
             }
@@ -133,9 +111,6 @@ impl Experiment {
             }
             Experiment::Mobile => {
                 "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
-            }
-            Experiment::WarmPools => {
-                "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
             }
         }
     }
@@ -146,11 +121,9 @@ impl Experiments {
     pub fn is_on(&self, e: Experiment) -> bool {
         match e {
             Experiment::CuaVolume => self.cua_volume,
-            Experiment::ChildSpaces => self.child_spaces,
             Experiment::CiRunners => self.ci_runners,
             Experiment::TcpShares => self.tcp_shares,
             Experiment::Mobile => self.mobile,
-            Experiment::WarmPools => self.warm_pools,
         }
     }
 
@@ -158,11 +131,9 @@ impl Experiments {
     pub fn with(mut self, e: Experiment, on: bool) -> Self {
         match e {
             Experiment::CuaVolume => self.cua_volume = on,
-            Experiment::ChildSpaces => self.child_spaces = on,
             Experiment::CiRunners => self.ci_runners = on,
             Experiment::TcpShares => self.tcp_shares = on,
             Experiment::Mobile => self.mobile = on,
-            Experiment::WarmPools => self.warm_pools = on,
         }
         self
     }
@@ -263,16 +234,12 @@ mod tests {
             [
                 "experiment:cua_volume",
                 "experiment:cua_volume-note",
-                "experiment:child_spaces",
-                "experiment:child_spaces-note",
                 "experiment:ci_runners",
                 "experiment:ci_runners-note",
                 "experiment:tcp_shares",
                 "experiment:tcp_shares-note",
                 "experiment:mobile",
                 "experiment:mobile-note",
-                "experiment:warm_pools",
-                "experiment:warm_pools-note",
             ]
         );
         for r in switches(&p) {
@@ -292,7 +259,7 @@ mod tests {
     #[test]
     fn the_always_on_features_have_no_switch_row_or_id() {
         let p = page(&Experiments::all_on());
-        for id in ["secure_spaces", "ask_first"] {
+        for id in ["secure_spaces", "ask_first", "child_spaces", "warm_pools"] {
             assert!(Experiment::parse(id).is_none(), "{id}");
             assert!(
                 p.sections[0]
@@ -307,6 +274,8 @@ mod tests {
         let x = Experiments::default();
         assert_eq!(choose(&x, "experiment:secure_spaces", "off"), x);
         assert_eq!(choose(&x, "experiment:ask_first", "on"), x);
+        assert_eq!(choose(&x, "experiment:child_spaces", "off"), x);
+        assert_eq!(choose(&x, "experiment:warm_pools", "on"), x);
     }
 
     #[test]
@@ -321,14 +290,7 @@ mod tests {
         assert_eq!(choose(&x, "experiment:nope", "on"), x);
         assert_eq!(
             Experiments::all_on().on_ids(),
-            [
-                "cua_volume",
-                "child_spaces",
-                "ci_runners",
-                "tcp_shares",
-                "mobile",
-                "warm_pools"
-            ]
+            ["cua_volume", "ci_runners", "tcp_shares", "mobile"]
         );
     }
 
@@ -337,14 +299,14 @@ mod tests {
         // Keys of switches that are gone (an older build's `yourCloud`,
         // `sharing`, `webUi`) and of future ones are ignored.
         let x: Experiments = serde_json::from_str(
-            r#"{"cuaVolume":true,"yourCloud":false,"sharing":false,"webUi":true,"secureSpaces":false,"askFirst":false,"someFutureExperiment":true}"#,
+            r#"{"cuaVolume":true,"yourCloud":false,"sharing":false,"webUi":true,"secureSpaces":false,"askFirst":false,"childSpaces":false,"warmPools":true,"someFutureExperiment":true}"#,
         )
         .unwrap();
         assert!(x.cua_volume);
         let back = serde_json::to_value(x).unwrap();
         assert_eq!(
             back,
-            serde_json::json!({"cuaVolume": true, "childSpaces": false, "ciRunners": false, "tcpShares": false, "mobile": false, "warmPools": false})
+            serde_json::json!({"cuaVolume": true, "ciRunners": false, "tcpShares": false, "mobile": false})
         );
         assert_eq!(
             serde_json::from_str::<Experiments>("{}").unwrap(),

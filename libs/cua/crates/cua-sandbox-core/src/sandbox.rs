@@ -192,7 +192,7 @@ impl NetworkMode {
 }
 
 /// Options for [`Sandboxes::create`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CreateOptions {
     /// Provider.
     pub provider: ProviderKind,
@@ -322,6 +322,51 @@ pub struct CreateOptions {
     /// share its pages ([`Sandboxes::checkpoint`], [`Sandboxes::fork`]). It
     /// never claims a warm-pool member. Other kinds ignore it.
     pub forkable: bool,
+}
+
+impl std::fmt::Debug for CreateOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateOptions")
+            .field("provider", &self.provider)
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("ready_timeout_given", &self.ready_timeout_given)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("env_token", &self.env_token.as_ref().map(|_| "<redacted>"))
+            .field("firmware", &self.firmware)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_credentials",
+                &self.registry_credentials.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("container_runtime", &self.container_runtime)
+            .field("network", &self.network)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("egress", &self.egress)
+            .field("network_settings", &self.network_settings)
+            .field("network_tree", &self.network_tree)
+            .field("owner_pid", &self.owner_pid)
+            .field("contrib", &self.contrib)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("mounts", &self.mounts)
+            .field("ephemeral_name", &self.ephemeral_name)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
 }
 
 impl CreateOptions {

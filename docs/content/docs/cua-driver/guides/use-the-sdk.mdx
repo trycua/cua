@@ -134,7 +134,7 @@ async def main() -> None:
             pid=app.pid, window_id=window.window_id, session=None, query=None,
             include_accessibility_tree=True, include_screenshot=True,
             screenshot_out_file=None, max_elements=None, max_depth=None,
-            max_dimension=None,
+            max_dimension=None, max_image_dimension=None,
         )
 
         async def snapshot():
@@ -250,7 +250,9 @@ Python uses `snake_case`, TypeScript `camelCase`. Desktop methods mirror the
 [MCP tools](/cua-driver/reference/mcp-tools) (`get_window_state`, `click`,
 `type_text`, …); `list_tools_json()` and `call_tool()` reach the full generic
 tool surface. Results are `ToolResult` (`text`, `images`, `structured_json`,
-`is_error`, `error_code`, `verified`, `degraded`). On macOS, a direct runtime
+`is_error`, `error_code`, `action`, `verification`, `degraded`, `raw_json`);
+for an action tool, `action.effect` says whether the change was confirmed.
+On macOS, a direct runtime
 cannot draw the agent cursor unless the host provides an AppKit main-thread
 adapter; it returns `facility_unavailable`. Use a private worker when you need
 the overlay.
@@ -296,6 +298,15 @@ Python exposes the same objects:
   endpoint: discard old clients and MCP proxies. `start()` coalesces callers,
   `stop()` is idempotent, and `waitForExit(generation)` reports an unexpected
   exit.
+- **Turn off the agent cursor.** Build the host with
+  `EmbeddedCuaDriverHost.withOptions()` (`with_options()` in Python) and set
+  `noOverlay` (`no_overlay`) to pass `--no-overlay` to the daemon. It is off
+  by default.
+- **Read why a start failed.** Set `captureStderr` (`capture_stderr`) in the
+  same options. After a failed start, `lastDiagnostics()`
+  (`last_diagnostics()`) returns up to the last 65,536 bytes of daemon stderr,
+  the exit code when there is one, and whether the tail was truncated. The text
+  is raw stderr, so keep it out of telemetry.
 - **Check it.** Call `check_permissions`; on macOS embedded mode returns
   `source.attribution: "host"` and never raises its own prompts. Call
   `health_report` with `{"include":["bundle_identity"]}` to confirm the parent

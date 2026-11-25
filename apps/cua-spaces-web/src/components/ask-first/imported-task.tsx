@@ -6,7 +6,19 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, LaptopIcon, Loader2Icon, MonitorIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { folderLabel, resumeContext, useAgents, useAgentTimeline, useBridge, useMachines, type AgentTimeline, type HostStatus, type PastThread, type ThreadAgent, type TranscriptItem } from "@/bridge";
+import {
+  folderLabel,
+  resumeContext,
+  useAgents,
+  useAgentTimeline,
+  useBridge,
+  useMachines,
+  type AgentTimeline,
+  type HostStatus,
+  type PastThread,
+  type ThreadAgent,
+  type TranscriptItem,
+} from "@/bridge";
 import { Timeline } from "@/components/agents/timeline";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
@@ -120,13 +132,17 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold">{chat.title}</h2>
           <p className="truncate text-[13px] text-muted-foreground">
-            {folder ? t("home.task.imported_detail_folder", { name, folder, ago: agoLabel(chat.lastActiveMs) }) : t("home.task.imported_detail", { name, ago: agoLabel(chat.lastActiveMs) })}
+            {folder
+              ? t("home.task.imported_detail_folder", { name, folder, ago: agoLabel(chat.lastActiveMs) })
+              : t("home.task.imported_detail", { name, ago: agoLabel(chat.lastActiveMs) })}
           </p>
         </div>
       </header>
       <div className="flex min-h-0 flex-1 flex-col">
         <p className="mx-auto w-full max-w-[720px] shrink-0 px-8 pt-6 text-[12px] font-medium text-muted-foreground" data-earlier-heading="">
-          {history?.earlierOmitted ? t("home.task.earlier_omitted", { computer: thisComputerText() }) : t("home.task.earlier", { computer: thisComputerText() })}
+          {history?.earlierOmitted
+            ? t("home.task.earlier_omitted", { computer: thisComputerText() })
+            : t("home.task.earlier", { computer: thisComputerText() })}
           {history?.earlierOmitted ? (
             <button
               type="button"
@@ -165,7 +181,9 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
         )}
         <div className="shrink-0 px-8 pb-6">
           <div className="mx-auto flex max-w-[720px] flex-col gap-2">
-            <div /* design-ok: the message box, as Home's and the task view's */ className="flex min-h-14 items-end gap-2 rounded-2xl border bg-card py-1.5 pr-1.5 pl-5 shadow-xs dark:bg-white/[0.03]">
+            <div
+              /* design-ok: the message box, as Home's and the task view's */ className="flex min-h-14 items-end gap-2 rounded-2xl border bg-card py-1.5 pr-1.5 pl-5 shadow-xs dark:bg-white/[0.03]"
+            >
               <textarea
                 value={reply}
                 rows={1}
@@ -189,7 +207,10 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
                 aria-label={t("home.task.send")}
                 disabled={starting || !reply.trim()}
                 onClick={() => void send(reply)}
-                className={cn("flex size-11 shrink-0 items-center justify-center rounded-full", reply.trim() && !starting ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground")}
+                className={cn(
+                  "flex size-11 shrink-0 items-center justify-center rounded-full",
+                  reply.trim() && !starting ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground",
+                )}
               >
                 {starting ? <Loader2Icon className="size-5 animate-spin" /> : <ArrowUpIcon className="size-5" />}
               </button>
@@ -221,8 +242,13 @@ export function ContinueOn() {
     <MenuPrimitive.Root>
       <MenuPrimitive.Trigger
         render={
-          <button type="button" className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] outline-none hover:bg-foreground/5 data-popup-open:bg-foreground/[0.07]" data-continue-on="">
-            <span className="text-muted-foreground">{t("home.task.continue_on_label")}</span> {thisComputerLabel()} <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+          <button
+            type="button"
+            className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] outline-none hover:bg-foreground/5 data-popup-open:bg-foreground/[0.07]"
+            data-continue-on=""
+          >
+            <span className="text-muted-foreground">{t("home.task.continue_on_label")}</span> {thisComputerLabel()}{" "}
+            <ChevronDownIcon className="size-3.5 text-muted-foreground" />
           </button>
         }
       />
@@ -243,7 +269,12 @@ export function ContinueOn() {
               <CheckIcon className="size-4" />
             </MenuPrimitive.Item>
             {others.map((m) => (
-              <MenuPrimitive.Item key={m.id} disabled className="flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 opacity-50 outline-none" data-continue-on-other={m.id}>
+              <MenuPrimitive.Item
+                key={m.id}
+                disabled
+                className="flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 opacity-50 outline-none"
+                data-continue-on-other={m.id}
+              >
                 <MonitorIcon className="size-4" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium">{m.name}</div>

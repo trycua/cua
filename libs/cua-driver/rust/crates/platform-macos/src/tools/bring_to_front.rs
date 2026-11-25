@@ -17,11 +17,12 @@ use cua_driver_core::{
     protocol::ToolResult,
     tool::{DesktopLease, Tool, ToolDef},
 };
+use objc2::rc::Retained;
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
 
 use crate::ax::bindings::raise_exact_window_of_pid;
-use crate::windows::{WindowBounds, WindowInfo};
+use crate::windows::{overlap_area, WindowBounds, WindowInfo};
 
 pub struct BringToFrontTool;
 
@@ -30,6 +31,85 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 const VERIFY_TIMEOUT: Duration = Duration::from_millis(900);
 const VERIFY_POLL: Duration = Duration::from_millis(20);
 const VERIFY_STABLE: Duration = Duration::from_millis(100);
+
+/// How long AppKit may lag the kernel before a live pid counts as not an
+/// application. On the macOS E2E guest the lookup missed a live, frontmost
+/// app for under 200 ms; the bound leaves room for a loaded machine.
+const APP_LOOKUP_GRACE: Duration = Duration::from_secs(1);
+const APP_LOOKUP_POLL: Duration = Duration::from_millis(20);
+
+/// Why no `NSRunningApplication` could be had for a pid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMissing {
+    /// The kernel has no such process.
+    Exited,
+    /// The process lives, but AppKit never reported it as an application.
+    NotAnApplication,
+}
+
+impl AppMissing {
+    fn result(self, pid: i32) -> ToolResult {
+        let (code, message) = match self {
+            Self::Exited => (
+                "bring_to_front_pid_not_found",
+                format!("bring_to_front: no running application for pid {pid} (process not found or exited)."),
+            ),
+            Self::NotAnApplication => (
+                "bring_to_front_pid_not_application",
+                format!("bring_to_front: pid {pid} is running but is not a registered application."),
+            ),
+        };
+        ToolResult::error(message).with_structured(json!({
+            "code": code,
+            "pid": pid,
+            "activated": false,
+            "request_accepted": false,
+        }))
+    }
+}
+
+/// Whether the kernel has `pid`. `EPERM` still proves the process exists.
+fn process_exists(pid: i32) -> bool {
+    pid > 0
+        && (unsafe { libc::kill(pid, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+}
+
+/// The running application for `pid`.
+///
+/// `runningApplicationWithProcessIdentifier` answers from AppKit's cache of
+/// running applications, which can briefly miss a live app (seen right after
+/// another app took activation). A nil there is not proof the process exited,
+/// so ask the kernel, and wait for AppKit only while the process is alive.
+fn running_application(pid: i32) -> Result<Retained<NSRunningApplication>, AppMissing> {
+    await_application(
+        || unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) },
+        || process_exists(pid),
+        APP_LOOKUP_GRACE,
+        APP_LOOKUP_POLL,
+    )
+}
+
+fn await_application<T>(
+    mut lookup: impl FnMut() -> Option<T>,
+    mut alive: impl FnMut() -> bool,
+    grace: Duration,
+    poll: Duration,
+) -> Result<T, AppMissing> {
+    let deadline = Instant::now() + grace;
+    loop {
+        if let Some(app) = lookup() {
+            return Ok(app);
+        }
+        if !alive() {
+            return Err(AppMissing::Exited);
+        }
+        if Instant::now() >= deadline {
+            return Err(AppMissing::NotAnApplication);
+        }
+        std::thread::sleep(poll);
+    }
+}
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
@@ -43,7 +123,10 @@ fn def() -> &'static ToolDef {
              in the global WindowServer layer-0 order; another application (an always-raised \
              utility window, another display's front window) can hold that spot without the \
              requested window losing keyboard focus, so it is reported and not required. \
-             Request acceptance alone is reported as a partial \
+             `exact_window_effect.unobstructed` is false when another ordinary (layer-0) window \
+             lies over part of the target, and `observed.occluding_window` names the frontmost \
+             one. It may intercept desktop pointer input at a covered point, even after a \
+             verified activation. Request acceptance alone is reported as a partial \
              result, never as activation. This DOES steal foreground and does NOT restore the \
              previously frontmost application."
             .into(),
@@ -63,6 +146,13 @@ fn def() -> &'static ToolDef {
     })
 }
 
+/// The frontmost window that lies over part of the target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Occluder {
+    pid: i32,
+    window_id: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ExactWindowObservation {
     workspace_frontmost_pid: Option<i32>,
@@ -71,6 +161,7 @@ struct ExactWindowObservation {
     frontmost_ordinary_window_id: Option<u32>,
     process_front_window_on_display: Option<u32>,
     target_visible_ordinary: bool,
+    occluder: Option<Occluder>,
 }
 
 impl ExactWindowObservation {
@@ -96,6 +187,10 @@ impl ExactWindowObservation {
 
     fn exact_window_frontmost_ordinary(self, window_id: u32) -> bool {
         self.target_visible_ordinary && self.frontmost_ordinary_window_id == Some(window_id)
+    }
+
+    fn exact_window_unobstructed(self) -> bool {
+        self.target_visible_ordinary && self.occluder.is_none()
     }
 
     fn exact_postcondition(self, pid: i32, window_id: u32) -> bool {
@@ -149,16 +244,6 @@ fn active_display_bounds() -> Vec<WindowBounds> {
         .collect()
 }
 
-fn overlap_area(left: &WindowBounds, right: &WindowBounds) -> f64 {
-    let width = (left.x + left.width).min(right.x + right.width) - left.x.max(right.x);
-    let height = (left.y + left.height).min(right.y + right.height) - left.y.max(right.y);
-    if width > 0.0 && height > 0.0 {
-        width * height
-    } else {
-        0.0
-    }
-}
-
 fn display_holding(bounds: &WindowBounds, displays: &[WindowBounds]) -> Option<usize> {
     displays
         .iter()
@@ -186,6 +271,26 @@ fn front_window_of_process_on_target_display(
         .map(|window| window.window_id)
 }
 
+/// The frontmost layer-0 window above `window_id` that overlaps it, from the
+/// same window list the desktop pointer guard reads. Bounds alone cannot tell
+/// whether it takes pointer events, so it is reported as a possible
+/// obstruction.
+fn occluding_window(windows: &[WindowInfo], window_id: u32) -> Option<Occluder> {
+    let target = windows.iter().find(|w| w.window_id == window_id)?;
+    windows
+        .iter()
+        .filter(|w| {
+            w.window_id != window_id
+                && w.z_index > target.z_index
+                && overlap_area(&w.bounds, &target.bounds) > 0.0
+        })
+        .max_by_key(|w| w.z_index)
+        .map(|w| Occluder {
+            pid: w.pid,
+            window_id: w.window_id,
+        })
+}
+
 fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     let mut windows = crate::windows::visible_windows();
     windows.retain(|window| !crate::cursor::overlay::is_overlay_window(window.window_id));
@@ -210,7 +315,36 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,
+        occluder: occluding_window(&windows, window_id),
     }
+}
+
+fn already_front(observation: ExactWindowObservation, pid: i32, window_id: u32) -> bool {
+    observation.exact_postcondition(pid, window_id)
+        && observation.exact_window_frontmost_ordinary(window_id)
+        && observation
+            .workspace_frontmost_pid
+            .is_none_or(|front| front == pid)
+}
+
+/// The early return for a window that is already front. Every read in an
+/// observation is WindowServer or AX state, so AppKit can still hold another
+/// app active (as during a relaunch), and AX focus can hold while the NSWindow
+/// is not key, which leaves native menu commands disabled. `request` asks for
+/// both again; the observation after it must still be already front, or the
+/// caller takes the full activation path.
+fn confirm_already_front(
+    pid: i32,
+    window_id: u32,
+    mut observe: impl FnMut() -> ExactWindowObservation,
+    request: impl FnOnce() -> bool,
+) -> Option<(bool, ExactWindowObservation)> {
+    if !already_front(observe(), pid, window_id) {
+        return None;
+    }
+    let request_accepted = request();
+    let confirmed = observe();
+    already_front(confirmed, pid, window_id).then_some((request_accepted, confirmed))
 }
 
 fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
@@ -243,8 +377,7 @@ fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
 /// make the app active for AppKit, so a window the typing opens (Chrome's
 /// omnibox suggestions) hands the front back to the previous app mid-string.
 pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
-    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-    else {
+    let Ok(app) = running_application(pid) else {
         return false;
     };
     crate::input::skylight::set_front_process_persistently(pid, window_id);
@@ -261,8 +394,7 @@ pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
 /// the app's own key window comes forward. Best effort: macOS may refuse an
 /// activation requested by a background process.
 pub(crate) fn reactivate_application(pid: i32) -> bool {
-    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-    else {
+    let Ok(app) = running_application(pid) else {
         return false;
     };
     unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) }
@@ -283,6 +415,7 @@ fn exact_result(
     let exact_window_front_on_display =
         observation.exact_window_front_in_process_on_display(window_id);
     let exact_window_frontmost_ordinary = observation.exact_window_frontmost_ordinary(window_id);
+    let unobstructed = observation.exact_window_unobstructed();
     let status = match outcome {
         ExactOutcome::Activated => "activated",
         ExactOutcome::Partial => "partial",
@@ -303,6 +436,7 @@ fn exact_result(
             "front_in_process_on_display": exact_window_front_on_display,
             "frontmost_ordinary": exact_window_frontmost_ordinary,
             "target_visible_ordinary": observation.target_visible_ordinary,
+            "unobstructed": unobstructed,
         },
         "observed": {
             "frontmost_pid": frontmost_pid,
@@ -311,13 +445,22 @@ fn exact_result(
             "focused_window_id": observation.focused_window_id,
             "frontmost_ordinary_window_id": observation.frontmost_ordinary_window_id,
             "process_front_window_on_display": observation.process_front_window_on_display,
+            "occluding_window": observation.occluder.map(|occluder| json!({
+                "pid": occluder.pid,
+                "window_id": occluder.window_id,
+            })),
         }
     });
     if activated {
-        ToolResult::text(format!(
-            "Brought exact window {window_id} for pid {pid} to the foreground."
-        ))
-        .with_structured(structured)
+        let mut text = format!("Brought exact window {window_id} for pid {pid} to the foreground.");
+        if let Some(occluder) = observation.occluder {
+            text.push_str(&format!(
+                " Window {} of pid {} lies over part of it and may intercept desktop \
+                 pointer input at a covered point.",
+                occluder.window_id, occluder.pid
+            ));
+        }
+        ToolResult::text(text).with_structured(structured)
     } else {
         ToolResult::error(format!(
             "bring_to_front: exact window {window_id} for pid {pid} was not verified \
@@ -387,18 +530,9 @@ impl Tool for BringToFrontTool {
 
 impl BringToFrontTool {
     fn activate_blocking(pid: i32, window_id: Option<u32>) -> ToolResult {
-        let Some(app) =
-            (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-        else {
-            return ToolResult::error(format!(
-                "bring_to_front: no running application for pid {pid} (process not found or exited)."
-            ))
-            .with_structured(json!({
-                "code": "bring_to_front_pid_not_found",
-                "pid": pid,
-                "activated": false,
-                "request_accepted": false,
-            }));
+        let app = match running_application(pid) {
+            Ok(app) => app,
+            Err(missing) => return missing.result(pid),
         };
 
         if let Some(window_id) = window_id {
@@ -441,6 +575,21 @@ impl BringToFrontTool {
                     "activated": false,
                     "request_accepted": false,
                 }));
+            }
+
+            if let Some((request_accepted, confirmed)) = confirm_already_front(
+                pid,
+                window_id,
+                || observe_exact_window(pid, window_id),
+                || {
+                    let native_key_requested =
+                        crate::input::skylight::make_exact_window_key(pid, window_id);
+                    let cocoa_accepted =
+                        unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) };
+                    native_key_requested || cocoa_accepted
+                },
+            ) {
+                return exact_result(pid, window_id, "already_front", request_accepted, confirmed);
             }
 
             // The persistent kCPSNoWindows request owns process activation
@@ -528,6 +677,71 @@ impl BringToFrontTool {
 mod tests {
     use super::*;
 
+    const NO_WAIT: Duration = Duration::ZERO;
+
+    #[test]
+    fn a_live_app_that_appkit_reports_late_is_found() {
+        let mut lookups = 0;
+        let found = await_application(
+            || {
+                lookups += 1;
+                (lookups == 3).then_some("app")
+            },
+            || true,
+            Duration::from_secs(5),
+            NO_WAIT,
+        );
+        assert_eq!(found, Ok("app"));
+        assert_eq!(lookups, 3);
+    }
+
+    #[test]
+    fn an_exited_process_fails_without_waiting() {
+        let started = Instant::now();
+        let found = await_application(
+            || None::<()>,
+            || false,
+            Duration::from_secs(5),
+            Duration::from_secs(1),
+        );
+        assert_eq!(found, Err(AppMissing::Exited));
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn a_live_process_appkit_never_reports_is_not_an_application() {
+        let found = await_application(
+            || None::<()>,
+            || true,
+            Duration::from_millis(30),
+            Duration::from_millis(5),
+        );
+        assert_eq!(found, Err(AppMissing::NotAnApplication));
+    }
+
+    #[test]
+    fn the_kernel_oracle_tells_a_live_pid_from_a_reaped_one() {
+        assert!(process_exists(std::process::id() as i32));
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        assert!(!process_exists(pid));
+        assert!(!process_exists(0));
+        assert!(!process_exists(-1));
+    }
+
+    #[test]
+    fn a_reaped_pid_is_reported_as_exited() {
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        let result = BringToFrontTool::activate_blocking(pid, None);
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "bring_to_front_pid_not_found");
+        assert_eq!(structured["activated"], false);
+    }
+
     fn observation(
         workspace_frontmost_pid: Option<i32>,
         front_process_matches_target: Option<bool>,
@@ -542,6 +756,7 @@ mod tests {
             frontmost_ordinary_window_id,
             process_front_window_on_display: frontmost_ordinary_window_id,
             target_visible_ordinary,
+            occluder: None,
         }
     }
 
@@ -557,6 +772,7 @@ mod tests {
             frontmost_ordinary_window_id: global_front_window_id,
             process_front_window_on_display,
             target_visible_ordinary: true,
+            occluder: None,
         }
     }
 
@@ -590,7 +806,7 @@ mod tests {
                 height: 600.0,
             },
             layer: 0,
-            z_index,
+            z_index: Some(z_index),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),
@@ -694,6 +910,88 @@ mod tests {
     }
 
     #[test]
+    fn only_a_focused_frontmost_window_of_the_active_process_skips_activation() {
+        assert!(already_front(
+            contested_observation(Some(7), Some(7), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            contested_observation(Some(7), Some(900), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            contested_observation(Some(8), Some(7), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            observation(Some(42), Some(false), Some(7), Some(7), true),
+            42,
+            7
+        ));
+    }
+
+    #[test]
+    fn a_front_process_pid_other_than_the_window_owner_still_activates() {
+        assert!(!already_front(
+            observation(Some(515), Some(true), Some(7), Some(7), true),
+            42,
+            7
+        ));
+        assert!(already_front(
+            observation(None, Some(true), Some(7), Some(7), true),
+            42,
+            7
+        ));
+    }
+
+    #[test]
+    fn a_window_that_loses_the_front_during_the_requests_takes_the_full_path() {
+        let front = contested_observation(Some(7), Some(7), Some(7));
+        let sibling_on_top = contested_observation(Some(7), Some(8), Some(8));
+
+        let mut reads = [front, sibling_on_top].into_iter();
+        let mut requested = false;
+        let confirmed = confirm_already_front(
+            42,
+            7,
+            || reads.next().unwrap(),
+            || {
+                requested = true;
+                true
+            },
+        );
+        assert_eq!(confirmed, None);
+        assert!(requested);
+
+        let mut reads = [front, front].into_iter();
+        assert_eq!(
+            confirm_already_front(42, 7, || reads.next().unwrap(), || true),
+            Some((true, front))
+        );
+
+        let mut requested = false;
+        assert_eq!(
+            confirm_already_front(
+                42,
+                7,
+                || sibling_on_top,
+                || {
+                    requested = true;
+                    true
+                }
+            ),
+            None
+        );
+        assert!(
+            !requested,
+            "a window that is not front sends no early requests"
+        );
+    }
+
+    #[test]
     fn another_applications_window_on_top_does_not_unverify_the_reveal() {
         let contested = contested_observation(Some(7), Some(900), Some(7));
         assert_eq!(
@@ -714,6 +1012,76 @@ mod tests {
         );
         assert_eq!(structured["observed"]["process_front_window_on_display"], 7);
         assert_eq!(structured["observed"]["frontmost_ordinary_window_id"], 900);
+    }
+
+    #[test]
+    fn a_verified_target_under_another_applications_window_reports_the_occluder() {
+        // #5385: the target process is front and its dialog is key and front
+        // in that process, while another application's window covers it.
+        let covered = ExactWindowObservation {
+            occluder: Some(Occluder {
+                pid: 200,
+                window_id: 400,
+            }),
+            ..contested_observation(Some(7), Some(400), Some(7))
+        };
+        let result = exact_result(42, 7, "skylight_process_exact_cocoa_ax", true, covered);
+        assert_eq!(result.is_error, None);
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("Window 400 of pid 200 lies over part of it"),
+            "{text}"
+        );
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["activated"], true);
+        assert_eq!(structured["exact_window_effect"]["unobstructed"], false);
+        assert_eq!(structured["observed"]["occluding_window"]["pid"], 200);
+        assert_eq!(structured["observed"]["occluding_window"]["window_id"], 400);
+
+        let clear = exact_result(
+            42,
+            7,
+            "skylight_process_exact_cocoa_ax",
+            true,
+            contested_observation(Some(7), Some(7), Some(7)),
+        )
+        .structured_content
+        .expect("structured result");
+        assert_eq!(clear["exact_window_effect"]["unobstructed"], true);
+        assert_eq!(clear["observed"]["occluding_window"], Value::Null);
+    }
+
+    #[test]
+    fn only_an_overlapping_window_above_the_target_occludes_it() {
+        let target = window(7, 42, 10, 100.0);
+        let covering = |z_index| window(400, 200, z_index, 300.0);
+        assert_eq!(
+            occluding_window(&[target.clone(), covering(20)], 7),
+            Some(Occluder {
+                pid: 200,
+                window_id: 400
+            })
+        );
+        // Below the target.
+        assert_eq!(occluding_window(&[target.clone(), covering(5)], 7), None);
+        // Front, but on the other display.
+        assert_eq!(
+            occluding_window(&[target.clone(), window(400, 200, 20, 2000.0)], 7),
+            None
+        );
+        // The frontmost of several wins.
+        assert_eq!(
+            occluding_window(
+                &[target.clone(), covering(20), window(500, 300, 30, 500.0)],
+                7
+            ),
+            Some(Occluder {
+                pid: 300,
+                window_id: 500
+            })
+        );
+        // A target that is not on screen has no occluder to report.
+        assert_eq!(occluding_window(&[covering(20)], 7), None);
     }
 
     #[test]

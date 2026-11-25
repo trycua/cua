@@ -15,9 +15,11 @@ extension Server {
             let vms = try vmController.list(storage: storage)
             return try .json(vms)
         } catch {
-            print(
-                "ERROR: Failed to list VMs: \(error.localizedDescription), storage=\(String(describing: storage))"
-            )
+            Logger.error(
+                "Failed to list VMs",
+                metadata: [
+                    "error": error.localizedDescription, "storage": String(describing: storage),
+                ])
             return .badRequest(message: error.localizedDescription)
         }
     }
@@ -598,6 +600,8 @@ extension Server {
             let networkMode = try request.parseNetworkMode()
             let vncPolicy = try request.validatedVNCPolicy(noDisplayDefault: false)
             let noDisplay = request.noDisplay ?? false
+            let hostDevices = try request.validatedHostDevices()
+            let guestTimePort = try request.validatedTimeVsockPort()
 
             // Virtualization.framework runs at most two macOS guests per host
             // and fails a third start only after the async start was accepted,
@@ -630,7 +634,9 @@ extension Server {
                 networkMode: networkMode,
                 clipboard: request.clipboard ?? false,
                 vncPolicy: vncPolicy,
-                forwards: request.forwards ?? []
+                forwards: request.forwards ?? [],
+                hostDevices: hostDevices,
+                guestTimePort: guestTimePort
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -785,7 +791,7 @@ extension Server {
                     reassemble: false,  // Default API behavior is likely non-reassemble
                     singleLayer: request.singleLayer
                 )
-                print(
+                Logger.info(
                     "Background push completed successfully for image: \(request.imageName):\(request.tags.joined(separator: ","))"
                 )
                 TelemetryClient.shared.recordOperationCompleted(
@@ -796,7 +802,7 @@ extension Server {
                     elapsed: Date().timeIntervalSince(pushStartedAt)
                 )
             } catch {
-                print(
+                Logger.error(
                     "Background push failed for image: \(request.imageName):\(request.tags.joined(separator: ",")) - Error: \(error.localizedDescription)"
                 )
                 TelemetryClient.shared.recordOperationCompleted(
@@ -1108,7 +1114,9 @@ extension Server {
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled,
-        forwards: [UInt16] = []
+        forwards: [UInt16] = [],
+        hostDevices: HostDeviceOptions = .all,
+        guestTimePort: UInt32? = nil
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -1145,6 +1153,8 @@ extension Server {
                     clipboard: clipboard,
                     vncPolicy: vncPolicy,
                     forwards: forwards,
+                    hostDevices: hostDevices,
+                    guestTimePort: guestTimePort,
                     telemetryTransport: .http
                 )
                 Logger.info("VM run ended in background task", metadata: ["name": name])

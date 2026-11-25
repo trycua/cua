@@ -93,23 +93,52 @@ impl AXPageReader {
         lines_out.join("\n")
     }
 
-    /// Query elements from AX tree markdown by CSS selector (maps to AX roles).
-    pub fn query(selector: &str, tree_markdown: &str) -> Vec<AXElement> {
-        let roles = css_selector_to_ax_roles(selector);
-        let match_all = roles.is_empty();
-
-        let mut result = Vec::new();
-        for line in tree_markdown.lines() {
-            let Some(el) = parse_ax_line(line) else {
-                continue;
-            };
-            if match_all || roles.iter().any(|r| *r == el.role) {
-                result.push(el);
-            }
-        }
-        result
+    /// Query elements from AX tree markdown with a role filter from
+    /// [`AxRoleFilter::from_css`].
+    pub fn query(filter: AxRoleFilter, tree_markdown: &str) -> Vec<AXElement> {
+        tree_markdown
+            .lines()
+            .filter_map(parse_ax_line)
+            .filter(|el| match filter {
+                AxRoleFilter::Any => true,
+                AxRoleFilter::Roles(roles) => roles.contains(&el.role.as_str()),
+            })
+            .collect()
     }
 }
+
+/// The AX roles a CSS selector selects when the page is read through the
+/// accessibility tree instead of the DOM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AxRoleFilter {
+    /// `*` or an empty selector: every element.
+    Any,
+    Roles(&'static [&'static str]),
+}
+
+impl AxRoleFilter {
+    /// The AX tree carries no ids, classes or attributes, so only a bare tag
+    /// selector with a role mapping (or `*`) can be applied. `None` for every
+    /// other selector: matching it by role alone would answer a different
+    /// query.
+    pub fn from_css(selector: &str) -> Option<Self> {
+        let roles: &'static [&'static str] = match selector.trim() {
+            "*" | "" => return Some(Self::Any),
+            "a" | "link" => &["AXLink"],
+            "button" => &["AXButton"],
+            "input" => &["AXTextField", "AXCheckBox", "AXRadioButton"],
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => &["AXHeading"],
+            "p" | "li" => &["AXStaticText"],
+            "img" => &["AXImage"],
+            "select" => &["AXPopUpButton", "AXComboBox"],
+            _ => return None,
+        };
+        Some(Self::Roles(roles))
+    }
+}
+
+/// The selectors [`AxRoleFilter::from_css`] accepts, for refusal messages.
+pub const AX_SELECTORS: &str = "a, link, button, input, h1-h6, p, li, img, select, *";
 
 /// Parse a single AX tree markdown line into an AXElement.
 ///
@@ -236,24 +265,9 @@ fn best_text(el: &AXElement) -> String {
     String::new()
 }
 
-fn css_selector_to_ax_roles(selector: &str) -> Vec<&'static str> {
-    match selector.trim() {
-        "a" | "link" => vec!["AXLink"],
-        "button" => vec!["AXButton"],
-        "input" => vec!["AXTextField", "AXCheckBox", "AXRadioButton"],
-        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => vec!["AXHeading"],
-        "p" => vec!["AXStaticText"],
-        "img" => vec!["AXImage"],
-        "select" => vec!["AXPopUpButton", "AXComboBox"],
-        "li" => vec!["AXStaticText"],
-        "*" | "" => vec![],
-        _ => vec![],
-    }
-}
-
 #[cfg(test)]
 mod web_area_tests {
-    use super::AXPageReader;
+    use super::{AXPageReader, AxRoleFilter};
 
     const TREE: &str = "\
 - [0] AXMenuBar
@@ -285,5 +299,37 @@ mod web_area_tests {
     fn a_tree_without_a_web_area_has_no_page_content() {
         let tree = "- [0] AXMenuBar\n  - [1] AXMenuBarItem \"Apple\"\n- [2] AXWindow \"x\"\n";
         assert_eq!(AXPageReader::web_area_markdown(tree), None);
+    }
+
+    #[test]
+    fn a_selector_the_ax_tree_cannot_express_has_no_role_filter() {
+        for selector in [
+            "select#model",
+            "nav",
+            "div.menu",
+            "input[type=text]",
+            "a, button",
+        ] {
+            assert_eq!(AxRoleFilter::from_css(selector), None, "{selector}");
+        }
+    }
+
+    #[test]
+    fn a_tag_selector_returns_only_its_roles() {
+        let page = AXPageReader::web_area_markdown(TREE).expect("web area");
+        let filter = AxRoleFilter::from_css("h1").expect("h1 maps to a role");
+        let found = AXPageReader::query(filter, &page);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].title, "Your loans");
+    }
+
+    #[test]
+    fn the_wildcard_returns_every_row() {
+        let page = AXPageReader::web_area_markdown(TREE).expect("web area");
+        let filter = AxRoleFilter::from_css(" * ").expect("wildcard");
+        assert_eq!(
+            AXPageReader::query(filter, &page).len(),
+            page.lines().count()
+        );
     }
 }

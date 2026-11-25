@@ -49,7 +49,6 @@ impl Tool for GetConfigTool {
         // and read it from the overlay deterministically — `all_states().first()`
         // was a nondeterministic HashMap read across sessions (macOS BUG 3).
         let cursor_enabled = crate::overlay::is_enabled(&resolve_cursor_key(&args));
-        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
@@ -59,8 +58,6 @@ impl Tool for GetConfigTool {
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
             "cursor":              cursor_overlay::cursor_options::saved_config_json(),
-            "experimental_pip":    pip_enabled,
-            "experimental_pip_geometry": pip_geometry,
             "fast_path":           cua_driver_core::fast_path::wire::config_value(),
         });
         // Match Swift's text format 1:1: `"✅ <pretty JSON>"`.

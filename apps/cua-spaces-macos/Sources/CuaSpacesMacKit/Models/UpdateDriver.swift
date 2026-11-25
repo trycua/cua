@@ -171,6 +171,44 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
     public var resumeSilentUpdate: (() -> Void)?
     private var told = false
 
+    // MARK: - When "Restart to update" does nothing
+
+    /// How long a restart may take before it is treated as stuck.
+    var restartGrace: TimeInterval = 6
+    /// Runs `work` after `delay` seconds (tests run it by hand).
+    var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    /// Quits the app, so Sparkle's own installer applies the staged update on
+    /// the way out (set by `UpdatesModel`).
+    public var quitApp: (() -> Void)?
+    /// Each click on "Restart to update" is one attempt; a late timer of an
+    /// older attempt does nothing.
+    private var restartAttempt = 0
+
+    /// The plain line shown when the update could not be applied by the click
+    /// or by quitting from here.
+    static let restartStuckMessage =
+        "Cua Spaces could not restart by itself. Quit it from the menu bar and open it again to finish the update."
+
+    /// Called when a restart was asked for. A working restart quits the app,
+    /// so a process still running after the grace time is a stuck one: quit
+    /// it (the update is staged, Sparkle installs it at quit), and if even
+    /// that does not end the app, say what to do.
+    private func watchRestart() {
+        restartAttempt += 1
+        let attempt = restartAttempt
+        schedule(restartGrace) { [weak self] in
+            guard let self, attempt == self.restartAttempt else { return }
+            NSLog("Cua Spaces: Restart to update did not restart the app; quitting so the staged update installs")
+            self.quitApp?()
+            self.schedule(self.restartGrace) { [weak self] in
+                guard let self, attempt == self.restartAttempt, self.flow.state.status != .error else { return }
+                self.handleError(Self.restartStuckMessage)
+            }
+        }
+    }
+
     public var state: UpdateState { flow.state }
 
     public init(currentVersion: String) {
@@ -212,6 +250,7 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
         if let reply = heldReply {
             heldReply = nil
             reply(.install)
+            watchRestart()
             return true
         }
         if silentPending, let resume = resumeSilentUpdate {
@@ -220,6 +259,7 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
             // the update through a check and answer its ready prompt.
             installWhenReady = true
             resume()
+            watchRestart()
             return true
         }
         return false

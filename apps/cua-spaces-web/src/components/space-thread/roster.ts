@@ -8,7 +8,18 @@
  * names the composer's `@` picker offers.
  */
 
-import { DEFAULT_AGENT_RIGHTS, type ThreadFailure, type AgentMember, type AgentRight, type AgentRights, type MemberIdentity, type ShareEntry, type ThreadAuthor, type ThreadEntry, type ThreadRole } from "@/bridge";
+import {
+  DEFAULT_AGENT_RIGHTS,
+  type ThreadFailure,
+  type AgentMember,
+  type AgentRight,
+  type AgentRights,
+  type MemberIdentity,
+  type ShareEntry,
+  type ThreadAuthor,
+  type ThreadEntry,
+  type ThreadRole,
+} from "@/bridge";
 import type { MentionCandidate } from "@/lib/mentions";
 
 export interface RosterAgent {
@@ -97,6 +108,13 @@ export function personLabel(who: string): string {
 
 const AGENT_CAPTION: Record<string, string> = { working: "Working", waiting: "Waiting", paused: "Paused", failed: "Failed" };
 
+/** What the chip says: what it is doing, but never "Starting" or "Installing" while a turn is under way (it reads as
+ * stuck; the thread's live row carries the steps). */
+export function agentCaption(status: string, activity: string | null | undefined): string | null {
+  if (status === "working" && activity && /^(starting|installing|connecting|preparing)\b/i.test(activity.trim())) return "Working";
+  return activity ?? AGENT_CAPTION[status] ?? null;
+}
+
 /** Where an agent posts from, under its name when it isn't busy: its computer, or the Space it runs in. */
 export function postsFrom(identity: MemberIdentity): string {
   if (identity.device) return identity.device.name;
@@ -108,7 +126,8 @@ const LOOP_QUIET_MS = 2 * 60_000;
 
 /** The line under an idle agent's name: a connected one that is not watching the thread (a CLI session that runs only when prompted) says it waits for you; others say where they post from. */
 export function idleCaption(identity: MemberIdentity, nowMs = Date.now()): string {
-  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS)) return "Waits for you to message it";
+  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS))
+    return "Waits for you to message it";
   return postsFrom(identity);
 }
 
@@ -143,7 +162,7 @@ export function buildRoster(input: {
     harness: m.identity?.harness.id || m.harness,
     status: m.status,
     // What it says it is doing (`task #12: …`, `2 open tasks`), else the state in a word, else where it posts from.
-    caption: m.activity ?? AGENT_CAPTION[m.status] ?? (m.identity ? idleCaption(m.identity) : null),
+    caption: agentCaption(m.status, m.activity) ?? (m.identity ? idleCaption(m.identity) : null),
     dim: m.status === "asleep" || m.status === "paused",
     sessions: m.sessions,
     rights: m.rights ?? DEFAULT_AGENT_RIGHTS,

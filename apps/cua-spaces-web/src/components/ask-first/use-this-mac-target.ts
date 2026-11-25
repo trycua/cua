@@ -65,7 +65,8 @@ export function useThisMacTarget(): ThisMacTarget {
       try {
         for (const step of thisMacSetupSteps(await read())) {
           if (step === "add") {
-            if (!(await (store?.addThisComputer(identity) ?? Promise.resolve(false)))) throw new Error(store?.thisMachine.get().setupError?.message ?? t("home.this_mac.add_failed", { computer: thisComputerLabel() }));
+            if (!(await (store?.addThisComputer(identity) ?? Promise.resolve(false))))
+              throw new Error(store?.thisMachine.get().setupError?.message ?? t("home.this_mac.add_failed", { computer: thisComputerLabel() }));
           } else await adapter.call("host.action", { action: step });
         }
       } catch (e) {

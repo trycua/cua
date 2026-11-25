@@ -6,7 +6,7 @@ import { readExperiments } from "../ops/volume";
 
 describe("stored experiments", () => {
   it("reads an experiment as off unless stored, and ignores keys of switches that are gone (including Secure Spaces and Ask first, which are always on now)", () => {
-    const off = { cuaVolume: false, childSpaces: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false };
+    const off = { cuaVolume: false, ciRunners: false, tcpShares: false, mobile: false };
     expect(readExperiments(undefined)).toEqual(off);
     expect(readExperiments(JSON.stringify({ cuaVolume: true }))).toMatchObject({ cuaVolume: true });
     expect(readExperiments(JSON.stringify({ askFirst: false, secureSpaces: false }))).toEqual(off);

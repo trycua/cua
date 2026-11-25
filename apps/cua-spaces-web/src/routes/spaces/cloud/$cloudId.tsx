@@ -30,7 +30,11 @@ function CloudRoute() {
       ) : isLoading || !view ? (
         <div aria-busy="true" aria-label={t("computers.page.cloud_loading")} className="h-28 animate-pulse rounded-lg bg-muted" />
       ) : (
-        <EmptyState icon={<CloudIcon />} title={t("computers.page.cloud_missing_title")} action={<Button render={<Link to="/spaces" />}>{t("computers.page.missing_action")}</Button>}>
+        <EmptyState
+          icon={<CloudIcon />}
+          title={t("computers.page.cloud_missing_title")}
+          action={<Button render={<Link to="/spaces" />}>{t("computers.page.missing_action")}</Button>}
+        >
           {t("computers.page.cloud_missing_body")}
         </EmptyState>
       )}

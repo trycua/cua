@@ -3062,6 +3062,13 @@ fn inspect_archive(
     })
 }
 
+/// semver never lets a prerelease satisfy a plain comparator such as
+/// `>=0.28.2`, so a nightly build is also checked by its base version.
+fn driver_satisfies(requirement: &VersionReq, driver: &Version) -> bool {
+    requirement.matches(driver)
+        || requirement.matches(&Version::new(driver.major, driver.minor, driver.patch))
+}
+
 fn validate_manifest(
     manifest: &ExtensionManifest,
     entry: &RegistryEntry,
@@ -3085,7 +3092,7 @@ fn validate_manifest(
     let requirement = VersionReq::parse(&manifest.driver_version)
         .context("manifest driver_version is not a valid semantic version requirement")?;
     let driver = Version::parse(env!("CARGO_PKG_VERSION"))?;
-    if !requirement.matches(&driver) {
+    if !driver_satisfies(&requirement, &driver) {
         bail!(
             "extension {} requires Driver {}; running Driver is {}",
             manifest.version,
@@ -4505,7 +4512,9 @@ fn windows_reject_reparse_directory(directory: &Dir) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(handle: &T) -> Result<()> {
+pub(crate) fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(
+    handle: &T,
+) -> Result<()> {
     windows_set_private_security(handle.as_raw_handle().cast())?;
     windows_verify_security(handle.as_raw_handle().cast())
 }
@@ -5862,9 +5871,10 @@ mod tests {
             "bin/cua-perception"
         }));
         assert_eq!(config.args[0], "--manifest");
-        assert!(config.args[1].ends_with("models/model-manifest.json"));
+        // Path::ends_with compares components, so it holds with `\` on Windows.
+        assert!(Path::new(&config.args[1]).ends_with("models/model-manifest.json"));
         assert_eq!(config.args[2], "--onnx-runtime-library");
-        assert!(config.args[3].ends_with(&format!("runtime/{runtime_name}")));
+        assert!(Path::new(&config.args[3]).ends_with(format!("runtime/{runtime_name}")));
         assert_eq!(
             &config.args[4..],
             [
@@ -8068,6 +8078,24 @@ mod tests {
         assert!(store.root.join(TRUST_NAME).exists());
         assert!(!store.root.join(TRUST_BACKUP_NAME).exists());
         assert!(!store.root.join(TRUST_NEW_NAME).exists());
+    }
+
+    #[test]
+    fn driver_requirement_accepts_prerelease_builds_by_base_version() {
+        let satisfies = |requirement: &str, driver: &str| {
+            driver_satisfies(
+                &VersionReq::parse(requirement).unwrap(),
+                &Version::parse(driver).unwrap(),
+            )
+        };
+        let nightly = "0.38.1-nightly.20261105.41967274244";
+        assert!(satisfies(">=0.28.2", nightly));
+        assert!(satisfies(">=0.38.1", nightly));
+        assert!(satisfies(&format!("={nightly}"), nightly));
+        assert!(!satisfies(">=0.38.2", nightly));
+        assert!(!satisfies("<0.38.1", nightly));
+        assert!(satisfies(">=0.28.2", "0.38.0"));
+        assert!(!satisfies(">=0.28.2", "0.28.1"));
     }
 
     #[test]

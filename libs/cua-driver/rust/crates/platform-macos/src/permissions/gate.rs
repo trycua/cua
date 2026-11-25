@@ -11,8 +11,10 @@
 //!      also adds Cua Driver to that pane's list in System Settings.
 //!   2. Show the step-by-step guide window (`panel`, bundled app only), or
 //!      print the same steps in the terminal.
-//!   3. Check every second from a fresh helper process. When a switch turns
-//!      on, move to the next step: ask for Screen Recording, open its pane.
+//!   3. Check again from a fresh helper process: every second for a while
+//!      after something happens, every few seconds otherwise
+//!      ([`PollCadence`]). When a switch turns on, move to the next step: ask
+//!      for Screen Recording, open its pane.
 //!   4. Once both are on, say "All set" and let `serve` continue.
 //!
 //! Opt-out: `--no-permissions-gate` flag or
@@ -27,6 +29,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use crate::permissions::guide::{PollCadence, PollSchedule};
 use crate::permissions::status::{current_status, request_next_missing, PermissionsStatus};
 
 const PERMISSION_PROBE_ARG: &str = "--cua-internal-permission-probe";
@@ -183,9 +186,9 @@ pub struct GateOpts {
     /// forever.  `None` means "wait indefinitely" — matches Swift's
     /// SwiftUI panel which has no built-in timeout.  Default: 10 min.
     pub deadline: Option<Duration>,
-    /// How often to re-check TCC state.  Default: 1s — same cadence as
-    /// the Swift gate's `Timer.scheduledTimer(withTimeInterval: 1.0)`.
-    pub poll_interval: Duration,
+    /// When to re-check TCC state. Every check starts a helper process.
+    /// Default: [`PollCadence::INTERACTIVE`].
+    pub poll: PollCadence,
     /// How often to print a "still waiting for X" status line.  Default:
     /// 5s — frequent enough to reassure the user the daemon is alive,
     /// rare enough not to spam the terminal.
@@ -207,7 +210,7 @@ impl Default for GateOpts {
         Self {
             opt_out: false,
             deadline: Some(Duration::from_secs(10 * 60)),
-            poll_interval: Duration::from_secs(1),
+            poll: PollCadence::INTERACTIVE,
             status_interval: Duration::from_secs(5),
             also_raise_prompts: true,
             open_settings: true,
@@ -218,11 +221,12 @@ impl Default for GateOpts {
 impl GateOpts {
     /// Options for the wait that continues after the interactive gate timed
     /// out: no deadline, so a later grant still unblocks the running daemon,
-    /// at a slower cadence than the interactive poll.
+    /// at a slower cadence than the interactive poll since nobody may be
+    /// looking.
     pub fn after_timeout(&self) -> Self {
         Self {
             deadline: None,
-            poll_interval: Duration::from_secs(5),
+            poll: PollCadence::steady(Duration::from_secs(30)),
             status_interval: Duration::from_secs(5 * 60),
             ..self.clone()
         }
@@ -357,7 +361,7 @@ pub fn prepare_telemetry_context(opt_out: bool) -> Option<(GateProgress, GateTel
 ///   - Prints the missing-permissions banner.
 ///   - Optionally raises the system TCC prompts (`also_raise_prompts`).
 ///   - Opens the System Settings pane(s) for the user.
-///   - Polls TCC every `poll_interval` and re-emits a status line every
+///   - Polls TCC on the `poll` cadence and re-emits a status line every
 ///     `status_interval` until everything is green or `deadline` elapses.
 ///
 /// Returns `Ok(())` on success (all green or opt-out).  Returns
@@ -518,7 +522,7 @@ fn present_finished_if_available() {
     if panel::panel_enabled() {
         panel::show_finished(panel_hooks(false));
     } else {
-        println!("[cua-driver] All set. Cua Driver can now use this Mac.");
+        println!("{}", all_set_line(&panel::host_app_name()));
         let _ = std::io::stdout().flush();
     }
 }
@@ -603,13 +607,16 @@ fn wait_for_grants_with(
     opts: &GateOpts,
     mut probe: impl FnMut() -> Vec<MissingPermission>,
 ) -> Result<()> {
+    let host = super::panel::host_app_name();
     let start = Instant::now();
     let mut last_status_print = start;
+    let mut schedule = PollSchedule::new(opts.poll, start);
     let mut last_missing: Vec<MissingPermission> = probe();
+    schedule.checked(Instant::now());
 
     loop {
         if last_missing.is_empty() {
-            println!("[cua-driver] All set. Cua Driver can now use this Mac.");
+            println!("{}", all_set_line(&host));
             let _ = std::io::stdout().flush();
             return Ok(());
         }
@@ -624,10 +631,17 @@ fn wait_for_grants_with(
             }
         }
 
-        std::thread::sleep(opts.poll_interval);
+        let mut wait = schedule.wait(Instant::now());
+        if let Some(deadline) = opts.deadline {
+            wait = wait.min(deadline.saturating_sub(start.elapsed()));
+        }
+        std::thread::sleep(wait);
 
         let new_missing = probe();
+        let now = Instant::now();
+        schedule.checked(now);
         if new_missing != last_missing {
+            schedule.note_activity(now);
             // State changed (red→green, or order-flipped).  Re-emit so the
             // user sees progress without waiting for the next status tick.
             if !new_missing.is_empty() {
@@ -643,20 +657,55 @@ fn wait_for_grants_with(
         }
 
         if last_status_print.elapsed() >= opts.status_interval {
-            println!(
-                "[cua-driver] Still waiting for: {} \
-                 (System Settings → Privacy & Security, turn on Cua Driver)",
-                fmt_missing(&last_missing)
-            );
+            println!("{}", still_waiting_line(&last_missing, &host));
             let _ = std::io::stdout().flush();
             last_status_print = Instant::now();
         }
     }
 }
 
+fn all_set_line(app: &str) -> String {
+    format!(
+        "[cua-driver] {}",
+        super::guide::for_app(super::guide::DONE_TITLE, app)
+    )
+}
+
+fn still_waiting_line(missing: &[MissingPermission], app: &str) -> String {
+    super::guide::for_app(
+        &format!(
+            "[cua-driver] Still waiting for: {} \
+             (System Settings → Privacy & Security, turn on Cua Driver)",
+            fmt_missing(missing)
+        ),
+        app,
+    )
+}
+
 fn print_banner(missing: &[MissingPermission], open_settings: bool) {
-    print!("{}", banner_text(missing, open_settings));
+    let app = super::panel::host_app_name();
+    let text = super::guide::for_app(&banner_text(missing, open_settings), &app);
+    print!(
+        "{}",
+        in_file_picker(text, &app, super::panel::host_app_in_finder())
+    );
     let _ = std::io::stdout().flush();
+}
+
+/// Name the host app in the + button's file picker as the picker shows it.
+fn in_file_picker(text: String, app: &str, file: Option<(String, std::path::PathBuf)>) -> String {
+    let Some((name, folder)) = file else {
+        return text;
+    };
+    let folder = if folder == std::path::Path::new("/Applications") {
+        "Applications".to_owned()
+    } else {
+        folder.display().to_string()
+    };
+    text.replace(
+        &format!(" choose {app} in Applications."),
+        &format!(" choose {name} in {folder}."),
+    )
 }
 
 fn banner_text(missing: &[MissingPermission], open_settings: bool) -> String {
@@ -756,14 +805,14 @@ mod tests {
     fn wait_after_timeout_picks_up_a_late_grant() {
         let interactive = GateOpts {
             deadline: Some(Duration::from_nanos(1)),
-            poll_interval: Duration::from_millis(1),
+            poll: PollCadence::steady(Duration::from_millis(1)),
             ..GateOpts::default()
         };
         let still_missing = || vec![MissingPermission::Accessibility];
         assert!(wait_for_grants_with(&interactive, still_missing).is_err());
 
         let slow = GateOpts {
-            poll_interval: Duration::from_millis(1),
+            poll: PollCadence::steady(Duration::from_millis(1)),
             ..interactive.after_timeout()
         };
         assert_eq!(slow.deadline, None);
@@ -790,7 +839,7 @@ mod tests {
         let opts = GateOpts {
             opt_out: true,
             deadline: Some(Duration::from_nanos(1)),
-            poll_interval: Duration::from_secs(60),
+            poll: PollCadence::steady(Duration::from_secs(60)),
             status_interval: Duration::from_secs(60),
             also_raise_prompts: false,
             open_settings: false,
@@ -865,6 +914,46 @@ mod tests {
         ] {
             assert_eq!(progress_for_presentation(presentation), None);
         }
+    }
+
+    #[test]
+    fn terminal_lines_name_the_host_app() {
+        let missing = [MissingPermission::ScreenRecording];
+        for text in [
+            all_set_line("Host App"),
+            still_waiting_line(&missing, "Host App"),
+            super::super::guide::for_app(&banner_text(&missing, true), "Host App"),
+        ] {
+            assert!(text.contains("Host App"), "{text}");
+            assert!(!text.contains("Cua Driver"), "{text}");
+        }
+        assert_eq!(
+            all_set_line("Cua Driver"),
+            "[cua-driver] All set. Cua Driver can now use this Mac."
+        );
+    }
+
+    #[test]
+    fn the_banner_points_to_the_host_app_as_the_file_picker_shows_it() {
+        let text = super::super::guide::for_app(
+            &banner_text(&[MissingPermission::Accessibility], true),
+            "Host",
+        );
+        let elsewhere = in_file_picker(
+            text.clone(),
+            "Host",
+            Some(("Host Beta".into(), "/Users/u/Applications/Vendor".into())),
+        );
+        assert!(elsewhere.contains("choose Host Beta in /Users/u/Applications/Vendor."));
+        assert!(!elsewhere.contains("in Applications."));
+        let installed = in_file_picker(
+            text.clone(),
+            "Host",
+            Some(("Host Beta".into(), "/Applications".into())),
+        );
+        assert!(installed.contains("choose Host Beta in Applications."));
+        assert!(installed.contains("next to Host."));
+        assert_eq!(in_file_picker(text.clone(), "Host", None), text);
     }
 
     #[test]

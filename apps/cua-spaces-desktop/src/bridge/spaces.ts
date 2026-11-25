@@ -51,7 +51,7 @@ export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null,
       available: env.localAvailable,
       backends: env.localBackends ?? [],
       error: env.localReason ?? null,
-      // Windows without a runtime: what the app can do about it ("Install Docker Desktop").
+      // Windows without a runtime: what the app can do about it ("Set up Linux support").
       fix: env.localAvailable ? null : fix,
       hostArch: env.hostArch ?? null,
       storage: encode(env.storage),
@@ -214,7 +214,15 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       if (!b.setNetwork) throw Failure.unsupported("network settings");
       const list = (k: string) => (Array.isArray(args[k]) ? (args[k] as unknown[]).filter((x): x is string => typeof x === "string") : []);
       const via = typeof args.via === "string" ? args.via : undefined;
-      const applied = await b.setNetwork(string(args, "spaceId"), string(args, "network"), list("allow"), list("deny"), args.widen === true, args.tree === true, via);
+      const applied = await b.setNetwork(
+        string(args, "spaceId"),
+        string(args, "network"),
+        list("allow"),
+        list("deny"),
+        args.widen === true,
+        args.tree === true,
+        via,
+      );
       return { applied };
     },
     "network.log": async (args) => {
@@ -237,7 +245,7 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       await b.setAccess(string(args, "spaceId"), clipboard, volume);
       return {};
     },
-    // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+    // Child Spaces: the tree of Spaces, children, budgets and kept services.
     "spaces.tree": async () => {
       const b = model.backend;
       return b.spaceTree ? await b.spaceTree() : [];

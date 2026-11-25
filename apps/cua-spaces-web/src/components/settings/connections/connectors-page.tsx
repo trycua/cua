@@ -62,7 +62,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   if (!view || c.apps.rows === null) return <div className="mb-8 h-48" aria-busy="true" />;
   const open = (agent: string) => void navigate({ to: "/settings/connections/$app", params: { app: agent } });
   const moreOpen = Boolean(c.input.moreOpen || (c.input.query ?? "").trim());
-  const detailRow = detail ? [...view.providers, ...view.moreProviders].find((p) => p.id === detail) ?? null : null;
+  const detailRow = detail ? ([...view.providers, ...view.moreProviders].find((p) => p.id === detail) ?? null) : null;
   const confirm = keys.removing ? keys.removeConfirmOf(keys.removing) : null;
 
   return (
@@ -80,7 +80,9 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         footer={
           // Connect edits the coding apps of this machine only: it says which, and what it leaves alone.
           <span data-connectors-machine="">
-            {others.length > 0 ? t("settings.connections.page.on_here_others", { name: hereName, others: others.join(", ") }) : t("settings.connections.page.on_here", { name: hereName })}
+            {others.length > 0
+              ? t("settings.connections.page.on_here_others", { name: hereName, others: others.join(", ") })
+              : t("settings.connections.page.on_here", { name: hereName })}
           </span>
         }
       >
@@ -104,7 +106,11 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
                   <HarnessMark agent={row.agent} name={row.name} />
                   <span className="min-w-0 flex-1 text-[13px]">{row.name}</span>
                   {url ? (
-                    <button type="button" className="text-xs hover:text-foreground hover:underline" onClick={() => void data?.call("session.openExternal", { url }).catch(() => {})}>
+                    <button
+                      type="button"
+                      className="text-xs hover:text-foreground hover:underline"
+                      onClick={() => void data?.call("session.openExternal", { url }).catch(() => {})}
+                    >
                       {t("settings.connections.page.get_it")}
                     </button>
                   ) : null}
@@ -114,7 +120,8 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           </>
         ) : null}
         <GroupedAction data-connected-show-all="" aria-expanded={all} onClick={() => setAll(!all)}>
-          {all ? t("settings.connections.page.show_fewer") : t("settings.connections.page.show_all")} {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
+          {all ? t("settings.connections.page.show_fewer") : t("settings.connections.page.show_all")}{" "}
+          {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
         </GroupedAction>
       </SettingsGroup>
       <AgentMenuGroup c={c} />
@@ -137,6 +144,21 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           </Button>
         </GroupedRow>
         {otherOpen ? <OtherMachineBlock /> : null}
+        {keys.report && typeof keys.report.copySignIn === "boolean" ? (
+          <SettingsRow
+            label={t("settings.connections.page.copy_sign_in")}
+            description={t("settings.connections.page.copy_sign_in_help", { name: hereName })}
+            htmlFor="connectors-copy-sign-in"
+            control={
+              <Switch
+                id="connectors-copy-sign-in"
+                data-connectors-copy-sign-in=""
+                checked={keys.report.copySignIn}
+                onCheckedChange={(on) => void keys.setCopySignIn(on).catch(toastError(t("settings.connections.page.copy_sign_in_failed")))}
+              />
+            }
+          />
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title={view.providersTitle} footer={view.providersFooter} data-connectors-providers="">
@@ -195,7 +217,8 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           }
         />
         <GroupedAction data-connectors-more-toggle="" aria-expanded={moreOpen} onClick={() => c.searchMore("", !moreOpen)}>
-          {moreOpen ? t("settings.connections.page.show_fewer") : t("settings.connections.page.show_all_count", { count: String(view.moreCount) })} {moreOpen ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
+          {moreOpen ? t("settings.connections.page.show_fewer") : t("settings.connections.page.show_all_count", { count: String(view.moreCount) })}{" "}
+          {moreOpen ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
         </GroupedAction>
       </SettingsGroup>
 
@@ -268,7 +291,14 @@ function AppRow({ row, lit, onOpen, onConnect }: { row: ConnectorAppRow; lit: bo
         </span>
       ) : null}
       {row.button ? (
-        <Button size="sm" variant="outline" disabled={!row.button.enabled} data-connector-connect={row.button.id} onClick={(e) => (stop(e), onConnect())} onKeyDown={stop}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!row.button.enabled}
+          data-connector-connect={row.button.id}
+          onClick={(e) => (stop(e), onConnect())}
+          onKeyDown={stop}
+        >
           {row.state === "connecting" ? <Loader2Icon className="animate-spin" /> : null}
           {row.button.label}
         </Button>
@@ -310,7 +340,11 @@ function ProviderRow({ row, c, onOpen, inMore }: { row: ConnectorProviderRow; c:
       <ProviderMark id={row.id} name={row.label} />
       <div className="min-w-0 flex-1">
         <div className="truncate">{row.label}</div>
-        <p className={cn("mt-px truncate text-xs", problem ? "text-destructive" : "text-muted-foreground")} data-connector-credential="" data-connector-status="">
+        <p
+          className={cn("mt-px truncate text-xs", problem ? "text-destructive" : "text-muted-foreground")}
+          data-connector-credential=""
+          data-connector-status=""
+        >
           {line}
         </p>
       </div>
@@ -366,7 +400,9 @@ function ProviderDetail({
   const several = saved.length > 1;
   const removeKey = (k: (typeof saved)[number]) => {
     const others = saved.some((x) => x.env === k.env && x !== k);
-    void (k.slot ? keys.remove(k.env, { slot: k.slot }) : keys.remove(k.env, others ? { keepOthers: true } : {})).then(() => c.reload()).catch(toastError(t("settings.connections.keys.remove_failed")));
+    void (k.slot ? keys.remove(k.env, { slot: k.slot }) : keys.remove(k.env, others ? { keepOthers: true } : {}))
+      .then(() => c.reload())
+      .catch(toastError(t("settings.connections.keys.remove_failed")));
   };
   if (adding) return <AddKeyDialog row={row} keys={keys} onDone={() => (setAdding(false), void c.reload())} onCancel={() => setAdding(false)} />;
   return (
@@ -377,16 +413,27 @@ function ProviderDetail({
             <ProviderMark id={row.id} name={row.label} large />
             <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-[15px] font-semibold">{row.label}</DialogTitle>
-              <DialogDescription className="truncate text-[13px] text-muted-foreground">{connected && row.credential ? row.credential : row.status}</DialogDescription>
+              <DialogDescription className="truncate text-[13px] text-muted-foreground">
+                {connected && row.credential ? row.credential : row.status}
+              </DialogDescription>
             </div>
           </div>
-          {row.addedMs !== null ? <FactRow className="mt-3" label={t("settings.connections.detail.added")} value={addedText(addedLabel, row.addedMs).replace(/^Added /, "")} data-connector-added="" /> : null}
+          {row.addedMs !== null ? (
+            <FactRow
+              className="mt-3"
+              label={t("settings.connections.detail.added")}
+              value={addedText(addedLabel, row.addedMs).replace(/^Added /, "")}
+              data-connector-added=""
+            />
+          ) : null}
           {several ? (
             <div className="mt-3" data-connector-keys="">
               <div className="px-1 text-xs text-muted-foreground">{t("settings.connections.detail.keys")}</div>
               {saved.map((k) => (
                 <div key={`${k.env}:${k.slot ?? ""}`} className="flex items-center gap-2 px-1 py-1 text-[13px]" data-connector-key={k.slot ?? "first"}>
-                  <span className="min-w-0 flex-1 truncate">{k.label?.trim() || (k.last4 ? t("settings.connections.detail.key_ending", { last4: k.last4 }) : t("settings.connections.detail.key"))}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {k.label?.trim() || (k.last4 ? t("settings.connections.detail.key_ending", { last4: k.last4 }) : t("settings.connections.detail.key"))}
+                  </span>
                   <Button size="sm" variant="ghost" onClick={() => removeKey(k)} data-connector-key-remove="">
                     {t("settings.connections.remove")}
                   </Button>
@@ -468,11 +515,26 @@ function AddKeyDialog({ row, keys, onDone, onCancel }: { row: ConnectorProviderR
           <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("settings.connections.add_key.help")}</DialogDescription>
           <label className="mt-3 block">
             <span className="mb-1 block text-xs font-medium">{t("settings.connections.name_optional")}</span>
-            <Input value={name} maxLength={40} placeholder={t("settings.connections.add_key.placeholder")} autoComplete="off" onChange={(e) => setName(e.currentTarget.value)} data-add-key-name="" />
+            <Input
+              value={name}
+              maxLength={40}
+              placeholder={t("settings.connections.add_key.placeholder")}
+              autoComplete="off"
+              onChange={(e) => setName(e.currentTarget.value)}
+              data-add-key-name=""
+            />
           </label>
           <label className="mt-3 block">
             <span className="mb-1 block text-xs font-medium">{t("settings.connections.add_key.key")}</span>
-            <Input type="password" value={value} autoComplete="off" spellCheck={false} className="font-mono" onChange={(e) => setValue(e.currentTarget.value)} data-add-key-value="" />
+            <Input
+              type="password"
+              value={value}
+              autoComplete="off"
+              spellCheck={false}
+              className="font-mono"
+              onChange={(e) => setValue(e.currentTarget.value)}
+              data-add-key-value=""
+            />
           </label>
           {error ? (
             <p className="mt-2 text-[13px] text-destructive" data-add-key-error="">

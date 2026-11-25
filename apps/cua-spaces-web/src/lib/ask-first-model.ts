@@ -18,10 +18,14 @@ import { useSyncExternalStore } from "react";
 
 import type { AgentAccount, AgentGroup, AgentsView, ModelChoice } from "@/bridge";
 
+import { chipWords, effortOf } from "./model-effort";
+
 /** What was picked: an app and, when the person chose, its account and model. */
 export interface PickedAgent {
   harness: string;
   model?: string;
+  /** The reasoning level the person chose for the model (kept only while the model offers it). */
+  effort?: string;
   env?: string;
   slot?: string;
 }
@@ -33,6 +37,8 @@ export interface AgentSelection {
   model: ModelChoice;
   /** The harness id a run uses. */
   harness: string;
+  /** The reasoning level in use, null for a model without levels. */
+  effort: string | null;
 }
 
 const sameAccount = (a: AgentAccount, p: { env?: string; slot?: string | null }) => a.env === p.env && (a.slot ?? null) === (p.slot ?? null);
@@ -49,7 +55,9 @@ function select(group: AgentGroup | undefined, p: PickedAgent | null, wanted?: s
   if (!account) return null;
   const id = [wanted, p?.harness === group.harness ? p.model : undefined].find((m) => m && account.models.some((x) => x.id === m)) ?? account.defaultModel;
   const model = account.models.find((m) => m.id === id) ?? account.models[0];
-  return model ? { group, account, model, harness: group.harness } : null;
+  return model
+    ? { group, account, model, harness: group.harness, effort: effortOf(group.harness, model.id, p?.harness === group.harness ? p.effort : undefined) }
+    : null;
 }
 
 /**
@@ -58,10 +66,21 @@ function select(group: AgentGroup | undefined, p: PickedAgent | null, wanted?: s
  */
 export function resolveAgent(view: AgentsView | null | undefined, picked: PickedAgent | null): AgentSelection | null {
   if (!view) return null;
-  const last = picked ? select(view.groups.find((g) => g.harness === picked.harness), picked) : null;
+  const last = picked
+    ? select(
+        view.groups.find((g) => g.harness === picked.harness),
+        picked,
+      )
+    : null;
   if (last) return last;
   const d = view.default;
-  return d ? select(view.groups.find((g) => g.harness === d.harness), { harness: d.harness, env: d.env, ...(d.slot ? { slot: d.slot } : {}) }, d.model) : null;
+  return d
+    ? select(
+        view.groups.find((g) => g.harness === d.harness),
+        { harness: d.harness, env: d.env, ...(d.slot ? { slot: d.slot } : {}) },
+        d.model,
+      )
+    : null;
 }
 
 /** What picking `account` of `group` starts with: that account and its quick model (the last model while it is offered). */
@@ -70,11 +89,20 @@ export function pickAccount(group: AgentGroup, account: AgentAccount, picked: Pi
   return { harness: group.harness, env: account.env, ...(account.slot ? { slot: account.slot } : {}), ...(keep ? { model: keep } : {}) };
 }
 
-/** The pick as the chip says it: just the app ("Claude Code"). The account is chosen inside the menu. */
+/** The pick as a line of words: the app ("Claude Code"). The account is chosen inside the menu. */
 export const agentLine = (s: AgentSelection) => s.group.label;
 
+/** The pick as the chip says it: "Sonnet 5.5" and a quiet "High", or "OpenCode" and a quiet model. The logo already names the app. */
+export const chipLine = (s: AgentSelection, say: (key: string) => string) => chipWords(s.group.label, s.model.label, s.effort, say);
+
 /** The pick to remember for a selection. */
-export const pickOf = (s: AgentSelection): PickedAgent => ({ harness: s.harness, model: s.model.id, env: s.account.env, ...(s.account.slot ? { slot: s.account.slot } : {}) });
+export const pickOf = (s: AgentSelection): PickedAgent => ({
+  harness: s.harness,
+  model: s.model.id,
+  env: s.account.env,
+  ...(s.account.slot ? { slot: s.account.slot } : {}),
+  ...(s.effort ? { effort: s.effort } : {}),
+});
 
 /* ---- the last pick, per computer ---- */
 

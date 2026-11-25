@@ -197,7 +197,10 @@ browser_prepare
 ```
 
 For long-running service use, place `--grant existing-profile` on
-`cua-driver serve`. An embedding application may instead provide
+`cua-driver serve`. A grant applies only to a newly started driver: if a
+driver is already running without it, stop it with `cua-driver stop` first.
+`cua-driver serve` started from a terminal uses Cua Driver's own macOS
+permissions, the same as when the app starts it. An embedding application may instead provide
 `DriverAuthorizationHost`. Bounded mode uses a reviewed manifest with
 `resources.browser.profiles: [{kind: existing_profile}]`. Unrestricted mode
 requires `--dangerously-bypass-approvals`.
@@ -229,6 +232,15 @@ only sees the targets it bound. The shared connection closes after 30 minutes
 without a session, 8 hours after the prompt that opened it, when the daemon
 restarts, on `cua-driver revoke --all`, or when the driver turns remote
 debugging back off; the next session after that prompts once again.
+
+Chrome approves one connection per prompt and holds that connection until the
+prompt is answered. The driver presses the exact **Allow** itself when it can
+read the prompt. When it cannot, an attach the user can see keeps that same
+connection open for up to two minutes, so a person's **Allow** attaches it.
+**Cancel** refuses with `browser_consent_revoked`. No answer refuses with
+`browser_consent_required` and `detail.reason: "browser_consent_unanswered"`.
+On either refusal the driver closes the prompt it raised: an answer given after
+the connection is gone would attach nothing.
 When the Chrome window is on another Space than the user's, the attach runs in
 the background: the driver turns remote debugging on without bringing Chrome
 forward, and reverts Chrome's own brief activations (its consent window opens
@@ -239,8 +251,14 @@ refuses with `background_unavailable` before it opens a tab or connects. Keep
 or put Chrome on another Space, or pass `delivery_mode:"foreground"` only when
 nobody is using the screen or the user agreed to Chrome coming forward; the
 driver then brings the previous app back and reports
-`side_effects.restored_frontmost_app`. If the user is working in another app,
-read the Chrome window with `get_window_state` instead.
+`side_effects.restored_frontmost_app`. When Chrome comes to the front during
+the call, including its own activation for the consent prompt,
+`side_effects.foregrounded_window` is `true`. A guarded attach counts every
+activation the driver reverted. Any other attach, including one that starts
+with Chrome already in front, counts what macOS reported before the call
+returned, so an activation the user switched away from in the last moments of
+the call can still be missed. If the user is working in
+another app, read the Chrome window with `get_window_state` instead.
 
 Chrome 144 and later can expose its agent auto-connect bridge from the running
 profile. After approval, Cua reads the exact port and browser WebSocket path
@@ -388,8 +406,15 @@ browser_click
 ```
 
 `trusted` is the default and models browser input through CDP's Input domain.
-Before dispatch, the driver refreshes the element box and hit-tests the point.
-It refuses stale, covered, or ambiguous targets.
+A trusted event lands on whatever the page renders at its point, so for a ref
+the driver scrolls the element into view, takes its box center, and hit-tests
+that point before dispatch. A point outside the visible viewport, or one where
+another element (a sticky header, a modal, an overlay) is rendered on top,
+returns `browser_input_trust_unavailable` with `hit_test` set to
+`outside_viewport` or `covered` and nothing sent. Refresh page state, or use
+`dom_event`, which dispatches on the element itself. Coordinate clicks are
+sent where you aim and are not hit-tested. This applies to `browser_pointer`
+refs on the trusted route too.
 
 Standalone Chromium on Linux can activate its native window when trusted CDP
 pointer input is used. CUA Driver detects that limitation and returns
@@ -515,11 +540,11 @@ AX/PX ladder for browser chrome.
 The legacy `page` tool remains a compatibility surface for older clients. Do
 not start new browser workflows with it: its backend and trust semantics are
 less precise than the typed browser tools, and it does not replace exact
-window binding. Its mutations are disabled by default. Only a trusted daemon
-operator can enable the temporary compatibility path with
-`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` before daemon startup. Restart Cua
-Driver after changing the flag. It does not add typed endpoint ownership,
-capabilities, or existing-profile consent.
+window binding. It is read-only: only `get_text` and `query_dom` remain, and
+they are the way to read Safari and Firefox pages. Its page actions (run
+JavaScript, click, type) were removed, along with the
+`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS` switch; act on a page with the typed
+`browser_*` tools.
 
 On macOS, legacy `page.get_text` and `page.query_dom` keep their original text
 payload but also report read provenance in `structuredContent.source`:
@@ -528,6 +553,12 @@ fallback succeeds, `structuredContent.fallback_error` preserves the triggering
 error and `structuredContent.truncated` reports whether the bounded AX walk was
 cut short. A direct WKWebView/Tauri AX read has no `fallback_error` because no
 JavaScript or CDP route was attempted.
+
+The AX fallback for `query_dom` applies only bare tag selectors (`a`, `link`,
+`button`, `input`, `h1`-`h6`, `p`, `li`, `img`, `select`, `*`); a blank selector
+counts as `*`. Any other selector, such as `select#model` or `nav`, fails with
+an error saying the selector was not applied, instead of returning every
+element of the window.
 
 ## Support boundaries
 
@@ -544,10 +575,35 @@ JavaScript or CDP route was attempted.
 Product classification alone is not a capability claim. Trust the structured
 result from the current host, process, window, session, and tab.
 
+### Electron apps
+
+An Electron app binds like a browser whatever its product name (Slack,
+Obsidian, VS Code): the driver recognizes the bundled Electron runtime, not the
+name. Its page is reachable only through a DevTools endpoint the app opened at
+launch, and an Electron app has no remote-debugging page to turn one on later,
+so `strategy: {"kind":"existing_profile"}` does not apply.
+
+- Started with `--remote-debugging-port=0` (for example through
+  `launch_app` with `additional_arguments`): `get_browser_state` binds the
+  user's instance directly.
+- Started without it: `get_browser_state` refuses with
+  `browser_requires_setup`, reason `embedded_application_endpoint_closed`, and
+  `detail.next_call` names `browser_prepare` with `allow_launch: true` and
+  `profile: {"mode":"isolated_new"}`. That launches a separate driver-owned
+  copy of the app on a fresh profile; bind that copy's window (its pid is
+  `prepared_pid`). The copy does not see the user's open documents or signed-in
+  state. Attaching the user's own instance needs the user to restart it with
+  the flag.
+
+The typed tools read the page's semantic outline and act on refs; they do not
+return arbitrary DOM attributes.
+
 ## Recovery rules
 
 - `browser_requires_setup`: obtain explicit approval and call
-  `browser_prepare`; never make setup a hidden read side effect.
+  `browser_prepare`; never make setup a hidden read side effect. When the
+  refusal carries `detail.next_call`, make that exact call (an Electron app
+  names an isolated launch, see [Electron apps](#electron-apps)).
 - `browser_consent_required`: restart standard mode with the trusted launch
   grant, use a capability manifest that admits the exact resource while the
   selected profile remains independently binding, or let the embedding host
@@ -561,7 +617,9 @@ result from the current host, process, window, session, and tab.
   action; never treat a readable `content_ref` as clickable or editable.
 - `browser_input_trust_unavailable`: either request `dom_event` when its
   semantics are acceptable or use the native action ladder. Do not foreground
-  the browser while calling the action background.
+  the browser while calling the action background. When `detail.hit_test` is
+  `covered` or `outside_viewport`, the ref's point did not reach the element;
+  snapshot again first, since the page may have changed under it.
 - closed tab, moved tab, browser restart, or reconnect: discard capabilities
   and bind again.
 

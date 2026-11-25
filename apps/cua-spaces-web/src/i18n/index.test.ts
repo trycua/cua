@@ -32,6 +32,10 @@ describe("t", () => {
 
 describe("english-files", () => {
   it("lists every English catalog file, for code that runs outside Vite", () => {
-    expect(Object.keys(ENGLISH_FILES).map((p) => /([^/]+)\.json$/.exec(p)![1]).sort()).toEqual([...NAMESPACES]);
+    expect(
+      Object.keys(ENGLISH_FILES)
+        .map((p) => /([^/]+)\.json$/.exec(p)![1])
+        .sort(),
+    ).toEqual([...NAMESPACES]);
   });
 });

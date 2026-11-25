@@ -194,6 +194,7 @@ final class LumeController {
     private let imageLoaderFactory: ImageLoaderFactory
     private let vmFactory: VMFactory
     private let runLockProbe: RunLockProbe
+    private let hostVolumeSpaceProbe: HostVolumeSpaceProbe
 
     // MARK: - Initialization
 
@@ -201,12 +202,14 @@ final class LumeController {
         home: Home = Home(),
         imageLoaderFactory: ImageLoaderFactory = DefaultImageLoaderFactory(),
         vmFactory: VMFactory = DefaultVMFactory(),
-        runLockProbe: RunLockProbe = LsofRunLockProbe()
+        runLockProbe: RunLockProbe = LsofRunLockProbe(),
+        hostVolumeSpaceProbe: HostVolumeSpaceProbe = FoundationHostVolumeSpaceProbe()
     ) {
         self.home = home
         self.imageLoaderFactory = imageLoaderFactory
         self.vmFactory = vmFactory
         self.runLockProbe = runLockProbe
+        self.hostVolumeSpaceProbe = hostVolumeSpaceProbe
     }
 
     // MARK: - Public VM Management Methods
@@ -1350,6 +1353,8 @@ final class LumeController {
         clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled,
         forwards: [UInt16] = [],
+        hostDevices: HostDeviceOptions = .all,
+        guestTimePort: UInt32? = nil,
         telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
@@ -1362,6 +1367,7 @@ final class LumeController {
         ) {
             throw VMError.vncDisabledConflict(option)
         }
+        try hostDevices.validate(clipboardSync: clipboard)
         Logger.info(
             "Running VM",
             metadata: [
@@ -1379,6 +1385,8 @@ final class LumeController {
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
                 "additional_disks": "\(additionalDiskPaths?.count ?? 0)",
                 "network_override": networkMode?.description ?? "vm-config",
+                "audio_device": "\(hostDevices.audio)",
+                "clipboard_device": "\(hostDevices.clipboard)",
             ])
 
         do {
@@ -1472,6 +1480,18 @@ final class LumeController {
                 additionalDiskPaths: additionalDiskPaths
             )
 
+            // The mount and USB images attach read-only; these disks grow on the host.
+            let writableDisks = [diskPath ?? vmDir.diskPath] + (additionalDiskPaths ?? [])
+            if let shortfall = HostDiskSpace.shortfall(
+                writableDisks: writableDisks, probe: hostVolumeSpaceProbe)
+            {
+                throw VMError.insufficientHostSpace(
+                    name: normalizedName,
+                    volume: shortfall.volume,
+                    required: shortfall.requiredBytes,
+                    available: shortfall.availableBytes)
+            }
+
             // Load the VM directly using the located VMDirectory and storage context
             let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage, diskPath: diskPath, nvramPath: nvramPath)
             vm.telemetryTransport = telemetryTransport
@@ -1501,7 +1521,9 @@ final class LumeController {
                 networkMode: networkMode,
                 clipboard: clipboard,
                 vncPolicy: vncPolicy,
-                forwards: forwards)
+                forwards: forwards,
+                hostDevices: hostDevices,
+                guestTimePort: guestTimePort)
             // `run` returns once the guest has stopped, including when it shut
             // itself down, so the VM no longer runs in this process.
             SharedVM.shared.removeVM(name: normalizedName, ifSame: vm)
@@ -1556,6 +1578,7 @@ final class LumeController {
             // Set default VM name if not provided
             let vmName = name ?? "\(imageName)_\(tag)"
 
+            Logger.info("Pulling \(image)")
             Logger.debug(
                 "Pulling image",
                 metadata: [
@@ -1599,6 +1622,7 @@ final class LumeController {
                 try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
             }
 
+            Logger.info("Pulled \(image) as VM \(vmName)")
             Logger.debug(
                 "Image pulled successfully",
                 metadata: [

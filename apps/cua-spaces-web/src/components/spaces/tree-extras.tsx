@@ -29,7 +29,15 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const rowLink = "flex min-h-11 items-center gap-3 px-4 py-2.5 text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent/50";
 
 /** Computers that signed in or were set up and wait for you: Add, or Not me. */
-export function PendingSection({ pending, title, actions }: { pending: readonly PendingMachine[]; title: string; actions: ReturnType<typeof usePendingActions> }) {
+export function PendingSection({
+  pending,
+  title,
+  actions,
+}: {
+  pending: readonly PendingMachine[];
+  title: string;
+  actions: ReturnType<typeof usePendingActions>;
+}) {
   if (pending.length === 0) return null;
   return (
     <GroupedSection title={title} className="mb-6" data-tree-pending={pending.length}>
@@ -104,7 +112,15 @@ export function DevicesSection() {
       {rows.map((m) => {
         const os = machineOs(m);
         return (
-          <Link key={m.id} to="/spaces/computer/$computerId" params={{ computerId: m.id }} className={rowLink} data-machine-id={m.id} data-machine-name={m.name} data-online={String(m.online)}>
+          <Link
+            key={m.id}
+            to="/spaces/computer/$computerId"
+            params={{ computerId: m.id }}
+            className={rowLink}
+            data-machine-id={m.id}
+            data-machine-name={m.name}
+            data-online={String(m.online)}
+          >
             {os ? <OsIcon os={os} className="size-4 shrink-0 text-muted-foreground" /> : null}
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{m.name}</span>

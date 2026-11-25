@@ -105,7 +105,16 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       run: () => setPreference(other),
     },
     ...(preference !== "system"
-      ? [{ id: "theme:system", group: actions, label: t("shell.palette.match_system"), keywords: t("shell.palette.match_system_keywords"), icon: icon(MonitorIcon), run: () => setPreference("system") }]
+      ? [
+          {
+            id: "theme:system",
+            group: actions,
+            label: t("shell.palette.match_system"),
+            keywords: t("shell.palette.match_system_keywords"),
+            icon: icon(MonitorIcon),
+            run: () => setPreference("system"),
+          },
+        ]
       : []),
     ...(!vaultLocked && unattended.length > 0
       ? [
@@ -124,7 +133,15 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
         ]
       : []),
     session?.signedIn
-      ? { id: "session:signOut", group: actions, label: t("shell.palette.sign_out"), hint: session.identity ?? undefined, keywords: t("shell.palette.sign_out_keywords"), icon: icon(LogOutIcon), run: () => void signOut().catch(toastError(t("shell.palette.sign_out_failed"))) }
+      ? {
+          id: "session:signOut",
+          group: actions,
+          label: t("shell.palette.sign_out"),
+          hint: session.identity ?? undefined,
+          keywords: t("shell.palette.sign_out_keywords"),
+          icon: icon(LogOutIcon),
+          run: () => void signOut().catch(toastError(t("shell.palette.sign_out_failed"))),
+        }
       : {
           id: "session:signIn",
           group: actions,
@@ -136,7 +153,15 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
               .then(() => toast(t("shell.palette.sign_in_opened"), { description: t("shell.palette.sign_in_opened_description") }))
               .catch(toastError(t("shell.palette.sign_in_failed"))),
         },
-    { id: "sidebar", group: actions, label: t("shell.palette.toggle_sidebar"), keywords: t("shell.palette.toggle_sidebar_keywords"), shortcut: bindingFor("sidebar.toggle"), icon: icon(PanelLeftIcon), run: toggleSidebar },
+    {
+      id: "sidebar",
+      group: actions,
+      label: t("shell.palette.toggle_sidebar"),
+      keywords: t("shell.palette.toggle_sidebar_keywords"),
+      shortcut: bindingFor("sidebar.toggle"),
+      icon: icon(PanelLeftIcon),
+      run: toggleSidebar,
+    },
     ...navItems.map((n) => ({
       id: `nav:${n.to}`,
       group: goTo,
@@ -169,15 +194,37 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
           },
         ]
       : []),
-    { id: "nav:onboarding", group: goTo, label: t("shell.palette.onboarding"), keywords: t("shell.palette.onboarding_keywords"), icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
+    {
+      id: "nav:onboarding",
+      group: goTo,
+      label: t("shell.palette.onboarding"),
+      keywords: t("shell.palette.onboarding_keywords"),
+      icon: icon(SparklesIcon),
+      run: () => void navigate({ to: "/onboarding" }),
+    },
     ...orderSpaces(realSpaces(spaces)).flatMap((s): Command[] => {
       const state = spaceState(s);
-      const meta = { group: "Spaces", hint: osLabel(s), keywords: paletteKeywords(s, state, machineName(machines, s)), icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
+      const meta = {
+        group: "Spaces",
+        hint: osLabel(s),
+        keywords: paletteKeywords(s, state, machineName(machines, s)),
+        icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" />,
+      };
       const out: Command[] = [{ ...meta, id: `space:open:${s.id}`, label: t("shell.palette.open_space", { name: s.name }), run: () => openSpace(s.id) }];
       if (state === "stopped") {
-        out.push({ ...meta, id: `space:start:${s.id}`, label: t("shell.palette.start_space", { name: s.name }), run: () => void startSpace(s.id).catch(toastError(t("shell.palette.start_space_failed", { name: s.name }))) });
+        out.push({
+          ...meta,
+          id: `space:start:${s.id}`,
+          label: t("shell.palette.start_space", { name: s.name }),
+          run: () => void startSpace(s.id).catch(toastError(t("shell.palette.start_space_failed", { name: s.name }))),
+        });
       } else if (state === "running") {
-        out.push({ ...meta, id: `space:stop:${s.id}`, label: t("shell.palette.stop_space", { name: s.name }), run: () => void stopSpace(s.id).catch(toastError(t("shell.palette.stop_space_failed", { name: s.name }))) });
+        out.push({
+          ...meta,
+          id: `space:stop:${s.id}`,
+          label: t("shell.palette.stop_space", { name: s.name }),
+          run: () => void stopSpace(s.id).catch(toastError(t("shell.palette.stop_space_failed", { name: s.name }))),
+        });
       }
       return out;
     }),
@@ -261,9 +308,19 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
         })}
       </div>
       <div className="flex items-center gap-3 border-t bg-foreground/[0.02] px-4 py-2 text-2xs text-muted-foreground">
-        <span className="flex items-center gap-1"><Kbd>↑</Kbd><Kbd>↓</Kbd> {t("shell.palette.hint_move")}</span>
-        <span className="flex items-center gap-1"><Kbd><CornerDownLeftIcon className="size-3" /></Kbd> {t("shell.palette.hint_run")}</span>
-        <span className="flex items-center gap-1"><Kbd>{t("shell.palette.key_esc")}</Kbd> {t("shell.palette.hint_close")}</span>
+        <span className="flex items-center gap-1">
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd> {t("shell.palette.hint_move")}
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>
+            <CornerDownLeftIcon className="size-3" />
+          </Kbd>{" "}
+          {t("shell.palette.hint_run")}
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>{t("shell.palette.key_esc")}</Kbd> {t("shell.palette.hint_close")}
+        </span>
       </div>
     </div>
   );

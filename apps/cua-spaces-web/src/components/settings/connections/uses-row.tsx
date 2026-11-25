@@ -29,9 +29,7 @@ export function UsesRow({ agent, uses, onChoose, onConnect }: { agent: string; u
   const cur = uses.current;
   return (
     <GroupedRow className="min-h-14" data-connector-uses={uses.state} data-connector-uses-app={agent}>
-      {cur ? (
-        <ProviderMark id={cur.provider} name={cur.providerName} />
-      ) : null}
+      {cur ? <ProviderMark id={cur.provider} name={cur.providerName} /> : null}
       <div className="min-w-0 flex-1">
         {cur ? (
           <>

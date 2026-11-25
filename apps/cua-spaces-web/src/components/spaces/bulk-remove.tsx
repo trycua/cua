@@ -100,7 +100,9 @@ export function useBulkRemove(present: ReadonlySet<string>, onDone: (results: Bu
       const failed = results.filter((r) => !r.ok);
       toast(said.text, {
         type: said.tone === "ok" ? "success" : "error",
-        description: failed.length ? failed.map((r) => `${items.find((i) => i.id === r.id)?.name ?? r.id}: ${r.error ?? t("computers.bulk.failed")}`).join("\n") : undefined,
+        description: failed.length
+          ? failed.map((r) => `${items.find((i) => i.id === r.id)?.name ?? r.id}: ${r.error ?? t("computers.bulk.failed")}`).join("\n")
+          : undefined,
         group: "spaces-bulk",
       });
       onDone(results);
@@ -109,7 +111,17 @@ export function useBulkRemove(present: ReadonlySet<string>, onDone: (results: Bu
 }
 
 /** The confirm, as the core lays it out. */
-export function BulkConfirmDialog({ view, items = [], onCancel, onConfirm }: { view: BulkConfirmView; items?: readonly SpaceItem[]; onCancel: () => void; onConfirm: () => void }) {
+export function BulkConfirmDialog({
+  view,
+  items = [],
+  onCancel,
+  onConfirm,
+}: {
+  view: BulkConfirmView;
+  items?: readonly SpaceItem[];
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
   return (
     <AlertDialog open onOpenChange={(o) => !o && onCancel()}>
       <AlertDialogPopup data-bulk-confirm="" className="w-[min(460px,calc(100vw-2rem))] rounded-lg border-0">
@@ -131,7 +143,10 @@ export function BulkConfirmDialog({ view, items = [], onCancel, onConfirm }: { v
                     return it && !it.mine ? (
                       <SpaceMark space={it.space} access={it.access} className="size-4 text-[9px]" />
                     ) : (
-                      <OsIcon os={(["macos", "linux", "windows"].includes(r.os) ? r.os : "unknown") as "macos"} className="size-3.5 shrink-0 text-muted-foreground" />
+                      <OsIcon
+                        os={(["macos", "linux", "windows"].includes(r.os) ? r.os : "unknown") as "macos"}
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
                     );
                   })()}
                   <span className="min-w-0 truncate font-medium">{r.name}</span>
@@ -143,7 +158,15 @@ export function BulkConfirmDialog({ view, items = [], onCancel, onConfirm }: { v
                   {r.people.length ? (
                     <span className="inline-flex shrink-0 items-center">
                       {r.people.slice(0, 3).map((p, i) => (
-                        <span key={`${p}:${i}`} aria-hidden className={cn("flex size-4 items-center justify-center rounded-full text-[9px] font-semibold text-white ring-2 ring-popover", avatarColor(p), i > 0 && "-ml-1")}>
+                        <span
+                          key={`${p}:${i}`}
+                          aria-hidden
+                          className={cn(
+                            "flex size-4 items-center justify-center rounded-full text-[9px] font-semibold text-white ring-2 ring-popover",
+                            avatarColor(p),
+                            i > 0 && "-ml-1",
+                          )}
+                        >
                           {initial(p)}
                         </span>
                       ))}

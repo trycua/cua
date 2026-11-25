@@ -89,7 +89,10 @@ export function RepoChip({ repo, onRepo }: { repo: AskRepo | null; onRepo?: (r: 
         placeholder={t("home.repo.placeholder")}
         aria-label={t("home.repo.field_label")}
         aria-invalid={bad}
-        className={cn("w-full rounded-lg bg-foreground/[0.05] px-2.5 py-2 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60", bad && "ring-2 ring-destructive/50")}
+        className={cn(
+          "w-full rounded-lg bg-foreground/[0.05] px-2.5 py-2 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+          bad && "ring-2 ring-destructive/50",
+        )}
       />
       {bad ? <p className="px-2.5 pt-1.5 text-[12px] text-destructive">{t("home.repo.invalid")}</p> : null}
       {recent.length ? (

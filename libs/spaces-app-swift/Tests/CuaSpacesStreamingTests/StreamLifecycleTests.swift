@@ -142,7 +142,10 @@ private func eventually(_ what: String, _ cond: @MainActor () async -> Bool) asy
         await session.start()
         let took = ContinuousClock.now - began
         #expect(session.status == .streaming)
-        #expect(took < LiveStreamSession.presenceWait + .milliseconds(1_500), "opened after \(took)")
+        // The join would take 60 s. The open must not wait for it, so the
+        // limit is far under that and far over `presenceWait` plus what a
+        // loaded CI runner adds (it measured 2.4 s once).
+        #expect(took < .seconds(10), "opened after \(took)")
         #expect(provider.opened.count == 1)
         await session.stop()
     }

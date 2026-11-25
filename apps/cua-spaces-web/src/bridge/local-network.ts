@@ -50,6 +50,8 @@ function writeAsked(at: number): void {
 }
 
 export interface LocalNetworkState {
+  /** Not read yet (or there is no host to ask): `available` doesn't say anything until this is false. */
+  loading: boolean;
   /** This Mac runs macOS Spaces, so it needs Local Network. False while loading and on other computers. */
   available: boolean;
   /** macOS lets Cua Spaces reach the local network. */
@@ -68,15 +70,17 @@ export interface LocalNetworkState {
 export function useLocalNetwork(active: boolean): LocalNetworkState {
   const adapter = useContext(BridgeContext)?.adapter ?? null;
   const [row, setRow] = useState<{ granted: boolean; settingsUrl: string | null } | null>(null);
+  const [loading, setLoading] = useState(true);
   const [askedAt, setAskedAt] = useState<number | null>(() => readAsked());
   const [now, setNow] = useState(() => Date.now());
   const live = useRef(true);
   const asked = askedAt != null;
 
   const refresh = useCallback(async () => {
-    if (!adapter) return;
+    if (!adapter) return setLoading(false);
     const h = await adapter.call("host.status", { localNetwork: true, localNetworkCheck: asked }).catch(() => null);
     if (!live.current) return;
+    setLoading(false);
     const p = h?.permissions?.find((x) => x.id === LOCAL_NETWORK_ID);
     setRow(p ? { granted: Boolean(p.granted), settingsUrl: p.settingsUrl ?? null } : null);
     setNow(Date.now());
@@ -113,5 +117,5 @@ export function useLocalNetwork(active: boolean): LocalNetworkState {
     await adapter.call("host.openSettings", { url });
   }, [adapter, row]);
 
-  return { available: row != null, granted, asked, waiting, denied: asked && !granted && !waiting, allow };
+  return { loading, available: row != null, granted, asked, waiting, denied: asked && !granted && !waiting, allow };
 }

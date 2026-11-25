@@ -20,7 +20,11 @@ stubBrowserApis();
 describe.skipIf(!wasmBuilt)("the core's words and states (wasm core)", () => {
   it("says a Space's status as the core does: Suspended, not Stopped", async () => {
     const core = await testCore();
-    const [space] = rowsToSpaces(core, [{ id: "local:fbd1", name: "fbd1", provider: "local", os: "linux", spacesdVersion: "0.6.0", features: [], reachable: false }], 0);
+    const [space] = rowsToSpaces(
+      core,
+      [{ id: "local:fbd1", name: "fbd1", provider: "local", os: "linux", spacesdVersion: "0.6.0", features: [], reachable: false }],
+      0,
+    );
     expect(space!.status).toBe("suspended");
     const { container } = render(
       <BridgeProvider adapter={createDemoAdapter({ latencyMs: 0 })} core={core}>

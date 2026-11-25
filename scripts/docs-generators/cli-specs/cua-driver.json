@@ -24,12 +24,6 @@
     },
     {
      "default_value": false,
-     "help": "Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots.",
-     "name": "claude-code-computer-use-compat",
-     "short_name": null
-    },
-    {
-     "default_value": false,
      "help": "Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app.",
      "name": "embedded",
      "short_name": null
@@ -149,6 +143,10 @@
      "description": "Save the screenshot from a tool response"
     },
     {
+     "command": "cua-driver call --text get_guide '{\"topic\":\"overview\"}'",
+     "description": "Print a tool's text output (guides, summaries) instead of its structured JSON"
+    },
+    {
      "command": "cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"since\":\"s0000002a\"}'",
      "description": "Read only what changed since an earlier snapshot_id"
     },
@@ -157,7 +155,14 @@
      "description": "Return the structured elements instead of the markdown tree"
     }
    ],
-   "flags": [],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Print the result's text content instead of its structured JSON, for tools whose output is text (for example get_guide).",
+     "name": "text",
+     "short_name": null
+    }
+   ],
    "name": "call",
    "options": [
     {
@@ -200,18 +205,6 @@
    "flags": [
     {
      "default_value": false,
-     "help": "Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.",
-     "name": "claude-code-computer-use-compat",
-     "short_name": null
-    },
-    {
-     "default_value": false,
-     "help": "Show a small always-on-top window with the latest post-action screenshot and a one-line label (macOS only).",
-     "name": "experimental-pip",
-     "short_name": null
-    },
-    {
-     "default_value": false,
      "help": "Select unrestricted mode and acknowledge its risk.",
      "name": "dangerously-bypass-approvals",
      "short_name": null
@@ -220,12 +213,6 @@
      "default_value": false,
      "help": "Trusted-launcher confirmation that the exact capability manifest was reviewed.",
      "name": "approve-capability-manifest",
-     "short_name": null
-    },
-    {
-     "default_value": false,
-     "help": "Deprecated alias for approve-capability-manifest.",
-     "name": "approve-session-policy",
      "short_name": null
     },
     {
@@ -304,14 +291,6 @@
     },
     {
      "default_value": null,
-     "help": "Deprecated alias for capability-manifest.",
-     "is_optional": true,
-     "name": "session-policy",
-     "short_name": null,
-     "type": "Path"
-    },
-    {
-     "default_value": null,
      "help": "Advisory host bundle id label echoed in check_permissions output (embedded mode).",
      "is_optional": true,
      "name": "host-bundle-id",
@@ -357,14 +336,6 @@
      "name": "idle-hide-ms",
      "short_name": null,
      "type": "Number"
-    },
-    {
-     "default_value": null,
-     "help": "Size and optional top-left origin of the experimental preview window: WxH or WxH+X+Y (default 480x360, top-right of the main display).",
-     "is_optional": true,
-     "name": "experimental-pip-geometry",
-     "short_name": null,
-     "type": "String"
     }
    ],
    "subcommands": []
@@ -785,13 +756,136 @@
      "name": "grant",
      "options": [],
      "subcommands": []
+    },
+    {
+     "abstract": "Approve the permission prompts through the Mac's Screen Sharing (VNC) server, for a Mac nobody is sitting at.",
+     "arguments": [],
+     "discussion": "Screen Sharing input does not depend on Cua Driver's own permissions, so this works before they are granted, from this Mac or another computer. Run `permissions grant` on the Mac to raise the prompts, approve each one from screenshots, then check with `permissions status`; once both are on, Cua Driver works natively. Credentials come only from the environment: CUA_VNC_USER and CUA_VNC_PASSWORD for a macOS account (Apple Remote Desktop authentication), or CUA_VNC_PASSWORD alone for a VNC password. Clicks and typing are logged to $CUA_VNC_LOG, default ~/.cache/cua-driver/vnc-approvals.log. Only with the owner's authorization; see the macOS permissions reference.",
+     "examples": [
+      {
+       "command": "cua-driver permissions vnc shot screen.png",
+       "description": "Save the screen of $CUA_VNC_SERVER"
+      }
+     ],
+     "flags": [],
+     "name": "vnc",
+     "options": [],
+     "subcommands": [
+      {
+       "abstract": "Save a PNG of the whole screen, readable only by you.",
+       "arguments": [
+        {
+         "help": "PNG path to write.",
+         "is_optional": false,
+         "name": "out",
+         "type": "Path"
+        }
+       ],
+       "discussion": "",
+       "examples": [
+        {
+         "command": "cua-driver permissions vnc shot screen.png --server mac.local",
+         "description": "Save the remote Mac's screen"
+        }
+       ],
+       "flags": [],
+       "name": "shot",
+       "options": [
+        {
+         "default_value": null,
+         "help": "The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.",
+         "is_optional": true,
+         "name": "server",
+         "short_name": null,
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      },
+      {
+       "abstract": "Click at a pixel of the screenshot and log what the click approves.",
+       "arguments": [
+        {
+         "help": "Pixel column in the screenshot.",
+         "is_optional": false,
+         "name": "x",
+         "type": "Number"
+        },
+        {
+         "help": "Pixel row in the screenshot.",
+         "is_optional": false,
+         "name": "y",
+         "type": "Number"
+        }
+       ],
+       "discussion": "",
+       "examples": [
+        {
+         "command": "cua-driver permissions vnc click 640 412 --label \"CuaDriver: Accessibility\"",
+         "description": "Turn on a switch and log it"
+        }
+       ],
+       "flags": [],
+       "name": "click",
+       "options": [
+        {
+         "default_value": null,
+         "help": "The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.",
+         "is_optional": true,
+         "name": "server",
+         "short_name": null,
+         "type": "String"
+        },
+        {
+         "default_value": null,
+         "help": "What the click approves, such as 'CuaDriver: Accessibility'. Required.",
+         "is_optional": false,
+         "name": "label",
+         "short_name": null,
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      },
+      {
+       "abstract": "Type the value of an environment variable, then press Return. The value is never printed or logged.",
+       "arguments": [
+        {
+         "help": "Environment variable that holds the text.",
+         "is_optional": false,
+         "name": "name",
+         "type": "String"
+        }
+       ],
+       "discussion": "",
+       "examples": [
+        {
+         "command": "cua-driver permissions vnc type-env VM_PASSWORD",
+         "description": "Type a password the owner gave you"
+        }
+       ],
+       "flags": [],
+       "name": "type-env",
+       "options": [
+        {
+         "default_value": null,
+         "help": "The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.",
+         "is_optional": true,
+         "name": "server",
+         "short_name": null,
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      }
+     ]
     }
    ]
   },
   {
-   "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
+   "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
    "arguments": [],
-   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. An agent whose cua-driver server launches a different Cua Driver, such as the one inside Cua Spaces, is reported as using another Cua Driver and left as is; --replace switches Claude Code, Codex and Cursor to this one the way Set up in Cua Spaces does, backing up the config file first. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
    "examples": [
     {
      "command": "cua-driver connect",
@@ -804,6 +898,10 @@
     {
      "command": "cua-driver connect --json",
      "description": "Print the result for each agent as JSON"
+    },
+    {
+     "command": "cua-driver connect --replace",
+     "description": "Switch agents that use another Cua Driver to this one"
     }
    ],
    "flags": [
@@ -811,6 +909,12 @@
      "default_value": false,
      "help": "Show what would be connected without changing anything.",
      "name": "dry-run",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Switch an agent that uses another Cua Driver, such as the one inside Cua Spaces, to this one.",
+     "name": "replace",
      "short_name": null
     },
     {
@@ -824,7 +928,7 @@
    "options": [
     {
      "default_value": null,
-     "help": "Connect only this agent (claude, codex or cursor). Repeat for several.",
+     "help": "Connect only this agent (claude, codex, cursor or droid). Repeat for several.",
      "is_optional": true,
      "name": "client",
      "short_name": null,
@@ -836,7 +940,7 @@
   {
    "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
    "arguments": [],
-   "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
+   "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode, and deepseek-harness. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
    "examples": [
     {
      "command": "cua-driver mcp-config",
@@ -1071,7 +1175,7 @@
        "type": "String"
       }
      ],
-     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.marks (action marks) is on, off or default and off by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
+     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
      "examples": [
       {
        "command": "cua-driver config set max_image_dimension 1568",
@@ -2438,6 +2542,5 @@
    "meaning": "Usage error: an unknown or missing subcommand or argument, or conflicting flags (for example `revoke` without exactly one of `--session` or `--all`, or an authorization flag passed to `mcp`)."
   }
  ],
- "name": "cua-driver",
- "version": "0.45.1"
+ "name": "cua-driver"
 }

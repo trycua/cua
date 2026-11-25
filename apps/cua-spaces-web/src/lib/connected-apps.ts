@@ -101,7 +101,10 @@ export const BY_HAND: Record<string, { file: string; snippet: string }> = {
   "claude-code": { file: "~/.claude.json", snippet: "claude mcp add --scope user cua -- cua mcp" },
   codex: { file: "~/.codex/config.toml", snippet: '[mcp_servers.cua]\ncommand = "cua"\nargs = ["mcp"]' },
   hermes: { file: "~/.hermes/config.yaml", snippet: "mcp_servers:\n  cua:\n    command: cua\n    args: [mcp]" },
-  openclaw: { file: "~/.openclaw/openclaw.json", snippet: '{\n  "mcp": {\n    "servers": {\n      "cua": { "command": "cua", "args": ["mcp"] }\n    }\n  }\n}' },
+  openclaw: {
+    file: "~/.openclaw/openclaw.json",
+    snippet: '{\n  "mcp": {\n    "servers": {\n      "cua": { "command": "cua", "args": ["mcp"] }\n    }\n  }\n}',
+  },
   cursor: { file: "~/.cursor/mcp.json", snippet: '{\n  "mcpServers": {\n    "cua": { "command": "cua", "args": ["mcp"] }\n  }\n}' },
 };
 
@@ -114,5 +117,9 @@ export function failureText(name: string, detail: string): string {
     return t("settings.connections.failure.read_only", { name });
   }
   const said = detail.trim();
-  return (!said || /^not set up$/i.test(said) ? t("settings.connections.failure.generic", { name }) : t("settings.connections.failure.said", { name, said: said.replace(/\.$/, "") })).trim();
+  return (
+    !said || /^not set up$/i.test(said)
+      ? t("settings.connections.failure.generic", { name })
+      : t("settings.connections.failure.said", { name, said: said.replace(/\.$/, "") })
+  ).trim();
 }

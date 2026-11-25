@@ -51,7 +51,7 @@ fn e(err: rusqlite::Error) -> String {
 }
 
 /// A host as stored. In a pool its row is replicated without its token.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NodeRow {
     /// Its name (unique).
@@ -81,6 +81,26 @@ pub struct NodeRow {
     pub added_ms: i64,
     /// Most jobs at once for a provider node.
     pub max_jobs: u32,
+}
+
+impl std::fmt::Debug for NodeRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeRow")
+            .field("name", &self.name)
+            .field("direct", &self.direct)
+            .field("relay_url", &self.relay_url)
+            .field("relay_machine", &self.relay_machine)
+            .field("token", &"<redacted>")
+            .field("via", &self.via)
+            .field("provider", &self.provider)
+            .field("state", &self.state)
+            .field("os", &self.os)
+            .field("cursor", &self.cursor)
+            .field("ledger_id", &self.ledger_id)
+            .field("added_ms", &self.added_ms)
+            .field("max_jobs", &self.max_jobs)
+            .finish()
+    }
 }
 
 /// A job as the API shows it.

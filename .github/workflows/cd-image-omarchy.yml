@@ -209,10 +209,47 @@ jobs:
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
           [ -e /dev/kvm ] || { echo "::error::no /dev/kvm; the Omarchy doctor and e2e need KVM"; exit 1; }
           scripts/images/install-release-tools.sh --free-disk
+      # Arch packages come from archive.archlinux.org, the only host that keeps
+      # old versions, and it stalls now and then (run 45256854452 failed on a
+      # bash download). The package files are cached by week: each version is
+      # fetched from the archive once, then seeded into the BuildKit cache mount
+      # the Dockerfiles use. A miss only means a normal download; pacman checks
+      # cached files against the dated snapshot database and their signatures.
+      - name: Week for the package cache
+        id: week
+        run: echo "week=$(date -u +%G-W%V)" >>"$GITHUB_OUTPUT"
+      - name: Restore the Arch package cache
+        id: pkgcache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/omarchy-pkgcache
+          key: omarchy-pacman-v1-${{ steps.week.outputs.week }}-${{ github.run_id }}
+          restore-keys: |
+            omarchy-pacman-v1-${{ steps.week.outputs.week }}-
+            omarchy-pacman-v1-
+      - name: Seed the package cache into BuildKit
+        run: |
+          scripts/images/omarchy-pkgcache.sh seed "$RUNNER_TEMP/omarchy-pkgcache"
+          echo "PKGCACHE_BEFORE=$(find "$RUNNER_TEMP/omarchy-pkgcache" -maxdepth 1 -name '*.pkg.tar.*' | wc -l)" >>"$GITHUB_ENV"
       - name: cua images release (build, gates, stage)
         run: |
           cua images release "$IMAGE_DIR" --stamp "$STAMP" --var "tag=$TAG" --work release \
             --steps prepare,build,gate,stage
+      # Saved even when a later gate fails: the downloads are the slow part.
+      - name: Collect the package cache
+        id: collect
+        if: always() && steps.pkgcache.outcome == 'success'
+        run: |
+          scripts/images/omarchy-pkgcache.sh save "$RUNNER_TEMP/omarchy-pkgcache"
+          after="$(find "$RUNNER_TEMP/omarchy-pkgcache" -maxdepth 1 -name '*.pkg.tar.*' | wc -l)"
+          # Only a changed package set is worth a new cache entry.
+          [ "$after" != "${PKGCACHE_BEFORE:-}" ] && echo "changed=true" >>"$GITHUB_OUTPUT" || true
+      - name: Save the Arch package cache
+        if: always() && steps.collect.outputs.changed == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/omarchy-pkgcache
+          key: omarchy-pacman-v1-${{ steps.week.outputs.week }}-${{ github.run_id }}
       - name: Content changed since the promoted edge?
         env:
           EVENT: ${{ github.event_name }}

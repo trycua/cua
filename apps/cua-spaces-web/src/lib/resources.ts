@@ -142,7 +142,11 @@ export function lowDiskWarning(c: ComputerResources, computer: string): { level:
   const free = `${size(c.diskFree)} free of ${size(c.diskTotal)}.`;
   return level === "critical"
     ? { level, title: `${computer} is out of space. Delete old Spaces or snapshots.`, detail: `${free} New Spaces can’t start until there’s more room.` }
-    : { level, title: `${computer} is almost out of space. Delete old Spaces or snapshots.`, detail: `${free} New Spaces may not fit, and apps can slow down.` };
+    : {
+        level,
+        title: `${computer} is almost out of space. Delete old Spaces or snapshots.`,
+        detail: `${free} New Spaces may not fit, and apps can slow down.`,
+      };
 }
 
 /* ---- A Space's resources dialog (the core's `resources.spacePanel`) ---------------- */

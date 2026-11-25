@@ -48,7 +48,13 @@ export function AgentMenuGroup({ c }: { c: Connectors }) {
             <div className="truncate text-[13px]">{r.label}</div>
             <p className="mt-px truncate text-xs text-muted-foreground">{r.status}</p>
           </div>
-          <Switch aria-label={`${view.switchLabel}: ${r.label}`} data-agent-menu-switch={r.app} checked={r.shown} disabled={r.locked} onCheckedChange={(on) => flip(r.app, on)} />
+          <Switch
+            aria-label={`${view.switchLabel}: ${r.label}`}
+            data-agent-menu-switch={r.app}
+            checked={r.shown}
+            disabled={r.locked}
+            onCheckedChange={(on) => flip(r.app, on)}
+          />
         </GroupedRow>
       ))}
     </SettingsGroup>

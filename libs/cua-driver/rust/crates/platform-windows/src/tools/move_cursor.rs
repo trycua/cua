@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use cua_driver_contract::MoveCursorInput;
 use cua_driver_core::{
+    action_record::{ActionExecutionRecord, ActionTransport},
     protocol::ToolResult,
     tool::{Tool, ToolDef},
     tool_args::parse_typed_projection,
@@ -55,9 +56,10 @@ impl Tool for MoveCursorTool {
                 Ok(()) => ToolResult::text(format!(
                     "Moved the OS pointer to ({x:.1}, {y:.1}) (scope:desktop)."
                 ))
-                .with_structured(json!({
-                    "scope": "desktop", "path": "SetCursorPos", "x": x, "y": y
-                })),
+                .with_action_record(ActionExecutionRecord::cursor_move(
+                    ActionTransport::WindowsSetCursorPos,
+                    &args,
+                )),
                 Err(error) => ToolResult::error(error.to_string()),
             };
         }
@@ -71,6 +73,7 @@ impl Tool for MoveCursorTool {
                 .cursor_registry
                 .update_position(&cursor_key, x, y);
         }
+        crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::Unpin);
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so
         // the cursor settles to the natural macOS-style pose.
@@ -83,5 +86,9 @@ impl Tool for MoveCursorTool {
             cursor_key.as_str()
         };
         ToolResult::text(format!("Agent cursor '{shown}' moved to ({x:.1}, {y:.1})."))
+            .with_action_record(ActionExecutionRecord::cursor_move(
+                ActionTransport::AgentCursorOverlay,
+                &args,
+            ))
     }
 }

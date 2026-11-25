@@ -46,20 +46,13 @@ async def build_pwa2apk(
     import hashlib
     from pathlib import Path
 
-    # Check if pwa2apk is installed globally or locally
-    pwa2apk_dir = None
-    for p in [
-        cua_home() / "pwa2apk",
-        Path("/tmp/pwa2apk"),
-    ]:
-        if (p / "src" / "index.js").exists():
-            pwa2apk_dir = p
-            break
-
-    if not pwa2apk_dir:
+    # Only the user's own cua home is trusted. A shared, world-writable location
+    # such as /tmp is never probed: any local user could plant code there that
+    # we would then run with node.
+    pwa2apk_dir = cua_home() / "pwa2apk"
+    if not (pwa2apk_dir / "src" / "index.js").exists():
         # Auto-clone pwa2apk
         logger.info("Cloning pwa2apk...")
-        pwa2apk_dir = cua_home() / "pwa2apk"
         pwa2apk_dir.mkdir(parents=True, exist_ok=True)
         clone_result = subprocess.run(
             ["git", "clone", "https://github.com/trycua/pwa2apk.git", str(pwa2apk_dir)],

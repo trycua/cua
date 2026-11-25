@@ -600,6 +600,14 @@
     {
      "command": "lume run my-vm --detach --display none --vnc disabled",
      "description": "In the background with no VNC listener"
+    },
+    {
+     "command": "lume run my-vm --no-audio-device --no-clipboard-device",
+     "description": "With no audio or clipboard-sharing device"
+    },
+    {
+     "command": "lume run my-vm --time-vsock 5000",
+     "description": "Serve the host's time to the guest on vsock port 5000"
     }
    ],
    "flags": [
@@ -618,6 +626,16 @@
      "default_value": false,
      "help": "Sync the clipboard both ways over SSH. Automatic with the native macOS display",
      "name": "clipboard"
+    },
+    {
+     "default_value": false,
+     "help": "Leave the virtio sound device (host audio input and output) out of the VM, so the guest has no audio device",
+     "name": "no-audio-device"
+    },
+    {
+     "default_value": false,
+     "help": "Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with --clipboard",
+     "name": "no-clipboard-device"
     }
    ],
    "name": "run",
@@ -732,6 +750,12 @@
      "is_optional": true,
      "name": "network",
      "type": "String"
+    },
+    {
+     "help": "Serve the host's UTC time to the guest on this vsock port, for guests with no clock to read at boot. Each connection receives one line, time-v1 <seconds> <nanoseconds>. Off by default",
+     "is_optional": true,
+     "name": "time-vsock",
+     "type": "Int"
     }
    ],
    "subcommands": []
@@ -1961,6 +1985,5 @@
    "meaning": "Usage error: an unknown command or option, a missing argument, or an invalid value"
   }
  ],
- "name": "lume",
- "version": "0.7.0"
+ "name": "lume"
 }

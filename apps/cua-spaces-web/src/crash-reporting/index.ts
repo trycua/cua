@@ -49,7 +49,13 @@ export function sentryOptions(sentry: SentryLike, config: CrashReportingConfig, 
     environment: config.environment,
     sendDefaultPii: false,
     defaultIntegrations: false,
-    integrations: [sentry.globalHandlersIntegration(), sentry.dedupeIntegration(), sentry.linkedErrorsIntegration(), sentry.functionToStringIntegration(), sentry.eventFiltersIntegration()],
+    integrations: [
+      sentry.globalHandlersIntegration(),
+      sentry.dedupeIntegration(),
+      sentry.linkedErrorsIntegration(),
+      sentry.functionToStringIntegration(),
+      sentry.eventFiltersIntegration(),
+    ],
     maxBreadcrumbs: 0,
     sendClientReports: false,
     initialScope: { tags: { shell: config.shell, component: "ui" } },
@@ -115,7 +121,11 @@ export async function startCrashReporting(o: StartOptions = {}): Promise<CrashRe
     });
 
     if (wantsUiTestCrash(first)) {
-      const crash = o.crash ?? (() => { throw new Error("CUA_CRASH_TEST ui"); });
+      const crash =
+        o.crash ??
+        (() => {
+          throw new Error("CUA_CRASH_TEST ui");
+        });
       setTimeout(crash, 3000);
     }
     return { stop };

@@ -86,7 +86,9 @@ function HostRow({ row, onOpen }: { row: GithubRow; onOpen: () => void }) {
         </p>
       </div>
       {row.tone === "ok" ? <CheckIcon aria-hidden className="size-3.5 text-success" data-github-ok="" /> : null}
-      {row.warning ? <TriangleAlertIcon aria-label={t("settings.connections.github.broader")} className="size-4 text-warning" data-github-warning-mark="" /> : null}
+      {row.warning ? (
+        <TriangleAlertIcon aria-label={t("settings.connections.github.broader")} className="size-4 text-warning" data-github-warning-mark="" />
+      ) : null}
       <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground/70" />
     </div>
   );

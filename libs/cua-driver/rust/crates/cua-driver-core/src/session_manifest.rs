@@ -282,14 +282,6 @@ impl SessionManifest {
                 "browser_target" | "authenticated_browser_tab" => {
                     self.authorize_resource_origin(resource)
                 }
-                // `escalate_session` always expands a browser-scoped session
-                // to desktop scope; it has no caller-selectable capture_scope
-                // argument. Require the immutable manifest's display grant
-                // directly instead of keying enforcement on a field the tool
-                // can never send.
-                "session_capture_scope" => self.desktop_display.then_some(()).ok_or_else(|| {
-                    "desktop capture escalation is outside the capability manifest".to_owned()
-                }),
                 "session_trajectory_recording" => Ok(()),
                 _ => refused(),
             },
@@ -415,16 +407,15 @@ impl SessionManifest {
             .get("bundle_id")
             .and_then(serde_json::Value::as_str);
         // The process path the platform adapter read from the OS for this
-        // exact pid. Unlike `bundle_id` and `launch_path`, which come from
-        // `list_apps` (and on Windows are matched to a running process by file
-        // name only), this cannot be influenced by naming a program.
+        // exact pid. It is the only identity an `executable` grant accepts.
+        // `bundle_id` and `launch_path` come from `list_apps`, which on Windows
+        // and Linux pairs a running process with an installed app by file name
+        // only, and `launch_path` is a launcher command line, not the running
+        // image. When the OS image path cannot be read, an executable grant
+        // fails closed; `launch_path` is honoured only by `launch_app`, before
+        // any process exists.
         let attested_executable = resource
             .pointer("/fingerprint/executable")
-            .and_then(serde_json::Value::as_str);
-        let executable = resource
-            .pointer("/fingerprint/executable")
-            .or_else(|| resource.get("executable"))
-            .or_else(|| resource.get("launch_path"))
             .and_then(serde_json::Value::as_str);
         self.applications.iter().any(|application| {
             (!require_all_windows || application.all_windows)
@@ -433,7 +424,7 @@ impl SessionManifest {
                 }) || application
                     .executable
                     .as_deref()
-                    .zip(executable)
+                    .zip(attested_executable)
                     .is_some_and(|(allowed, actual)| allowed == actual))
         })
     }
@@ -1396,9 +1387,11 @@ fn normalize_windows_executable_path(path: &str) -> Option<String> {
 ///   names and AUMIDs) are compared with the claimed identity, as before.
 /// - A grant that is a Windows file path is compared with the attested
 ///   executable path only. The claimed identity is ignored because Windows
-///   `list_apps` pairs a running process with an installed app by file name,
-///   so any program named like the granted one would otherwise inherit the
-///   grant. A missing or unusable path never matches.
+///   `list_apps` pairs a running unpackaged process with an installed app by
+///   file name, so any program named like the granted one would otherwise
+///   inherit the grant. A missing or unusable path never matches. A packaged
+///   process is paired by the package identity Windows reports for it, so its
+///   claimed package family name is trustworthy.
 fn bundle_grant_matches(
     granted_bundle_id: &str,
     claimed_bundle_id: Option<&str>,
@@ -1940,56 +1933,6 @@ allow:
             .unwrap();
     }
 
-    #[cfg(feature = "yaml")]
-    #[test]
-    fn desktop_escalation_requires_the_manifest_display_grant() {
-        let without_display = manifest(
-            r#"
-version: 1
-mode: bounded
-expires_after: 8h
-idle_timeout: 30m
-resources: {}
-allow:
-  tools: [escalate_session]
-"#,
-        )
-        .unwrap();
-        assert!(without_display
-            .authorize_protected_resource(
-                "private_observation",
-                &serde_json::json!({
-                    "kind": "session_capture_scope",
-                    "capture_scope": "desktop"
-                }),
-            )
-            .is_err());
-
-        let with_display = manifest(
-            r#"
-version: 1
-mode: bounded
-expires_after: 8h
-idle_timeout: 30m
-resources:
-  desktop:
-    display: true
-allow:
-  tools: [escalate_session]
-"#,
-        )
-        .unwrap();
-        with_display
-            .authorize_protected_resource(
-                "private_observation",
-                &serde_json::json!({
-                    "kind": "session_capture_scope",
-                    "capture_scope": "desktop"
-                }),
-            )
-            .unwrap();
-    }
-
     #[cfg(all(feature = "yaml", unix))]
     #[test]
     fn manifest_paths_resolve_a_symlinked_deepest_ancestor() {
@@ -2480,6 +2423,79 @@ allow:
             assert!(
                 outcome(serde_json::Value::Null).is_err(),
                 "{adapter}/{kind}"
+            );
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn executable_grant_requires_the_attested_process_image() {
+        // Regression for trycua/cua#8565: a running process must be matched by
+        // the image path the OS reports for its pid, never by the `list_apps`
+        // launch command or an unattested `executable` field.
+        let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let executable = executable.to_string_lossy().into_owned();
+        let loaded = manifest(&format!(
+            r#"
+version: 3
+allow:
+  tools: [list_windows, click]
+resources:
+  apps:
+    - executable: {executable:?}
+      windows: all
+"#
+        ))
+        .unwrap();
+        let resource = |kind: &str, extra: serde_json::Value| {
+            let mut value = serde_json::json!({"kind": kind, "pid": 4321, "window_id": 7});
+            for (key, field) in extra.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            value
+        };
+        let attested = |path: Option<&str>| serde_json::json!({"pid": 4321, "start_time": 1, "executable": path});
+
+        for (adapter, kind) in [
+            ("private_observation", "window"),
+            ("private_observation", "application"),
+            ("desktop_input", "window_input"),
+            ("desktop_input", "application_input"),
+        ] {
+            let outcome =
+                |extra| loaded.authorize_protected_resource(adapter, &resource(kind, extra));
+            // The granted image, attested by the OS.
+            outcome(serde_json::json!({
+                "fingerprint": attested(Some(&executable)),
+                "launch_path": "/usr/bin/env",
+            }))
+            .unwrap();
+            // A launch command equal to the grant, with no attested image.
+            assert!(
+                outcome(serde_json::json!({"launch_path": executable})).is_err(),
+                "{adapter}/{kind}: launch_path alone"
+            );
+            assert!(
+                outcome(serde_json::json!({
+                    "fingerprint": attested(None),
+                    "launch_path": executable,
+                }))
+                .is_err(),
+                "{adapter}/{kind}: unreadable image path"
+            );
+            // An unattested top-level executable claim.
+            assert!(
+                outcome(serde_json::json!({"executable": executable})).is_err(),
+                "{adapter}/{kind}: unattested executable"
+            );
+            // A different attested image with a matching launch command.
+            assert!(
+                outcome(serde_json::json!({
+                    "fingerprint": attested(Some("/usr/bin/id")),
+                    "launch_path": executable,
+                }))
+                .is_err(),
+                "{adapter}/{kind}: different image"
             );
         }
     }

@@ -40,12 +40,20 @@ export function PeopleStack({ access, className }: { access: SpaceAccess; classN
   const names = peopleNames(access);
   const more = names.length - 3;
   return (
-    <span data-people={names.length} title={t("computers.tile.shared_with", { names: namesText(names) })} className={cn("inline-flex shrink-0 items-center", className)}>
+    <span
+      data-people={names.length}
+      title={t("computers.tile.shared_with", { names: namesText(names) })}
+      className={cn("inline-flex shrink-0 items-center", className)}
+    >
       {names.slice(0, 3).map((name, i) => (
         <span
           key={`${name}:${i}`}
           aria-hidden
-          className={cn("flex size-4 items-center justify-center rounded-full text-[9px] font-semibold text-white ring-2 ring-background", avatarColor(name), i > 0 && "-ml-1")}
+          className={cn(
+            "flex size-4 items-center justify-center rounded-full text-[9px] font-semibold text-white ring-2 ring-background",
+            avatarColor(name),
+            i > 0 && "-ml-1",
+          )}
         >
           {initial(name)}
         </span>

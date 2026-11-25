@@ -36,7 +36,9 @@ import fnmatch
 import json
 import os
 import re
+import signal
 import subprocess
+import tempfile
 import sys
 from typing import Any
 
@@ -118,15 +120,54 @@ def repo_of(ref: str) -> str:
     return ref.split("@", 1)[0] if "@" in ref else ref.rsplit(":", 1)[0]
 
 
-def resolve_crane(ref: str) -> dict[str, Any]:
-    digest = subprocess.run(["crane", "digest", ref], capture_output=True, text=True, timeout=60)
-    if digest.returncode != 0:
-        return {"error": digest.stderr.strip() or "crane digest failed"}
-    manifest = subprocess.run(["crane", "manifest", ref], capture_output=True, text=True, timeout=60)
-    children: list[str] = []
-    if manifest.returncode == 0:
+CRANE_TIMEOUT = float(os.environ.get("CUA_CRANE_TIMEOUT", "60"))
+
+
+CRANE_ATTEMPTS = 2
+
+
+def run_crane(args: list[str], anon_dir: str, timeout: float = CRANE_TIMEOUT) -> tuple[int, str, str]:
+    """Run crane anonymously and never longer than ``timeout`` seconds in total -> (rc, stdout, stderr).
+
+    The refs checked here are public, so no credentials are needed. crane has no ``--anonymous`` flag; it reads
+    registry credentials through the Docker config, so we point DOCKER_CONFIG at an empty directory we own. That keeps
+    crane away from credential helpers (osxkeychain, desktop), which block forever on a headless Mac. The child runs in
+    its own process group so a stuck helper is killed with it.
+
+    A healthy lookup takes well under a second, so a call that stalls is a dead connection (shared CI runner IPs get
+    throttled by the registry), not a slow one. The budget is therefore split over a few short attempts: a stalled
+    connection is killed and retried on a fresh one instead of burning the whole budget on a single hang. rc 124 means
+    every attempt timed out.
+    """
+    env = dict(os.environ, DOCKER_CONFIG=anon_dir)
+    per_attempt = timeout / CRANE_ATTEMPTS
+    for _ in range(CRANE_ATTEMPTS):
+        proc = subprocess.Popen(["crane", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
         try:
-            body = json.loads(manifest.stdout)
+            out, err = proc.communicate(timeout=per_attempt)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (OSError, AttributeError):
+                proc.kill()
+            proc.communicate()
+            continue
+        return proc.returncode, out, err
+    return 124, "", f"crane {args[0]} timed out after {timeout:.0f}s (anonymous access; is the registry reachable?)"
+
+
+def resolve_crane(ref: str) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="crane-anon-") as anon:
+        rc, out, err = run_crane(["digest", ref], anon)
+        if rc != 0:
+            return {"error": err.strip() or "crane digest failed"}
+        digest = out.strip()
+        rc, out, _ = run_crane(["manifest", ref], anon)
+    children: list[str] = []
+    if rc == 0:
+        try:
+            body = json.loads(out)
             for m in body.get("manifests", []):
                 platform = m.get("platform", {})
                 # Skip attestation manifests (buildx) and referrer artifacts.
@@ -135,7 +176,7 @@ def resolve_crane(ref: str) -> dict[str, Any]:
                 children.append(m["digest"])
         except json.JSONDecodeError:
             pass
-    return {"digest": digest.stdout.strip(), "children": children}
+    return {"digest": digest, "children": children}
 
 
 def check(refs: dict[str, list[str]], ledger: str | None, baseline: dict[str, str],

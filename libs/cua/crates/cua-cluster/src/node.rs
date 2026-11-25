@@ -114,6 +114,15 @@ pub trait JobExecutor: Send + Sync + 'static {
     /// offered): keep it cheap.
     fn offers(&self) -> Offers;
 
+    /// What this machine creates as Spaces (what it reports in its status
+    /// for placement of Spaces, forks and `on="auto"`). Default: what jobs
+    /// get ([`JobExecutor::offers`]); an executor that keeps a kind from
+    /// jobs only (its members need something the kind lacks) reports it
+    /// here all the same, because a Space made outside a job can use it.
+    fn space_offers(&self) -> Offers {
+        self.offers()
+    }
+
     /// The kind `spec` runs as here: its own, or, when it names none, the
     /// one this host picks for it (a dedicated host's own Space, a macOS VM
     /// for a macOS image, a container). Asked when the job is admitted;
@@ -763,7 +772,7 @@ impl NodeJobs {
     /// This host now, as a scheduler sees it.
     pub fn status(&self) -> pb::HostNodeStatus {
         let ext = self.external();
-        let offers = self.exec.offers();
+        let offers = self.exec.space_offers();
         let g = self.inner.lock().expect("jobs");
         let mut running = ext.running.clone();
         for (k, n) in &g.running_by_kind {

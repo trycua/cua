@@ -23,7 +23,12 @@ const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
 
 describe("a card is only ever the host's", () => {
   const entry = (kind: string) => ({
-    seq: 1, id: "x", ts_ms: 1, author: { kind, id: kind === "system" ? "system:host" : "agent:claude", name: "n" }, kind: "approval", text: "ask",
+    seq: 1,
+    id: "x",
+    ts_ms: 1,
+    author: { kind, id: kind === "system" ? "system:host" : "agent:claude", name: "n" },
+    kind: "approval",
+    text: "ask",
     approval: { action: "export:repo.push", details: "d", state: "open", card: { repo: "acme/app" } },
   });
   it("keeps the card from Cua's host and drops it from an agent", () => {
@@ -83,7 +88,9 @@ describe.skipIf(!wasmBuilt)("the host's push card in the thread", () => {
     expect(files[0]!.querySelector("[data-bar]")!.getAttribute("data-bar")).toBe("add,add,add,add,del");
     expect(files[0]!.querySelectorAll("[data-bar] > span")).toHaveLength(5);
     expect(approval.textContent).toContain("+2 more");
-    expect([...approval.querySelectorAll("[data-commit]")].map((c) => (c as HTMLElement).dataset.commit)).toEqual(DEMO_PUSH_CARD.commits.map((c) => c.sha.slice(0, 7)));
+    expect([...approval.querySelectorAll("[data-commit]")].map((c) => (c as HTMLElement).dataset.commit)).toEqual(
+      DEMO_PUSH_CARD.commits.map((c) => c.sha.slice(0, 7)),
+    );
     const pr = approval.querySelector("[data-pr]")!;
     expect(pr.textContent).toContain("Back off between reconnect retries");
     expect(pr.querySelector("[data-pr-state]")!.textContent).toBe("Open");

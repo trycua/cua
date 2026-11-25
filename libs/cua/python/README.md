@@ -75,17 +75,23 @@ returns) is always `cua.SandboxHandle`.
   and must not be edited; `--check` fails CI when it drifts.
 - Wheels are platform wheels (`build_wheel.py`), one per OS/arch, each with
   the `libcua_sdk` library next to `_native.py` (and the static Linux
-  cua-spacesd in `cua/bin/`). The `cua` CLI is a second platform wheel,
-  `cua-cli` (`cli/`), a dependency of `cua` that installs
-  `cua_cli/bin/cua[.exe]`; the `cua` command runs it with
-  `CUA_SPACESD_STATIC` set to that cua-spacesd. PyPI caps each file at
-  100 MB and the two together are over it.
+  cua-spacesd in `cua/bin/`). The `cua` CLI is a separate package,
+  `cua-cli` (`cli/`), a dependency of `cua`; the `cua` command runs it with
+  `CUA_SPACESD_STATIC` set to that cua-spacesd.
+- On PyPI, `cua-cli` is one thin `py3-none-any` wheel of a few KB
+  (`cli/build_thin_wheel.py`). The first `cua` run downloads the signed CLI
+  archive of the same GitHub release for its machine, checks the SHA-256 the
+  wheel carries, and caches it. Offline or pinned installs: set
+  `CUA_CLI_BINARY` to a `cua` binary, or `CUA_CLI_DOWNLOAD_BASE` to a mirror
+  of the release archives; `python -m cua_cli fetch` downloads ahead of time
+  (Docker images, CI). Local builds (`build_wheel.py --cli`) still put the
+  binary inside the wheel.
 
 ## Development
 
 ```bash
 cd libs/cua
-cargo build --release -p cua-sdk
+cargo build --release -p cua-sdk-native
 scripts/build-test-fixtures.sh
 node scripts/stage-uniffi-library.mjs          # copies the library here
 cd python && uv run --with pytest pytest -q    # smoke tests against fixtures

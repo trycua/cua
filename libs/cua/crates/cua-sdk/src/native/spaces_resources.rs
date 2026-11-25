@@ -371,7 +371,7 @@ async fn embedded_watch(
 }
 
 async fn daemon_watch(
-    daemon: cua_daemon::client::DaemonClient,
+    daemon: cua_daemon_core::client::DaemonClient,
     mut control: tokio::sync::watch::Receiver<Control>,
     listener: Arc<dyn ResourcesListener>,
 ) {

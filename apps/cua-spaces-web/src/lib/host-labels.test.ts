@@ -3,7 +3,17 @@
 
 import { describe, expect, it } from "vitest";
 
-import { creatingLine, leavesLine, globalShortcutLine, hostOs, keyvaultUnlockWay, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
+import {
+  creatingLine,
+  leavesLine,
+  globalShortcutLine,
+  hostOs,
+  keyvaultUnlockWay,
+  osOfPlatform,
+  showsMacShellSettings,
+  thisComputerLabel,
+  thisComputerText,
+} from "./host-labels";
 
 describe("host labels", () => {
   it("names the local machine after its system", () => {

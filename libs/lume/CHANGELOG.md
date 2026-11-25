@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.9.0](https://github.com/trycua/cua/compare/lume-v0.8.0...lume-v0.9.0) (2026-11-24)
+
+
+### Features
+
+* **lume:** optional guest time service over virtio-vsock ([#8546](https://github.com/trycua/cua/issues/8546)) ([f7a7a2f](https://github.com/trycua/cua/commit/f7a7a2f1d7f0915f5d2e63c5164f42bd547de580))
+
+## [0.8.0](https://github.com/trycua/cua/compare/lume-v0.7.2...lume-v0.8.0) (2026-11-23)
+
+
+### Features
+
+* **lume:** optional runs without audio or clipboard devices ([#8624](https://github.com/trycua/cua/issues/8624)) ([1b5bf6b](https://github.com/trycua/cua/commit/1b5bf6b7f3ecea0698023d60b9e87d756d2d81bb))
+
+## [0.7.2](https://github.com/trycua/cua/compare/lume-v0.7.1...lume-v0.7.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **lume:** draw CLI logs and progress through one console ([#7466](https://github.com/trycua/cua/issues/7466)) ([e9756ea](https://github.com/trycua/cua/commit/e9756eadbf605fa3c6a874d92d0c77c8bb8327e7))
+
+## [0.7.1](https://github.com/trycua/cua/compare/lume-v0.7.0...lume-v0.7.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **lume:** refuse writable VM starts when host free space is unsafe ([#7457](https://github.com/trycua/cua/issues/7457)) ([a8f7ab2](https://github.com/trycua/cua/commit/a8f7ab2df35096ea3cf67d4773efd01c23e84da4)), closes [#2767](https://github.com/trycua/cua/issues/2767)
+
 ## [0.7.0](https://github.com/trycua/cua/compare/lume-v0.6.1...lume-v0.7.0) (2026-11-06)
 
 

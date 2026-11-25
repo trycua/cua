@@ -20,8 +20,7 @@ export interface LanguageHost {
   navigator?: { languages?: readonly string[]; language?: string };
 }
 
-const clean = (list: readonly unknown[] | undefined): string[] =>
-  (list ?? []).filter((x): x is string => typeof x === "string" && x.trim() !== "");
+const clean = (list: readonly unknown[] | undefined): string[] => (list ?? []).filter((x): x is string => typeof x === "string" && x.trim() !== "");
 
 export function hostLanguages(win: LanguageHost | undefined = globalThis as LanguageHost): string[] {
   const native = clean(win?.cuaHost?.languages);

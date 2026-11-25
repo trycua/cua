@@ -150,6 +150,286 @@ mod megapixel_cap_tests {
     }
 }
 
+/// Add `screenshot_frame` to the elements of X11 window `window`, captured
+/// as `delivered` pixels at `capture_scale` delivered pixels per X11 pixel.
+fn with_x11_screenshot_frames(
+    window: (i32, i32, i32, i32),
+    elements: Vec<Value>,
+    delivered: (u32, u32),
+    capture_scale: f64,
+) -> Vec<Value> {
+    let (wx, wy, _, _) = window;
+    match dip_window_frame(window, &elements) {
+        Some((root, origin, scale)) => {
+            let root_frame = elements[root]["frame"].clone();
+            let mut elements = cua_driver_core::element_frame::with_screenshot_frames(
+                elements,
+                origin,
+                scale * capture_scale,
+            );
+            // The root is the whole capture; its DIP size was rounded. Any
+            // element with the root's bounds, such as a second maximized
+            // window, covers the same pixels.
+            for entry in &mut elements {
+                if entry["frame"] == root_frame {
+                    entry["screenshot_frame"] =
+                        json!({ "x": 0, "y": 0, "w": delivered.0, "h": delivered.1 });
+                }
+            }
+            elements
+        }
+        None => cua_driver_core::element_frame::with_screenshot_frames(
+            elements,
+            (f64::from(wx), f64::from(wy)),
+            capture_scale,
+        ),
+    }
+}
+
+/// The window's top-level frame when its frames are in DIPs: its position in
+/// `elements`, its origin, and the X11 pixels per DIP. Chromium under a device
+/// scale reports AT-SPI extents in DIPs while its X11 window is in device
+/// pixels, so its frame is the X11 window rectangle divided by that scale.
+/// Only the shallowest top-level frames are windows; an application-wide tree
+/// holds several, and one that matches the window in pixels means no scale.
+fn dip_window_frame(
+    window: (i32, i32, i32, i32),
+    elements: &[Value],
+) -> Option<(usize, (f64, f64), f64)> {
+    let (wx, wy, ww, wh) = window;
+    let top_level_depth = |entry: &Value| {
+        let role = entry["role"].as_str()?.to_ascii_lowercase();
+        let top_level = matches!(role.as_str(), "frame" | "window" | "dialog");
+        (top_level && entry.get("frame").is_some())
+            .then(|| entry["depth"].as_u64())
+            .flatten()
+    };
+    let depth = elements.iter().filter_map(top_level_depth).min()?;
+    let window = [wx, wy, ww, wh].map(f64::from);
+    let fits: Vec<(usize, [f64; 4], f64)> = elements
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| top_level_depth(entry) == Some(depth))
+        .filter_map(|(index, entry)| {
+            let frame = &entry["frame"];
+            let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
+            let frame = [x?, y?, w?, h?];
+            Some((index, frame, fitting_scale(frame, window)?))
+        })
+        .collect();
+    if fits.iter().any(|(_, _, scale)| *scale == 1.0) {
+        return None;
+    }
+    // Of several DIP frames, the one closest to the window is its own.
+    let miss = |frame: &[f64; 4], scale: f64| -> f64 {
+        frame
+            .iter()
+            .zip(window)
+            .map(|(f, w)| (f * scale - w).abs())
+            .sum()
+    };
+    fits.into_iter()
+        .min_by(|a, b| miss(&a.1, a.2).total_cmp(&miss(&b.1, b.2)))
+        .map(|(index, frame, scale)| (index, (frame[0], frame[1]), scale))
+}
+
+/// The X11 pixels per frame unit, at least 1, that map `frame` onto `window`
+/// as `[x, y, w, h]`, or `None` when no scale does. Frames are whole units, so
+/// each value may miss by up to one unit: `|f * scale - w| <= scale`. 1 when
+/// it fits; otherwise the width ratio, held inside what every value allows.
+fn fitting_scale(frame: [f64; 4], window: [f64; 4]) -> Option<f64> {
+    let (mut low, mut high) = (1.0_f64, f64::INFINITY);
+    for (f, w) in frame.into_iter().zip(window) {
+        if f * w < 0.0 {
+            return None;
+        }
+        let (f, w) = (f.abs(), w.abs());
+        low = low.max(w / (f + 1.0));
+        if f > 1.0 {
+            high = high.min(w / (f - 1.0));
+        }
+    }
+    if low > high || frame[2] <= 0.0 || frame[3] <= 0.0 {
+        return None;
+    }
+    Some(if low == 1.0 {
+        1.0
+    } else {
+        (window[2] / frame[2]).clamp(low, high)
+    })
+}
+
+#[cfg(test)]
+mod x11_screenshot_frame_tests {
+    use super::with_x11_screenshot_frames;
+    use serde_json::json;
+
+    fn frames(
+        window: (i32, i32, i32, i32),
+        elements: Vec<serde_json::Value>,
+    ) -> Vec<serde_json::Value> {
+        let delivered = (window.2 as u32, window.3 as u32);
+        with_x11_screenshot_frames(window, elements, delivered, 1.0)
+            .into_iter()
+            .map(|entry| entry["screenshot_frame"].clone())
+            .collect()
+    }
+
+    // #6935: Electron at device scale 2 on X11, its window at (1040,440)
+    // with a 1840x1360 native capture.
+    #[test]
+    fn dip_frames_map_onto_the_device_pixel_capture() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+            json!({"role": "push button", "depth": 1, "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
+        ];
+        assert_eq!(
+            frames((1040, 440, 1840, 1360), elements),
+            vec![
+                json!({"x": 0, "y": 0, "w": 1840, "h": 1360}),
+                json!({"x": 1740, "y": 0, "w": 100, "h": 60}),
+            ]
+        );
+    }
+
+    #[test]
+    fn pixel_frames_keep_the_window_origin() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+            json!({"role": "push button", "depth": 1, "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
+        ];
+        assert_eq!(
+            frames((520, 220, 920, 680), elements),
+            vec![
+                json!({"x": 0, "y": 0, "w": 920, "h": 680}),
+                json!({"x": 870, "y": 0, "w": 50, "h": 30}),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_smaller_frame_elsewhere_is_not_a_device_scale() {
+        // A dialog half the window's size that does not sit at half its
+        // origin belongs to another window, not a scaled copy of this one.
+        let elements = vec![
+            json!({"role": "dialog", "depth": 0, "frame": {"x": 700, "y": 400, "w": 460, "h": 340}}),
+            json!({"role": "push button", "depth": 1, "frame": {"x": 720, "y": 420, "w": 50, "h": 30}}),
+        ];
+        assert_eq!(
+            frames((520, 220, 920, 680), elements)[1],
+            json!({"x": 200, "y": 200, "w": 50, "h": 30})
+        );
+    }
+
+    #[test]
+    fn only_the_window_s_own_frame_shows_a_device_scale() {
+        // The window's frame matches its X11 rectangle; a half-size dialog
+        // at its origin is not this window's frame in DIPs.
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 0, "y": 0, "w": 1920, "h": 1080}}),
+            json!({"role": "dialog", "depth": 1, "frame": {"x": 0, "y": 0, "w": 960, "h": 540}}),
+        ];
+        assert_eq!(
+            frames((0, 0, 1920, 1080), elements.clone())[0],
+            json!({"x": 0, "y": 0, "w": 1920, "h": 1080})
+        );
+        // Element order does not pick the window frame.
+        let other_window_first = elements.into_iter().rev().collect();
+        assert_eq!(
+            frames((0, 0, 1920, 1080), other_window_first)[1],
+            json!({"x": 0, "y": 0, "w": 1920, "h": 1080})
+        );
+    }
+
+    #[test]
+    fn a_nested_dialog_is_not_a_window_frame() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 0, "y": 0, "w": 1280, "h": 720}}),
+            json!({"role": "dialog", "depth": 1, "frame": {"x": 0, "y": 0, "w": 1920, "h": 1080}}),
+        ];
+        assert_eq!(
+            frames((0, 0, 2560, 1440), elements)[0],
+            json!({"x": 0, "y": 0, "w": 2560, "h": 1440})
+        );
+    }
+
+    #[test]
+    fn the_dip_root_spans_the_capture_despite_rounding() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+        ];
+        assert_eq!(
+            frames((1040, 440, 1840, 1361), elements)[0],
+            json!({"x": 0, "y": 0, "w": 1840, "h": 1361})
+        );
+    }
+
+    #[test]
+    fn an_odd_dip_width_still_fits_a_far_origin() {
+        // 801 pixels are 400.5 DIPs, reported as 401.
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 960, "y": 220, "w": 401, "h": 300}}),
+        ];
+        assert_eq!(
+            frames((1920, 440, 801, 600), elements)[0],
+            json!({"x": 0, "y": 0, "w": 801, "h": 600})
+        );
+    }
+
+    #[test]
+    fn the_closest_dip_frame_is_the_window_s() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 961, "y": 220, "w": 401, "h": 300}}),
+            json!({"role": "frame", "depth": 0, "frame": {"x": 960, "y": 220, "w": 400, "h": 300}}),
+        ];
+        assert_eq!(
+            frames((1920, 440, 800, 600), elements)[1],
+            json!({"x": 0, "y": 0, "w": 800, "h": 600})
+        );
+    }
+
+    #[test]
+    fn identical_window_frames_both_span_the_capture() {
+        // Two maximized windows on an odd-height work area: 1055 pixels are
+        // 527.5 DIPs, reported as 528.
+        let root = json!({"x": 0, "y": 0, "w": 960, "h": 528});
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": root}),
+            json!({"role": "frame", "depth": 0, "frame": root}),
+        ];
+        let capture = json!({"x": 0, "y": 0, "w": 1920, "h": 1055});
+        assert_eq!(
+            frames((0, 0, 1920, 1055), elements),
+            vec![capture.clone(), capture]
+        );
+    }
+
+    #[test]
+    fn an_application_wide_tree_finds_the_scaled_window_frame() {
+        // Two DPR-2 windows: the walk could not scope DIP extents to the
+        // X11 window, so it offers both frames.
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 0, "y": 0, "w": 400, "h": 300}}),
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+        ];
+        assert_eq!(
+            frames((1040, 440, 1840, 1360), elements)[1],
+            json!({"x": 0, "y": 0, "w": 1840, "h": 1360})
+        );
+    }
+
+    #[test]
+    fn an_odd_pixel_origin_maps_the_frame_to_the_capture_origin() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+        ];
+        assert_eq!(
+            frames((1041, 441, 1840, 1360), elements)[0],
+            json!({"x": 0, "y": 0, "w": 1840, "h": 1360})
+        );
+    }
+}
+
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
@@ -397,7 +677,7 @@ impl Tool for GetWindowStateTool {
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
+                "query":{"type":"string","description":"Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. A query that matches nothing says `0 of N elements match`."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
@@ -773,7 +1053,7 @@ impl Tool for GetWindowStateTool {
                 let mut published_snapshot = false;
                 let mut invalidated = Vec::new();
 
-                if let Some(tr) = tree_opt {
+                if let Some(mut tr) = tree_opt {
                     let source_trusted = tr.trusted;
                     let source_degraded_reason = tr.degraded_reason.clone();
                     let count = tr
@@ -825,7 +1105,11 @@ impl Tool for GetWindowStateTool {
                     // the window's scope (`snapshot_binds_window`).
                     let target_scoped = binds_window;
                     if !observation_only && !target_scoped {
-                        invalidated.extend(state.snapshots.remove(pid as i32, xid));
+                        invalidated.extend(state.snapshots.remove(
+                            pid as i32,
+                            xid,
+                            session_id.as_deref(),
+                        ));
                         crate::atspi::snapshot::forget_window(pid, xid);
                     }
                     let (snapshot_id, replaced) = (!observation_only && target_scoped)
@@ -865,10 +1149,9 @@ impl Tool for GetWindowStateTool {
                     // (override-redirect) window is not in the WM's client
                     // list; when its origin cannot be read, the popup's own
                     // screen rectangle is the origin.
-                    let local_origin = (!crate::wayland::is_wayland())
-                        .then(|| crate::atspi::native::x11_window_origin(xid))
-                        .flatten()
-                        .or_else(|| popup_meta.as_ref().map(|popup| (popup.x, popup.y)));
+                    let x11_window = (!crate::wayland::is_wayland())
+                        .then(|| crate::atspi::native::x11_window_geometry(xid))
+                        .flatten();
                     let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
                         .into_iter()
                         .map(|(i, x, y, w, h)| (i, (x, y, w, h)))
@@ -892,12 +1175,16 @@ impl Tool for GetWindowStateTool {
                     let elements = framed_elements_first(elements);
                     // Screenshot pixels: the capture is the window's own X11
                     // drawable (screen pixels), downsized by delivered/native.
-                    let elements = match (local_origin, shot_opt.as_ref()) {
-                        (Some((ox, oy)), Some((_, _, w, _, orig_w, _))) => {
+                    let elements = match (x11_window, &popup_meta, shot_opt.as_ref()) {
+                        (Some(window), _, Some((_, _, w, h, orig_w, _))) => {
+                            let scale = orig_w.map_or(1.0, |ow| *w as f64 / ow as f64);
+                            with_x11_screenshot_frames(window, elements, (*w, *h), scale)
+                        }
+                        (None, Some(popup), Some((_, _, w, _, orig_w, _))) => {
                             let scale = orig_w.map_or(1.0, |ow| *w as f64 / ow as f64);
                             cua_driver_core::element_frame::with_screenshot_frames(
                                 elements,
-                                (f64::from(ox), f64::from(oy)),
+                                (f64::from(popup.x), f64::from(popup.y)),
                                 scale,
                             )
                         }
@@ -919,6 +1206,15 @@ impl Tool for GetWindowStateTool {
                     structured["total_element_count"] = json!(count);
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
+                    // Display-only rows of a window-scoped native walk. An
+                    // application-wide tree would mix in other windows' text.
+                    if target_scoped && tr.trusted {
+                        cua_driver_core::element_query::publish_observations(
+                            &mut structured,
+                            std::mem::take(&mut tr.observations),
+                            query.as_deref(),
+                        );
+                    }
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] = json!(
@@ -1185,7 +1481,9 @@ mod get_window_state_actions_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions,
             element_key: 1,
             identity: None,

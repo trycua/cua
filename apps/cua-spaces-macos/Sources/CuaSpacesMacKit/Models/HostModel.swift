@@ -223,7 +223,7 @@ public final class HostModel {
     /// What the system calls this computer (Sharing's Computer Name), which
     /// the setup form's Name starts with: `cua host setup` uses the same
     /// name when none is given. Tests pin it.
-    public var computerName: () -> String? = { Foundation.Host.current().localizedName }
+    public var computerName: () -> String? = { ComputerName.current }
     public private(set) var busy = false
     public private(set) var error: String?
     /// The last page button that failed (a setting, Stop sharing, ...), in

@@ -15,13 +15,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const from = resolve(here, "../../../libs/cua/crates/cua-spacesd-html5/web/src/gen/cua/env/v1");
 const to = resolve(here, "../src/data/live/gen/cua/env/v1");
 const check = process.argv.includes("--check");
-if (!existsSync(from)) { console.error(`missing ${from}`); process.exit(1); }
+if (!existsSync(from)) {
+  console.error(`missing ${from}`);
+  process.exit(1);
+}
 if (check) {
   let bad = 0;
   for (const f of readdirSync(from)) {
     const a = readFileSync(join(from, f), "utf8");
     const p = join(to, f);
-    if (!existsSync(p) || readFileSync(p, "utf8") !== a) { console.error(`drift: ${f}`); bad++; }
+    if (!existsSync(p) || readFileSync(p, "utf8") !== a) {
+      console.error(`drift: ${f}`);
+      bad++;
+    }
   }
   process.exit(bad ? 1 : 0);
 }

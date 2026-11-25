@@ -18,6 +18,7 @@ use core_foundation::{
     boolean::CFBoolean,
     number::CFNumber,
     string::CFString,
+    url::CFURL,
 };
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -53,11 +54,12 @@ pub(crate) enum NodeAttr {
     ValueDescription,
     MinValue,
     MaxValue,
+    Url,
     Children,
 }
 
 impl NodeAttr {
-    const ALL: [NodeAttr; 16] = [
+    const ALL: [NodeAttr; 17] = [
         NodeAttr::Role,
         NodeAttr::Title,
         NodeAttr::Value,
@@ -73,6 +75,7 @@ impl NodeAttr {
         NodeAttr::ValueDescription,
         NodeAttr::MinValue,
         NodeAttr::MaxValue,
+        NodeAttr::Url,
         NodeAttr::Children,
     ];
 
@@ -93,6 +96,7 @@ impl NodeAttr {
             NodeAttr::ValueDescription => "AXValueDescription",
             NodeAttr::MinValue => "AXMinValue",
             NodeAttr::MaxValue => "AXMaxValue",
+            NodeAttr::Url => "AXURL",
             NodeAttr::Children => "AXChildren",
         }
     }
@@ -135,25 +139,10 @@ impl NodeAttributes {
     /// `element` must be a valid, live `AXUIElementRef` for as long as the
     /// returned value is used.
     pub(crate) unsafe fn read(element: AXUIElementRef) -> Self {
-        let mut values: CFArrayRef = std::ptr::null();
-        let error = ATTRIBUTE_NAMES.with(|names| {
-            AXUIElementCopyMultipleAttributeValues(
-                element,
-                names.as_concrete_TypeRef(),
-                0,
-                &mut values,
-            )
-        });
-        if error == kAXErrorSuccess && !values.is_null() {
-            if CFArrayGetCount(values) == NodeAttr::ALL.len() as isize {
-                return NodeAttributes::Batch(values);
-            }
-            CFRelease(values as CFTypeRef);
-        }
-        if error == AX_ERROR_CANNOT_COMPLETE {
-            NodeAttributes::Unanswered
-        } else {
-            NodeAttributes::Single(element)
+        match ATTRIBUTE_NAMES.with(|names| copy_multiple(element, names)) {
+            Reply::Values(values) => NodeAttributes::Batch(values),
+            Reply::Refused => NodeAttributes::Single(element),
+            Reply::Unanswered => NodeAttributes::Unanswered,
         }
     }
 
@@ -175,11 +164,7 @@ impl NodeAttributes {
         match *self {
             NodeAttributes::Single(element) => copy_string_attr(element, attr.name()),
             NodeAttributes::Unanswered => None,
-            NodeAttributes::Batch(_) => {
-                let value = self.raw(attr)?;
-                (CFGetTypeID(value) == CFString::type_id())
-                    .then(|| CFString::wrap_under_get_rule(value as _).to_string())
-            }
+            NodeAttributes::Batch(_) => string_value(self.raw(attr)?),
         }
     }
 
@@ -228,6 +213,15 @@ impl NodeAttributes {
         }
     }
 
+    /// [`copy_url_attr`]: the absolute string of a CFURL.
+    pub(crate) unsafe fn url(&self, attr: NodeAttr) -> Option<String> {
+        match *self {
+            NodeAttributes::Single(element) => copy_url_attr(element),
+            NodeAttributes::Unanswered => None,
+            NodeAttributes::Batch(_) => url_value(self.raw(attr)?),
+        }
+    }
+
     /// [`element_screen_rect`]: `[x, y, width, height]`, or `None` when either
     /// value is missing or the element is smaller than one point.
     pub(crate) unsafe fn screen_rect(&self) -> Option<[f64; 4]> {
@@ -255,6 +249,27 @@ impl NodeAttributes {
         };
         CFGetTypeID(value) == AXValueGetTypeID()
             && AXValueGetValue(value as AXValueRef, kind, out.as_mut_ptr().cast())
+    }
+
+    /// Whether the batched read of `attr` came back as an error other than
+    /// "no such attribute" or "no value": the application failed to answer it.
+    pub(crate) unsafe fn read_failed(&self, attr: NodeAttr) -> bool {
+        const AX_VALUE_AX_ERROR_TYPE: AXValueType = 5;
+        let Some(value) = self.raw(attr) else {
+            return false;
+        };
+        if CFGetTypeID(value) != AXValueGetTypeID()
+            || AXValueGetType(value as AXValueRef) != AX_VALUE_AX_ERROR_TYPE
+        {
+            return false;
+        }
+        let mut error: AXError = kAXErrorSuccess;
+        AXValueGetValue(
+            value as AXValueRef,
+            AX_VALUE_AX_ERROR_TYPE,
+            (&mut error as *mut AXError).cast(),
+        );
+        is_failed_read(error)
     }
 
     /// [`copy_children`]: every child element, retained; release each.
@@ -285,9 +300,171 @@ impl NodeAttributes {
     }
 }
 
+/// The reply to one `AXUIElementCopyMultipleAttributeValues` request.
+enum Reply {
+    /// One value per requested name, owned by the caller.
+    Values(CFArrayRef),
+    /// The application refused the batch; single reads may still answer.
+    Refused,
+    /// The application did not answer in time; single reads would not either.
+    Unanswered,
+}
+
+unsafe fn copy_multiple(element: AXUIElementRef, names: &CFArray<CFString>) -> Reply {
+    let mut values: CFArrayRef = std::ptr::null();
+    let error = AXUIElementCopyMultipleAttributeValues(
+        element,
+        names.as_concrete_TypeRef(),
+        0,
+        &mut values,
+    );
+    if error == kAXErrorSuccess && !values.is_null() {
+        if CFArrayGetCount(values) == names.len() {
+            return Reply::Values(values);
+        }
+        CFRelease(values as CFTypeRef);
+    }
+    if error == AX_ERROR_CANNOT_COMPLETE {
+        Reply::Unanswered
+    } else {
+        Reply::Refused
+    }
+}
+
+/// [`copy_string_attr`] of one batched slot: a CFString, empty included;
+/// anything else (an AXError value, kCFNull, a number) is `None`.
+unsafe fn string_value(value: CFTypeRef) -> Option<String> {
+    (CFGetTypeID(value) == CFString::type_id())
+        .then(|| CFString::wrap_under_get_rule(value as _).to_string())
+}
+
+/// [`copy_url_attr`] of one batched slot: a CFURL as its absolute string;
+/// anything else (an AXError value, kCFNull, a CFString) is `None`.
+unsafe fn url_value(value: CFTypeRef) -> Option<String> {
+    (CFGetTypeID(value) == CFURL::type_id()).then(|| {
+        CFURL::wrap_under_get_rule(value as _)
+            .absolute()
+            .get_string()
+            .to_string()
+    })
+}
+
+unsafe fn string_values<const N: usize>(values: CFArrayRef) -> [Option<String>; N] {
+    std::array::from_fn(|index| {
+        let value = CFArrayGetValueAtIndex(values, index as isize) as CFTypeRef;
+        if value.is_null() {
+            None
+        } else {
+            string_value(value)
+        }
+    })
+}
+
+/// [`copy_string_attr`] of each of `names`, in one round trip instead of one
+/// per name. An application that refuses the batch is read name by name; one
+/// that does not answer in time reads as every attribute missing, as each
+/// single read would after waiting out the same timeout.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub(crate) unsafe fn copy_string_attrs<const N: usize>(
+    element: AXUIElementRef,
+    names: [&str; N],
+) -> [Option<String>; N] {
+    let cf_names = CFArray::from_CFTypes(&names.map(CFString::new));
+    match copy_multiple(element, &cf_names) {
+        Reply::Values(values) => {
+            let strings = string_values(values);
+            CFRelease(values as CFTypeRef);
+            strings
+        }
+        Reply::Refused => names.map(|name| copy_string_attr(element, name)),
+        Reply::Unanswered => std::array::from_fn(|_| None),
+    }
+}
+
+/// Whether an AXError in a batched reply means the read failed, as opposed to
+/// the element having no such attribute or no value for it.
+fn is_failed_read(error: AXError) -> bool {
+    error != kAXErrorNoValue && error != kAXErrorAttributeUnsupported
+}
+
 #[cfg(test)]
 mod tests {
     use super::NodeAttr;
+
+    #[test]
+    fn only_an_unanswered_attribute_is_a_failed_read() {
+        use super::super::bindings::*;
+        assert!(!super::is_failed_read(kAXErrorNoValue));
+        assert!(!super::is_failed_read(kAXErrorAttributeUnsupported));
+        for error in [
+            kAXErrorFailure,
+            kAXErrorCannotComplete,
+            kAXErrorInvalidUIElement,
+            kAXErrorIllegalArgument,
+        ] {
+            assert!(super::is_failed_read(error), "{error}");
+        }
+    }
+
+    #[test]
+    fn string_slots_read_like_single_string_reads() {
+        use super::super::bindings::*;
+        use core_foundation::{
+            array::CFArray,
+            base::{CFRelease, CFTypeRef, TCFType},
+            number::CFNumber,
+            string::CFString,
+        };
+        let label = CFString::new("Submit");
+        let empty = CFString::new("");
+        let number = CFNumber::from(8);
+        let error = kAXErrorAttributeUnsupported;
+        let unsupported = unsafe { AXValueCreate(5, (&error as *const AXError).cast()) };
+        assert!(!unsupported.is_null());
+        let reply = CFArray::from_copyable(&[
+            label.as_CFTypeRef(),
+            empty.as_CFTypeRef(),
+            unsupported as CFTypeRef,
+            number.as_CFTypeRef(),
+        ]);
+        let strings: [Option<String>; 4] =
+            unsafe { super::string_values(reply.as_concrete_TypeRef()) };
+        unsafe { CFRelease(unsupported as CFTypeRef) };
+        // A present-but-empty label stays distinct from a missing one, and a
+        // non-string value is missing, exactly as `copy_string_attr` reads them.
+        assert_eq!(
+            strings,
+            [Some("Submit".into()), Some(String::new()), None, None]
+        );
+    }
+
+    #[test]
+    fn url_slots_read_like_single_url_reads() {
+        use core_foundation::{
+            base::{kCFAllocatorDefault, TCFType},
+            string::CFString,
+            url::{CFURLCreateWithString, CFURL},
+        };
+        let base = CFURL::from_path("/docs/", true).expect("file URL");
+        let link: CFURL = unsafe {
+            TCFType::wrap_under_create_rule(CFURLCreateWithString(
+                kCFAllocatorDefault,
+                CFString::new("guide?page=2").as_concrete_TypeRef(),
+                base.as_concrete_TypeRef(),
+            ))
+        };
+        let text = CFString::new("https://example.com/");
+        // A relative CFURL resolves against its base, as `copy_url_attr` does,
+        // and a string slot is not a URL.
+        assert_eq!(
+            unsafe { super::url_value(link.as_CFTypeRef()) }.as_deref(),
+            Some("file:///docs/guide?page=2")
+        );
+        assert_eq!(unsafe { super::url_value(text.as_CFTypeRef()) }, None);
+    }
 
     #[test]
     fn every_attribute_has_a_distinct_slot_and_name() {

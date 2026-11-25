@@ -53,7 +53,10 @@ export function useNotifier(): void {
       const needs = new Map<string, { seq: number; kind: "approval" | "question"; text: string }[]>();
       for (const s of list.spaces.filter((x) => x.tone === "you")) {
         const ms = await backend.members(s.id).catch(() => []);
-        needs.set(s.id, ms.flatMap((m) => (m.needsYou ?? []).map((n) => ({ seq: n.seq, kind: n.kind, text: n.text }))));
+        needs.set(
+          s.id,
+          ms.flatMap((m) => (m.needsYou ?? []).map((n) => ({ seq: n.seq, kind: n.kind, text: n.text }))),
+        );
       }
       for (const n of needsYouIn(list, needs)) {
         if (seen.current!.has(n.key)) continue;

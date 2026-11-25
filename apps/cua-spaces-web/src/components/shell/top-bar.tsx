@@ -34,7 +34,13 @@ export function TopBar() {
         paddingRight: "calc(var(--titlebar-right-inset) + 0.75rem)",
       }}
     >
-      <Tooltip content={<span className="flex items-center gap-2">{t("shell.top_bar.toggle_sidebar")} <Shortcut spec={bindingFor("sidebar.toggle") ?? ""} /></span>}>
+      <Tooltip
+        content={
+          <span className="flex items-center gap-2">
+            {t("shell.top_bar.toggle_sidebar")} <Shortcut spec={bindingFor("sidebar.toggle") ?? ""} />
+          </span>
+        }
+      >
         <Button variant="ghost" size="icon-sm" aria-label={t("shell.top_bar.toggle_sidebar")} onClick={toggleSidebar}>
           <PanelLeftIcon className="text-muted-foreground" strokeWidth={1.75} />
         </Button>
@@ -59,7 +65,11 @@ export function TopBar() {
           aria-label={resolved === "dark" ? t("shell.top_bar.switch_to_light") : t("shell.top_bar.switch_to_dark")}
           onClick={() => setPreference(resolved === "dark" ? "light" : "dark")}
         >
-          {resolved === "dark" ? <SunIcon className="text-muted-foreground" strokeWidth={1.75} /> : <MoonIcon className="text-muted-foreground" strokeWidth={1.75} />}
+          {resolved === "dark" ? (
+            <SunIcon className="text-muted-foreground" strokeWidth={1.75} />
+          ) : (
+            <MoonIcon className="text-muted-foreground" strokeWidth={1.75} />
+          )}
         </Button>
       </Tooltip>
     </header>

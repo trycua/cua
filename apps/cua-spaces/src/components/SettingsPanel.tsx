@@ -3,12 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  configureAgents,
-  detectAgents,
-  removeAgents,
-  type AgentRow,
-} from "../native/agentConfig";
+import { configureAgents, detectAgents, removeAgents, type AgentRow } from "../native/agentConfig";
 import {
   reduceStorage,
   storageChoose,
@@ -199,7 +194,10 @@ export function SettingsPanel({
         .then(setLoginStatus)
         .catch((e: unknown) => {
           setLoginError(e instanceof Error ? e.message : String(e));
-          void loginItem.status().then(setLoginStatus).catch(() => {});
+          void loginItem
+            .status()
+            .then(setLoginStatus)
+            .catch(() => {});
         })
         .finally(() => setLoginBusy(false));
     },
@@ -343,7 +341,9 @@ export function SettingsPanel({
       ? {
           enabled: telemetryView.enabled,
           lockedBy:
-            telemetryView.sourceKind !== "config" && telemetryView.sourceKind !== "default" ? telemetryView.source : null,
+            telemetryView.sourceKind !== "config" && telemetryView.sourceKind !== "default"
+              ? telemetryView.source
+              : null,
         }
       : null,
     agents: agentRows,
@@ -401,8 +401,7 @@ export function SettingsPanel({
     ...experimentsPage(experiments).sections,
   ];
 
-  const sectionError = (id: string) =>
-    id === "privacy" ? telemetryError : id === "agents" ? agentsError : null;
+  const sectionError = (id: string) => (id === "privacy" ? telemetryError : id === "agents" ? agentsError : null);
 
   return (
     <div
@@ -612,7 +611,13 @@ export function SettingsRowItem({
     case "link":
       return (
         <div className="st-row st-link-row">
-          <button type="button" className="dw-link st-link" data-owns-enter disabled={!row.enabled} onClick={() => onPress(row)}>
+          <button
+            type="button"
+            className="dw-link st-link"
+            data-owns-enter
+            disabled={!row.enabled}
+            onClick={() => onPress(row)}
+          >
             {row.label}
           </button>
         </div>
@@ -631,12 +636,21 @@ export function SettingsRowItem({
           </span>
           {row.value && path && <MiddleText className="st-value" text={row.value} title={row.help} />}
           {row.value && !path && (
-            <span className={`st-value${row.id === "sign-in-code" ? " st-code" : ""}`} aria-live={row.id === "sign-in-code" ? "polite" : undefined}>
+            <span
+              className={`st-value${row.id === "sign-in-code" ? " st-code" : ""}`}
+              aria-live={row.id === "sign-in-code" ? "polite" : undefined}
+            >
               {row.value}
             </span>
           )}
           {row.button && (
-            <button type="button" className="dw-btn" data-owns-enter disabled={!row.enabled} onClick={() => onPress(row)}>
+            <button
+              type="button"
+              className="dw-btn"
+              data-owns-enter
+              disabled={!row.enabled}
+              onClick={() => onPress(row)}
+            >
               {row.button}
             </button>
           )}
@@ -724,10 +738,16 @@ function useStorage(drive: DriveBridge, os: SpaceOs) {
       try {
         switch (request.kind) {
           case "test":
-            settle({ type: "checked", check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput });
+            settle({
+              type: "checked",
+              check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput,
+            });
             break;
           case "save":
-            settle({ type: "saved", check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput });
+            settle({
+              type: "saved",
+              check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput,
+            });
             break;
           case "mount":
             await drive.call("volume_mount");
@@ -756,7 +776,10 @@ function useStorage(drive: DriveBridge, os: SpaceOs) {
           case "adopt":
             // The bucket the user's agent set up, with its saved keys.
             try {
-              settle({ type: "adopted", check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput });
+              settle({
+                type: "adopted",
+                check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput,
+              });
             } catch (e) {
               settle({ type: "adopted", check: failedCheck(e instanceof Error ? e.message : String(e)) });
             }

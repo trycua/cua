@@ -60,8 +60,16 @@ export function ProBanner() {
   if (!banner?.visible) return null;
   return (
     <div data-pro-banner="" className="mx-2.5 mb-1.5 flex min-h-9 items-center gap-1 rounded-lg bg-brand-surface py-1 pr-1 pl-3">
-      <span data-pro-copy="" className="min-w-0 flex-1 whitespace-normal text-xs leading-4 font-medium">{banner.text}</span>
-      <Button size="sm" variant="ghost" data-pro-upgrade="" className="h-6 bg-background/60 px-2 hover:bg-background dark:bg-white/10 dark:hover:bg-white/15" onClick={link.open}>
+      <span data-pro-copy="" className="min-w-0 flex-1 whitespace-normal text-xs leading-4 font-medium">
+        {banner.text}
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        data-pro-upgrade=""
+        className="h-6 bg-background/60 px-2 hover:bg-background dark:bg-white/10 dark:hover:bg-white/15"
+        onClick={link.open}
+      >
         {banner.button}
       </Button>
     </div>
@@ -100,7 +108,10 @@ export function AccountLine({ identity }: { identity: string }) {
         data-account-line=""
         className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07] dark:data-popup-open:bg-white/[0.08]"
       >
-        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-surface text-2xs font-semibold text-brand-strong uppercase">
+        <span
+          aria-hidden
+          className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-surface text-2xs font-semibold text-brand-strong uppercase"
+        >
           {identity.slice(0, 1)}
         </span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium" data-signin-identity="">

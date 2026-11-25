@@ -32,6 +32,19 @@ inputs:
       and the caller builds for itself.
     required: false
     default: "true"
+  compile-cache:
+    description: >-
+      How the workspace crates (the 52 `cua-*` crates; rust-cache drops them,
+      so each run used to recompile them, about an hour on a hosted macOS
+      runner) are cached on a miss. "none" (default): not at all; the release
+      (cd-cua-spaces.yml) builds from scratch. "read": restore main's sccache
+      directory and compile only the crates whose source, or whose
+      dependencies' source, changed (a pull request). "seed": compile
+      everything from scratch (SCCACHE_RECACHE, so the library stays a clean
+      build) and write each crate's object to sccache; main saves the
+      directory, once a day, for the pull requests to read (the producer).
+    required: false
+    default: "none"
   verify-key:
     description: >-
       "true": after a build, fail if the compiler or a build script read a
@@ -73,8 +86,11 @@ runs:
     # after the build instead.
     - name: Restore the compiled slice
       id: cache
+      continue-on-error: true
       if: inputs.build == 'true'
       uses: actions/cache/restore@v4
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -82,8 +98,11 @@ runs:
         key: ${{ steps.key.outputs.key }}
     - name: Restore the compiled slice (restore only)
       id: restore
+      continue-on-error: true
       if: inputs.build != 'true'
       uses: actions/cache/restore@v4
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -104,6 +123,26 @@ runs:
       uses: ./.github/actions/setup-protoc
     - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
+        # rust-cache hashes every CARGO*, CC*, CFLAGS*, CXX*, CMAKE* and RUST*
+        # variable it sees into the dependency cache key, and skips empty
+        # ones. The caller's tuning variables (set at workflow or job level:
+        # CARGO_BUILD_JOBS, CARGO_NET_RETRY, CARGO_HTTP_TIMEOUT,
+        # CARGO_HTTP_MULTIPLEXING) change how a build runs, not what it
+        # produces, but they used to change the key: the producer on main
+        # (a reusable workflow that does not inherit them) saved under one
+        # hash and ci-cua-spaces-macos.yml looked under another, so a pull
+        # request never found main's dependency cache and compiled the whole
+        # tree cold (an hour or more), long enough for a force-pushed bot PR
+        # to cancel it every time (cua#8486). Blank them for this step only,
+        # so every caller computes the same key. The build step sets
+        # CARGO_BUILD_JOBS itself. A variable that does change the output
+        # (RUSTFLAGS) is left alone and still keys the cache.
+        CARGO_BUILD_JOBS: ""
+        CARGO_NET_RETRY: ""
+        CARGO_HTTP_TIMEOUT: ""
+        CARGO_HTTP_MULTIPLEXING: ""
       with:
         workspaces: libs/cua -> target
         shared-key: swiftui-rust-${{ inputs.triple }}
@@ -112,6 +151,16 @@ runs:
         # within the hour. Only the default branch saves it.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
+    # Content-addressed cache of the workspace crates, the crates rust-cache
+    # drops. After rust-cache on purpose: rust-cache hashes RUSTC_WRAPPER into
+    # the dependency cache's key, and this step exports it.
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true' && inputs.compile-cache != 'none'
+      name: Cache the workspace crates (sccache)
+      uses: ./.github/actions/rust-cache
+      with:
+        workspaces: libs/cua
+        shared-key: swiftui-slice-${{ inputs.triple }}
+        save-if: ${{ inputs.compile-cache == 'seed' }}
     - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Build the slice
       shell: bash
@@ -122,7 +171,17 @@ runs:
         # (build-release.sh sets the same empty default).
         CUA_DEFAULT_ENV: ""
         TRIPLE: ${{ inputs.triple }}
-      run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE"
+        # The producer writes every crate's object without reading one.
+        SCCACHE_RECACHE: ${{ inputs.compile-cache == 'seed' && '1' || '' }}
+      # sccache puts every CARGO_* variable the process has into a crate's
+      # key, so the callers' network tuning (set in the workflow env of the
+      # pull request workflow, not in the producer's) made the keys differ and
+      # every crate miss. The same settings go in as cargo configuration,
+      # which is not hashed, and the variables are removed for this command.
+      run: |
+        env -u CARGO_NET_RETRY -u CARGO_HTTP_TIMEOUT -u CARGO_HTTP_MULTIPLEXING \
+          cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE" \
+          --config net.retry=10 --config http.timeout=120 --config http.multiplexing=false
     # Ground truth for the key: what rustc and the build scripts really read.
     - if: inputs.build == 'true' && inputs.verify-key == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: The cache key covers every file the build read

@@ -137,6 +137,9 @@ async fn idle_daemon(signed_in: bool) {
 
     let mut h = Home::new();
     h.set("CUA_RELAY_URL", &relay.url);
+    // Warm start (always on) prepares a Space in the daemon's first minute, which is work, not polling; this test
+    // measures what the app's polls cost an idle daemon, so the warm Space is left out of it.
+    h.set("CUA_WARM_START", "0");
     std::fs::create_dir_all(h.cua_home()).unwrap();
     if signed_in {
         std::fs::write(

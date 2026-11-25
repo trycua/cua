@@ -11,6 +11,8 @@
 //! - `client`: the client kind, bucketed from the credential and the
 //!   `User-Agent` (`spacesd`, `machine`, `cli`, `app`, `sdk`, `browser`,
 //!   `other`); the raw header is never logged;
+//! - `client_version`: the version a spacesd sends in its join header, only
+//!   when it looks like a version (see [`client_version`]);
 //! - `token_issuer` / `token_audience`: only values the relay knows to be
 //!   public (its configured issuer and audiences, `*.cua.ai` issuers, a few
 //!   well-known audiences); anything else is logged as `other`;
@@ -314,6 +316,19 @@ pub fn client_kind(headers: &HeaderMap) -> &'static str {
     }
 }
 
+/// The version a spacesd reports in its join header, if it looks like one
+/// (digits, letters, `.`, `-`, `+`, at most 24 characters); anything else is
+/// not logged. A version is public information, and it tells which release
+/// of a client keeps retrying.
+pub fn client_version(headers: &HeaderMap) -> Option<&str> {
+    let v = headers.get(crate::VERSION_HEADER)?.to_str().ok()?.trim();
+    let ok = !v.is_empty()
+        && v.len() <= 24
+        && v.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'));
+    ok.then_some(v)
+}
+
 /// Logs one 401.
 pub fn rejected(headers: &HeaderMap, route: Route, reason: Reason, facts: Option<&TokenFacts>) {
     REJECTIONS[route.index()][reason.index()].fetch_add(1, Ordering::Relaxed);
@@ -323,6 +338,7 @@ pub fn rejected(headers: &HeaderMap, route: Route, reason: Reason, facts: Option
         reason = reason.as_str(),
         route = route.as_str(),
         client = client_kind(headers),
+        client_version = client_version(headers),
         token_issuer = facts.issuer.as_deref(),
         token_audience = facts.audience.as_deref(),
         clock_skew_secs = facts.clock_skew_secs,
@@ -506,5 +522,23 @@ mod tests {
             "browser"
         );
         assert_eq!(with(&[("user-agent", "curl/8.7.1")]), "other");
+    }
+
+    #[test]
+    fn only_version_shaped_values_are_logged() {
+        let with = |v: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(crate::VERSION_HEADER, HeaderValue::from_str(v).unwrap());
+            client_version(&h).map(str::to_owned)
+        };
+        assert_eq!(with("0.16.6").as_deref(), Some("0.16.6"));
+        assert_eq!(
+            with("1.2.3-rc.1+build5").as_deref(),
+            Some("1.2.3-rc.1+build5")
+        );
+        assert_eq!(with("cmt_secret token"), None);
+        assert_eq!(with("a@b.c"), None);
+        assert_eq!(with(&"1".repeat(25)), None);
+        assert_eq!(client_version(&HeaderMap::new()), None);
     }
 }

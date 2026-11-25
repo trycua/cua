@@ -57,7 +57,11 @@ export function DefaultSpaceGroup() {
   const fail = toastError(t("settings.default_space.save_failed"));
   const save = (patch: Partial<Pick<SpacesSettings, "defaultSpace" | "fallback" | "fallbackOn">>) =>
     void defaults
-      .save({ defaultSpace: patch.defaultSpace !== undefined ? patch.defaultSpace : (settings?.defaultSpace ?? null), fallback: patch.fallback ?? settings?.fallback ?? [], fallbackOn: patch.fallbackOn ?? fallbackOn })
+      .save({
+        defaultSpace: patch.defaultSpace !== undefined ? patch.defaultSpace : (settings?.defaultSpace ?? null),
+        fallback: patch.fallback ?? settings?.fallback ?? [],
+        fallbackOn: patch.fallbackOn ?? fallbackOn,
+      })
       .catch(fail);
   const reorder = (from: number, to: number) => {
     if (from === to) return;
@@ -79,7 +83,10 @@ export function DefaultSpaceGroup() {
             aria-label={t("settings.default_space.label")}
             className="min-w-56"
             value={value}
-            options={choices.map((n) => ({ value: n.settingsId!, label: parentName(n) ? t("settings.default_space.option_on", { name: n.name, parent: parentName(n) }) : n.name }))}
+            options={choices.map((n) => ({
+              value: n.settingsId!,
+              label: parentName(n) ? t("settings.default_space.option_on", { name: n.name, parent: parentName(n) }) : n.name,
+            }))}
             onValueChange={(v) => save({ defaultSpace: v, fallback: (settings?.fallback ?? []).filter((id) => id !== v) })}
           />
         }
@@ -114,7 +121,10 @@ export function DefaultSpaceGroup() {
                   }}
                   onDragEnd={() => setDragging(null)}
                   data-order-item={n.settingsId!}
-                  className={cn("flex h-8 cursor-grab items-center gap-2 rounded-lg bg-foreground/[0.05] px-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60", dragging === i && "opacity-50")}
+                  className={cn(
+                    "flex h-8 cursor-grab items-center gap-2 rounded-lg bg-foreground/[0.05] px-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                    dragging === i && "opacity-50",
+                  )}
                 >
                   <GripVerticalIcon className="size-3.5 text-muted-foreground" aria-hidden />
                   <TreeIcon node={n} />

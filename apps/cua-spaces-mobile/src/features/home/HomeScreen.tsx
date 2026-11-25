@@ -91,7 +91,10 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
   // Offline: what is shown was saved or last loaded, and the line says when (the core's words).
   const offlineLine = error && list ? (cacheLine(cached?.savedMs ?? syncedMs, now, true) ?? "You're offline.") : "";
   // The core's words around the lists: while it reads, and when there is nothing to show (never a computer faked as a Space).
-  const reachingLine = status === "loading" ? "Loading Spaces…" : (list?.words?.reachingLine ?? (list?.incomplete ? "Some computers did not answer. Pull down to try again." : null));
+  const reachingLine =
+    status === "loading"
+      ? "Loading Spaces…"
+      : (list?.words?.reachingLine ?? (list?.incomplete ? "Some computers did not answer. Pull down to try again." : null));
 
   const actions = {
     onSleep: (s: SpaceSummary) => backend.sleep(s.id).then(refresh, (e) => Alert.alert("Could not put it to sleep", String(e?.message ?? e))),
@@ -108,9 +111,18 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
   const header = (
     <View>
       <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 16, flexDirection: "row", alignItems: "center" }}>
-        <Text variant="largeTitle" style={{ flex: 1 }} accessibilityRole="header">Spaces</Text>
+        <Text variant="largeTitle" style={{ flex: 1 }} accessibilityRole="header">
+          Spaces
+        </Text>
         {onNewTask && backend.capabilities.startTask ? (
-          <Pressable onPress={onNewTask} accessibilityRole="button" accessibilityLabel="Start a task" testID="new-task" hitSlop={8} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: c.tile, alignItems: "center", justifyContent: "center", marginRight: 10 }}>
+          <Pressable
+            onPress={onNewTask}
+            accessibilityRole="button"
+            accessibilityLabel="Start a task"
+            testID="new-task"
+            hitSlop={8}
+            style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: c.tile, alignItems: "center", justifyContent: "center", marginRight: 10 }}
+          >
             <Icon name="compose" size={17} color={c.foreground} />
           </Pressable>
         ) : null}
@@ -120,10 +132,25 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
       </View>
       {backend.capabilities.sample ? (
         <View style={{ marginHorizontal: 16, marginTop: 4 }} accessibilityLabel="Sample data. Not your account.">
-          <Text variant="footnote" color="warning">Sample data. Not your account.</Text>
+          <Text variant="footnote" color="warning">
+            Sample data. Not your account.
+          </Text>
         </View>
       ) : null}
-      <View style={{ marginHorizontal: 16, marginTop: 10, marginBottom: 10, minHeight: 38, borderRadius: 10, backgroundColor: c.tile, flexDirection: "row", alignItems: "center", paddingHorizontal: 10, gap: 8 }}>
+      <View
+        style={{
+          marginHorizontal: 16,
+          marginTop: 10,
+          marginBottom: 10,
+          minHeight: 38,
+          borderRadius: 10,
+          backgroundColor: c.tile,
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: 10,
+          gap: 8,
+        }}
+      >
         <Icon name="search" size={16} color={c.mutedForeground} />
         <TextInput
           value={query}
@@ -143,14 +170,37 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
         </View>
       ) : null}
       {error && list ? (
-        <Pressable onPress={refresh} accessibilityRole="button" accessibilityLabel={`${offlineLine} Try again.`} style={{ marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 10, backgroundColor: c.muted, flexDirection: "row", gap: 8, alignItems: "center" }} testID="home-offline">
+        <Pressable
+          onPress={refresh}
+          accessibilityRole="button"
+          accessibilityLabel={`${offlineLine} Try again.`}
+          style={{
+            marginHorizontal: 16,
+            marginBottom: 8,
+            padding: 10,
+            borderRadius: 10,
+            backgroundColor: c.muted,
+            flexDirection: "row",
+            gap: 8,
+            alignItems: "center",
+          }}
+          testID="home-offline"
+        >
           <Icon name="reload" size={14} color={c.mutedForeground} />
-          <Text variant="footnote" color="muted" style={{ flex: 1 }}>{offlineLine}</Text>
+          <Text variant="footnote" color="muted" style={{ flex: 1 }}>
+            {offlineLine}
+          </Text>
         </Pressable>
       ) : null}
-      {waiting?.banner && waiting.rows.length ? <Text variant="footnote" color="muted" style={{ marginHorizontal: 16, marginBottom: 8 }} accessibilityLiveRegion="polite" testID="home-outbox">{waiting.banner}</Text> : null}
+      {waiting?.banner && waiting.rows.length ? (
+        <Text variant="footnote" color="muted" style={{ marginHorizontal: 16, marginBottom: 8 }} accessibilityLiveRegion="polite" testID="home-outbox">
+          {waiting.banner}
+        </Text>
+      ) : null}
       {reachingLine && status !== "loading" ? (
-        <Text variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingBottom: 6 }} accessibilityLiveRegion="polite">{reachingLine}</Text>
+        <Text variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingBottom: 6 }} accessibilityLiveRegion="polite">
+          {reachingLine}
+        </Text>
       ) : null}
       {spaces.length ? (
         <View style={{ marginBottom: 6 }}>
@@ -164,7 +214,9 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
     return (
       <View style={{ flex: 1, backgroundColor: c.background }}>
         {header}
-        <Text variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingBottom: 12 }}>{reachingLine ?? "Loading Spaces…"}</Text>
+        <Text variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+          {reachingLine ?? "Loading Spaces…"}
+        </Text>
         <Skeleton />
       </View>
     );
@@ -175,9 +227,17 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
         {header}
         <View style={{ padding: 24, alignItems: "center", gap: 12 }}>
           <Text variant="headline">Could not reach your Spaces</Text>
-          <Text variant="subhead" color="muted" style={{ textAlign: "center" }}>{error}</Text>
-          <Pressable onPress={refresh} accessibilityRole="button" style={{ backgroundColor: c.primary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 }}>
-            <Text weight="600" style={{ color: c.primaryForeground }}>Try again</Text>
+          <Text variant="subhead" color="muted" style={{ textAlign: "center" }}>
+            {error}
+          </Text>
+          <Pressable
+            onPress={refresh}
+            accessibilityRole="button"
+            style={{ backgroundColor: c.primary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 }}
+          >
+            <Text weight="600" style={{ color: c.primaryForeground }}>
+              Try again
+            </Text>
           </Pressable>
         </View>
       </View>
@@ -201,7 +261,9 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
           <View style={{ padding: 32, alignItems: "center", gap: 8 }}>
             <Text variant="headline">{query || machine ? "Nothing matches" : (list?.words?.empty?.title ?? "No Spaces yet")}</Text>
             <Text variant="subhead" color="muted" style={{ textAlign: "center" }}>
-              {query || machine ? "Try another search or computer." : (list?.words?.empty?.body ?? "Make Spaces in Cua Spaces on a Mac or PC. This phone talks to them and watches.")}
+              {query || machine
+                ? "Try another search or computer."
+                : (list?.words?.empty?.body ?? "Make Spaces in Cua Spaces on a Mac or PC. This phone talks to them and watches.")}
             </Text>
           </View>
         }

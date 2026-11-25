@@ -10,10 +10,13 @@ on:
       - "docs/public/scripts/**"
       - "docs/scripts/tests/test_unified_sandbox_docs.py"
       - "docs/scripts/tests/test_desktop_driver_guide.py"
+      - "docs/scripts/tests/test_driver_sdk_guide.py"
       - "docs/scripts/tests/test_sandbox_secret_example.py"
       - "docs/scripts/tests/test_docs_version_facts.py"
       - "docs/scripts/tests/test_openai_agents_example.py"
       - "libs/python/cua-sandbox/**"
+      - "libs/cua-driver/python/src/cua_driver/_native.py"
+      - "libs/cua-driver/typescript/src/native/cua_driver_sdk.ts"
       - "libs/cua/VERSION"
       - "libs/cua/python/pyproject.toml"
       - "libs/cua/typescript/package.json"
@@ -41,7 +44,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - name: Run the page tests
         # test_sandbox_secret_example imports cua_sandbox (pure Python; the
         # native cua SDK is not loaded) and checks the installed version.
@@ -51,6 +54,7 @@ jobs:
           pytest -q
           docs/scripts/tests/test_unified_sandbox_docs.py
           docs/scripts/tests/test_desktop_driver_guide.py
+          docs/scripts/tests/test_driver_sdk_guide.py
           docs/scripts/tests/test_sandbox_secret_example.py
           docs/scripts/tests/test_docs_version_facts.py
           docs/scripts/tests/test_openai_agents_example.py

@@ -80,12 +80,22 @@ export function CliHintBlock({ commands }: { commands: string[] }) {
     <div data-cli-hint="block" className="mt-4">
       <div className="flex items-center justify-between px-1 pb-1.5">
         <span className="text-xs text-muted-foreground">{t("settings.cli_hint.run_in_terminal")}</span>
-        <Button type="button" size="sm" variant="ghost" data-cli-copy="" onClick={copy} className="h-6 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          data-cli-copy=""
+          onClick={copy}
+          className="h-6 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
           {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
           {copied ? t("settings.cli_hint.copied") : t("settings.cli_hint.copy")}
         </Button>
       </div>
-      <pre data-cli-command="" className="overflow-x-auto rounded-lg bg-foreground/[0.04] px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground/85 select-all dark:bg-black/25">
+      <pre
+        data-cli-command=""
+        className="overflow-x-auto rounded-lg bg-foreground/[0.04] px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground/85 select-all dark:bg-black/25"
+      >
         {text}
       </pre>
     </div>

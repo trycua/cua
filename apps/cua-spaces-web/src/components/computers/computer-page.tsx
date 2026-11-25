@@ -2,7 +2,18 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, CircleAlertIcon, InfoIcon, LockIcon, MousePointer2Icon, PencilIcon, PlusIcon, ServerIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  CircleAlertIcon,
+  InfoIcon,
+  LockIcon,
+  MousePointer2Icon,
+  PencilIcon,
+  PlusIcon,
+  ServerIcon,
+  TriangleAlertIcon,
+  UsersIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -22,6 +33,7 @@ import {
 } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { BackLink } from "@/components/back-link";
+import { computerWarnings } from "@/components/resources/computer-resources";
 import { DriverAttentionLabel } from "@/components/driver/attention";
 import { driverLine } from "@/components/driver/copy";
 import { EnrollSheet, RecentAccess, TrustSection, useMachinesAccount } from "@/components/machines/account-parts";
@@ -86,7 +98,11 @@ export function ComputerPage({ id }: { id: string }) {
           <div className="h-28 animate-pulse rounded-lg bg-muted" />
         </div>
       ) : (
-        <EmptyState icon={<ServerIcon />} title={t("computers.page.missing_title")} action={<Button render={<Link to="/spaces" />}>{t("computers.page.missing_action")}</Button>}>
+        <EmptyState
+          icon={<ServerIcon />}
+          title={t("computers.page.missing_title")}
+          action={<Button render={<Link to="/spaces" />}>{t("computers.page.missing_action")}</Button>}
+        >
           {t("computers.page.missing_body")}
         </EmptyState>
       )}
@@ -103,7 +119,12 @@ function DriverRow({ computerId }: { computerId: string }) {
   if (!driver.available) return null;
   return (
     <GroupedSection className="mt-[22px]" data-computer-driver="">
-      <Link to="/spaces/computer/$computerId/driver" params={{ computerId }} className="flex min-h-11 items-center gap-3 px-4 py-2.5 outline-none hover:bg-accent/50 focus-visible:bg-accent/50" data-computer-driver-link="">
+      <Link
+        to="/spaces/computer/$computerId/driver"
+        params={{ computerId }}
+        className="flex min-h-11 items-center gap-3 px-4 py-2.5 outline-none hover:bg-accent/50 focus-visible:bg-accent/50"
+        data-computer-driver-link=""
+      >
         <MousePointer2Icon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-medium">{t("common.cua_driver")}</span>
@@ -171,6 +192,7 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
 
   // What each Space takes on this computer's disk, where the host says (the low-disk warning leads here).
   const resources = useResources();
+  const diskWarning = row ? computerWarnings(resources, [row])[0] : undefined;
   const sizeOf = (id: string) => {
     const bytes = m.current ? spaceDiskBytes(resources, id) : null;
     return bytes ? size(bytes) : null;
@@ -209,6 +231,14 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
         {m.status}
         {m.sharedBy ? <span className="ml-2">{m.sharedBy}</span> : null}
       </p>
+
+      {/* The full low-disk message lives here; the Computers list only marks the row. */}
+      {diskWarning ? (
+        <p className="mt-2 flex items-center gap-1.5 text-[13px] text-muted-foreground" data-machine-disk-warning={diskWarning.level}>
+          <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
+          {diskWarning.text}
+        </p>
+      ) : null}
 
       <MachineIssues machine={m} hidePermissions={Boolean(m.current && row?.panel?.permissionsTitle)} onFail={fail} />
 
@@ -271,40 +301,39 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
 
       {m.spacesTitle ? (
         <GroupedSection title={m.spacesTitle} className="mt-7" data-machine-spaces>
-            {rows.map((s) => (
-              <div key={s.id} className="group/row relative">
-                <Link
-                  to="/spaces/$spaceId"
-                  params={{ spaceId: s.id }}
-                  title={t("computers.page.open_named", { name: s.name })}
-                  data-space-row={s.id}
-                  className="flex items-center gap-2.5 px-4 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50"
-                >
-                  <span className="truncate font-mono text-xs">{s.name}</span>
-                  {s.label ? <span className="shrink-0 text-xs text-muted-foreground">{s.label}</span> : null}
-                  {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
-                  {sizeOf(s.id) ? (
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-space-size="">
-                      {sizeOf(s.id)}
-                    </span>
-                  ) : null}
-                  <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <StatusDot online={s.running} className="size-[7px]" />
-                    {s.status}
+          {rows.map((s) => (
+            <div key={s.id} className="group/row relative">
+              <Link
+                to="/spaces/$spaceId"
+                params={{ spaceId: s.id }}
+                title={t("computers.page.open_named", { name: s.name })}
+                data-space-row={s.id}
+                className="flex items-center gap-2.5 px-4 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50"
+              >
+                <span className="truncate font-mono text-xs">{s.name}</span>
+                {s.label ? <span className="shrink-0 text-xs text-muted-foreground">{s.label}</span> : null}
+                {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
+                {sizeOf(s.id) ? (
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-space-size="">
+                    {sizeOf(s.id)}
                   </span>
-                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60 group-hover/row:invisible group-focus-within/row:invisible" />
-                </Link>
-                {/* Not This Mac's own desktop: it is never a notch tile. */}
-                {m.current && s.id === m.desktop?.id ? null : <MachineRowMenu id={s.id} name={s.name} />}
-              </div>
-            ))}
-            {m.spacesEmpty ? <p className="px-4 py-3.5 text-xs text-muted-foreground">{m.spacesEmpty}</p> : null}
-            <div className="px-4 py-2.5">
-              <NewSpaceHere machine={m} />
+                ) : null}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <StatusDot online={s.running} className="size-[7px]" />
+                  {s.status}
+                </span>
+                <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60 group-hover/row:invisible group-focus-within/row:invisible" />
+              </Link>
+              {/* Not This Mac's own desktop: it is never a notch tile. */}
+              {m.current && s.id === m.desktop?.id ? null : <MachineRowMenu id={s.id} name={s.name} />}
             </div>
+          ))}
+          {m.spacesEmpty ? <p className="px-4 py-3.5 text-xs text-muted-foreground">{m.spacesEmpty}</p> : null}
+          <div className="px-4 py-2.5">
+            <NewSpaceHere machine={m} />
+          </div>
         </GroupedSection>
       ) : null}
-
 
       <div className="mt-6">
         <button
@@ -334,7 +363,15 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
       </div>
 
       <div className="mt-7 flex flex-wrap items-center gap-x-5" data-machine-actions="">
-        {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
+        {account ? (
+          <RecentAccess
+            lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)}
+            title={account.recentTitle}
+            empty={account.recentEmpty}
+            now={now}
+            error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null}
+          />
+        ) : null}
         {m.remove ? (
           <span title={m.remove.help ?? undefined} className="inline-flex">
             <button
@@ -372,7 +409,15 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
  * with its fix where there is one here. Nothing at all when it is healthy.
  * `hidePermissions`: This Mac lists the permissions it needs already.
  */
-function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: MachinesViewMachine; hidePermissions: boolean; onFail: (what: string) => (e: unknown) => void }) {
+function MachineIssues({
+  machine: m,
+  hidePermissions,
+  onFail,
+}: {
+  machine: MachinesViewMachine;
+  hidePermissions: boolean;
+  onFail: (what: string) => (e: unknown) => void;
+}) {
   const t = useT();
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
@@ -400,7 +445,14 @@ function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: Machi
             )}
             <span className="min-w-0 flex-1 text-[13px]">{i.text}</span>
             {i.action ? (
-              <Button size="sm" variant="outline" className="shrink-0" disabled={host.busy || (i.action.appUpdate && update.installing)} onClick={() => act(i)} data-machine-issue-action={i.id}>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                disabled={host.busy || (i.action.appUpdate && update.installing)}
+                onClick={() => act(i)}
+                data-machine-issue-action={i.id}
+              >
                 {i.action.label}
               </Button>
             ) : null}
@@ -458,7 +510,15 @@ function RenameDialog({ open, machine: m, onClose }: { open: boolean; machine: M
         >
           <div className="px-5 pt-5 pb-4">
             <DialogTitle className="text-[15px] font-semibold">{r.title}</DialogTitle>
-            <Input className="mt-3" aria-label={r.title} value={name} autoFocus maxLength={64} onChange={(e) => setName(e.currentTarget.value)} data-machine-rename-input />
+            <Input
+              className="mt-3"
+              aria-label={r.title}
+              value={name}
+              autoFocus
+              maxLength={64}
+              onChange={(e) => setName(e.currentTarget.value)}
+              data-machine-rename-input
+            />
           </div>
           {/* design-ok: a dialog's footer bar, as ConfirmDialog's */}
           <div className="flex justify-end gap-2 border-t bg-muted/60 px-5 py-3">

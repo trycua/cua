@@ -15,7 +15,18 @@
 import * as Crypto from "expo-crypto";
 
 import { core } from "../core";
-import { outboxFound, outboxInitial, outboxReduce, outboxView, type EntryLite, type OutboxAction, type OutboxEffect, type OutboxState, type OutboxView, type OutMessage } from "../core/phone";
+import {
+  outboxFound,
+  outboxInitial,
+  outboxReduce,
+  outboxView,
+  type EntryLite,
+  type OutboxAction,
+  type OutboxEffect,
+  type OutboxState,
+  type OutboxView,
+  type OutMessage,
+} from "../core/phone";
 import type { Backend, TaskResult, ThreadEntry } from "../data/types";
 import { errorText, isNetworkError } from "./network";
 import type { SealedStore } from "./sealed";
@@ -125,7 +136,17 @@ export class OutboxDriver {
       void this.deliverDirect(id, { ...input, kind });
       return { id, done };
     }
-    this.apply({ type: "send", nowMs: this.now(), id, space: input.space, kind, text: input.text ?? "", replyTo: input.replyTo ?? null, mode: input.mode ?? "send", extra: input.extra ?? null });
+    this.apply({
+      type: "send",
+      nowMs: this.now(),
+      id,
+      space: input.space,
+      kind,
+      text: input.text ?? "",
+      replyTo: input.replyTo ?? null,
+      mode: input.mode ?? "send",
+      extra: input.extra ?? null,
+    });
     return { id, done };
   }
 
@@ -222,13 +243,19 @@ export class OutboxDriver {
     if (this.timer && this.timerAt <= atMs) return;
     if (this.timer) clearTimeout(this.timer);
     this.timerAt = atMs;
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.tick();
-    }, Math.max(0, atMs - this.now()));
+    this.timer = setTimeout(
+      () => {
+        this.timer = null;
+        this.tick();
+      },
+      Math.max(0, atMs - this.now()),
+    );
   }
 
-  private async post(backend: Backend, m: { space: string; kind: string; text: string; replyTo: number | null; mode: string; extra: Record<string, unknown> | null; id: string }): Promise<Delivered> {
+  private async post(
+    backend: Backend,
+    m: { space: string; kind: string; text: string; replyTo: number | null; mode: string; extra: Record<string, unknown> | null; id: string },
+  ): Promise<Delivered> {
     const extra = m.extra ?? {};
     if (m.kind === "task") {
       if (!backend.startTask) throw new Error(backend.capabilities.why.startTask ?? "This account cannot start a task from the phone yet.");
@@ -236,10 +263,19 @@ export class OutboxDriver {
       return { id: m.id, space: task.space, kind: m.kind, entry: null, task };
     }
     if (m.kind === "answer") {
-      const entry = await backend.answer(m.space, extra.approval as number, extra.approve === true, { scope: (extra.scope as "once" | "space" | undefined) ?? undefined, clientId: m.id });
+      const entry = await backend.answer(m.space, extra.approval as number, extra.approve === true, {
+        scope: (extra.scope as "once" | "space" | undefined) ?? undefined,
+        clientId: m.id,
+      });
       return { id: m.id, space: m.space, kind: m.kind, entry, task: null };
     }
-    const entry = await backend.post(m.space, m.text, { replyTo: m.replyTo, view: (extra.view as never) ?? null, clientId: m.id, mode: (m.mode as "send" | "queue" | "steer") ?? "send", agent: (extra.agent as string | undefined) ?? null });
+    const entry = await backend.post(m.space, m.text, {
+      replyTo: m.replyTo,
+      view: (extra.view as never) ?? null,
+      clientId: m.id,
+      mode: (m.mode as "send" | "queue" | "steer") ?? "send",
+      agent: (extra.agent as string | undefined) ?? null,
+    });
     return { id: m.id, space: m.space, kind: m.kind, entry, task: null };
   }
 
@@ -268,7 +304,15 @@ export class OutboxDriver {
     const backend = this.deps.backend();
     try {
       if (!backend) throw new Error("Not connected.");
-      const d = await this.post(backend, { id, space: input.space, kind: input.kind, text: input.text ?? "", replyTo: input.replyTo ?? null, mode: input.mode ?? "send", extra: input.extra ?? null });
+      const d = await this.post(backend, {
+        id,
+        space: input.space,
+        kind: input.kind,
+        text: input.text ?? "",
+        replyTo: input.replyTo ?? null,
+        mode: input.mode ?? "send",
+        extra: input.extra ?? null,
+      });
       for (const l of this.deliveredListeners) l(d);
       this.waiters.get(id)?.resolve(d);
     } catch (e) {
@@ -289,7 +333,13 @@ export class OutboxDriver {
     try {
       if (!backend) throw new Error("Not connected.");
       const page = await backend.readThread(space, { limit: 80 });
-      const lite: EntryLite[] = page.entries.map((e) => ({ id: e.id, clientId: e.clientId ?? e.answer?.clientId ?? null, authorId: e.author.id, text: e.text, tsMs: e.tsMs }));
+      const lite: EntryLite[] = page.entries.map((e) => ({
+        id: e.id,
+        clientId: e.clientId ?? e.answer?.clientId ?? null,
+        authorId: e.author.id,
+        text: e.text,
+        tsMs: e.tsMs,
+      }));
       const found = outboxFound(m, lite, this.deps.me() ?? page.me ?? "") ?? false;
       this.verifying.delete(id);
       this.apply({ type: "threadHas", nowMs: this.now(), id, found });

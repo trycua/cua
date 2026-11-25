@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { listView, useBridge, useMachines, useNotchPins, useResources, useSpaces, useSpacesDefault, type CreatingElsewhere, type SpaceOs } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { NewSpaceButton } from "@/components/new-space/new-space-button";
-import { ComputerWarnings } from "@/components/resources/computer-resources";
+import { computerWarnings } from "@/components/resources/computer-resources";
 import { EnrollSheet, useMachinesAccount, usePendingActions } from "@/components/machines/account-parts";
 import { PageTip } from "@/components/tips";
 import { UpsellPrompt } from "@/components/upsell-prompt";
@@ -25,11 +25,11 @@ import { useNewSpace } from "@/hooks/use-new-space";
 import { t, useT } from "@/i18n";
 import { THIS_COMPUTER, computerParam } from "@/lib/machines";
 import type { ComputersSearch } from "@/lib/old-links";
-import { foldOffline, treeSummary, type TreeNode } from "@/lib/spaces-tree";
+import { descendants, foldOffline, treeSummary, type TreeNode } from "@/lib/spaces-tree";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
-import { HomeTag, PinnedMark } from "./space-tile";
+import { PinnedMark } from "./space-tile";
 import { CloudsSection, DevicesSection, PendingSection, RemoveOldButton } from "./tree-extras";
 import { PeopleFaces, TreeDot, TreeIcon, toggleCollapsed, useCollapsed } from "./tree-parts";
 import { useRunningBySpace, useSpacesTreeData } from "./use-spaces-tree";
@@ -52,12 +52,13 @@ export function removeText(
   node: Pick<TreeNode, "name" | "children">,
   alsoDelete = false,
 ): { title: string; lead: string; keep: string; box: string | null; confirm: string } {
-  const n = node.children.length;
+  const n = descendants(node).length;
   const lead = n === 0 ? t("computers.tree.remove_lead_none") : t("computers.tree.remove_lead_spaces", { count: n });
   const keepKey = n === 0 ? "computers.tree.remove_keep_none" : n === 1 ? "computers.tree.remove_keep_one" : "computers.tree.remove_keep_many";
   // A computer is removed while it is offline (CUA-3479): ticked, its Spaces leave the account now, and the relay keeps
   // them as pending deletions that the computer carries out, files included, the next time it comes online.
-  const deleted = n === 1 ? t("computers.tree.remove_deleted_one", { name: node.name }) : t("computers.tree.remove_deleted_many", { name: node.name, count: n });
+  const deleted =
+    n === 1 ? t("computers.tree.remove_deleted_one", { name: node.name }) : t("computers.tree.remove_deleted_many", { name: node.name, count: n });
   return {
     title: t("computers.tree.remove_title", { name: node.name }),
     lead,
@@ -78,7 +79,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   const t = useT();
   const running = useRunningBySpace();
   const { tree, loaded, defaults } = useSpacesTreeData(running);
-  const { data: spaces = [], listStatus, renameSpace, deleteSpace, creatingElsewhere } = useSpaces();
+  const { data: spaces = [], listStatus, renameSpace, deleteSpace, startSpace, stopSpace, creatingElsewhere } = useSpaces();
   const { core } = useBridge();
   const machines = useMachines();
   const resources = useResources();
@@ -138,7 +139,13 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   );
   const sheets = (
     <>
-      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={search.join !== undefined ? "enter" : "pick"} initialCode={search.join ?? ""} initialRelay={search.relay ?? null} />
+      <AddComputerSheet
+        open={adding}
+        onOpenChange={setAdding}
+        initialView={search.join !== undefined ? "enter" : "pick"}
+        initialCode={search.join ?? ""}
+        initialRelay={search.relay ?? null}
+      />
       <EnrollSheet />
       {pendingActions.notMeDialog((machine) => machines.remove(machine, null))}
     </>
@@ -178,11 +185,13 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
 
   // A computer opens its own page (its switches, Spaces, details and Remove), a Space its own.
   const open = (n: TreeNode) =>
-    n.kind === "computer" && n.machine
-      ? void navigate({ to: "/spaces/computer/$computerId", params: { computerId: computerParam(n.machine) } })
-      : n.space
-        ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.space.id } })
-        : undefined;
+    n.kind === "computer" && n.opens
+      ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.opens } })
+      : n.kind === "computer" && n.machine
+        ? void navigate({ to: "/spaces/computer/$computerId", params: { computerId: computerParam(n.machine) } })
+        : n.space
+          ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.space.id } })
+          : undefined;
   // A click on a name opens it, a double-click renames it. A real double-click starts with a click, so a click waits out
   // the double-click time before opening, and a double-click cancels it. A keyboard press (detail 0) opens at once.
   const clickName = (n: TreeNode, detail: number) => {
@@ -207,27 +216,70 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   const viewRemove = (n: TreeNode) => machines.view?.machines.find((m) => m.id === n.machine?.id)?.remove ?? null;
   const menu = (n: TreeNode): MenuItem[] => {
     const items: MenuItem[] = [{ label: t("computers.page.open"), onSelect: () => open(n) }];
+    // A computer whose row opens its desktop keeps its own page (switches, details, Remove) one step away.
+    if (n.kind === "computer" && n.opens && n.machine)
+      items.push({
+        label: t("computers.page.computer_settings"),
+        onSelect: () => void navigate({ to: "/spaces/computer/$computerId", params: { computerId: computerParam(n.machine!) } }),
+      });
     if (canRename(n)) items.push({ label: t("computers.page.rename"), onSelect: () => setEditing({ key: n.key, name: n.name }) });
     if (n.settingsId && !n.isDefault && !defaults.unsupported)
-      items.push({ label: t("computers.page.make_default"), onSelect: () => void defaults.makeDefault(n.settingsId!).catch(toastError(t("computers.page.default_failed"))) });
+      items.push({
+        label: t("computers.page.make_default"),
+        onSelect: () => void defaults.makeDefault(n.settingsId!).catch(toastError(t("computers.page.default_failed"))),
+      });
     if (n.kind === "computer" && !n.current && n.machine) {
       const r = viewRemove(n);
       // The core keeps Remove off while a computer is online. The tree's offline (the relay's own answer) wins over a
       // machines list that lags; the relay still refuses a computer that is connected.
-      items.push({ label: t("computers.tree.remove_named", { name: n.name }), destructive: true, disabled: r ? !r.enabled && n.online : false, onSelect: () => setRemoving(n) });
+      items.push({
+        label: t("computers.tree.remove_named", { name: n.name }),
+        destructive: true,
+        disabled: r ? !r.enabled && n.online : false,
+        onSelect: () => setRemoving(n),
+      });
+    }
+    // Turn a Space on or off from its row, as the Space page's power button does (a Space that can be turned off, by its true
+    // state; one being made, failed or not yours has none). Turning a parent off turns its child Spaces off with it.
+    if (n.kind === "space" && n.space?.power && n.space.access?.canDelete !== false) {
+      const state = spaceState(n.space);
+      const id = n.space.id;
+      if (state === "running") {
+        items.push({
+          label: n.children.length > 0 ? t("computers.page.turn_off_with_children") : t("computers.page.turn_off"),
+          onSelect: () => void stopSpace(id).catch(toastError(t("computers.page.turn_off_failed", { name: n.name }))),
+        });
+      } else if (state === "stopped") {
+        items.push({
+          label: t("computers.page.turn_on"),
+          onSelect: () => void startSpace(id).catch(toastError(t("computers.page.turn_on_failed", { name: n.name }))),
+        });
+      }
     }
     if (pinnable(n)) {
       const id = n.space!.id;
-      items.push({ label: pins.pinned.has(id) ? t("computers.page.unpin") : t("computers.page.pin"), onSelect: () => void pins.toggle(id).catch(toastError(t("computers.menu.notch_failed"))) });
+      items.push({
+        label: pins.pinned.has(id) ? t("computers.page.unpin") : t("computers.page.pin"),
+        onSelect: () => void pins.toggle(id).catch(toastError(t("computers.menu.notch_failed"))),
+      });
     }
-    if (n.kind === "space" && n.space?.access?.canDelete !== false) items.push({ label: t("computers.page.delete"), destructive: true, onSelect: () => setDeleting(n) });
+    if (n.kind === "space" && n.space?.access?.canDelete !== false)
+      items.push({ label: t("computers.page.delete"), destructive: true, onSelect: () => setDeleting(n) });
     return items;
   };
 
-  const rowFor = (n: TreeNode, depth: 0 | 1) => {
+  // A computer with a low disk says so on its own row (a small mark by its status), not in a banner above the list.
+  const diskMarks = new Map(
+    computerWarnings(resources, machines.data ?? []).map(
+      (w) =>
+        [w.machineId, { level: w.level, title: t(w.level === "critical" ? "computers.row.disk_full" : "computers.row.disk_low", { free: w.free }) }] as const,
+    ),
+  );
+  const rowFor = (n: TreeNode, depth: number) => {
     const folded = collapsed.has(n.key);
     const state = n.space ? spaceState(n.space) : null;
     const isEditing = editing?.key === n.key;
+    const warning = n.kind === "computer" && n.machine ? diskMarks.get(n.machine.id) : undefined;
     return (
       <div
         key={n.key}
@@ -243,19 +295,23 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         data-state={state ?? undefined}
         className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]", n.dim && "text-muted-foreground")}
       >
-        <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", depth === 1 && "pl-8", isEditing && "col-span-2")}>
-          {depth === 0 && n.children.length > 0 ? (
-            <button
-              type="button"
-              aria-label={folded ? t("computers.page.show_spaces", { name: n.name }) : t("computers.page.hide_spaces", { name: n.name })}
-              aria-expanded={!folded}
-              onClick={() => toggleCollapsed(n.key)}
-              className="-ml-5 flex size-4 items-center justify-center text-muted-foreground hover:text-foreground"
-              data-tree-fold={n.key}
-            >
-              <ChevronRightIcon className={cn("size-3.5 transition-transform", !folded && "rotate-90")} />
-            </button>
-          ) : null}
+        <div role="cell" className={cn("flex min-w-0 items-center gap-1.5", isEditing && "col-span-2")} style={{ paddingLeft: depth * INDENT_PX }}>
+          {/* One slot for the fold caret on every row (empty when there is nothing to fold), inside the row's padding: the
+              caret never hangs out of the table's edge, and the icons line up at every depth. */}
+          <span className="flex size-5 shrink-0 items-center justify-center">
+            {n.children.length > 0 ? (
+              <button
+                type="button"
+                aria-label={folded ? t("computers.page.show_spaces", { name: n.name }) : t("computers.page.hide_spaces", { name: n.name })}
+                aria-expanded={!folded}
+                onClick={() => toggleCollapsed(n.key)}
+                className="flex size-5 items-center justify-center rounded-lg text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                data-tree-fold={n.key}
+              >
+                <ChevronRightIcon className={cn("size-3.5 transition-transform", !folded && "rotate-90")} />
+              </button>
+            ) : null}
+          </span>
           <TreeIcon node={n} className={cn(n.dim && "opacity-50")} />
           {isEditing ? (
             <Input
@@ -288,7 +344,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               {n.name}
             </button>
           )}
-          {n.kind === "space" && n.space && !isEditing ? <HomeTag spaceId={n.space.id} /> : null}
+          {/* Folded, a Space says how many child Spaces are under it. */}
+          {n.kind === "space" && folded && n.children.length > 0 && !isEditing ? (
+            <span data-tree-folded-count={n.key} className="shrink-0 text-xs text-muted-foreground">
+              {t("computers.page.child_count", { count: descendants(n).length })}
+            </span>
+          ) : null}
           {pinnable(n) && !isEditing ? <PinnedMark id={n.space!.id} /> : null}
         </div>
         {isEditing ? (
@@ -302,9 +363,20 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               {/* A Space being made says its step ("Downloading macOS (first time only)…") and how far it got, as the
                   sidebar's Making card does. */}
               <span className="truncate">{state === "creating" && n.space?.progress?.label ? n.space.progress.label : n.status}</span>
+              {warning ? (
+                // A low disk is a mark on the computer's own row; its page says the rest.
+                <span title={warning.title} data-tree-disk-warning={warning.level} className="flex shrink-0 text-warning">
+                  <TriangleAlertIcon aria-hidden className="size-3.5" />
+                  <span className="sr-only">{warning.title}</span>
+                </span>
+              ) : null}
               {state === "creating" && n.space ? (
                 <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-foreground/10" aria-hidden>
-                  <span data-create-progress="" className="block h-full rounded-full bg-brand" style={{ width: `${Math.round(createProgress(n.space) * 100)}%` }} />
+                  <span
+                    data-create-progress=""
+                    className="block h-full rounded-full bg-brand"
+                    style={{ width: `${Math.round(createProgress(n.space) * 100)}%` }}
+                  />
                 </span>
               ) : null}
               {state === "creating" && n.space?.progress?.transfer ? (
@@ -323,7 +395,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               <Menu
                 items={menu(n)}
                 trigger={
-                  <button type="button" aria-label={t("computers.menu.more_for", { name: n.name })} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground" data-tree-menu={n.key}>
+                  <button
+                    type="button"
+                    aria-label={t("computers.menu.more_for", { name: n.name })}
+                    className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                    data-tree-menu={n.key}
+                  >
                     <MoreHorizontalIcon className="size-4" />
                   </button>
                 }
@@ -351,9 +428,15 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         data-online={String(here.online)}
         className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}
       >
-        <div role="cell" className="flex min-w-0 items-center gap-2.5">
+        <div role="cell" className="flex min-w-0 items-center gap-1.5">
+          <span className="size-5 shrink-0" aria-hidden />
           <TreeIcon node={{ kind: "computer", current: true, os: null }} />
-          <Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} className="min-w-0 truncate font-semibold outline-none hover:underline focus-visible:underline" data-tree-name="this-mac">
+          <Link
+            to="/spaces/computer/$computerId"
+            params={{ computerId: THIS_COMPUTER }}
+            className="min-w-0 truncate font-semibold outline-none hover:underline focus-visible:underline"
+            data-tree-name="this-mac"
+          >
             {thisComputerLabel()}
           </Link>
         </div>
@@ -365,9 +448,16 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         <div role="cell" />
         <div role="cell" className="flex justify-end">
           <Menu
-            items={[{ label: t("computers.page.open"), onSelect: () => void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } }) }]}
+            items={[
+              { label: t("computers.page.open"), onSelect: () => void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } }) },
+            ]}
             trigger={
-              <button type="button" aria-label={t("computers.menu.more_for", { name: thisComputerLabel() })} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground" data-tree-menu="this-mac">
+              <button
+                type="button"
+                aria-label={t("computers.menu.more_for", { name: thisComputerLabel() })}
+                className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                data-tree-menu="this-mac"
+              >
                 <MoreHorizontalIcon className="size-4" />
               </button>
             }
@@ -381,26 +471,36 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   // isn't in the list come last.
   const elsewhereOn = (r: TreeNode) => creatingElsewhere.filter((c) => r.machine && c.machineId === r.machine.id);
   const strays = creatingElsewhere.filter((c) => !tree.roots.some((r) => r.machine?.id === c.machineId));
+  // A row, then (unless folded) the Spaces under it; a Space's child Spaces sit under it one step further in.
+  const rows = (n: TreeNode, depth: number): ReactNode[] => [rowFor(n, depth), ...(collapsed.has(n.key) ? [] : n.children.flatMap((c) => rows(c, depth + 1)))];
   const branch = (r: TreeNode) => [
     rowFor(r, 0),
-    ...(collapsed.has(r.key) ? [] : [...r.children.map((c) => rowFor(c, 1)), ...elsewhereOn(r).map((c) => <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} nested />)]),
+    ...(collapsed.has(r.key)
+      ? []
+      : [
+          ...r.children.map((c) => rowFor(c, 1)),
+          ...elsewhereOn(r).map((c) => <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} nested />),
+        ]),
   ];
   const offlineRow =
     folded.length > 0 ? (
       <div key="offline" role="row" data-tree-offline-fold="" className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px] text-muted-foreground")}>
-        <div role="cell" className="col-span-5 flex min-w-0 items-center gap-2.5">
-          <button
-            type="button"
-            aria-expanded={showOffline}
-            onClick={() => setShowOffline((v) => !v)}
-            className="-ml-5 flex min-w-0 items-center gap-2.5 text-left outline-none hover:text-foreground focus-visible:underline"
-            data-tree-offline-toggle=""
-          >
-            <ChevronRightIcon className={cn("size-3.5 shrink-0 transition-transform", showOffline && "rotate-90")} />
-            <span className="shrink-0 font-medium text-foreground">{t("computers.page.offline_fold", { count: folded.length })}</span>
-            {showOffline ? null : <span className="min-w-0 truncate">{folded.map((n) => n.name).join(", ")}</span>}
-          </button>
-          <RemoveOldButton />
+        {/* One quiet sentence, level with the names above it (past the caret slot and the icon). */}
+        <div role="cell" className="col-span-5 flex min-w-0 items-center gap-3" style={{ paddingLeft: INDENT_PX }}>
+          <span className="min-w-0 truncate">
+            {t(showOffline ? "computers.page.offline_shown" : "computers.page.offline_hidden", { count: folded.length })}
+            {"\u00a0"}
+            <button
+              type="button"
+              aria-expanded={showOffline}
+              onClick={() => setShowOffline((v) => !v)}
+              className="cursor-default underline decoration-border underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground"
+              data-tree-offline-toggle=""
+            >
+              {showOffline ? t("computers.page.offline_hide") : t("computers.page.offline_show")}
+            </button>
+          </span>
+          {showOffline ? <RemoveOldButton /> : null}
         </div>
       </div>
     ) : null;
@@ -409,10 +509,11 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
       <PageHeader title={t("computers.page.title")} description={editing ? t("computers.page.rename_help") : treeSummary(tree)} actions={addButton} />
       <PageTip place="spaces" />
       {waiting}
-      <ComputerWarnings snapshot={resources} machines={machines.data ?? []} />
       <div role="table" aria-label={t("computers.page.table")} data-spaces-tree="">
         <div role="row" className={cn(COLS, "px-4 pb-2 text-[13px] text-muted-foreground")}>
-          <div role="columnheader">{t("computers.page.col_name")}</div>
+          <div role="columnheader" className="pl-[26px]">
+            {t("computers.page.col_name")}
+          </div>
           <div role="columnheader">{t("computers.page.col_status")}</div>
           <div role="columnheader">{t("computers.page.col_people")}</div>
           <div role="columnheader">{t("computers.page.col_tasks")}</div>
@@ -434,7 +535,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         </p>
       ) : null}
       {single ? (
-        // f7: only This Mac. Agents are better off on a computer you're not using.
+        // f7: only This Mac. A hint, not a second button: the header's Add a computer is the one way in.
         <GroupedSection className="mt-8" data-tree-single="">
           <div className="flex items-center gap-4 px-5 py-4">
             <HardDriveIcon className="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
@@ -442,9 +543,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               <div className="text-[15px] font-medium">{t("computers.page.single_title")}</div>
               <div className="text-[13px] text-muted-foreground">{t("computers.page.single_body")}</div>
             </div>
-            <Button variant="outline" onClick={() => setAdding(true)}>
-              {t("computers.page.add_computer")}
-            </Button>
           </div>
         </GroupedSection>
       ) : null}
@@ -457,14 +555,24 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
         title={deleting ? t("computers.page.delete_title", { name: deleting.name }) : ""}
-        description={t("computers.page.delete_body")}
+        description={
+          deleting && deleting.children.length > 0
+            ? t("computers.page.delete_body_children", {
+                count: descendants(deleting).length,
+                names: namesOf(descendants(deleting).map((d) => d.name)),
+              })
+            : t("computers.page.delete_body")
+        }
         confirmLabel={t("computers.page.delete")}
         destructive
         cancelFirst
         onConfirm={() => {
           const n = deleting!;
           setDeleting(null);
-          void deleteSpace(n.space!.id).then(() => toast(t("computers.page.deleted", { name: n.name }), { type: "success" }), toastError(t("computers.page.delete_failed", { name: n.name })));
+          void deleteSpace(n.space!.id).then(
+            () => toast(t("computers.page.deleted", { name: n.name }), { type: "success" }),
+            toastError(t("computers.page.delete_failed", { name: n.name })),
+          );
         }}
       />
     </Page>
@@ -472,13 +580,29 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
 }
 
 /** A Space another computer is making: its name, Getting ready and how far it got. Nothing to open yet. */
+/** "kid-a", "kid-a and kid-b", "kid-a, kid-b and kid-c" (names only up to four, then a count). */
+export function namesOf(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  if (names.length > 4) return t("computers.page.names_more", { list: names.slice(0, 3).join(", "), count: names.length - 3 });
+  if (names.length === 1) return names[0]!;
+  return t("computers.page.names_and", { list: names.slice(0, -1).join(", "), last: names[names.length - 1]! });
+}
+/** How far each level of child Spaces sits in from its parent (px): one caret slot and its gap. */
+const INDENT_PX = 26;
+
 function ElsewhereRow({ creating: c, nested }: { creating: CreatingElsewhere; nested?: boolean }) {
   const t = useT();
   const os: SpaceOs = c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
   const percent = `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
   return (
-    <div role="row" data-creating-elsewhere={c.machineId} aria-label={t("computers.page.elsewhere_label", { name: c.name, machine: c.machineName.trim() || t("computers.page.another_computer"), percent })} className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}>
-      <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", nested && "pl-8")}>
+    <div
+      role="row"
+      data-creating-elsewhere={c.machineId}
+      aria-label={t("computers.page.elsewhere_label", { name: c.name, machine: c.machineName.trim() || t("computers.page.another_computer"), percent })}
+      className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}
+    >
+      <div role="cell" className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: nested ? INDENT_PX : 0 }}>
+        <span className="size-5 shrink-0" aria-hidden />
         <TreeIcon node={{ kind: "space", current: false, os }} />
         <span className="min-w-0 truncate">{c.name}</span>
       </div>
@@ -535,7 +659,7 @@ export function RemoveComputerDialog({ node, onClose }: { node: TreeNode; onClos
           <p className="mt-3 text-[14px] text-muted-foreground">{text.lead}</p>
           {node.children.length > 0 ? (
             <ul className="mt-3 flex flex-col gap-1.5 text-[14px]" data-tree-remove-children="">
-              {node.children.map((c) => (
+              {descendants(node).map((c) => (
                 <li key={c.key} className="flex items-center gap-2.5">
                   <TreeIcon node={c} />
                   {stopsLine(c)}

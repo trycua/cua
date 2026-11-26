@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.63.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.0...cua-driver-rs-v0.63.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **hyprland-plugin:** reviewed Omarchy edge profile for Hyprland 0.57.2-7 ([#8738](https://github.com/trycua/cua/issues/8738)) ([f14b456](https://github.com/trycua/cua/commit/f14b456de30abbf8b17ffd1c7bea6f95a286222b))
+
 ## [0.63.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.62.1...cua-driver-rs-v0.63.0) (2026-11-26)
 
 

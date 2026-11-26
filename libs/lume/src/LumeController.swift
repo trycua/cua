@@ -1488,10 +1488,17 @@ final class LumeController {
                 stackedDiskSpecs: stackedDiskSpecs
             )
 
-            // The mount and USB images attach read-only; these disks grow on the host.
-            let writableDisks = [diskPath ?? vmDir.diskPath] + (additionalDiskPaths ?? [])
+            // The mount and USB images attach read-only; these disks grow on the
+            // host. An NBD root replaces the VM's disk, NBD disks grow wherever
+            // their server keeps them, and a disk stack writes only to its
+            // topmost layer.
+            let writableDisks =
+                (nbdDisks?.root == nil ? [diskPath ?? vmDir.diskPath] : [])
+                + (additionalDiskPaths ?? [])
             if let shortfall = HostDiskSpace.shortfall(
-                writableDisks: writableDisks, probe: hostVolumeSpaceProbe)
+                writableDisks: writableDisks,
+                growingLayers: (stackedDiskSpecs ?? []).compactMap(\.writableLayer),
+                probe: hostVolumeSpaceProbe)
             {
                 throw VMError.insufficientHostSpace(
                     name: normalizedName,

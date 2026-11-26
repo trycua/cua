@@ -39,22 +39,36 @@ enum HostDiskSpace {
 
     /// The first volume without the room the writable `disks` need, or nil.
     /// A volume whose free space cannot be read does not block the start.
+    ///
+    /// `growingLayers` are the disk-stack layers that take a stack's writes.
+    /// One may not exist yet (the run creates it), and an ASIF layer's file
+    /// size says nothing of how much the guest can still write into it, so
+    /// each needs the full reserve on the volume of its directory.
     static func shortfall(
         writableDisks disks: [Path],
+        growingLayers: [Path] = [],
         probe: HostVolumeSpaceProbe
     ) -> Shortfall? {
         var logicalBytes: [URL: UInt64] = [:]
         var available: [URL: UInt64] = [:]
         var order: [URL] = []
+        func add(_ found: (volume: URL, availableBytes: UInt64), bytes: UInt64) {
+            if logicalBytes[found.volume] == nil { order.append(found.volume) }
+            logicalBytes[found.volume, default: 0] += bytes
+            available[found.volume] = found.availableBytes
+        }
         for disk in disks {
             guard let found = probe.volume(of: disk.url) else { continue }
-            let volume = found.volume
             let size =
                 (try? disk.url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
                 .map { UInt64(max(0, $0)) } ?? 0
-            if logicalBytes[volume] == nil { order.append(volume) }
-            logicalBytes[volume, default: 0] += size
-            available[volume] = found.availableBytes
+            add(found, bytes: size)
+        }
+        for layer in growingLayers {
+            guard let found = probe.volume(of: layer.url.deletingLastPathComponent()) else {
+                continue
+            }
+            add(found, bytes: reserveBytes)
         }
         for volume in order {
             let required = min(logicalBytes[volume] ?? 0, reserveBytes)

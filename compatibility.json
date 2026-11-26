@@ -48,8 +48,8 @@
       }
     },
     "omarchy-rc": {
-      "abi_key": "d200226cf375baa7",
-      "hyprland": "0.57.2-5",
+      "abi_key": "abbcd3efd3b02da4",
+      "hyprland": "0.57.2-7",
       "omarchy_driver": {
         "version": "0.47.5-1"
       },
@@ -57,9 +57,9 @@
         "broken_pins": {},
         "installable": true,
         "pins": {
-          "hyprland": "0.57.2-5"
+          "hyprland": "0.57.2-7"
         },
-        "version": "0.47.8-9"
+        "version": "0.47.8-10"
       },
       "packages": {
         "aquamarine": "0.16.0-1",
@@ -67,7 +67,7 @@
         "glibc": "2.44+r78+gfcfb867c58ab-1",
         "hyprcursor": "0.1.14-1",
         "hyprgraphics": "0.7.0-1",
-        "hyprland": "0.57.2-5",
+        "hyprland": "0.57.2-7",
         "hyprlang": "0.6.8-5",
         "hyprutils": "0.14.4-1",
         "libgcc": "16.2.1+r23+gd564253eb6c8-1",
@@ -173,27 +173,27 @@
     },
     "omarchy-rc": {
       "cua-driver-rs-v0.33.2": {
-        "checked_at": "2026-11-25T18:47:49Z",
+        "checked_at": "2026-11-26T10:47:51Z",
         "status": "unsupported",
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
       "cua-driver-rs-v0.47.8": {
-        "checked_at": "2026-11-25T18:48:38Z",
+        "checked_at": "2026-11-26T10:48:57Z",
         "status": "pass",
         "tree": "99899b60460b955125c4a4d52a00b60206fe1b3a"
       },
       "cua-driver-rs-v0.62.1": {
-        "checked_at": "2026-11-25T18:48:56Z",
+        "checked_at": "2026-11-26T10:49:05Z",
         "status": "pass",
         "tree": "d19599242d42f559d9d9a6e85ccc3289a2c8fa7a"
       },
       "cua-driver-rs-v0.63.1": {
-        "checked_at": "2026-11-26T14:49:25Z",
+        "checked_at": "2026-11-26T14:49:09Z",
         "status": "pass",
         "tree": "135325af5f0d01d6e2bd6bf1885434aaeca593ce"
       },
       "main": {
-        "checked_at": "2026-11-26T14:49:25Z",
+        "checked_at": "2026-11-26T14:49:09Z",
         "status": "pass",
         "tree": "135325af5f0d01d6e2bd6bf1885434aaeca593ce"
       }
@@ -13267,9 +13267,9 @@
       }
     }
   ],
-  "generated_at": "2026-11-26T14:49:49Z",
+  "generated_at": "2026-11-26T22:46:28Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/45842273401",
+  "run_url": "https://github.com/trycua/cua/actions/runs/45906786449",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

@@ -8,6 +8,7 @@
 
 use async_trait::async_trait;
 use cua_driver_core::page::{PageBackend, PageReadResult};
+use cua_driver_core::tree_text;
 
 pub struct LinuxPageBackend;
 
@@ -90,9 +91,14 @@ impl PageBackend for LinuxPageBackend {
                     .map(|i| format!("[{i}] "))
                     .unwrap_or_default();
                 if value.is_empty() {
-                    format!("- {index}{} \"{}\"", n.role, name)
+                    format!("- {index}{} \"{}\"", n.role, tree_text::escape(name))
                 } else {
-                    format!("- {index}{} \"{}\" = \"{}\"", n.role, name, value)
+                    format!(
+                        "- {index}{} \"{}\" = \"{}\"",
+                        n.role,
+                        tree_text::escape(name),
+                        tree_text::escape(value)
+                    )
                 }
             })
             .collect();

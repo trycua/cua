@@ -10,6 +10,7 @@
 //! only projects the protocol response to the indexed rows the filtered tree
 //! renders.
 
+use crate::tree_text;
 use cua_driver_contract::WindowObservation;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -52,8 +53,9 @@ pub fn publish_observations(
 }
 
 /// A parsed `query`: lowercase alternatives, any one of which must occur in a
-/// row. Blank alternatives (`"a||b"`, a trailing `|`) are dropped; a query with
-/// no non-blank alternative is matched literally.
+/// row, as typed or as [`tree_text::escape`] renders it. Blank alternatives
+/// (`"a||b"`, a trailing `|`) are dropped; a query with no non-blank
+/// alternative is matched literally.
 struct Query(Vec<String>);
 
 impl Query {
@@ -63,7 +65,7 @@ impl Query {
             .split('|')
             .map(str::trim)
             .filter(|alt| !alt.is_empty())
-            .map(str::to_owned)
+            .flat_map(|alt| [alt.to_owned(), tree_text::escape(alt)])
             .collect();
         if alternatives.is_empty() {
             Self(vec![lower])
@@ -202,6 +204,15 @@ mod tests {
         assert_eq!(filter_tree(TREE, "|"), "");
         let piped = "- [0] AXStaticText \"a | b\"\n";
         assert_eq!(filter_tree(piped, " | "), piped);
+    }
+
+    #[test]
+    fn a_query_matches_text_as_the_row_escapes_it() {
+        let tree = format!(
+            "- [0] Edit \"Path\" [value=\"{}\"]\n",
+            tree_text::escape(r"C:\Users")
+        );
+        assert_eq!(filter_tree(&tree, r"c:\users"), tree);
     }
 
     #[test]

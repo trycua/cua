@@ -18,6 +18,7 @@
 
 use async_trait::async_trait;
 use cua_driver_core::page::{PageBackend, PageReadResult};
+use cua_driver_core::tree_text;
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -164,17 +165,17 @@ unsafe fn query_dom_blocking(
                 _ => None,
             };
             if let Some(v) = v {
-                attr_parts.push(format!("{a}=\"{}\"", escape_attr(&v)));
+                attr_parts.push(format!("{a}=\"{}\"", tree_text::escape(&v)));
             }
         }
 
         let ct = read_control_type(&elem).unwrap_or_else(|| "Unknown".to_owned());
         let line = if attr_parts.is_empty() {
-            format!("- {ct} \"{}\"", escape_attr(&name))
+            format!("- {ct} \"{}\"", tree_text::escape(&name))
         } else {
             format!(
                 "- {ct} \"{}\" [{}]",
-                escape_attr(&name),
+                tree_text::escape(&name),
                 attr_parts.join(" ")
             )
         };
@@ -454,8 +455,4 @@ fn control_type_for_role(role: &str) -> Option<UIA_CONTROLTYPE_ID> {
         "listitem" => UIA_ListItemControlTypeId,
         _ => return None,
     })
-}
-
-fn escape_attr(s: &str) -> String {
-    s.replace('"', "\\\"")
 }

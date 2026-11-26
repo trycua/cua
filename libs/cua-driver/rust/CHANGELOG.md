@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.63.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.62.1...cua-driver-rs-v0.63.0) (2026-11-26)
+
+
+### Features
+
+* **cua-driver:** hide a cursor's session label with set_agent_cursor_badge ([#8680](https://github.com/trycua/cua/issues/8680)) ([e71e5c3](https://github.com/trycua/cua/commit/e71e5c39847bc23a2c92fddb3f4bb8ae997007d0))
+
 ## [0.62.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.62.0...cua-driver-rs-v0.62.1) (2026-11-24)
 
 

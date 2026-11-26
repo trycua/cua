@@ -141,6 +141,12 @@ lume run [OPTIONS] <name>
 | <span id="lume-run--mount"></span>`--mount` |  | string |  | For Linux VMs only, a read-only disk image to attach. |
 | <span id="lume-run--usb-storage"></span>`--usb-storage` |  | string |  | Disk image to attach as a USB mass storage device. Repeatable. |
 | <span id="lume-run--disk"></span>`--disk` |  | string |  | Disk image to attach as a read-write virtio-blk device. Repeatable. |
+| <span id="lume-run--disk-stack"></span>`--disk-stack` |  | string |  | Disk to attach as a read-only base plus DiskImageKit layers: &lt;base&gt;[+&lt;layer&gt;[@cache\|@overlay]]... Layers default to @overlay. Only the topmost layer takes writes, so one base can back many VMs, and a missing layer is created. Requires macOS 27. Repeatable. |
+| <span id="lume-run--nbd-disk"></span>`--nbd-disk` |  | string |  | Read-write virtio-blk disk served over NBD (an nbd:// or nbd+unix:// URL), attached after every other disk. Repeatable. |
+| <span id="lume-run--nbd-root"></span>`--nbd-root` |  | string |  | Boot from a root disk served over NBD (an nbd:// or nbd+unix:// URL) instead of the VM's disk image. |
+| <span id="lume-run--nbd-timeout"></span>`--nbd-timeout` |  | number | `120` | Seconds an NBD disk waits on a request before reconnecting. |
+| <span id="lume-run--stop-timeout"></span>`--stop-timeout` |  | integer |  | On SIGINT or SIGTERM, ask the guest to shut down and force the VM off after this many seconds. The command then exits 0 only if the guest shut down by itself. lume stop forces the VM off after its own --timeout, so give it a longer one. |
+| <span id="lume-run--vsock-forward"></span>`--vsock-forward` |  | string |  | Forward a host TCP port to a guest AF_VSOCK port: [&lt;IPv4 address&gt;:]&lt;hostPort&gt;:&lt;guestPort&gt;. Listens on 127.0.0.1 unless an address is given. Repeatable. |
 | <span id="lume-run--registry"></span>`--registry` |  | string | `ghcr.io` | Container registry to pull images from. |
 | <span id="lume-run--organization"></span>`--organization` |  | string | `trycua` | Organization to pull images from. |
 | <span id="lume-run--vnc"></span>`--vnc` |  | `enabled` \| `disabled` | `enabled` | VNC server policy. disabled starts the VM with no VNC listener and reports a null vncUrl. |
@@ -157,6 +163,7 @@ lume run [OPTIONS] <name>
 | <span id="lume-run--clipboard"></span>`--clipboard` |  | boolean | `false` | Sync the clipboard both ways over SSH. Automatic with the native macOS display. |
 | <span id="lume-run--no-audio-device"></span>`--no-audio-device` |  | boolean | `false` | Leave the virtio sound device (host audio input and output) out of the VM, so the guest has no audio device. |
 | <span id="lume-run--no-clipboard-device"></span>`--no-clipboard-device` |  | boolean | `false` | Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with --clipboard. |
+| <span id="lume-run--flat-shared-dir"></span>`--flat-shared-dir` |  | boolean | `false` | Show the only --shared-dir's contents directly in the guest's shared folder instead of in a subfolder named after it. Needs exactly one --shared-dir; the VM then cannot take more shared folders while it runs. |
 
 **Examples**
 

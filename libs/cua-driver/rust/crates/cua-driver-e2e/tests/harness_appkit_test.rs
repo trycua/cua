@@ -1932,9 +1932,9 @@ fn harness_appkit_type_text_background() {
             let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
                 .expect("txt-input element_index not found");
 
-            // Address the field through type_text itself. AXTextField does not
-            // advertise AXPress, so a preparatory click would test an invalid
-            // action and fail before the keyboard/value delivery path runs.
+            // Address the field through type_text itself so this case covers
+            // type_text's own focus step, not the click that focuses a field
+            // (harness_appkit_click_on_a_text_role_focuses_it).
             let resp = driver.call(
                 "type_text",
                 serde_json::json!({
@@ -1951,6 +1951,68 @@ fn harness_appkit_type_text_background() {
             assert!(
                 post.contains("kbd-cua"),
                 "type_text keystroke did not land in the text field; snapshot:\n{post}"
+            );
+        },
+    );
+}
+
+/// A text control advertises no `AXPress`, so a click used to dispatch one
+/// anyway: the app answered `-25206` and nothing took focus (#3850). A click on
+/// a text role means "put the caret here". The proof is that unaddressed text
+/// typed next lands in the clicked field, after another field held focus.
+#[test]
+#[ignore]
+fn harness_appkit_click_on_a_text_role_focuses_it() {
+    run_background_case(
+        "click_text_focus",
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            let click_and_type = |driver: &mut McpDriver, identifier: &str, text: &str| {
+                let snapshot = snapshot_elements(driver, pid, wid);
+                let clicked = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element_token_by_id(&snapshot, identifier)
+                    }),
+                );
+                assert!(
+                    !clicked.is_error(),
+                    "click {identifier} failed: {}",
+                    clicked.text()
+                );
+                assert!(
+                    !clicked.text().contains("does not advertise"),
+                    "a text role still had an AXPress dispatched at it: {}",
+                    clicked.text()
+                );
+                assert_eq!(
+                    clicked.action_effect(),
+                    Some("confirmed"),
+                    "focusing {identifier} is confirmed by read-back: {}",
+                    clicked.raw
+                );
+                let typed = driver.call(
+                    "type_text",
+                    serde_json::json!({ "pid": pid as i64, "window_id": wid, "text": text }),
+                );
+                assert!(!typed.is_error(), "type_text failed: {}", typed.text());
+                std::thread::sleep(Duration::from_millis(250));
+            };
+            click_and_type(driver, "txt-note", "note-cua");
+            click_and_type(driver, "txt-input", "focus-cua");
+
+            let after = snapshot_elements(driver, pid, wid);
+            let mirror = after
+                .tree_text()
+                .lines()
+                .find(|line| has_id(line, "lbl-input-mirror"))
+                .unwrap_or_else(|| panic!("no input mirror:\n{}", after.tree_text()));
+            assert!(
+                mirror.contains("focus-cua") && !mirror.contains("note-cua"),
+                "each click did not move focus to its own field; mirror: {mirror}\n{}",
+                after.tree_text()
             );
         },
     );

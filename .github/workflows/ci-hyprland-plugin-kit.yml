@@ -50,9 +50,11 @@ jobs:
       matrix:
         include:
           - channel: omarchy-edge
-            profile: omarchy-edge-20261111
+            profile: omarchy-edge-20261126
+            package_release: "3"
           - channel: omarchy-stable
             profile: omarchy-stable-20261111
+            package_release: "2"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -107,6 +109,7 @@ jobs:
         env:
           CHANNEL: ${{ matrix.channel }}
           PROFILE: ${{ matrix.profile }}
+          PACKAGE_RELEASE: ${{ matrix.package_release }}
         run: |
           set -euo pipefail
           reviewed=()
@@ -117,7 +120,7 @@ jobs:
             -v "$RUNNER_TEMP/driver:/driver:ro" \
             -v "$RUNNER_TEMP/out:/out" \
             -v /run/udev:/run/udev:ro \
-            -e CHANNEL -e REVISION -e DRIVER_VERSION -e PROFILE -e TOOLING_REVISION="$(git rev-parse HEAD)" \
+            -e CHANNEL -e REVISION -e DRIVER_VERSION -e PROFILE -e PACKAGE_RELEASE -e TOOLING_REVISION="$(git rev-parse HEAD)" \
             "$ARCH_IMAGE" sh -euc '
               pacman-key --init >/dev/null
               pacman-key --populate archlinux >/dev/null
@@ -127,7 +130,7 @@ jobs:
                 --channel "$CHANNEL" --repo /repo --tooling-revision "$TOOLING_REVISION" \
                 --archive "/tmp/cua-hyprland-plugin-${DRIVER_VERSION}-${REVISION}.tar.gz" \
                 --revision "$REVISION" --driver-version "$DRIVER_VERSION" \
-                --profile-id "$PROFILE" --kit-version 1.4.0 --package-release 2 \
+                --profile-id "$PROFILE" --kit-version 1.4.0 --package-release "$PACKAGE_RELEASE" \
                 '"${reviewed[*]}"' --out /out'
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out"
           python3 - <<'PY' >>"$GITHUB_STEP_SUMMARY"

@@ -42,6 +42,13 @@ struct Run: AsyncParsableCommand {
     )
     var sharedDirectories: [String] = []
 
+    @Flag(
+        name: .customLong("flat-shared-dir"),
+        help:
+            "Show the only --shared-dir's contents directly in the guest's shared folder (on macOS, /Volumes/My Shared Files) instead of in a subfolder named after it. Needs exactly one --shared-dir, and the VM then cannot take more shared folders while it runs."
+    )
+    var flatSharedDir: Bool = false
+
     @Option(
         help:
             "For Linux VMs only, a read-only disk image to attach to the VM (e.g. --mount=\"ubuntu.iso\")",
@@ -283,6 +290,9 @@ struct Run: AsyncParsableCommand {
         if clipboard && noClipboardDevice {
             throw ValidationError("'--clipboard' cannot be combined with '--no-clipboard-device'.")
         }
+        if flatSharedDir && sharedDirectories.count != 1 {
+            throw ValidationError("'--flat-shared-dir' needs exactly one '--shared-dir'.")
+        }
         if let timeVsock, !GuestTimeService.isValidPort(timeVsock) {
             throw ValidationError(
                 "Invalid --time-vsock port \(timeVsock). Expected 1 to \(GuestTimeService.validPorts.upperBound).")
@@ -348,6 +358,7 @@ struct Run: AsyncParsableCommand {
             vsockForwards: vsockForwards.isEmpty ? nil : try parsedVsockForwards(),
             nbdDisks: try parsedNBDDisks(),
             stopTimeout: stopTimeout.map { TimeInterval($0) },
+            flatSharedDirectory: flatSharedDir,
             networkMode: parsedNetworkMode,
             clipboard: clipboard,
             vncPolicy: vnc,

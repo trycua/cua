@@ -57,6 +57,9 @@ class VM {
     private var displayContext: VMDisplayContext?
     private var nativeAttachRegistered = false
     private var activeSharedDirectories: [SharedDirectory] = []
+    /// The run shares its one folder flat (`--flat-shared-dir`), so no folder
+    /// can be added while it runs.
+    private var activeFlatSharedDirectory = false
     private var scopedSharedDirectoryURLs: [URL] = []
     private var clipboardTransferInProgress = false
     private var sessionCleanedUp = true
@@ -232,6 +235,7 @@ class VM {
         vsockForwards: [VsockPortForwarder.Rule]? = nil,
         nbdDisks: NBDDisks? = nil,
         stopTimeout: TimeInterval? = nil,
+        flatSharedDirectory: Bool = false,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = [],
         hostDevices: HostDeviceOptions = .all,
@@ -313,6 +317,7 @@ class VM {
         activeVNCPolicy = vncPolicy
         activeNoVNCSession = nil
         activeSharedDirectories = sharedDirectories
+        activeFlatSharedDirectory = flatSharedDirectory
 
         Logger.info(
             "Running VM with configuration",
@@ -379,6 +384,7 @@ class VM {
             // taken with a different set fails to restore into it, and the
             // VM then boots fresh with this set (`restoreOrBoot`).
             config.hostDevices = hostDevices
+            config.flatSharedDirectory = flatSharedDirectory
             if let guestTimePort {
                 if activeSocketDevice {
                     config.guestTimePort = guestTimePort
@@ -746,6 +752,12 @@ class VM {
     }
 
     private func addSharedFolder(_ url: URL, readOnly: Bool) async throws {
+        // A flat share has no subfolders to add one beside, and replacing it
+        // with the usual share would move the guest's files mid-run.
+        guard !activeFlatSharedDirectory else {
+            throw VMError.internalError(
+                "This VM shares its folder with --flat-shared-dir, so it cannot take more folders while it runs")
+        }
         var isDirectory: ObjCBool = false
         guard url.isFileURL,
               FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
@@ -985,6 +997,7 @@ class VM {
         }
         scopedSharedDirectoryURLs.removeAll()
         activeSharedDirectories.removeAll()
+        activeFlatSharedDirectory = false
         vncService.stop()
         vsockForwarder?.stop()
         vsockForwarder = nil

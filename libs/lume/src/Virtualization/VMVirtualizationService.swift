@@ -27,6 +27,9 @@ struct VMVirtualizationServiceContext {
     /// Vsock port on which the host serves its wall-clock time to the guest
     /// ([`GuestTimeService`]). Setting it also adds the socket device.
     var guestTimePort: UInt32? = nil
+    /// A single automount shared folder appears at the guest's shared-folder
+    /// root instead of in a subfolder named after it (`--flat-shared-dir`).
+    var flatSharedDirectory: Bool = false
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -397,9 +400,13 @@ class BaseVirtualizationService: VMVirtualizationService {
         return network
     }
 
+    /// `flatAutomount` shares a single automount directory as a
+    /// `VZSingleDirectoryShare`, so its contents sit at the guest's
+    /// shared-folder root; it takes no live-update placeholder.
     static func createDirectorySharingDevices(
         sharedDirectories: [SharedDirectory]?,
-        withLiveUpdatePlaceholder: Bool = false
+        withLiveUpdatePlaceholder: Bool = false,
+        flatAutomount: Bool = false
     )
         -> [VZDirectorySharingDeviceConfiguration]
     {
@@ -410,7 +417,7 @@ class BaseVirtualizationService: VMVirtualizationService {
         // dictionary iteration.
         return grouped.sorted { $0.key < $1.key }.map { tag, directories in
             let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
-            let isFlatAutomount = tag == automountTag && directories.count == 1
+            let isFlatAutomount = flatAutomount && tag == automountTag && directories.count == 1
             device.share = createDirectoryShare(
                 directories,
                 withLiveUpdatePlaceholder: withLiveUpdatePlaceholder && tag == automountTag
@@ -599,7 +606,8 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         // the native toolbar can replace its share while the VM is running.
         var directorySharingDevices = createDirectorySharingDevices(
             sharedDirectories: config.sharedDirectories,
-            withLiveUpdatePlaceholder: true
+            withLiveUpdatePlaceholder: true,
+            flatAutomount: config.flatSharedDirectory
         )
         let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
         if !directorySharingDevices.contains(where: {
@@ -780,7 +788,8 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
 
         // Directory sharing
         var directorySharingDevices = createDirectorySharingDevices(
-            sharedDirectories: config.sharedDirectories)
+            sharedDirectories: config.sharedDirectories,
+            flatAutomount: config.flatSharedDirectory)
 
         // Add Rosetta support if available
         if #available(macOS 13.0, *) {

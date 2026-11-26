@@ -570,49 +570,58 @@ static SHELL_HELPER_POSES: Mutex<Option<ShellHelperPoses>> = Mutex::new(None);
 /// session, not only the one drawing, so a session keeps its setting when
 /// it takes the helper's single cursor over.
 #[cfg(target_os = "linux")]
-type ShellHelperLabels = HashMap<CursorKey, (Option<String>, bool)>;
+#[derive(Default)]
+struct ShellHelperLabels {
+    labels: HashMap<CursorKey, (Option<String>, bool)>,
+    /// The session whose label the helper paints now.
+    painted: Option<CursorKey>,
+}
+
+#[cfg(target_os = "linux")]
+impl ShellHelperLabels {
+    /// Record a label change carried by `msg`. Returns whether it changed
+    /// the label or its visibility for the command's session.
+    fn record(&mut self, msg: &OverlayMsg) -> bool {
+        let (key, cmd) = match msg {
+            OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => (key, cmd),
+            OverlayMsg::Remove(key) => {
+                self.labels.remove(key);
+                if self.painted.as_ref() == Some(key) {
+                    self.painted = None;
+                }
+                return false;
+            }
+            OverlayMsg::Revive(_) | OverlayMsg::Wake => return false,
+        };
+        match cmd {
+            OverlayCommand::SetSessionLabel(label) => {
+                self.labels.entry(key.clone()).or_insert((None, true)).0 =
+                    cursor_overlay::sanitize_session_label(label);
+                true
+            }
+            OverlayCommand::SetSessionLabelVisible(show) => {
+                self.labels.entry(key.clone()).or_insert((None, true)).1 = *show;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The text the helper should paint once a command from `key` reaches
+    /// it, or `None` when what it paints is already `key`'s. A session that
+    /// takes the cursor over always gets its own label sent.
+    fn paint(&mut self, key: &str, changed: bool, verbose: bool) -> Option<String> {
+        if !changed && self.painted.as_deref() == Some(key) {
+            return None;
+        }
+        self.painted = Some(key.to_owned());
+        let (label, show) = self.labels.get(key).cloned().unwrap_or((None, true));
+        Some(label.filter(|_| show && verbose).unwrap_or_default())
+    }
+}
 
 #[cfg(target_os = "linux")]
 static SHELL_HELPER_LABELS: Mutex<Option<ShellHelperLabels>> = Mutex::new(None);
-
-/// Record a label change and return the text the helper should paint for
-/// `key` now, or `None` when `msg` changes no label.
-#[cfg(target_os = "linux")]
-fn shell_helper_label_update(msg: &OverlayMsg) -> Option<String> {
-    let mut guard = SHELL_HELPER_LABELS.lock().unwrap();
-    let labels = guard.get_or_insert_with(Default::default);
-    let (key, cmd) = match msg {
-        OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => (key, cmd),
-        OverlayMsg::Remove(key) => {
-            labels.remove(key);
-            return None;
-        }
-        OverlayMsg::Revive(_) | OverlayMsg::Wake => return None,
-    };
-    let entry = match cmd {
-        OverlayCommand::SetSessionLabel(label) => {
-            let entry = labels.entry(key.clone()).or_insert((None, true));
-            entry.0 = cursor_overlay::sanitize_session_label(label);
-            entry
-        }
-        OverlayCommand::SetSessionLabelVisible(show) => {
-            let entry = labels.entry(key.clone()).or_insert((None, true));
-            entry.1 = *show;
-            entry
-        }
-        _ => return None,
-    };
-    // The helper has no hover reveal and draws one cursor, so the minimal
-    // badge never shows the name there.
-    let verbose = cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
-    Some(
-        entry
-            .0
-            .clone()
-            .filter(|_| entry.1 && verbose)
-            .unwrap_or_default(),
-    )
-}
 
 /// Whether the helper plays pose tracks. Checked once, like the backend.
 #[cfg(target_os = "linux")]
@@ -700,7 +709,11 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
             let now = Instant::now();
-            let label = shell_helper_label_update(msg);
+            let label_changed = SHELL_HELPER_LABELS
+                .lock()
+                .unwrap()
+                .get_or_insert_with(Default::default)
+                .record(msg);
             let reach = shell_helper_surface_event(msg, now);
             let poses = (semantic && shell_helper_plays_poses()).then(|| {
                 // Read the launch template before taking the pose lock.
@@ -725,8 +738,19 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
                 return false;
             };
             dispatch_shell_helper_command(&command.key, &command.cmd, semantic, poses.as_ref());
-            if let Some(label) = label.filter(|_| semantic) {
-                crate::wayland::shell_helper::set_session_label(&label);
+            if semantic {
+                // The helper has no hover reveal and draws one cursor, so the
+                // minimal badge never shows the name there.
+                let verbose =
+                    cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
+                let label = SHELL_HELPER_LABELS
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(Default::default)
+                    .paint(&command.key, label_changed, verbose);
+                if let Some(label) = label {
+                    crate::wayland::shell_helper::set_session_label(&label);
+                }
             }
             poses
                 .and_then(|update| update.arrival)
@@ -6864,6 +6888,35 @@ mod shell_helper_surface_tests {
             now
         ));
         assert!(shell_helper_surface_event(&cmd(b), now));
+    }
+
+    /// The helper paints one label. A session that takes its cursor over
+    /// gets its own label and visibility sent, so a hidden label stays
+    /// hidden and a shown one comes back as sessions alternate.
+    #[test]
+    fn shell_helper_label_follows_the_session_that_takes_the_cursor() {
+        let mut labels = ShellHelperLabels::default();
+        let label =
+            |key: &str, text: &str| keyed(key, OverlayCommand::SetSessionLabel(text.into()));
+        let visible = |key: &str, show| keyed(key, OverlayCommand::SetSessionLabelVisible(show));
+        let mut step = |msg: OverlayMsg| {
+            let changed = labels.record(&msg);
+            let OverlayMsg::Cmd(command) = &msg else {
+                return None;
+            };
+            labels.paint(&command.key, changed, true)
+        };
+
+        assert_eq!(step(label("a", "Agent A")), Some("Agent A".into()));
+        assert_eq!(step(visible("a", false)), Some(String::new()));
+        assert_eq!(step(cmd("a")), None);
+        assert_eq!(step(label("b", "Agent B")), Some("Agent B".into()));
+        assert_eq!(step(cmd("b")), None);
+        assert_eq!(step(cmd("a")), Some(String::new()));
+        assert_eq!(step(cmd("b")), Some("Agent B".into()));
+        assert_eq!(step(OverlayMsg::Remove("b".into())), None);
+        assert_eq!(step(cmd("b")), Some(String::new()));
+        assert_eq!(step(visible("a", true)), Some("Agent A".into()));
     }
 
     fn keyed(key: &str, cmd: OverlayCommand) -> OverlayMsg {

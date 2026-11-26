@@ -25,7 +25,7 @@
     "additionalProperties": false,
     "properties": {
      "app": {
-      "description": "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
+      "description": "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
       "type": "string"
      },
      "on_screen_only": {
@@ -114,7 +114,7 @@
       "type": "string"
      },
      "since": {
-      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise.",
+      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change.",
       "type": "string"
      },
      "timeout_ms": {
@@ -633,6 +633,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "HWND of the target window. Omit when element_token is supplied (the token carries it).",
       "type": "integer"
@@ -689,6 +694,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND for the target window. Omit when element_token is supplied (the token carries it).",
@@ -747,6 +757,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND for the target window. Omit when element_token is supplied (the token carries it).",
@@ -874,6 +889,11 @@
       "description": "Drag-end Y in window-local screenshot pixels.",
       "type": "number"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Target window handle (HWND). Optional — driver picks frontmost window of pid when omitted.",
       "type": "integer"
@@ -963,6 +983,11 @@
      "text": {
       "description": "Text to insert at the focused element's cursor.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND of the target window. Omit when element_token is supplied (the token carries it).",
@@ -1060,6 +1085,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "HWND for the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window.",
       "type": "integer"
@@ -1153,6 +1183,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Explicit HWND when the pid owns multiple windows.",
       "type": "integer"
@@ -1201,6 +1236,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "value": {
       "description": "New value. UIA will coerce to the element's native type.",
@@ -1307,6 +1347,11 @@
        "kind"
       ],
       "type": "object"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND of the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window.",
@@ -1671,7 +1716,7 @@
    "read_only": false
   },
   {
-   "description": "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+   "description": "Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1725,6 +1770,31 @@
     "type": "object"
    },
    "name": "set_agent_cursor_theme",
+   "read_only": false
+  },
+  {
+   "description": "Show or hide the session label text beneath a session's cursor.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "Public label of the session that owns the cursor.",
+      "type": "string"
+     },
+     "show_session_label": {
+      "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals; `true` shows it again with a fresh reveal. The cursor and its delivery\nand target chips still show. The session's name is unchanged.",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session",
+     "show_session_label"
+    ],
+    "type": "object"
+   },
+   "name": "set_agent_cursor_badge",
    "read_only": false
   },
   {
@@ -2026,7 +2096,7 @@
    "read_only": true
   },
   {
-   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.",
+   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text. The macOS AX fallback applies only `*` (or a blank selector) and bare tag selectors and refuses any other selector instead of returning every element.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2295,7 +2365,7 @@
       "type": "string"
      },
      "input_route": {
-      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.",
+      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Its effect is confirmed when the target's own state changes or the click's handlers change the page; otherwise refresh page state and verify the expected postcondition.",
       "enum": [
        "trusted",
        "dom_event"
@@ -2816,6 +2886,18 @@
        "desktop"
       ],
       "type": "string"
+     },
+     "cursor_badge": {
+      "additionalProperties": false,
+      "description": "Optional initial cursor badge settings. The host applies them before the cursor is\nfirst made visible. Omitted fields keep the session's current value; a new session\nshows its label. A later `set_agent_cursor_badge` call wins.",
+      "properties": {
+       "show_session_label": {
+        "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals. The cursor and its delivery and target chips still show. Omit to keep\nthe current value (`true` for a new session).",
+        "type": "boolean"
+       }
+      },
+      "required": [],
+      "type": "object"
      },
      "cursor_motion": {
       "additionalProperties": false,

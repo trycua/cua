@@ -54,7 +54,10 @@ tower.workspace = true
 # EdDSA principal assertions. ring is already the workspace's TLS crypto.
 jsonwebtoken = "9"
 ring = "0.17"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# `hickory-dns`: names are resolved by an async resolver on the runtime,
+# not by blocking getaddrinfo calls on tokio's blocking pool, which the
+# relay's disk work also uses (CUA-4413).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "hickory-dns"] }
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true

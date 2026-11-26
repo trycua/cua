@@ -1,5 +1,104 @@
 # Changelog
 
+## [0.41.15](https://github.com/trycua/cua/compare/cua-spaces-v0.41.14...cua-spaces-v0.41.15) (2026-11-26)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.63.1 in Cua Spaces ([#8747](https://github.com/trycua/cua/issues/8747)) ([4778285](https://github.com/trycua/cua/commit/477828576ccc401b0000e76a9ffa600a5936f4ec))
+
+## [0.41.14](https://github.com/trycua/cua/compare/cua-spaces-v0.41.13...cua-spaces-v0.41.14) (2026-11-26)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.31.1 in Cua Spaces ([#8720](https://github.com/trycua/cua/issues/8720)) ([f7bd585](https://github.com/trycua/cua/commit/f7bd58569341fea3d9465d067c4be484fecf0445))
+
+## [0.41.13](https://github.com/trycua/cua/compare/cua-spaces-v0.41.12...cua-spaces-v0.41.13) (2026-11-25)
+
+
+### Performance Improvements
+
+* **cua-sdk:** link the cua SDK release binaries with fat LTO to slow PyPI project growth ([#8715](https://github.com/trycua/cua/issues/8715)) ([53a43ed](https://github.com/trycua/cua/commit/53a43edb4e3b0b194d1f139e7ef942009eea935b))
+
+## [0.41.12](https://github.com/trycua/cua/compare/cua-spaces-v0.41.11...cua-spaces-v0.41.12) (2026-11-25)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.62.1 in Cua Spaces ([#8702](https://github.com/trycua/cua/issues/8702)) ([0275586](https://github.com/trycua/cua/commit/027558667e819bcfe68ba475ac01d6b101ef3f3e))
+
+## [0.41.11](https://github.com/trycua/cua/compare/cua-spaces-v0.41.10...cua-spaces-v0.41.11) (2026-11-24)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.62.0 in Cua Spaces ([#8695](https://github.com/trycua/cua/issues/8695)) ([f8dee46](https://github.com/trycua/cua/commit/f8dee467fcc1d257467b880b0fc1586ba4a637a6))
+
+## [0.41.10](https://github.com/trycua/cua/compare/cua-spaces-v0.41.9...cua-spaces-v0.41.10) (2026-11-24)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.61.3 in Cua Spaces ([#8670](https://github.com/trycua/cua/issues/8670)) ([d534dfe](https://github.com/trycua/cua/commit/d534dfea8d6946cd9f82caf73a8c33a6e7713a06))
+
+## [0.41.9](https://github.com/trycua/cua/compare/cua-spaces-v0.41.8...cua-spaces-v0.41.9) (2026-11-24)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.61.2 in Cua Spaces ([#8629](https://github.com/trycua/cua/issues/8629)) ([caf56ab](https://github.com/trycua/cua/commit/caf56ab239721d104a2973bd6f023a5b98f9a71a))
+
+## [0.41.8](https://github.com/trycua/cua/compare/cua-spaces-v0.41.7...cua-spaces-v0.41.8) (2026-11-23)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.59.5 in Cua Spaces ([#8597](https://github.com/trycua/cua/issues/8597)) ([feec864](https://github.com/trycua/cua/commit/feec8645d22acef0ec430a2349c71a81ab54cd41))
+
+## [0.41.7](https://github.com/trycua/cua/compare/cua-spaces-v0.41.6...cua-spaces-v0.41.7) (2026-11-23)
+
+
+### Bug Fixes
+
+* **cua-driver,spaces-macos:** give the + route in the macOS permission guides ([#8572](https://github.com/trycua/cua/issues/8572)) ([c7ed4ad](https://github.com/trycua/cua/commit/c7ed4ad7e3ae949123090c71869c097ba1daf6e3))
+* **spaces-macos:** bundle Cua Driver 0.59.4 in Cua Spaces ([#8580](https://github.com/trycua/cua/issues/8580)) ([33f12a5](https://github.com/trycua/cua/commit/33f12a596fb4c9234dbf1ddd8484b6e874e1af61))
+
+## [0.41.6](https://github.com/trycua/cua/compare/cua-spaces-v0.41.5...cua-spaces-v0.41.6) (2026-11-23)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.59.3 in Cua Spaces ([#8559](https://github.com/trycua/cua/issues/8559)) ([877e183](https://github.com/trycua/cua/commit/877e183635331340dfd654753e32fffa557ae678))
+
+## [0.41.5](https://github.com/trycua/cua/compare/cua-spaces-v0.41.4...cua-spaces-v0.41.5) (2026-11-22)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.59.1 in Cua Spaces ([#8541](https://github.com/trycua/cua/issues/8541)) ([05229a4](https://github.com/trycua/cua/commit/05229a4171a61091d7f2a7dbf24d98fa49b7b318))
+
+## [0.41.4](https://github.com/trycua/cua/compare/cua-spaces-v0.41.3...cua-spaces-v0.41.4) (2026-11-22)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.58.1 in Cua Spaces ([#8528](https://github.com/trycua/cua/issues/8528)) ([9d699c7](https://github.com/trycua/cua/commit/9d699c7b99b096505f240d84764b1cb985ed4287))
+
+## [0.41.3](https://github.com/trycua/cua/compare/cua-spaces-v0.41.2...cua-spaces-v0.41.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.57.0 in Cua Spaces ([#8486](https://github.com/trycua/cua/issues/8486)) ([0e505e0](https://github.com/trycua/cua/commit/0e505e0064fe24e339fab071b30ea3f0841b5af6))
+
+## [0.41.2](https://github.com/trycua/cua/compare/cua-spaces-v0.41.1...cua-spaces-v0.41.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.56.4 in Cua Spaces ([#8452](https://github.com/trycua/cua/issues/8452)) ([b648172](https://github.com/trycua/cua/commit/b648172831009e86f23953ff74ed228eeb91f1de))
+
 ## [0.41.1](https://github.com/trycua/cua/compare/cua-spaces-v0.41.0...cua-spaces-v0.41.1) (2026-11-21)
 
 

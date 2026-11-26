@@ -475,6 +475,7 @@ impl std::fmt::Display for PendingError {
 
 fn pending_http() -> reqwest::Client {
     reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(20))
         .build()
         .unwrap_or_default()

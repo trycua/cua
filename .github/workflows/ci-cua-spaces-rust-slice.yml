@@ -64,6 +64,9 @@ jobs:
       - uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
+          # Compile from scratch (this is what the release restores) and keep
+          # every crate's object for the pull requests' builds to reuse.
+          compile-cache: seed
           # The producer is where a key that misses an input is found: it
           # fails here, on main, instead of serving a stale library later.
           verify-key: "true"

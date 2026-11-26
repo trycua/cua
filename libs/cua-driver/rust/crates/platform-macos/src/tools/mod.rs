@@ -3,6 +3,7 @@
 
 //! MCP tool implementations for macOS.
 
+mod agent_display;
 mod bring_to_front;
 mod calc_cell;
 mod capture_binding;
@@ -37,7 +38,7 @@ mod get_config;
 mod get_cursor_position;
 mod get_desktop_state;
 pub(crate) mod get_screen_size;
-mod health_report;
+pub(crate) mod health_report;
 mod move_cursor;
 mod page;
 mod pixel_route;
@@ -1445,6 +1446,7 @@ pub fn register_all(
     ));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
+    registry.register(Box::new(agent_display::AgentDisplayTool));
     let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
     registry.register(pid_window_guarded(
         bring_to_front::BringToFrontTool,
@@ -1510,6 +1512,9 @@ pub fn register_all(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::SetAgentCursorThemeTool::new(
+        state.clone(),
+    )));
+    registry.register(Box::new(cursor_tools::SetAgentCursorBadgeTool::new(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(

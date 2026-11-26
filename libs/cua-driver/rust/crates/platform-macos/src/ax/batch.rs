@@ -18,6 +18,7 @@ use core_foundation::{
     boolean::CFBoolean,
     number::CFNumber,
     string::CFString,
+    url::CFURL,
 };
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -53,11 +54,12 @@ pub(crate) enum NodeAttr {
     ValueDescription,
     MinValue,
     MaxValue,
+    Url,
     Children,
 }
 
 impl NodeAttr {
-    const ALL: [NodeAttr; 16] = [
+    const ALL: [NodeAttr; 17] = [
         NodeAttr::Role,
         NodeAttr::Title,
         NodeAttr::Value,
@@ -73,6 +75,7 @@ impl NodeAttr {
         NodeAttr::ValueDescription,
         NodeAttr::MinValue,
         NodeAttr::MaxValue,
+        NodeAttr::Url,
         NodeAttr::Children,
     ];
 
@@ -93,6 +96,7 @@ impl NodeAttr {
             NodeAttr::ValueDescription => "AXValueDescription",
             NodeAttr::MinValue => "AXMinValue",
             NodeAttr::MaxValue => "AXMaxValue",
+            NodeAttr::Url => "AXURL",
             NodeAttr::Children => "AXChildren",
         }
     }
@@ -206,6 +210,15 @@ impl NodeAttributes {
                 }
                 CFNumber::wrap_under_get_rule(value as _).to_f64()
             }
+        }
+    }
+
+    /// [`copy_url_attr`]: the absolute string of a CFURL.
+    pub(crate) unsafe fn url(&self, attr: NodeAttr) -> Option<String> {
+        match *self {
+            NodeAttributes::Single(element) => copy_url_attr(element),
+            NodeAttributes::Unanswered => None,
+            NodeAttributes::Batch(_) => url_value(self.raw(attr)?),
         }
     }
 
@@ -325,6 +338,17 @@ unsafe fn string_value(value: CFTypeRef) -> Option<String> {
         .then(|| CFString::wrap_under_get_rule(value as _).to_string())
 }
 
+/// [`copy_url_attr`] of one batched slot: a CFURL as its absolute string;
+/// anything else (an AXError value, kCFNull, a CFString) is `None`.
+unsafe fn url_value(value: CFTypeRef) -> Option<String> {
+    (CFGetTypeID(value) == CFURL::type_id()).then(|| {
+        CFURL::wrap_under_get_rule(value as _)
+            .absolute()
+            .get_string()
+            .to_string()
+    })
+}
+
 unsafe fn string_values<const N: usize>(values: CFArrayRef) -> [Option<String>; N] {
     std::array::from_fn(|index| {
         let value = CFArrayGetValueAtIndex(values, index as isize) as CFTypeRef;
@@ -415,6 +439,31 @@ mod tests {
             strings,
             [Some("Submit".into()), Some(String::new()), None, None]
         );
+    }
+
+    #[test]
+    fn url_slots_read_like_single_url_reads() {
+        use core_foundation::{
+            base::{kCFAllocatorDefault, TCFType},
+            string::CFString,
+            url::{CFURLCreateWithString, CFURL},
+        };
+        let base = CFURL::from_path("/docs/", true).expect("file URL");
+        let link: CFURL = unsafe {
+            TCFType::wrap_under_create_rule(CFURLCreateWithString(
+                kCFAllocatorDefault,
+                CFString::new("guide?page=2").as_concrete_TypeRef(),
+                base.as_concrete_TypeRef(),
+            ))
+        };
+        let text = CFString::new("https://example.com/");
+        // A relative CFURL resolves against its base, as `copy_url_attr` does,
+        // and a string slot is not a URL.
+        assert_eq!(
+            unsafe { super::url_value(link.as_CFTypeRef()) }.as_deref(),
+            Some("file:///docs/guide?page=2")
+        );
+        assert_eq!(unsafe { super::url_value(text.as_CFTypeRef()) }, None);
     }
 
     #[test]

@@ -224,17 +224,23 @@ jobs:
       # One definition of the build, shared with the producer on main
       # (ci-cua-spaces-rust-slice.yml). Exact key hit (the pull request leaves
       # the Rust inputs as they are on main): main's compiled library, seconds.
-      # Miss: the action builds with the same `--target` command and the same
-      # Swatinem cache family main saves, so a pull request compiles only the
-      # workspace crates it changed (minutes) and not the whole dependency tree
-      # (73 minutes cold). The old miss path built `cargo build --release`
-      # without `--target`, into a different target directory and an sccache
-      # family warmed by debug test builds, so it never reused main's work.
+      # Miss (the producer for main's tree is still building, about an hour,
+      # or the pull request changes Rust inputs): the action builds with the
+      # same `--target` command, on main's dependency cache (rust-cache) and
+      # main's compiled workspace crates (sccache, compile-cache: read).
+      # rust-cache alone drops the 52 workspace crates, so the build used to
+      # compile all of them, 66 minutes on this runner, for a change that
+      # touched none of them. Now only the crates the pull request changed,
+      # and those that depend on them, compile.
       - name: Restore main's compiled library, or build on top of main's dependency cache
         id: slice
         uses: ./.github/actions/spaces-rust-slice
         with:
           triple: aarch64-apple-darwin
+          # On a miss, reuse main's compiled workspace crates: only the
+          # crates this pull request changed, and those that depend on them,
+          # compile.
+          compile-cache: read
       - name: Stage the library where the Swift jobs expect it
         run: |
           mkdir -p libs/cua/target/release

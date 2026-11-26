@@ -945,7 +945,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "end_session"
         | "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
-        | "set_agent_cursor_theme" => RiskClass::R1,
+        | "set_agent_cursor_theme"
+        | "set_agent_cursor_badge" => RiskClass::R1,
 
         "clipboard_write" => RiskClass::R1,
 
@@ -961,6 +962,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_accessibility_tree"
         | "verify_state"
         | "set_config"
+        | "agent_display"
         | "start_recording"
         | "get_browser_state"
         | "browser_prepare"

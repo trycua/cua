@@ -873,6 +873,13 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
             .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
             .or_insert_with(crate::post_action_wait::schema);
     }
+    // Dispatch checks `ui_tree_revision` before delivery (see
+    // `crate::ui_tree_revision`).
+    if crate::ui_tree_revision::accepts(tool_name) {
+        properties
+            .entry(crate::ui_tree_revision::UI_TREE_REVISION_ARG)
+            .or_insert_with(crate::ui_tree_revision::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -953,7 +960,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 ///   `session.capture_scope.escalate` compatibility tokens
 /// - `agent_cursor.move`, `agent_cursor.set_enabled`,
 ///   `agent_cursor.set_motion`, `agent_cursor.set_theme`,
-///   `agent_cursor.state`
+///   `agent_cursor.set_badge`, `agent_cursor.state`
 /// - `recording.start`, `recording.stop`, `recording.state`,
 ///   `recording.replay`, `recording.install_dependency`
 /// - `page.action`
@@ -1050,6 +1057,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "launch_app" => &["app.launch"],
         "list_apps" => &["app.list"],
         "kill_app" => &["app.kill"],
+        "agent_display" => &["display.virtual"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
         "set_window_frame" => &["window.frame.set"],
@@ -1073,6 +1081,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "set_agent_cursor_enabled" => &["agent_cursor.set_enabled"],
         "set_agent_cursor_motion" => &["agent_cursor.set_motion"],
         "set_agent_cursor_theme" => &["agent_cursor.set_theme"],
+        "set_agent_cursor_badge" => &["agent_cursor.set_badge"],
         "get_agent_cursor_state" => &["agent_cursor.state"],
 
         // ── recording / replay ───────────────────────────────────────
@@ -2354,6 +2363,18 @@ impl ToolRegistry {
                 &format!("{resolved_name}: unknown {detail}"),
             );
         }
+        let planned_revision = if crate::ui_tree_revision::accepts(resolved_name) {
+            let revision = match crate::ui_tree_revision::parse(resolved_name, &args) {
+                Ok(revision) => revision,
+                Err(refusal) => return refusal,
+            };
+            if let Some(arguments) = args.as_object_mut() {
+                arguments.remove(crate::ui_tree_revision::UI_TREE_REVISION_ARG);
+            }
+            revision
+        } else {
+            None
+        };
 
         // Resource adapters run at the same canonical boundary as policy and
         // manifest admission, after session capture-scope validation but
@@ -2665,6 +2686,13 @@ impl ToolRegistry {
         } else {
             None
         };
+        // Checked once the action holds its input lanes, so a read that
+        // finished while it waited for them is seen.
+        let lane_refusal = lane_refusal.or_else(|| {
+            planned_revision.and_then(|expected| {
+                crate::ui_tree_revision::check(resolved_name, expected, &args).err()
+            })
+        });
         let pending_turn = should_record
             .then(|| {
                 // Use the same trusted identities the recording owner was minted from.
@@ -4138,8 +4166,18 @@ mod runtime_isolation_tests {
         async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
             self.last_args.lock().unwrap().replace(args.clone());
-            crate::protocol::ToolResult::text("file operation ran")
-                .with_structured(serde_json::json!({"received": args}))
+            let result = crate::protocol::ToolResult::text("file operation ran")
+                .with_structured(serde_json::json!({"received": args}));
+            // Like the real producers, a move_cursor attaches its own record.
+            if self.def.name == "move_cursor" {
+                return result.with_action_record(
+                    crate::action_record::ActionExecutionRecord::cursor_move(
+                        crate::action_record::ActionTransport::MacosCgEventHid,
+                        &args,
+                    ),
+                );
+            }
+            result
         }
     }
 
@@ -5672,6 +5710,74 @@ resources:
             assert_eq!(r.structured_content.unwrap()["code"], "invalid_arguments");
         }
         assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_refuses_a_stale_ui_tree_revision_before_delivery() {
+        use crate::ui_tree_revision::{record, UI_TREE_REVISION_ARG, UI_TREE_REVISION_TOOLS};
+        use crate::window_state_view::ViewKey;
+        use serde_json::json;
+        let schema = json!({
+            "type": "object",
+            "properties": {"element_token": {"type": "string"}},
+            "additionalProperties": false
+        });
+        for tool in UI_TREE_REVISION_TOOLS {
+            let advertised = super::advertised_runtime_input_schema(tool, &schema);
+            assert!(
+                advertised["properties"].get(UI_TREE_REVISION_ARG).is_some(),
+                "{tool}"
+            );
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: schema,
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let view = ViewKey {
+            query: None,
+            max_elements: 250,
+            max_depth: None,
+        };
+        let planned = record(9301, 5, &view, Some("s0000d301"), "- [1] Button \"OK\"");
+        let result = registry
+            .invoke_with_context(
+                "click",
+                json!({"element_token": "s0000d301:1", "ui_tree_revision": planned}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+
+        record(9301, 5, &view, Some("s0000d302"), "- [1] Button \"Done\"");
+        let result = registry
+            .invoke_with_context(
+                "click",
+                json!({"element_token": "s0000d301:1", "ui_tree_revision": planned}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["refusal"]["code"], "stale_revision");
+        assert_eq!(structured["refusal"]["reason"], "changed");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "a refused action is not delivered"
+        );
     }
 
     #[tokio::test]
@@ -7944,6 +8050,7 @@ mod capability_tests {
         "set_agent_cursor_enabled",
         "set_agent_cursor_motion",
         "set_agent_cursor_theme",
+        "set_agent_cursor_badge",
         "get_agent_cursor_state",
         // recording / replay
         "start_recording",
@@ -7972,6 +8079,7 @@ mod capability_tests {
         "history_status",
         "history_query",
         "parse_visual_regions",
+        "agent_display",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -8015,6 +8123,7 @@ mod capability_tests {
         "app.launch",
         "app.list",
         "app.kill",
+        "display.virtual",
         "window.list",
         "window.activate",
         "window.frame.set",
@@ -8039,6 +8148,7 @@ mod capability_tests {
         "agent_cursor.set_enabled",
         "agent_cursor.set_motion",
         "agent_cursor.set_theme",
+        "agent_cursor.set_badge",
         "agent_cursor.state",
         // recording
         "recording.start",

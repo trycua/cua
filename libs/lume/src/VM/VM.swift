@@ -494,10 +494,10 @@ class VM {
                 startVsockForwards(forwards, service: service)
             }
             if activeSocketDevice, let rules = vsockForwards, !rules.isEmpty,
-                let handle = service.vmHandle
+                let connect = service.vsockConnector()
             {
                 for rule in rules {
-                    let fwd = VsockPortForwarder(handle: handle, rule: rule)
+                    let fwd = VsockPortForwarder(connect: connect, rule: rule)
                     do {
                         try fwd.start()
                         vsockPortForwarders.append(fwd)
@@ -984,6 +984,8 @@ class VM {
         vncService.stop()
         vsockForwarder?.stop()
         vsockForwarder = nil
+        for forwarder in vsockPortForwarders { forwarder.stop() }
+        vsockPortForwarders.removeAll()
         vmDirContext.dir.clearVsockSession()
         if !activeVNCPolicy.isEnabled {
             // No VNC service owns this run's marker, so drop it here. Doing it

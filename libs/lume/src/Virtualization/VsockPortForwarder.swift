@@ -1,48 +1,69 @@
+import Darwin
 import Foundation
-import Virtualization
 
+/// A host TCP port carried straight to a guest AF_VSOCK port (`--vsock-forward`).
+///
+/// Unlike [`VsockForwarder`], which reaches the guest's own loopback ports
+/// through the guest agent, this connects to a vsock port that a guest daemon
+/// listens on itself, so the guest needs no agent and no networking. Streams
+/// are opened through the virtualization service's `vsockConnector()`.
 final class VsockPortForwarder: @unchecked Sendable {
-    struct Rule {
+    /// `[<IPv4 address>:]<hostPort>:<guestPort>`. The host port listens on
+    /// loopback unless an address is given.
+    struct Rule: Equatable {
+        static let defaultAddress = "127.0.0.1"
+
+        let address: String
         let hostPort: UInt16
         let guestPort: UInt32
 
         init(argument: String) throws {
-            let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
-            guard parts.count == 2,
-                let h = UInt16(parts[0]), let g = UInt32(parts[1]), h > 0, g > 0
+            let parts = argument.split(separator: ":", omittingEmptySubsequences: false)
+                .map(String.init)
+            guard parts.count == 2 || parts.count == 3 else {
+                throw VsockPortForwarderError.invalidRule(argument)
+            }
+            let address = parts.count == 3 ? parts[0] : Self.defaultAddress
+            guard Self.isIPv4(address),
+                let h = UInt16(parts[parts.count - 2]), let g = UInt32(parts[parts.count - 1]),
+                h > 0, g > 0
             else {
                 throw VsockPortForwarderError.invalidRule(argument)
             }
+            self.address = address
             hostPort = h
             guestPort = g
+        }
+
+        static func isIPv4(_ address: String) -> Bool {
+            var parsed = in_addr()
+            return inet_pton(AF_INET, address, &parsed) == 1
         }
     }
 
     static let maxConnections = 64
 
-    private let handle: BaseVirtualizationService.VirtualMachineHandle
+    private let connect: VsockForwarder.Connect
     private let rule: Rule
-    private var listenerFD: Int32 = -1
-    private let queue = DispatchQueue(label: "lume.vsock.forwarder")
     private let lock = NSLock()
     private var active = 0
     private var stopped = false
 
-    init(handle: BaseVirtualizationService.VirtualMachineHandle, rule: Rule) {
-        self.handle = handle
+    init(connect: @escaping VsockForwarder.Connect, rule: Rule) {
+        self.connect = connect
         self.rule = rule
     }
 
     func start() throws {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw VsockPortForwarderError.listenFailed(errno) }
-        var yes: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        Self.setOption(fd, SOL_SOCKET, SO_REUSEADDR, 1)
 
         var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = rule.hostPort.bigEndian
-        addr.sin_addr.s_addr = INADDR_ANY.bigEndian
+        inet_pton(AF_INET, rule.address, &addr.sin_addr)
         let bound = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
@@ -50,22 +71,34 @@ final class VsockPortForwarder: @unchecked Sendable {
         }
         guard bound == 0, listen(fd, 16) == 0 else {
             let e = errno
-            close(fd)
+            Darwin.close(fd)
             throw VsockPortForwarderError.listenFailed(e)
         }
-        listenerFD = fd
         Logger.info(
             "vsock forwarder listening",
-            metadata: ["host_port": "\(rule.hostPort)", "guest_port": "\(rule.guestPort)"])
+            metadata: [
+                "address": rule.address, "host_port": "\(rule.hostPort)",
+                "guest_port": "\(rule.guestPort)",
+            ])
 
-        queue.async { [weak self] in self?.acceptLoop(fd) }
+        let t = Thread { [weak self] in
+            guard let self else {
+                Darwin.close(fd)
+                return
+            }
+            self.acceptLoop(fd)
+        }
+        t.name = "vsock forward \(rule.hostPort)"
+        t.start()
     }
 
+    /// Stops accepting: the listener closes within half a second, on its own
+    /// thread, so no descriptor is closed under a blocked `accept`. Open
+    /// connections end with the VM.
     func stop() {
         lock.lock()
         stopped = true
         lock.unlock()
-        if listenerFD >= 0 { close(listenerFD); listenerFD = -1 }
     }
 
     private var isStopped: Bool {
@@ -89,7 +122,13 @@ final class VsockPortForwarder: @unchecked Sendable {
     }
 
     private func acceptLoop(_ listenFD: Int32) {
+        defer { Darwin.close(listenFD) }
         while !isStopped {
+            var p = pollfd(fd: listenFD, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&p, 1, 500)
+            if ready < 0 && errno != EINTR { return }
+            if ready <= 0 || isStopped { continue }
+
             var peer = sockaddr_in()
             var len = socklen_t(MemoryLayout<sockaddr_in>.size)
             let client = withUnsafeMutablePointer(to: &peer) {
@@ -98,7 +137,7 @@ final class VsockPortForwarder: @unchecked Sendable {
             if client < 0 {
                 let e = errno
                 switch e {
-                case EINTR, ECONNABORTED:
+                case EINTR, ECONNABORTED, EAGAIN:
                     continue
                 case EBADF, EINVAL, ENOTSOCK:
                     return
@@ -116,41 +155,36 @@ final class VsockPortForwarder: @unchecked Sendable {
                 Logger.info(
                     "vsock forwarder refused a connection over its limit",
                     metadata: ["client": address, "limit": "\(Self.maxConnections)"])
-                close(client)
+                Darwin.close(client)
                 continue
             }
             Self.configure(client)
             Logger.debug("vsock forwarder accepted a connection", metadata: ["client": address])
-            connectGuest(clientFD: client)
+            let worker = Thread { [weak self] in
+                guard let self else {
+                    Darwin.close(client)
+                    return
+                }
+                self.forward(client)
+            }
+            worker.name = "vsock forward \(rule.hostPort) connection"
+            worker.start()
         }
     }
 
-    private func connectGuest(clientFD: Int32) {
-        let handle = self.handle
-        let guestPort = rule.guestPort
-        let release: () -> Void = { [weak self] in self?.releaseSlot() }
-        handle.queue.async {
-            guard let device = handle.machine.socketDevices.first as? VZVirtioSocketDevice else {
-                Logger.error("vsock forwarder: VM has no VZVirtioSocketDevice")
-                close(clientFD)
-                release()
-                return
-            }
-            device.connect(toPort: guestPort) { result in
-                switch result {
-                case .success(let connection):
-                    Self.splice(clientFD, connection, onDone: release)
-                case .failure(let error):
-                    Logger.error(
-                        "vsock connect failed",
-                        metadata: [
-                            "guest_port": "\(guestPort)",
-                            "error": error.localizedDescription,
-                        ])
-                    close(clientFD)
-                    release()
-                }
-            }
+    /// Opens a vsock stream to the guest port and carries bytes both ways.
+    private func forward(_ clientFD: Int32) {
+        guard let stream = connect(rule.guestPort) else {
+            Logger.error("vsock connect failed", metadata: ["guest_port": "\(rule.guestPort)"])
+            Darwin.close(clientFD)
+            releaseSlot()
+            return
+        }
+        Self.setOption(stream.fd, SOL_SOCKET, SO_NOSIGPIPE, 1)
+        VsockForwarder.splice(clientFD, stream.fd) { [weak self] in
+            stream.close()
+            Darwin.close(clientFD)
+            self?.releaseSlot()
         }
     }
 
@@ -171,45 +205,8 @@ final class VsockPortForwarder: @unchecked Sendable {
         var addr = peer.sin_addr
         var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
         guard inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil else { return "unknown" }
-        return "\(String(cString: buf)):\(UInt16(bigEndian: peer.sin_port))"
-    }
-
-    private static func splice(
-        _ clientFD: Int32, _ connection: VZVirtioSocketConnection, onDone: @escaping () -> Void
-    ) {
-        let guestFD = connection.fileDescriptor
-        setOption(guestFD, SOL_SOCKET, SO_NOSIGPIPE, 1)
-        let done = DispatchGroup()
-
-        let pump: (Int32, Int32, Int32, Int32) -> Void = { from, to, endFD, how in
-            done.enter()
-            Thread {
-                defer { done.leave() }
-                var buf = [UInt8](repeating: 0, count: 64 * 1024)
-                while true {
-                    let n = buf.withUnsafeMutableBytes { read(from, $0.baseAddress, $0.count) }
-                    if n <= 0 { break }
-                    var off = 0
-                    while off < n {
-                        let w = buf.withUnsafeBytes {
-                            write(to, $0.baseAddress!.advanced(by: off), n - off)
-                        }
-                        if w <= 0 { break }
-                        off += w
-                    }
-                    if off < n { break }
-                }
-                shutdown(endFD, how)
-            }.start()
-        }
-        pump(clientFD, guestFD, guestFD, SHUT_WR)
-        pump(guestFD, clientFD, clientFD, SHUT_RDWR)
-
-        done.notify(queue: DispatchQueue.global()) {
-            close(clientFD)
-            connection.close()
-            onDone()
-        }
+        let host = buf.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        return "\(host):\(UInt16(bigEndian: peer.sin_port))"
     }
 }
 
@@ -220,7 +217,8 @@ enum VsockPortForwarderError: CustomNSError, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidRule(let s):
-            return "Invalid vsock forward '\(s)' — expected <hostPort>:<guestPort>, e.g. 8000:5005"
+            return
+                "Invalid vsock forward '\(s)' — expected [<IPv4 address>:]<hostPort>:<guestPort>, e.g. 8000:5005 or 0.0.0.0:8000:5005"
         case .listenFailed(let e):
             return "vsock forwarder could not listen: \(String(cString: strerror(e)))"
         }

@@ -116,9 +116,11 @@ struct Run: AsyncParsableCommand {
         name: [.customLong("vsock-forward")],
         help: ArgumentHelp(
             """
-            Forward a host TCP port to a guest AF_VSOCK port, as <hostPort>:<guestPort> \
-            (e.g. --vsock-forward=8000:5005). Lets a guest daemon be reached without guest \
-            networking — no DHCP wait, and no reliance on per-host NAT addresses.
+            Forward a host TCP port to a guest AF_VSOCK port, as \
+            [<IPv4 address>:]<hostPort>:<guestPort> (e.g. --vsock-forward=8000:5005). The port \
+            listens on 127.0.0.1 unless an address is given (e.g. 0.0.0.0:8000:5005 accepts \
+            connections from other hosts). Lets a guest daemon be reached without guest \
+            networking — no DHCP wait, and no reliance on per-host NAT addresses. Repeatable.
             """))
     var vsockForwards: [String] = []
 
@@ -289,6 +291,7 @@ struct Run: AsyncParsableCommand {
         // Checked here as well as in run(): with --detach, run() returns before
         // it builds the disks, and a bad URL would only show in the child's log.
         _ = try parsedNBDDisks()
+        _ = try parsedVsockForwards()
         if let stopTimeout, stopTimeout <= 0 {
             throw ValidationError("--stop-timeout must be positive")
         }

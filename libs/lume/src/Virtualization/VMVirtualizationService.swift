@@ -35,7 +35,6 @@ protocol VMVirtualizationService {
     var state: VZVirtualMachine.State { get }
     /// The framework VM used by native display and VNC. Test services may return nil.
     var displayVirtualMachine: VZVirtualMachine? { get }
-    var vmHandle: BaseVirtualizationService.VirtualMachineHandle? { get }
     func start() async throws
     func stop() async throws
     /// Asks the guest to shut down, as a power button press does. It returns at
@@ -89,8 +88,6 @@ class BaseVirtualizationService: VMVirtualizationService {
     var displayVirtualMachine: VZVirtualMachine? {
         virtualMachine
     }
-
-    var vmHandle: BaseVirtualizationService.VirtualMachineHandle? { virtualMachineHandle }
 
     init(
         virtualMachine: VZVirtualMachine,

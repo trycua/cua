@@ -247,15 +247,9 @@ cua-media-client = { path = "crates/cua-media-client", default-features = false 
 # Release binaries ship in the wheels, npm packages, installers and app
 # bundles. Their symbol tables roughly doubled the native files and pushed
 # the wheels past PyPI's 100 MB per-file limit. The dynamic symbol table
-# (what Python, Node and Swift load) is kept. PyPI also caps a project at
-# 10 GB in total, and every `cua` release is six wheels of 51 to 58 MB, so
-# link with fat LTO in one codegen unit as the Cua Driver workspace does
-# (libs/cua-driver/rust/Cargo.toml): same code, less of it. Release builds
-# link slower.
+# (what Python, Node and Swift load) is kept.
 [profile.release]
 strip = "symbols"
-lto = "fat"
-codegen-units = 1
 
 # Proc-macro dylibs and build scripts run on the build host and never ship.
 # Stripping them is pointless, and on Xcode / Command Line Tools 27 the `strip`

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.63.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.1...cua-driver-rs-v0.63.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* **cua-driver:** give browser_prepare E2E calls room for the driver's setup bounds ([#8750](https://github.com/trycua/cua/issues/8750)) ([79014f1](https://github.com/trycua/cua/commit/79014f184602b30235c2752e6a4d99a00bad047a)), closes [#8748](https://github.com/trycua/cua/issues/8748)
+
 ## [0.63.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.0...cua-driver-rs-v0.63.1) (2026-11-26)
 
 

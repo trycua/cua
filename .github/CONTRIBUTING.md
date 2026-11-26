@@ -159,8 +159,8 @@ xwin check` when `cargo-xwin` is installed. A check whose tool is missing is
 printed as SKIPPED, never as passed. On a memory-tight machine wrap the cargo
 commands: `CUA_BUILD_WRAPPER=/path/to/your-build-wrapper.sh scripts/ci/prepush.sh`.
 Which workflow a change triggers is listed in
-[`.github/workflows/README.md`](.github/workflows/README.md); known flaky
-checks are in [`.github/workflows/FLAKY.md`](.github/workflows/FLAKY.md).
+[`.github/workflows/README.md`](workflows/README.md); known flaky
+checks are in [`.github/workflows/FLAKY.md`](workflows/FLAKY.md).
 
 ## Preserve Contributor Authorship
 

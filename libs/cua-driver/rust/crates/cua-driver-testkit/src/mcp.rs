@@ -54,7 +54,19 @@ const MIN_BEHAVIOR_RECORDING_DURATION: Duration = Duration::from_millis(750);
 // the recording controls themselves.
 const MACOS_RECORDED_CALL_TIMEOUT: Duration = Duration::from_secs(CALL_TIMEOUT.as_secs() * 3);
 
+// `browser_prepare` runs the driver's own bounded setup phases back to back:
+// native tab-topology stabilisation (3 s), new-tab creation (3 s), the setup
+// page becoming ready (12 s, longer on a loaded runner while a behavioural
+// recording captures the screen), the isolated-launch endpoint wait (20 s)
+// and the rollback that closes the setup tab. Their sum can pass the base
+// ceiling, so a slow but correct prepare was reported as a harness timeout
+// with no evidence instead of the driver's own bounded result.
+const BROWSER_PREPARE_CALL_TIMEOUT: Duration = Duration::from_secs(CALL_TIMEOUT.as_secs() * 3);
+
 fn call_timeout(recording_started: bool, tool: &str, is_macos: bool) -> Duration {
+    if tool == "browser_prepare" {
+        return BROWSER_PREPARE_CALL_TIMEOUT;
+    }
     let recording_meta_tool = matches!(
         tool,
         "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
@@ -697,7 +709,7 @@ fn unix_ms() -> u64 {
 mod tests {
     use super::{
         call_timeout, recording_label, remaining_behavior_recording_time, timeout_error_message,
-        MACOS_RECORDED_CALL_TIMEOUT,
+        BROWSER_PREPARE_CALL_TIMEOUT, MACOS_RECORDED_CALL_TIMEOUT,
     };
     use crate::CALL_TIMEOUT;
     use std::time::Duration;
@@ -799,6 +811,19 @@ mod tests {
             MACOS_RECORDED_CALL_TIMEOUT,
             Duration::from_secs(CALL_TIMEOUT.as_secs() * 3)
         );
+    }
+
+    #[test]
+    fn browser_prepare_covers_the_drivers_sequential_setup_bounds() {
+        for is_macos in [false, true] {
+            for recording in [false, true] {
+                assert_eq!(
+                    call_timeout(recording, "browser_prepare", is_macos),
+                    BROWSER_PREPARE_CALL_TIMEOUT
+                );
+            }
+        }
+        assert!(BROWSER_PREPARE_CALL_TIMEOUT >= Duration::from_secs(3 + 3 + 12 + 20 + 4));
     }
 
     #[test]

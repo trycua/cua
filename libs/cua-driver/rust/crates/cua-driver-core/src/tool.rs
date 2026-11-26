@@ -946,7 +946,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 ///   `session.capture_scope.escalate` compatibility tokens
 /// - `agent_cursor.move`, `agent_cursor.set_enabled`,
 ///   `agent_cursor.set_motion`, `agent_cursor.set_theme`,
-///   `agent_cursor.state`
+///   `agent_cursor.set_badge`, `agent_cursor.state`
 /// - `recording.start`, `recording.stop`, `recording.state`,
 ///   `recording.replay`, `recording.install_dependency`
 /// - `page.action`
@@ -8129,6 +8129,7 @@ mod capability_tests {
         "agent_cursor.set_enabled",
         "agent_cursor.set_motion",
         "agent_cursor.set_theme",
+        "agent_cursor.set_badge",
         "agent_cursor.state",
         // recording
         "recording.start",

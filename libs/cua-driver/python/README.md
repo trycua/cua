@@ -50,7 +50,8 @@ async def main() -> None:
     driver = CuaDriver.create()
     await driver.start_session(
         StartSessionInput(
-            session="demo", capture_scope=None, cursor_theme=None, cursor_motion=None
+            session="demo", capture_scope=None, cursor_theme=None,
+            cursor_motion=None, cursor_badge=None,
         )
     )
     try:

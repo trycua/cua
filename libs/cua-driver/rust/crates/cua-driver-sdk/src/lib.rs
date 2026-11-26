@@ -2592,6 +2592,7 @@ mod tests {
                 capture_scope: None,
                 cursor_theme: None,
                 cursor_motion: None,
+                cursor_badge: None,
             })
             .await
             .unwrap();
@@ -3426,6 +3427,7 @@ mod tests {
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
                 cursor_theme: None,
                 cursor_motion: None,
+                cursor_badge: None,
             })
             .await
             .unwrap();

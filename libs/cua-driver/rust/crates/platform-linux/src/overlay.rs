@@ -570,8 +570,10 @@ static SHELL_HELPER_POSES: Mutex<Option<ShellHelperPoses>> = Mutex::new(None);
 /// session, not only the one drawing, so a session keeps its setting when
 /// it takes the helper's single cursor over.
 #[cfg(target_os = "linux")]
-static SHELL_HELPER_LABELS: Mutex<Option<HashMap<CursorKey, (Option<String>, bool)>>> =
-    Mutex::new(None);
+type ShellHelperLabels = HashMap<CursorKey, (Option<String>, bool)>;
+
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_LABELS: Mutex<Option<ShellHelperLabels>> = Mutex::new(None);
 
 /// Record a label change and return the text the helper should paint for
 /// `key` now, or `None` when `msg` changes no label.

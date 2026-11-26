@@ -108,7 +108,9 @@ struct Run: AsyncParsableCommand {
             """
             On SIGINT or SIGTERM, ask the guest to shut down and give it this many seconds \
             before forcing the VM off. The command then exits 0 only if the guest shut down \
-            by itself. Without this option a signal ends the process at once.
+            by itself. Without this option a signal ends the process at once. `lume stop` \
+            forces the VM off after its own --timeout (10 seconds by default), so give it a \
+            longer one.
             """))
     var stopTimeout: Int?
 

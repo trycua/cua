@@ -579,8 +579,12 @@ class VM {
 
                 // The AppKit run loop swallows SIGINT, so install explicit
                 // handlers that turn an external `stop` (SIGTERM) or an
-                // interactive Ctrl-C (SIGINT) into a clean shutdown.
-                installShutdownSignalHandlers()
+                // interactive Ctrl-C (SIGINT) into a clean shutdown. A run
+                // with --stop-timeout handles both itself (`GracefulStop`
+                // asks the guest to shut down); these would power it off.
+                if stopTimeout == nil {
+                    installShutdownSignalHandlers()
+                }
             }
 
             // Write VNC config into VM via SSH (background task).

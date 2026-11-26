@@ -8,9 +8,9 @@
 //! a client that polls the way the apps do at idle: every 10 s the Space
 //! list and a connection to every Space on it, every 30 s the hosts and a
 //! thumbnail of each reachable Space, and a visible-window resources lease.
-//! Over a minute the daemon must use under [`BUDGET`] of one core, signed in
-//! and signed out, and it
-//! must not dial an offline computer on every poll.
+//! Over a minute the daemon must use under [`SIGNED_IN_BUDGET`] of one core
+//! signed in and [`SIGNED_OUT_BUDGET`] signed out, and it must not dial an
+//! offline computer on every poll.
 //!
 //! Before the fix the daemon read the operating system's root store (and
 //! opened a new TLS connection) for every relay call, a quarter of a core
@@ -25,8 +25,13 @@ use cua_host::testing::FakeRelay;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// The share of one core the daemon may use while watched at idle.
-const BUDGET: f64 = 0.015;
+/// The share of one core the daemon may use while watched at idle, signed in. The bug this guards
+/// against costs several times this budget; the headroom above a quiet machine is for a shared CI
+/// runner.
+const SIGNED_IN_BUDGET: f64 = 0.03;
+/// The same, signed out. It stays tight: the signed-out bug (a new HTTPS client for every lease
+/// tick) costs about the signed-in budget, so that one would miss it.
+const SIGNED_OUT_BUDGET: f64 = 0.015;
 /// How long the daemon is measured.
 const WINDOW: Duration = Duration::from_secs(60);
 /// The apps' list poll.
@@ -175,7 +180,11 @@ async fn idle_daemon(signed_in: bool) {
     let used = cpu_seconds(pid) - cpu_before;
     let elapsed = started.elapsed().as_secs_f64();
     let offline = offline_dials(&relay) - offline_before;
-    let label = if signed_in { "signed in" } else { "signed out" };
+    let (label, budget) = if signed_in {
+        ("signed in", SIGNED_IN_BUDGET)
+    } else {
+        ("signed out", SIGNED_OUT_BUDGET)
+    };
     h.run(&["daemon", "stop"]).await.ok();
 
     let share = used / elapsed;
@@ -185,10 +194,10 @@ async fn idle_daemon(signed_in: bool) {
         share * 100.0
     );
     assert!(
-        share < BUDGET,
-        "the idle daemon ({label}) used {:.2}% of a core (budget {:.0}%)",
+        share < budget,
+        "the idle daemon ({label}) used {:.2}% of a core (budget {:.1}%)",
         share * 100.0,
-        BUDGET * 100.0
+        budget * 100.0
     );
     // Each offline computer is retried with backoff (at most about every
     // 20 s at first), not on every poll.

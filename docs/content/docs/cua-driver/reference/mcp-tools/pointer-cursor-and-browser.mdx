@@ -23,7 +23,8 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`set_agent_cursor_enabled`](#set_agent_cursor_enabled) | Show or hide the agent cursor owned by a session. | macOS, Linux, Windows |
 | [`set_agent_cursor_motion`](#set_agent_cursor_motion) | Configure the movement style, timing, effects and visibility timing for a session cursor. | macOS, Linux, Windows |
 | [`set_agent_cursor_theme`](#set_agent_cursor_theme) | Select an already-installed cursor theme for a session. | macOS, Linux, Windows |
-| [`get_agent_cursor_state`](#get_agent_cursor_state) | Return the session cursor's theme, semantic playback, position, visibility, and motion. | macOS, Linux, Windows |
+| [`set_agent_cursor_badge`](#set_agent_cursor_badge) | Show or hide the session label text beneath a session's cursor. | macOS, Linux, Windows |
+| [`get_agent_cursor_state`](#get_agent_cursor_state) | Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings. | macOS, Linux, Windows |
 | [`page`](#page) | Read-only legacy browser compatibility tool: read a page's text or query its DOM. | macOS, Linux, Windows |
 | [`get_browser_state`](#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
 | [`browser_prepare`](#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
@@ -460,9 +461,26 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 {"session":"<session>","theme_id":"<theme_id>"}
 ```
 
+### `set_agent_cursor_badge`
+
+Show or hide the session label text beneath a session's cursor.
+
+Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="set_agent_cursor_badge--session"></span>`session` | `string` | required | Public label of the session that owns the cursor. |
+| <span id="set_agent_cursor_badge--show_session_label"></span>`show_session_label` | `boolean` | required | `false` hides the session label text beneath the cursor, including its initial and hover reveals; `true` shows it again with a fresh reveal. The cursor and its delivery and target chips still show. The session's name is unchanged. |
+
+**Example arguments**
+
+```json
+{"session":"<session>","show_session_label":false}
+```
+
 ### `get_agent_cursor_state`
 
-Return the session cursor's theme, semantic playback, position, visibility, and motion.
+Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings.
 
 Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 

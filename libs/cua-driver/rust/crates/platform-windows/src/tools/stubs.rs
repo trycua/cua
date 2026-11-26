@@ -211,6 +211,11 @@ contract_stub_tool!(
     SetAgentCursorThemeTool,
     "set_agent_cursor_theme"
 );
+contract_stub_tool!(
+    cursor_badge_m,
+    SetAgentCursorBadgeTool,
+    "set_agent_cursor_badge"
+);
 
 mod invoke_menu_m {
     use super::*;
@@ -360,6 +365,7 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(SetAgentCursorMotionV2Tool));
     r.register(Box::new(GetAgentCursorStateV2Tool));
     r.register(Box::new(SetAgentCursorThemeTool));
+    r.register(Box::new(SetAgentCursorBadgeTool));
     r.register(Box::new(CheckPermissionsTool));
     // health_report is cross-platform — the Windows provider here lets
     // non-Windows hosts running the stubbed registry still advertise

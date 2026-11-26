@@ -256,7 +256,7 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     slug: 'agent-cursor',
     title: 'Agent cursor tools',
     summary: 'Show, animate and style the agent cursor',
-    tools: ['set_agent_cursor_enabled', 'set_agent_cursor_motion', 'set_agent_cursor_theme', 'get_agent_cursor_state'],
+    tools: ['set_agent_cursor_enabled', 'set_agent_cursor_motion', 'set_agent_cursor_theme', 'set_agent_cursor_badge', 'get_agent_cursor_state'],
   },
   {
     slug: 'recording',

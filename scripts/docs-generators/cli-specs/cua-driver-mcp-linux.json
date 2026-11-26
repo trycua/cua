@@ -2028,7 +2028,7 @@
    "read_only": false
   },
   {
-   "description": "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+   "description": "Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2082,6 +2082,31 @@
     "type": "object"
    },
    "name": "set_agent_cursor_theme",
+   "read_only": false
+  },
+  {
+   "description": "Show or hide the session label text beneath a session's cursor.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "Public label of the session that owns the cursor.",
+      "type": "string"
+     },
+     "show_session_label": {
+      "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals; `true` shows it again with a fresh reveal. The cursor and its delivery\nand target chips still show. The session's name is unchanged.",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session",
+     "show_session_label"
+    ],
+    "type": "object"
+   },
+   "name": "set_agent_cursor_badge",
    "read_only": false
   },
   {
@@ -3173,6 +3198,18 @@
        "desktop"
       ],
       "type": "string"
+     },
+     "cursor_badge": {
+      "additionalProperties": false,
+      "description": "Optional initial cursor badge settings. The host applies them before the cursor is\nfirst made visible. Omitted fields keep the session's current value; a new session\nshows its label. A later `set_agent_cursor_badge` call wins.",
+      "properties": {
+       "show_session_label": {
+        "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals. The cursor and its delivery and target chips still show. Omit to keep\nthe current value (`true` for a new session).",
+        "type": "boolean"
+       }
+      },
+      "required": [],
+      "type": "object"
      },
      "cursor_motion": {
       "additionalProperties": false,

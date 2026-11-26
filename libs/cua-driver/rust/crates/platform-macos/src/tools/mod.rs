@@ -38,7 +38,7 @@ mod get_config;
 mod get_cursor_position;
 mod get_desktop_state;
 pub(crate) mod get_screen_size;
-mod health_report;
+pub(crate) mod health_report;
 mod move_cursor;
 mod page;
 mod pixel_route;
@@ -1513,6 +1513,9 @@ pub fn register_all(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::SetAgentCursorThemeTool::new(
+        state.clone(),
+    )));
+    registry.register(Box::new(cursor_tools::SetAgentCursorBadgeTool::new(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(

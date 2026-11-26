@@ -306,6 +306,9 @@ pub fn init(cfg: CursorConfig) {
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
+                CursorEvent::SetSessionLabelVisible { session, visible } => {
+                    (session, OverlayCommand::SetSessionLabelVisible(visible))
+                }
             };
             send_command(session, cmd);
         },
@@ -435,6 +438,10 @@ pub fn is_visible_for_session(key: &str) -> bool {
 /// `"default"` cursor's motion when that key has no own entry yet.
 pub fn current_motion(key: &str) -> MotionConfig {
     read_render(|map| map.motion(key)).unwrap_or_default()
+}
+
+pub fn current_show_session_label(key: &str) -> bool {
+    read_render(|map| map.show_session_label(key)).unwrap_or(true)
 }
 
 pub fn current_theme_state(key: &str) -> Option<cursor_overlay::CursorThemeState> {
@@ -785,6 +792,8 @@ fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<Overlay
 static OVERLAY_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static CMD_RX_WIN: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static LAST_ZTICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Pin target (0 = none) the overlay's z-slot was last asserted for.
+static LAST_PIN_WID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
 
 // ── Scoped multimedia timer resolution ────────────────────────────────────
@@ -1395,6 +1404,40 @@ unsafe extern "system" fn wnd_proc(
                         .values()
                         .any(|rs| rs.core.session_badge_needs_hover_poll());
 
+                    // Decide where to pin the single overlay window in z. This is
+                    // computed on every tick, rendered or not: z-order is a
+                    // property of the window stack, not of pixel changes, so a
+                    // quiescent overlay must still be able to notice that it
+                    // sits in the wrong slot.
+                    //
+                    // The overlay is ONE full-virtual-screen layered window,
+                    // so it can occupy only one z-slot. It must sit ABOVE
+                    // every window a live cursor is actuating, but NOT above
+                    // whatever sits above those (the user's foreground). The
+                    // right slot is therefore "just above the HIGHEST-z
+                    // actuating window": the overlay is full-screen, so being
+                    // above the topmost driven window puts it above all of
+                    // them while still below anything stacked above them.
+                    // Pinning above one fixed window (the old last-active
+                    // behaviour) instead let any other driven window stacked
+                    // above it occlude its cursors — the blink-out. NB: this
+                    // is a RELATIVE z move (insert above a specific window),
+                    // which works from this non-foreground thread; an
+                    // absolute HWND_TOP can be refused by the foreground lock
+                    // and sink the overlay behind everything.
+                    let mut driven: Vec<u64> = Vec::new();
+                    for rs in map.cursors.values() {
+                        if !rs.core.visible || rs.core.idle_alpha < 0.004 {
+                            continue;
+                        }
+                        if let Some(w) = rs.core.pinned_wid {
+                            if !driven.contains(&w) {
+                                driven.push(w);
+                            }
+                        }
+                    }
+                    let pinned = unsafe { topmost_of(&driven) };
+
                     // Render only when something can have changed pixels this
                     // frame: a fresh command, a still-running animation, or the
                     // final settle frame as the previous animation winds down
@@ -1404,38 +1447,8 @@ unsafe extern "system" fn wnd_proc(
                         had_msg || refit || hover_changed || needs_tick || was_active;
 
                     if !should_render {
-                        (None, arrived, None, needs_tick, needs_hover_poll)
+                        (None, arrived, pinned, needs_tick, needs_hover_poll)
                     } else {
-                        // Decide where to pin the single overlay window in z.
-                        //
-                        // The overlay is ONE full-virtual-screen layered window,
-                        // so it can occupy only one z-slot. It must sit ABOVE
-                        // every window a live cursor is actuating, but NOT above
-                        // whatever sits above those (the user's foreground). The
-                        // right slot is therefore "just above the HIGHEST-z
-                        // actuating window": the overlay is full-screen, so being
-                        // above the topmost driven window puts it above all of
-                        // them while still below anything stacked above them.
-                        // Pinning above one fixed window (the old last-active
-                        // behaviour) instead let any other driven window stacked
-                        // above it occlude its cursors — the blink-out. NB: this
-                        // is a RELATIVE z move (insert above a specific window),
-                        // which works from this non-foreground thread; an
-                        // absolute HWND_TOP can be refused by the foreground lock
-                        // and sink the overlay behind everything.
-                        let mut driven: Vec<u64> = Vec::new();
-                        for rs in map.cursors.values() {
-                            if !rs.core.visible || rs.core.idle_alpha < 0.004 {
-                                continue;
-                            }
-                            if let Some(w) = rs.core.pinned_wid {
-                                if !driven.contains(&w) {
-                                    driven.push(w);
-                                }
-                            }
-                        }
-                        let pinned = unsafe { topmost_of(&driven) };
-
                         // Dirty-rect composite: paint only the union of last
                         // frame's and this frame's cursor bounds into the
                         // persistent surface (see `composite_dirty`). The old
@@ -1458,18 +1471,32 @@ unsafe extern "system" fn wnd_proc(
 
             if let Some(dirty) = upload {
                 unsafe { present_surface(hwnd, dirty) };
+            }
 
-                // Z-order maintenance every 80ms — delegate to the cross-platform
-                // ZOrderEnforcer so the contract for "z+1 of the application under
-                // test" is documented once in `cursor_overlay::z_order`. Only run
-                // while we actually rendered: a quiescent overlay leaves its z-slot
-                // untouched until the next command wakes the loop.
+            // Z-order maintenance, delegated to the cross-platform
+            // ZOrderEnforcer so the contract for "z+1 of the application under
+            // test" is documented once in `cursor_overlay::z_order`.
+            //
+            // It runs independently of rendering. It used to run only on ticks
+            // that painted pixels, at most every 80 ms, with no trailing pass.
+            // A pin change that painted nothing, or whose last painted frame
+            // fell inside the throttle window, left the overlay in a stale slot
+            // until some later render, so a target-bound overlay was sometimes
+            // not directly above its target when the action returned.
+            //
+            // Reassert immediately when the pin target changes. Otherwise
+            // reassert (throttled to 80 ms) whenever the overlay is observably
+            // not in its slot, including on the slow idle heartbeat, and keep
+            // the old once-per-80ms refresh while rendering.
+            if let Some(enforcer) = Z_ORDER.get() {
+                let pin_key = pinned_wid.unwrap_or(0);
+                let pin_changed =
+                    LAST_PIN_WID.swap(pin_key, std::sync::atomic::Ordering::Relaxed) != pin_key;
                 let last = LAST_ZTICK.load(std::sync::atomic::Ordering::Relaxed);
-                if now_ms.wrapping_sub(last) >= 80 {
+                let due = now_ms.wrapping_sub(last) >= 80;
+                if pin_changed || (due && (upload.is_some() || !enforcer.is_settled(pinned_wid))) {
                     LAST_ZTICK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(enforcer) = Z_ORDER.get() {
-                        enforcer.reassert(pinned_wid);
-                    }
+                    enforcer.reassert(pinned_wid);
                 }
             }
 
@@ -1555,6 +1582,41 @@ unsafe fn topmost_of(ids: &[u64]) -> Option<u64> {
         h = GetWindow(h, GW_HWNDNEXT).unwrap_or(HWND(std::ptr::null_mut()));
     }
     ids.first().copied()
+}
+
+impl WinZOrderEnforcer {
+    /// True when the overlay already satisfies the target-bound contract:
+    /// directly above `target` and outside the topmost band. Untargeted
+    /// overlays have no observable slot to verify, so they are reported
+    /// settled and rely on the periodic reassert while rendering. A target
+    /// that lives in the topmost band cannot be matched from the ordinary
+    /// band, so it is also reported settled rather than re-asserted forever.
+    fn is_settled(&self, target: Option<u64>) -> bool {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::*;
+            let Some(target) = target else { return true };
+            let target = HWND(target as *mut _);
+            if !IsWindow(Some(target)).as_bool() {
+                return true;
+            }
+            let overlay = HWND(self.hwnd_isize as *mut _);
+            let ex_style = |h: HWND| GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
+            if ex_style(target) & WS_EX_TOPMOST.0 != 0 {
+                return true;
+            }
+            if ex_style(overlay) & WS_EX_TOPMOST.0 != 0 {
+                return false;
+            }
+            GetWindow(target, GW_HWNDPREV).ok() == Some(overlay)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = target;
+            true
+        }
+    }
 }
 
 impl ZOrderEnforcer for WinZOrderEnforcer {

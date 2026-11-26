@@ -773,6 +773,65 @@ fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
     }
 }
 
+/// The active and focus HWNDs of `hwnd`'s GUI thread, as that thread's own
+/// input queue records them. Read without attaching.
+fn gui_thread_active_and_focus(hwnd: HWND) -> Option<(HWND, HWND)> {
+    let thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
+    if thread == 0 {
+        return None;
+    }
+    let mut info = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetGUIThreadInfo(thread, &mut info) }.ok()?;
+    Some((info.hwndActive, info.hwndFocus))
+}
+
+/// Whether `foreground`'s thread has processed its own activation.
+///
+/// `GetForegroundWindow` changes the moment `SetForegroundWindow` succeeds,
+/// but the target thread only becomes active when it reads the activation
+/// event Windows queued for it; until then its queue has no active or focus
+/// window. Attaching to the queue in that interval hands the pending
+/// activation, and every key routed by it, to the attached driver thread,
+/// which never reads input: the target stays inactive and reads nothing
+/// until the attachment is dropped (cua#8543). The queue's own active window
+/// is the observable proof that activation was processed.
+fn thread_activation_processed(foreground: HWND) -> bool {
+    gui_thread_active_and_focus(foreground).is_some_and(|(active, _)| active == foreground)
+}
+
+fn wait_for_thread_activation(foreground: HWND, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if thread_activation_processed(foreground) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(10));
+    }
+}
+
+fn activation_not_processed_error(
+    target: HWND,
+    foreground: HWND,
+    operation: &str,
+) -> anyhow::Error {
+    let (active, focus) = gui_thread_active_and_focus(foreground).unwrap_or_default();
+    anyhow::anyhow!(
+        "foreground_unavailable: HWND {:?} is foreground for {operation} but its thread did \
+         not process the activation within 500 ms (its queue's active HWND {:?}, focus HWND \
+         {:?}); no input was sent. Target HWND {:?}.",
+        foreground.0,
+        active.0,
+        focus.0,
+        target.0
+    )
+}
+
 /// Run one system-queue input transaction while `target`, or a live visible
 /// same-process window whose owner chain reaches `target`, is foreground.
 /// Foreground and optional child focus are checked against
@@ -801,6 +860,15 @@ fn with_confirmed_foreground<T>(
             target.0,
             actual.0
         );
+    }
+    // Focus and input both need the target's queue to be active, not just
+    // the foreground pointer. Confirm it without attaching.
+    if !wait_for_thread_activation(target, Duration::from_millis(500)) {
+        let error = activation_not_processed_error(target, target, operation);
+        if !previous.0.is_null() && previous != target {
+            let _ = unsafe { SetForegroundWindow(previous) };
+        }
+        return Err(error);
     }
 
     let Some(foreground_target) = crate::win32::capture_foreground_target(target.0 as usize as u64)
@@ -842,6 +910,12 @@ fn with_confirmed_foreground<T>(
                 actual.0
             );
         }
+        // The focus step may have moved the foreground to an owned window;
+        // that window's thread must also have processed its activation before
+        // the queue is shared (see `thread_activation_processed`).
+        if !wait_for_thread_activation(actual, Duration::from_millis(500)) {
+            return Err(activation_not_processed_error(target, actual, operation));
+        }
         // Attach before inserting anything: attaching resets the shared key
         // state, which must not race with modifiers the body is about to send.
         attachment = InputQueueAttachment::attach(actual);
@@ -856,11 +930,18 @@ fn with_confirmed_foreground<T>(
             Some(attachment) if attachment.wait_for_drain(Duration::from_secs(2)) => {
                 TypingTurn::Drained
             }
-            Some(_) => {
+            Some(attachment) => {
+                // Same evidence as a stalled text unit: whether the target
+                // thread still answers messages (busy in its own handler vs.
+                // waiting on input it never gets) and where its focus is.
+                let actual = unsafe { GetForegroundWindow() };
                 result = Err(anyhow::anyhow!(
                     "input_delivery_stalled: Windows did not confirm that the target read the \
                      {operation} input within 2000 ms. It was inserted and may still appear in \
-                     the target. Nothing was retried; inspect the target before repeating it."
+                     the target. Nothing was retried; inspect the target before repeating it. \
+                     Foreground window now: {fg}. {detail}",
+                    fg = window_label(actual),
+                    detail = attachment.stall_detail(actual),
                 ));
                 TypingTurn::Undrained
             }
@@ -897,17 +978,160 @@ enum UnitRead {
 /// the duration of one foreground input transaction; detaches on drop.
 ///
 /// Attaching makes this thread part of the target's input processing: the
-/// two threads share one input queue and its activation and focus state, so
-/// the target can need this thread to answer a cross-thread sent message
-/// before its own input moves on. A thread that holds the attachment and
-/// waits without servicing sent messages can therefore freeze the target it
-/// waits on, and the target reads nothing until the attachment is dropped.
-/// Every wait below goes through [`Self::idle`], which services sent messages
-/// (never posted or input messages, which belong to the target).
+/// two threads share one input queue, and Windows processes that queue in
+/// order. Anything it queues for this thread (a sent message, or an event
+/// for this thread in the shared queue) sits ahead of the target's keys
+/// until this thread retrieves it. A thread that
+/// holds the attachment and only answers sent messages therefore freezes the
+/// target it waits on: the target stays responsive to sent messages but
+/// reads no input until the attachment is dropped (release gate run
+/// 45363565804). Every wait below goes through [`Self::idle`], which pumps
+/// this thread's own queue completely, as `AttachThreadInput` requires of
+/// every attached thread. Windows only returns this thread's own messages
+/// there; input routed to the target's windows stays with the target. Input
+/// routed to this thread instead (it owns no window, so it should never get
+/// any) is counted in `misrouted_input` and never reported as read.
+///
+/// Attach only once the target thread has processed its activation
+/// ([`thread_activation_processed`]): a pending activation in the shared
+/// queue leaves it without a focus window, so keys and the activation itself
+/// wait on this thread, which never reads input.
 struct InputQueueAttachment {
     own_thread: u32,
     target_thread: u32,
     serviced: std::cell::Cell<u32>,
+    /// Messages this thread retrieved from its own queue, from just before
+    /// attaching.
+    pumped: std::cell::Cell<u32>,
+    /// Input messages Windows routed to this thread instead of the target.
+    misrouted_input: std::cell::Cell<u32>,
+    /// Records the messages other threads send this thread while attached,
+    /// so a stall names them.
+    sent_log: Option<SentMessageLog>,
+    /// This thread's `GetQueueStatus` before and right after attaching.
+    queue_before: u32,
+    queue_attached: u32,
+}
+
+/// The calling thread's queue status (high word: kinds queued now; low word:
+/// kinds added since the last check), for stall evidence.
+fn own_queue_status() -> u32 {
+    use windows::Win32::UI::WindowsAndMessaging::{GetQueueStatus, QS_ALLINPUT};
+    unsafe { GetQueueStatus(QS_ALLINPUT) }
+}
+
+/// Retrieve and dispatch every message Windows has for the calling thread,
+/// bounded per call. `PeekMessage` with no filter also delivers sent
+/// messages and processes the events queued for this thread; it never
+/// returns input that belongs to another thread's window. Input it does
+/// return was routed to this thread, is not dispatched (this thread has no
+/// window that wants it), and is counted in `misrouted_input`.
+fn pump_own_queue(pumped: &std::cell::Cell<u32>, misrouted_input: &std::cell::Cell<u32>) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, PeekMessageW, MSG, PM_REMOVE, WM_INPUT, WM_KEYFIRST, WM_KEYLAST,
+        WM_MOUSEFIRST, WM_MOUSELAST,
+    };
+    for _ in 0..64 {
+        let mut msg = MSG::default();
+        if !unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+            return;
+        }
+        pumped.set(pumped.get().saturating_add(1));
+        let input = (WM_KEYFIRST..=WM_KEYLAST).contains(&msg.message)
+            || (WM_MOUSEFIRST..=WM_MOUSELAST).contains(&msg.message)
+            || msg.message == WM_INPUT;
+        if input {
+            misrouted_input.set(misrouted_input.get().saturating_add(1));
+            continue;
+        }
+        unsafe {
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+thread_local! {
+    /// (message, receiving window class) -> count, filled by
+    /// [`record_sent_message`] while a [`SentMessageLog`] is installed.
+    static SENT_MESSAGES: std::cell::RefCell<std::collections::BTreeMap<(u32, String), u32>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+unsafe extern "system" fn record_sent_message(
+    code: i32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, CWPSTRUCT};
+    // HC_ACTION is 0; wParam is zero when another thread sent the message.
+    if code == 0 && wparam.0 == 0 && lparam.0 != 0 {
+        let cwp = &*(lparam.0 as *const CWPSTRUCT);
+        let class = class_name(cwp.hwnd).unwrap_or_else(|| format!("{:?}", cwp.hwnd.0));
+        SENT_MESSAGES.with(|log| {
+            *log.borrow_mut().entry((cwp.message, class)).or_default() += 1;
+        });
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// A `WH_CALLWNDPROC` hook on the calling thread only (no DLL, no other
+/// process): it observes the sent messages this thread dispatches.
+struct SentMessageLog(windows::Win32::UI::WindowsAndMessaging::HHOOK);
+
+impl SentMessageLog {
+    fn install() -> Option<Self> {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_CALLWNDPROC};
+        SENT_MESSAGES.with(|log| log.borrow_mut().clear());
+        unsafe {
+            SetWindowsHookExW(
+                WH_CALLWNDPROC,
+                Some(record_sent_message),
+                None,
+                GetCurrentThreadId(),
+            )
+        }
+        .ok()
+        .map(Self)
+    }
+
+    /// The most frequent sent messages, as `0xMSG to Class xN`.
+    fn summary() -> String {
+        SENT_MESSAGES.with(|log| {
+            let log = log.borrow();
+            let mut entries: Vec<_> = log.iter().collect();
+            entries.sort_by(|a, b| b.1.cmp(a.1));
+            entries
+                .iter()
+                .take(4)
+                .map(|((message, class), count)| format!("0x{message:04x} to {class} x{count}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+    }
+}
+
+impl Drop for SentMessageLog {
+    fn drop(&mut self) {
+        let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(self.0) };
+    }
+}
+
+/// The calling thread's COM apartment, for stall evidence.
+fn own_apartment() -> &'static str {
+    use windows::Win32::System::Com::{
+        CoGetApartmentType, APTTYPE, APTTYPEQUALIFIER, APTTYPE_MAINSTA, APTTYPE_MTA, APTTYPE_NA,
+        APTTYPE_STA,
+    };
+    let mut kind = APTTYPE(0);
+    let mut qualifier = APTTYPEQUALIFIER(0);
+    match unsafe { CoGetApartmentType(&mut kind, &mut qualifier) } {
+        Err(_) => "none",
+        Ok(()) if kind == APTTYPE_STA || kind == APTTYPE_MAINSTA => "STA",
+        Ok(()) if kind == APTTYPE_MTA => "MTA",
+        Ok(()) if kind == APTTYPE_NA => "NA",
+        Ok(()) => "other",
+    }
 }
 
 impl InputQueueAttachment {
@@ -918,34 +1142,48 @@ impl InputQueueAttachment {
         if target_thread == 0 || target_thread == own_thread {
             return None;
         }
+        // Retrieve what is already queued for this thread (this thread just
+        // shared the previous foreground thread's queue for the handoff in
+        // `force_foreground_attached`) before it joins the target's queue.
+        let pumped = std::cell::Cell::new(0);
+        pump_own_queue(&pumped, &std::cell::Cell::new(0));
+        let before = own_queue_status();
         unsafe { AttachThreadInput(own_thread, target_thread, true) }
             .as_bool()
-            .then_some(Self {
+            .then(|| Self {
                 own_thread,
                 target_thread,
                 serviced: std::cell::Cell::new(0),
+                pumped,
+                misrouted_input: std::cell::Cell::new(0),
+                sent_log: SentMessageLog::install(),
+                queue_before: before,
+                queue_attached: own_queue_status(),
             })
     }
 
-    /// Dispatch any messages other threads have sent to this thread, without
-    /// removing posted or input messages. `PM_QS_SENDMESSAGE` restricts the
-    /// peek to sent messages, so keyboard input in the shared queue stays for
-    /// the target thread.
-    fn service_sent_messages(&self) {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetQueueStatus, PeekMessageW, MSG, PM_NOREMOVE, PM_QS_SENDMESSAGE, QS_SENDMESSAGE,
-        };
+    /// Pump this thread's own share of the attached queue: sent messages,
+    /// queued events and posted messages. Counts the steps that found a sent
+    /// message waiting.
+    fn pump(&self) {
+        use windows::Win32::UI::WindowsAndMessaging::{GetQueueStatus, QS_SENDMESSAGE};
         let pending = unsafe { GetQueueStatus(QS_SENDMESSAGE) } >> 16 & QS_SENDMESSAGE.0;
         if pending != 0 {
             self.serviced.set(self.serviced.get().saturating_add(1));
-            let mut msg = MSG::default();
-            let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE) };
         }
+        pump_own_queue(&self.pumped, &self.misrouted_input);
     }
 
-    /// One bounded wait step while attached: answer sent messages first.
+    /// Whether the target read the inserted sentinel: its toggle bit in the
+    /// shared key state flipped, and no input went to this thread instead
+    /// (this thread reading the sentinel would flip it too).
+    fn read_by_target(&self, toggled: bool) -> bool {
+        toggled && self.misrouted_input.get() == 0
+    }
+
+    /// One bounded wait step while attached: pump this thread's queue first.
     fn idle(&self, step: Duration) {
-        self.service_sent_messages();
+        self.pump();
         if step.is_zero() {
             std::thread::yield_now();
         } else {
@@ -972,15 +1210,37 @@ impl InputQueueAttachment {
             )
         }
         .0 != 0;
+        let (active, focus) = gui_thread_active_and_focus(target).unwrap_or_default();
+        let sent = if self.sent_log.is_some() {
+            SentMessageLog::summary()
+        } else {
+            "not recorded".to_owned()
+        };
         format!(
-            "Driver thread answered {} sent-message batch(es) while attached; target thread {} \
-             WM_NULL within 200 ms.",
+            "Driver thread ({apartment}) answered {} sent-message batch(es) [{sent}] and \
+             retrieved {} message(s) of its own ({} of them input meant for the target) while \
+             attached; target thread {} WM_NULL within 200 ms; its queue's active HWND {:?}, \
+             focus HWND {:?}, caption {}; driver queue status 0x{:08x} before attach, \
+             0x{:08x} attached, 0x{:08x} now.",
             self.serviced.get(),
+            self.pumped.get(),
+            self.misrouted_input.get(),
             if responsive {
                 "answered"
             } else {
                 "did not answer"
-            }
+            },
+            active.0,
+            focus.0,
+            if caption_active(target) {
+                "active"
+            } else {
+                "inactive"
+            },
+            self.queue_before,
+            self.queue_attached,
+            own_queue_status(),
+            apartment = own_apartment(),
         )
     }
 
@@ -1001,7 +1261,7 @@ impl InputQueueAttachment {
         }
         let deadline = Instant::now() + timeout;
         loop {
-            if toggled() != before {
+            if self.read_by_target(toggled() != before) {
                 return true;
             }
             if Instant::now() >= deadline {
@@ -1026,7 +1286,7 @@ impl InputQueueAttachment {
         let deadline = Instant::now() + timeout;
         loop {
             let state = unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) };
-            if (state & 1) != before && state >= 0 {
+            if self.read_by_target((state & 1) != before && state >= 0) {
                 return UnitRead::Read;
             }
             if Instant::now() >= deadline {
@@ -1037,8 +1297,20 @@ impl InputQueueAttachment {
     }
 }
 
+/// Whether `hwnd`'s frame is drawn active: set when its thread handles
+/// `WM_NCACTIVATE(TRUE)` for a foreground activation.
+fn caption_active(hwnd: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowInfo, WINDOWINFO};
+    let mut info = WINDOWINFO {
+        cbSize: std::mem::size_of::<WINDOWINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowInfo(hwnd, &mut info) }.is_ok() && info.dwWindowStatus & 1 != 0
+}
+
 impl Drop for InputQueueAttachment {
     fn drop(&mut self) {
+        self.sent_log = None;
         use windows::Win32::System::Threading::AttachThreadInput;
         let _ = unsafe { AttachThreadInput(self.own_thread, self.target_thread, false) };
     }
@@ -1760,5 +2032,490 @@ mod attached_wait_services_sent_messages {
             elapsed < Duration::from_secs(1),
             "the attached wait answered the target's sent message only after {elapsed:?}"
         );
+    }
+}
+
+/// While attached, the driver thread must take everything Windows queues for
+/// it, not only sent messages: whatever it leaves sits in the shared queue
+/// ahead of the target's input (release gate run 45363565804: the target
+/// answered WM_NULL yet read none of the 16 inserted units until the driver
+/// detached). Input it is handed instead of the target never counts as read.
+#[cfg(test)]
+mod attached_wait_pumps_own_queue {
+    use super::*;
+    use std::sync::mpsc;
+    use windows::core::w;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, DispatchMessageW, PeekMessageW, PostThreadMessageW, MSG,
+        PM_NOREMOVE, PM_REMOVE, WINDOW_EX_STYLE, WM_APP, WS_POPUP,
+    };
+
+    fn popup() -> HWND {
+        unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .expect("create popup")
+        }
+    }
+
+    /// A pumping target thread with one window, alive until `stop` is sent.
+    fn target_thread() -> (HWND, mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        let (hwnd_tx, hwnd_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let join = std::thread::spawn(move || unsafe {
+            let hwnd = popup();
+            hwnd_tx.send(hwnd.0 as isize).expect("send hwnd");
+            while stop_rx.try_recv().is_err() {
+                let mut msg = MSG::default();
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    DispatchMessageW(&msg);
+                }
+                sleep(Duration::from_millis(5));
+            }
+            let _ = DestroyWindow(hwnd);
+        });
+        let hwnd = HWND(hwnd_rx.recv().expect("target hwnd") as *mut _);
+        (hwnd, stop_tx, join)
+    }
+
+    #[test]
+    fn attached_wait_retrieves_a_message_posted_to_the_driver_thread() {
+        let (target, stop, join) = target_thread();
+        let attachment = InputQueueAttachment::attach(target).expect("attach input queues");
+        let before = attachment.pumped.get();
+        unsafe { PostThreadMessageW(GetCurrentThreadId(), WM_APP + 7, WPARAM(0), LPARAM(0)) }
+            .expect("post to the driver thread");
+        attachment.idle(Duration::ZERO);
+        let mut msg = MSG::default();
+        let left =
+            unsafe { PeekMessageW(&mut msg, None, WM_APP + 7, WM_APP + 7, PM_NOREMOVE) }.as_bool();
+        let pumped = attachment.pumped.get() - before;
+        drop(attachment);
+        let _ = stop.send(());
+        join.join().expect("target thread");
+        assert!(
+            !left,
+            "the attached wait left a message queued for the driver thread"
+        );
+        assert!(pumped >= 1, "the attached wait retrieved nothing");
+    }
+
+    #[test]
+    fn input_handed_to_the_driver_thread_is_never_read_by_the_target() {
+        let (target, stop, join) = target_thread();
+        let own = popup();
+        let attachment = InputQueueAttachment::attach(target).expect("attach input queues");
+        assert!(attachment.read_by_target(true));
+        unsafe { PostMessageW(Some(own), WM_KEYDOWN, WPARAM(0x41), LPARAM(1)) }
+            .expect("post a key to the driver thread's window");
+        attachment.idle(Duration::ZERO);
+        let misrouted = attachment.misrouted_input.get();
+        let read = attachment.read_by_target(true);
+        drop(attachment);
+        unsafe {
+            let _ = DestroyWindow(own);
+        }
+        let _ = stop.send(());
+        join.join().expect("target thread");
+        assert_eq!(misrouted, 1);
+        assert!(
+            !read,
+            "a sentinel toggle cannot prove the target read input"
+        );
+    }
+}
+
+#[cfg(test)]
+mod thread_activation_tests {
+    use super::*;
+    use windows::core::w;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_POPUP,
+    };
+
+    #[test]
+    fn a_window_its_thread_has_not_activated_is_not_ready_for_attachment() {
+        // GetForegroundWindow can already name a window whose thread has not
+        // read its activation; only the thread's own active HWND proves it.
+        // A fresh, never-activated window is that state.
+        let hwnd = unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .expect("create popup")
+        };
+        let ready = thread_activation_processed(hwnd);
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+        assert!(!ready);
+        assert!(!thread_activation_processed(HWND(std::ptr::null_mut())));
+    }
+}
+
+/// A target whose UI thread is busy when the driver brings it to the
+/// foreground: the activation stays queued until the thread pumps again.
+/// Foreground text must still reach it once it does (WPF harness, release
+/// gate run 45363565804: 0 of 32 units read while the title bar stayed
+/// inactive, then the window activated the moment the driver detached).
+#[cfg(test)]
+mod busy_target_activation_tests {
+    use super::*;
+    use std::sync::{mpsc, Mutex};
+    use windows::core::w;
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+        PostQuitMessage, PostThreadMessageW, RegisterClassW, TranslateMessage, MSG,
+        WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+        WS_VISIBLE,
+    };
+
+    const WM_BUSY: u32 = WM_APP + 1;
+    const WM_SELF_ACTIVATE: u32 = WM_APP + 2;
+    static TYPED: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match msg {
+            WM_CHAR => {
+                TYPED.lock().unwrap().push(wparam.0 as u16);
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+
+    fn register() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| unsafe {
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(window_proc),
+                hInstance: GetModuleHandleW(None).expect("module handle").into(),
+                lpszClassName: w!("CuaBusyTargetActivation"),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0, "register window class");
+        });
+    }
+
+    /// A top-level window on its own pumping thread. A posted `WM_BUSY`
+    /// makes the thread stop pumping until `release` is signalled.
+    struct UiThread {
+        hwnd: HWND,
+        thread_id: u32,
+        busy: mpsc::Receiver<()>,
+        release: mpsc::Sender<()>,
+        join: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl UiThread {
+        fn spawn(x: i32) -> Self {
+            register();
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let (busy_tx, busy_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel::<()>();
+            let join = std::thread::spawn(move || unsafe {
+                let hwnd = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("CuaBusyTargetActivation"),
+                    w!("cua busy target"),
+                    WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                    x,
+                    100,
+                    300,
+                    200,
+                    None,
+                    None,
+                    Some(GetModuleHandleW(None).expect("module handle").into()),
+                    None,
+                )
+                .expect("create window");
+                ready_tx
+                    .send((hwnd.0 as isize, GetCurrentThreadId()))
+                    .expect("send hwnd");
+                let mut msg = MSG::default();
+                while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    if msg.hwnd.0.is_null() && msg.message == WM_SELF_ACTIVATE {
+                        // A window its own thread activates while another
+                        // app is foreground: active in its queue only.
+                        let _ = SetActiveWindow(hwnd);
+                        let _ = SetFocus(Some(hwnd));
+                        busy_tx.send(()).expect("self-activated");
+                        continue;
+                    }
+                    if msg.hwnd.0.is_null() && msg.message == WM_BUSY {
+                        busy_tx.send(()).expect("busy");
+                        let _ = release_rx.recv();
+                        continue;
+                    }
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            });
+            let (hwnd, thread_id) = ready_rx.recv().expect("window ready");
+            Self {
+                hwnd: HWND(hwnd as *mut _),
+                thread_id,
+                busy: busy_rx,
+                release: release_tx,
+                join: Some(join),
+            }
+        }
+
+        fn block(&self) {
+            unsafe { PostThreadMessageW(self.thread_id, WM_BUSY, WPARAM(0), LPARAM(0)) }
+                .expect("post busy");
+            self.busy
+                .recv_timeout(Duration::from_secs(5))
+                .expect("ui thread blocked");
+        }
+
+        fn activate_itself(&self) {
+            unsafe { PostThreadMessageW(self.thread_id, WM_SELF_ACTIVATE, WPARAM(0), LPARAM(0)) }
+                .expect("post self-activate");
+            self.busy
+                .recv_timeout(Duration::from_secs(5))
+                .expect("ui thread self-activated");
+        }
+
+        fn unblock(&self) {
+            let _ = self.release.send(());
+        }
+    }
+
+    impl Drop for UiThread {
+        fn drop(&mut self) {
+            self.unblock();
+            unsafe {
+                let _ = PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                let _ = PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
+            unsafe {
+                let _ = DestroyWindow(self.hwnd);
+            }
+        }
+    }
+
+    fn state(label: &str, hwnd: HWND) {
+        let (active, focus) = gui_thread_active_and_focus(hwnd).unwrap_or_default();
+        let mut fg_info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let _ = unsafe { GetGUIThreadInfo(0, &mut fg_info) };
+        eprintln!(
+            "[busy-target] {label}: fg={:?} target={:?} queue_active={:?} queue_focus={:?} \
+             caption_active={} activation_processed={} fg_thread_active={:?} \
+             fg_thread_focus={:?}",
+            unsafe { GetForegroundWindow() }.0,
+            hwnd.0,
+            active.0,
+            focus.0,
+            caption_active(hwnd),
+            thread_activation_processed(hwnd),
+            fg_info.hwndActive.0,
+            fg_info.hwndFocus.0,
+        );
+    }
+
+    fn bring_forward(hwnd: HWND) {
+        let _ = unsafe { crate::input::force_foreground_assisted(hwnd) };
+        assert!(
+            wait_for_exact_foreground(hwnd, Duration::from_secs(2)),
+            "window did not become foreground"
+        );
+    }
+
+    fn wait_caption(hwnd: HWND, active: bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if caption_active(hwnd) == active {
+                return true;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    /// A target that activated itself while in the background (as WPF does
+    /// on `Window.Activate`) has an active and focused window in its own
+    /// queue before the driver brings it forward, so that queue state does
+    /// not prove the foreground activation was processed.
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_a_target_that_activated_itself_in_the_background() {
+        self_activated_case(true);
+    }
+
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_an_idle_target_that_activated_itself_in_the_background() {
+        self_activated_case(false);
+    }
+
+    fn self_activated_case(busy: bool) {
+        let target = UiThread::spawn(100);
+        let other = UiThread::spawn(500);
+        bring_forward(target.hwnd);
+        assert!(wait_caption(target.hwnd, true), "target never activated");
+        bring_forward(other.hwnd);
+        assert!(wait_caption(target.hwnd, false), "target never deactivated");
+        target.activate_itself();
+        state("target self-activated in background", target.hwnd);
+
+        if busy {
+            target.block();
+        }
+        TYPED.lock().unwrap().clear();
+        let hwnd = target.hwnd.0 as usize as u64;
+        let typing = std::thread::spawn(move || send_text_synthesized(hwnd, "abc"));
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(300) {
+            state("self-activated, activation pending", target.hwnd);
+            sleep(Duration::from_millis(50));
+        }
+        target.unblock();
+        let result = typing.join().expect("typing thread");
+        state("self-activated, after typing", target.hwnd);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && TYPED.lock().unwrap().len() < 3 {
+            sleep(Duration::from_millis(10));
+        }
+        let typed = String::from_utf16_lossy(&TYPED.lock().unwrap());
+        eprintln!(
+            "[busy-target] self-activated result={:?} typed={typed:?} after {:?}",
+            result.as_ref().map_err(|e| e.to_string()),
+            started.elapsed()
+        );
+        drop(other);
+        drop(target);
+        result.expect("foreground text delivery");
+        assert_eq!(typed, "abc");
+    }
+
+    /// The window the driver takes the foreground from belongs to a thread
+    /// that is busy (not reading its queue) during the switch.
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_a_target_when_the_previous_foreground_is_busy() {
+        let target = UiThread::spawn(100);
+        let other = UiThread::spawn(500);
+        bring_forward(target.hwnd);
+        assert!(wait_caption(target.hwnd, true), "target never activated");
+        bring_forward(other.hwnd);
+        assert!(wait_caption(target.hwnd, false), "target never deactivated");
+        other.block();
+        TYPED.lock().unwrap().clear();
+        let hwnd = target.hwnd.0 as usize as u64;
+        let started = Instant::now();
+        let typing = std::thread::spawn(move || send_text_synthesized(hwnd, "abc"));
+        while started.elapsed() < Duration::from_millis(300) {
+            state("previous busy, typing", target.hwnd);
+            sleep(Duration::from_millis(50));
+        }
+        other.unblock();
+        let result = typing.join().expect("typing thread");
+        state("previous busy, after typing", target.hwnd);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && TYPED.lock().unwrap().len() < 3 {
+            sleep(Duration::from_millis(10));
+        }
+        let typed = String::from_utf16_lossy(&TYPED.lock().unwrap());
+        eprintln!(
+            "[busy-target] previous busy result={:?} typed={typed:?} after {:?}",
+            result.as_ref().map_err(|e| e.to_string()),
+            started.elapsed()
+        );
+        drop(other);
+        drop(target);
+        result.expect("foreground text delivery");
+        assert_eq!(typed, "abc");
+    }
+
+    #[test]
+    #[ignore = "activates windows on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn foreground_text_reaches_a_target_busy_when_activated() {
+        let target = UiThread::spawn(100);
+        let other = UiThread::spawn(500);
+
+        // The target has been active before, then lost the foreground: its
+        // queue still remembers an active window.
+        bring_forward(target.hwnd);
+        assert!(wait_caption(target.hwnd, true), "target never activated");
+        state("target active", target.hwnd);
+        bring_forward(other.hwnd);
+        assert!(wait_caption(target.hwnd, false), "target never deactivated");
+        state("target in background", target.hwnd);
+
+        // The target's UI thread is busy when the driver activates it.
+        target.block();
+        TYPED.lock().unwrap().clear();
+        let hwnd = target.hwnd.0 as usize as u64;
+        let typing = std::thread::spawn(move || send_text_synthesized(hwnd, "abc"));
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(300) {
+            state("activation pending", target.hwnd);
+            sleep(Duration::from_millis(50));
+        }
+        target.unblock();
+        let result = typing.join().expect("typing thread");
+        state("after typing", target.hwnd);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && TYPED.lock().unwrap().len() < 3 {
+            sleep(Duration::from_millis(10));
+        }
+        let typed = String::from_utf16_lossy(&TYPED.lock().unwrap());
+        eprintln!(
+            "[busy-target] result={:?} typed={typed:?} after {:?}",
+            result.as_ref().map_err(|e| e.to_string()),
+            started.elapsed()
+        );
+        drop(other);
+        drop(target);
+        result.expect("foreground text delivery");
+        assert_eq!(typed, "abc");
     }
 }

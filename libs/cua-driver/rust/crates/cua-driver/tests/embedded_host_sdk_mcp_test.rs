@@ -221,6 +221,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
             capture_scope: Some(CaptureScope::Window),
             cursor_theme: None,
             cursor_motion: None,
+            cursor_badge: None,
         })
         .await
         .expect("start SDK-owned session");

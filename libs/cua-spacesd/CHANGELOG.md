@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.18.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.7...cua-spacesd-v0.18.0) (2026-11-26)
+
+
+### Features
+
+* **cua-driver:** hide a cursor's session label with set_agent_cursor_badge ([#8680](https://github.com/trycua/cua/issues/8680)) ([e71e5c3](https://github.com/trycua/cua/commit/e71e5c39847bc23a2c92fddb3f4bb8ae997007d0))
+
+## [0.17.7](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.6...cua-spacesd-v0.17.7) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** report why a Windows key press stalled, and what the doctor's form read ([#8627](https://github.com/trycua/cua/issues/8627)) ([3151ed0](https://github.com/trycua/cua/commit/3151ed03b798aa88bf22cf5b8e578be6a6352f69))
+
+## [0.17.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.5...cua-spacesd-v0.17.6) (2026-11-23)
+
+
+### Bug Fixes
+
+* **relay:** refresh the service token in the background; no lock across network calls (CUA-4415) ([#8614](https://github.com/trycua/cua/issues/8614)) ([5f2a04f](https://github.com/trycua/cua/commit/5f2a04f66a60fe5c7021afc555d138619fabd584))
+
+## [0.17.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.4...cua-spacesd-v0.17.5) (2026-11-23)
+
+
+### Bug Fixes
+
+* **relay:** move state persistence off the request path (CUA-4413) ([#8608](https://github.com/trycua/cua/issues/8608)) ([6f47336](https://github.com/trycua/cua/commit/6f4733653c70e54d1e31b7dc5217c7578dcd4dc8))
+
 ## [0.17.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.3...cua-spacesd-v0.17.4) (2026-11-21)
 
 

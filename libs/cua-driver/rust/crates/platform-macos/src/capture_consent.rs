@@ -103,6 +103,37 @@ pub fn capture_blocked_reason() -> Option<String> {
     }
 }
 
+/// Whether a capture is known not to raise the consent alert: this macOS is
+/// older than 15, which has no such alert, or it recorded this app bundle's
+/// approval. Unlike [`capture_blocked_reason`], an answer it cannot work out
+/// (an unknown macOS version, a bare binary, an unreadable approvals file,
+/// the alert override) is no, for optional captures the user never asked for.
+pub fn direct_capture_consented() -> bool {
+    static CONSENTED: AtomicBool = AtomicBool::new(false);
+
+    if CONSENTED.load(Ordering::Relaxed) {
+        return true;
+    }
+    let before_alert = crate::tools::macos_product_version()
+        .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
+        .is_some_and(|major| major < 15);
+    let consented = before_alert
+        || own_app_bundle().is_some_and(|bundle| {
+            std::env::var_os("HOME").is_some_and(|home| {
+                consent_state(
+                    &Path::new(&home).join(APPROVALS_RELATIVE_PATH),
+                    &bundle,
+                    crate::tools::main_bundle_identifier().as_deref(),
+                    crate::tools::driver_daemon_direct_capture_evidence_store().as_ref(),
+                ) == ConsentState::Recorded
+            })
+        });
+    if consented {
+        CONSENTED.store(true, Ordering::Relaxed);
+    }
+    consented
+}
+
 fn blocked_message(bundle: &Path) -> String {
     format!(
         "{CONSENT_REQUIRED_CODE}: screen capture skipped. macOS has not yet asked whether {} \

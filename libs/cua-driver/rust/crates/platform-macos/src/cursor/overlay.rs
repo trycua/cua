@@ -489,6 +489,9 @@ pub fn init(cfg: CursorConfig) {
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
+                CursorEvent::SetSessionLabelVisible { session, visible } => {
+                    (session, OverlayCommand::SetSessionLabelVisible(visible))
+                }
             };
             send_command(session, cmd);
         },
@@ -573,6 +576,13 @@ pub fn current_motion(key: &str) -> MotionConfig {
     map.cursor_or_default(key)
         .map(|rs| rs.core.motion.clone())
         .unwrap_or_default()
+}
+
+/// Whether the cursor `key` (or the `"default"` cursor) may show its
+/// session label text.
+pub fn current_show_session_label(key: &str) -> bool {
+    let guard = RENDER.lock().unwrap();
+    guard.as_ref().is_none_or(|map| map.show_session_label(key))
 }
 
 /// Return the render-owned theme and semantic playback state for one cursor.

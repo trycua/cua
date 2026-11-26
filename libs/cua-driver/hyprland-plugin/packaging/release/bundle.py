@@ -24,6 +24,7 @@ include/cua_hyprland/protocol.hpp
 include/cua_hyprland/session.hpp
 include/cua_hyprland/status.hpp
 src/drag_geometry.hpp
+src/external_pointer_motion.hpp
 src/foreground_route.hpp
 src/ime_popup_guard.cpp
 src/ime_popup_guard.hpp
@@ -56,6 +57,7 @@ tests/cmake-api/include/src/plugins/PluginAPI.hpp
 tests/desktop_fault_policy_fixture.cpp
 tests/desktop_fault_policy_test.py
 tests/drag_geometry_test.cpp
+tests/external_pointer_motion_test.cpp
 tests/foreground_route_test.cpp
 tests/foreground_modifiers_test.py
 tests/input_grant_test.cpp

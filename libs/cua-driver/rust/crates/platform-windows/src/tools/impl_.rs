@@ -384,8 +384,8 @@ use super::{
     check_permissions::CheckPermissionsTool,
     click::ClickTool,
     cursor_tools::{
-        GetAgentCursorStateV2Tool, SetAgentCursorEnabledV2Tool, SetAgentCursorMotionV2Tool,
-        SetAgentCursorThemeTool,
+        GetAgentCursorStateV2Tool, SetAgentCursorBadgeTool, SetAgentCursorEnabledV2Tool,
+        SetAgentCursorMotionV2Tool, SetAgentCursorThemeTool,
     },
     debug_window_info::DebugWindowInfoTool,
     double_click::DoubleClickTool,
@@ -1462,6 +1462,7 @@ pub fn build_registry_with_provider(
     r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));
+    r.register(Box::new(SetAgentCursorBadgeTool));
     r.register(Box::new(CheckPermissionsTool));
     // `health_report` — single-call cross-platform driver diagnostics.
     // Stable schema_version="1" contract for downstream consumers. Windows skips

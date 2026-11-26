@@ -142,6 +142,10 @@ pub(super) struct FixtureState {
     /// dialog it has not yet announced).
     page_enable_hangs: bool,
     dom_click_changes_readback: bool,
+    /// DOM mutations the synthetic click sequence reports outside its target.
+    dom_click_page_mutations: u64,
+    /// The synthetic click sequence throws after reporting its mutations.
+    dom_click_throws: bool,
     /// A trusted `mouseReleased` changes the target's semantic readback.
     trusted_click_changes_readback: bool,
     dom_click_readback_available: bool,
@@ -212,6 +216,8 @@ impl Default for FixtureState {
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
+            dom_click_page_mutations: 0,
+            dom_click_throws: false,
             trusted_click_changes_readback: false,
             dom_click_readback_available: true,
             resolve_node_fails: false,
@@ -1012,7 +1018,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let declaration = call.params["functionDeclaration"]
                     .as_str()
                     .unwrap_or_default();
-                if st.click_opens_dialog && declaration.contains("const el = this;") {
+                if st.click_opens_dialog && declaration.contains("'pointerdown'") {
                     let events = st
                         .page_sessions
                         .iter()
@@ -1028,6 +1034,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         })
                         .collect();
                     return MockReply::hang().with_events(events);
+                }
+                if declaration.contains("'pointerdown'") {
+                    let mut reply = json!({
+                        "result": { "value": { "pageMutations": st.dom_click_page_mutations } }
+                    });
+                    if st.dom_click_throws {
+                        reply["exceptionDetails"] = json!({ "text": "Uncaught" });
+                    }
+                    return MockReply::ok(reply);
                 }
                 MockReply::ok(json!({ "result": { "value": true } }))
             }
@@ -4312,11 +4327,21 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     assert!(public["escalation"].is_null(), "{public}");
     assert!(public.get("status").is_none(), "{public}");
     let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
-    let click_sequence = dispatches
+    let sequences: Vec<&Value> = dispatches
         .iter()
-        .filter_map(|(_, params)| params["functionDeclaration"].as_str())
-        .find(|declaration| declaration.contains("'pointerdown'"))
-        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+        .map(|(_, params)| params)
+        .filter(|params| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|declaration| declaration.contains("dispatchEvent"))
+        })
+        .collect();
+    // One call carries the whole sequence, so a dialog a handler opens pauses
+    // it and the rest still runs once the dialog is dismissed.
+    assert_eq!(sequences.len(), 1, "{sequences:?}");
+    assert_eq!(sequences[0]["awaitPromise"], true, "{sequences:?}");
+    assert_eq!(sequences[0]["returnByValue"], true, "{sequences:?}");
+    let click_sequence = sequences[0]["functionDeclaration"].as_str().unwrap();
     // Apps that open rows from pointer/mouse down+up ignore a bare click(),
     // so the synthetic route must replay the whole primary-button sequence
     // at the element's center, in order.
@@ -4385,6 +4410,85 @@ async fn dom_event_click_remains_unverifiable_when_only_focus_changes() {
         public["escalation"]["reason"], "effect_unconfirmed",
         "{public}"
     );
+}
+
+#[tokio::test]
+async fn dom_event_click_confirms_when_its_handlers_change_the_page() {
+    // A button that reveals fields elsewhere keeps its own state, so only the
+    // page mutations its handlers caused can confirm the click (#5253).
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_page_mutations = 3;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("its own handlers changed the page outside the target")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "confirmed", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert!(public["escalation"].is_null(), "{public}");
+}
+
+#[tokio::test]
+async fn dom_event_click_counts_no_page_change_when_its_sequence_throws() {
+    // A sequence that threw part way may not have dispatched the click, so
+    // the mutations it reports cannot confirm it.
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_page_mutations = 3;
+        state.dom_click_throws = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("target state remained unchanged; application effect is unverifiable")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "unverifiable", "{public}");
 }
 
 #[tokio::test]
@@ -5083,7 +5187,7 @@ async fn dom_event_click_returns_when_its_handler_opens_a_dialog() {
                 m == "Runtime.callFunctionOn"
                     && p["functionDeclaration"]
                         .as_str()
-                        .is_some_and(|d| d.contains("const el = this;"))
+                        .is_some_and(|d| d.contains("'pointerdown'"))
             })
             .expect("click recorded");
         assert!(enable_at < click_at, "Page.enable must precede the click");
@@ -5162,7 +5266,7 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
         .filter(|(_, p)| {
             p["functionDeclaration"]
                 .as_str()
-                .is_some_and(|d| d.contains("const el = this;"))
+                .is_some_and(|d| d.contains("'pointerdown'"))
         })
         .count();
     assert_eq!(

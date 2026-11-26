@@ -577,7 +577,7 @@
         "account: Not signed in",
         "signIn: Sign in",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Pick a system to start it. / Linux (About 3 minutes · 3.3–7.3 GB of disk) / macOS (About 23 GB download)",
+        "empty: No Spaces yet / Pick a system to start it. / Linux (About 3 minutes · 3.5–7.8 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -590,7 +590,7 @@
         "account: API key",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Pick a system to start it. / Linux (About 3 minutes · 3.3–7.3 GB of disk) / macOS (About 23 GB download)",
+        "empty: No Spaces yet / Pick a system to start it. / Linux (About 3 minutes · 3.5–7.8 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -603,7 +603,7 @@
         "account: ada@example.com",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Pick a system to start it. / Linux (About 3 minutes · 3.3–7.3 GB of disk) / macOS (About 23 GB download)",
+        "empty: No Spaces yet / Pick a system to start it. / Linux (About 3 minutes · 3.5–7.8 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },

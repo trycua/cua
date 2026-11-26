@@ -24,8 +24,8 @@ use super::{
     check_permissions::CheckPermissionsTool,
     click::ClickTool,
     cursor_tools::{
-        GetAgentCursorStateV2Tool, SetAgentCursorEnabledV2Tool, SetAgentCursorMotionV2Tool,
-        SetAgentCursorThemeTool,
+        GetAgentCursorStateV2Tool, SetAgentCursorBadgeTool, SetAgentCursorEnabledV2Tool,
+        SetAgentCursorMotionV2Tool, SetAgentCursorThemeTool,
     },
     double_click::DoubleClickTool,
     drag::DragTool,
@@ -4447,6 +4447,14 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
     .map_err(|error| anyhow::anyhow!("task error: {error}"))?
 }
 
+/// Whether a desktop click glides the agent cursor to its point and waits for
+/// the layer-shell frame before the input is sent. A session that draws no
+/// cursor (a human viewer's input, see `cua_driver_core::agent_cursor`) has no
+/// glide to wait for: it must neither enable, move nor reveal an agent cursor.
+pub(crate) fn desktop_click_awaits_cursor_arrival(layer_shell: bool, draws_cursor: bool) -> bool {
+    layer_shell && draws_cursor
+}
+
 pub(crate) async fn prepare_desktop_click_cursor(
     layer_shell: bool,
     wayland_arrival: impl std::future::Future<Output = anyhow::Result<()>>,
@@ -4462,8 +4470,30 @@ pub(crate) async fn prepare_desktop_click_cursor(
 
 #[cfg(test)]
 mod desktop_click_arrival_tests {
-    use super::prepare_desktop_click_cursor;
+    use super::{desktop_click_awaits_cursor_arrival, prepare_desktop_click_cursor};
     use std::cell::Cell;
+
+    #[test]
+    fn a_session_that_draws_no_cursor_never_awaits_arrival() {
+        assert!(desktop_click_awaits_cursor_arrival(true, true));
+        assert!(!desktop_click_awaits_cursor_arrival(true, false));
+        assert!(!desktop_click_awaits_cursor_arrival(false, true));
+        assert!(!desktop_click_awaits_cursor_arrival(false, false));
+    }
+
+    #[test]
+    fn a_human_origin_session_draws_no_cursor() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        let key = "desktop-click-human-origin-1";
+        assert!(crate::overlay::draws_cursor(key));
+        set_input_origin(key, InputOrigin::Human);
+        assert!(!crate::overlay::draws_cursor(key));
+        assert!(!desktop_click_awaits_cursor_arrival(
+            true,
+            crate::overlay::draws_cursor(key)
+        ));
+        set_input_origin(key, InputOrigin::Agent);
+    }
 
     #[tokio::test]
     async fn click_tool_delivers_when_wayland_overlay_probe_cannot_connect() {
@@ -5402,6 +5432,7 @@ pub fn build_registry_with_provider(
     r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));
+    r.register(Box::new(SetAgentCursorBadgeTool));
     r.register(Box::new(CheckPermissionsTool));
     // `health_report` — single-call cross-platform driver diagnostics.
     // Stable schema_version="1" contract for downstream consumers. Linux skips

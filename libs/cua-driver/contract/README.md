@@ -70,6 +70,7 @@ generated SDKs:
 - `set_agent_cursor_enabled`
 - `set_agent_cursor_motion`
 - `set_agent_cursor_theme`
+- `set_agent_cursor_badge`
 - `get_agent_cursor_state`
 
 Cursor artwork is selected by installed theme ID. Theme installation and

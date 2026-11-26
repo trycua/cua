@@ -617,6 +617,7 @@ impl AgentSessionState {
             "set_agent_cursor_enabled"
                 | "set_agent_cursor_motion"
                 | "set_agent_cursor_theme"
+                | "set_agent_cursor_badge"
                 | "get_agent_cursor_state"
         );
         self.used_recording |= matches!(

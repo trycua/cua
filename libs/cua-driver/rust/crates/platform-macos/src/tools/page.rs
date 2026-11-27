@@ -17,6 +17,7 @@ use cua_driver_core::page::{PageBackend, PageReadResult};
 use std::{future::Future, sync::Arc};
 
 use super::ToolState;
+use crate::browser::ax_page_reader::{AxRoleFilter, AX_SELECTORS};
 use crate::browser::{is_wk_web_view_app, AXPageReader, BrowserJs, CdpClient, ElectronJs};
 
 pub struct MacOsPageBackend {
@@ -223,20 +224,34 @@ async fn ax_query_fallback(
     selector: &str,
     require_web_area: bool,
 ) -> anyhow::Result<(String, bool)> {
+    let filter = ax_role_filter(selector)?;
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
-    let sel = selector.to_owned();
     let result =
         tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
             .await
             .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
     Ok((
         format_ax_elements(&AXPageReader::query(
-            &sel,
+            filter,
             &page_rows(result.tree_markdown, require_web_area)?,
         )),
         result.truncated || result.depth_truncated,
     ))
+}
+
+/// The AX fallback answers only selectors it can apply. Any other selector
+/// is refused rather than read as `*`, which would return every element of
+/// the window as if it matched.
+fn ax_role_filter(selector: &str) -> anyhow::Result<AxRoleFilter> {
+    AxRoleFilter::from_css(selector).ok_or_else(|| {
+        anyhow::anyhow!(
+            "css_selector '{selector}' was not applied: this window has no JavaScript or CDP \
+             route to its DOM, and the accessibility-tree fallback matches only bare tag \
+             selectors ({AX_SELECTORS}). Query with one of those, use get_window_state with \
+             query, or attach CDP with browser_prepare for full DOM access."
+        )
+    })
 }
 
 fn format_ax_elements(elements: &[crate::browser::ax_page_reader::AXElement]) -> String {
@@ -326,6 +341,19 @@ mod tests {
     #[test]
     fn web_view_apps_keep_the_whole_tree_without_a_web_area() {
         assert_eq!(page_rows(MENU_ONLY.to_owned(), false).unwrap(), MENU_ONLY);
+    }
+
+    #[test]
+    fn an_unmappable_selector_fails_the_ax_fallback_with_the_reason() {
+        let ax = ax_role_filter("select#model").map(|_| (String::new(), false));
+        let error = finish_page_read("cdp", None, Some("no CDP port".into()), ax)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("'select#model' was not applied"), "{error}");
+        assert!(
+            error.contains("JavaScript read failed first: no CDP port"),
+            "{error}"
+        );
     }
 
     #[test]

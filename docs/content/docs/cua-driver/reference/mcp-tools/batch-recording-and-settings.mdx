@@ -263,7 +263,8 @@ Current schema (Windows):
     "source_sha": "&lt;maintainer build commit or null&gt;",
     "platform": "windows",
     "capture_mode": "ax" | "vision" (DEPRECATED, ignored),
-    "max_image_dimension": 0
+    "max_image_dimension": 0,
+    "get_window_state": &#123;"max_elements": 250, "max_depth": 25, "saved": &#123;"max_elements": null, "max_depth": null&#125;&#125;
   &#125;
 
 `capture_mode` is deprecated and no longer affects behavior: `get_window_state` always returns both the UIA tree and a screenshot.
@@ -294,6 +295,15 @@ Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to
 
 Agent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
+get_window_state walk defaults: get_window_state.max_elements (1 to 2000) and get_window_state.max_depth (1 to 25) replace the built-in 250 nodes and 25 levels on reads that omit the argument and pass no query or full_output; 0 clears them. A per-call argument always wins. Saved to ~/.cua-driver/config.json and applied to every session at once.
+
+**macOS parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="set_config--macos--get_window_state-max_depth"></span>`get_window_state.max_depth` | `integer` |  | Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 to 25, or 0 to clear it and use 25. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once. Range: 0 to 25. |
+| <span id="set_config--macos--get_window_state-max_elements"></span>`get_window_state.max_elements` | `integer` |  | Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 2000 (the full_output budget), or 0 to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once. Range: 0 to 2000. |
+
 </Tab>
 <Tab value="Linux">
 
@@ -307,11 +317,15 @@ Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimensio
 
 `cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).
 
+`get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 or more), or `0` to clear, are saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. They apply to every session at once.
+
 **Linux parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--linux--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | Default capture mode for get_window_state. ("som"/"screenshot" still decode as deprecated aliases.). |
+| <span id="set_config--linux--get_window_state-max_depth"></span>`get_window_state.max_depth` | `integer` |  | Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 or more, or 0 to clear it and use no depth cap. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once. Minimum: 0. |
+| <span id="set_config--linux--get_window_state-max_elements"></span>`get_window_state.max_elements` | `integer` |  | Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or 0 to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once. Range: 0 to 5000. |
 
 </Tab>
 <Tab value="Windows">
@@ -324,6 +338,7 @@ Known keys:
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 - `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
 - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).
+- `get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 to 25), or `0` to clear: saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. Applies to every session at once.
 
 Returns the full updated config in the same shape as `get_config`.
 
@@ -332,6 +347,8 @@ Returns the full updated config in the same shape as `get_config`.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--windows--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | DEPRECATED and ignored: get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. ("som"/"screenshot" still decode as deprecated aliases.). |
+| <span id="set_config--windows--get_window_state-max_depth"></span>`get_window_state.max_depth` | `integer` |  | Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 to 25, or 0 to clear it and use 25. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once. Range: 0 to 25. |
+| <span id="set_config--windows--get_window_state-max_elements"></span>`get_window_state.max_elements` | `integer` |  | Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or 0 to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once. Range: 0 to 5000. |
 
 </Tab>
 </Tabs>

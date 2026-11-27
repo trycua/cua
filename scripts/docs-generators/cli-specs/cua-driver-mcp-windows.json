@@ -1,7 +1,7 @@
 {
  "tools": [
   {
-   "description": "List Windows apps — both currently running and installed-but-not-running — with per-app state flags:\n\n- running: is a process for this app live? (pid is 0 when false)\n- active: is it the system-frontmost app? (implies running)\n- kind: `\"desktop\"` for `.exe`-backed apps (resolved from Start-Menu shortcuts) or `\"uwp\"` for packaged store apps.\n- launch_path: what `launch_app` would consume.\n* desktop: full `.exe` commandline (path + any arguments preserved from the source `.lnk`; the exe is quoted when it contains whitespace).\n* uwp: `shell:appsFolder\\{PackageFamilyName}!{AppId}` where `{AppId}` falls back to `App` when the package manifest does not expose a specific Application.Id.\n- last_used: RFC3339 mtime of the launcher (`.lnk` for desktop, package install location for UWP), when readable.\n\nRunning apps are derived from visible top-level windows + the foreground pid (mirrors NSApplicationActivationPolicyRegular's intent: background services and console processes are excluded). Installed apps are merged from Start-Menu `.lnk` enumeration and the WinRT PackageManager — running processes whose executable matches a Start-Menu target are folded into a single entry with `running: true`.\n\nUse this for \"is X installed?\" as well as \"is X running?\". For per-window state — on-screen, minimized, window titles — call list_windows instead. For just opening an app — running or not — call launch_app({path: ...}) directly; list_apps is not a prerequisite.",
+   "description": "List Windows apps — both currently running and installed-but-not-running — with per-app state flags:\n\n- running: is a process for this app live? (pid is 0 when false)\n- active: is it the system-frontmost app? (implies running)\n- kind: `\"desktop\"` for `.exe`-backed apps (resolved from Start-Menu shortcuts) or `\"uwp\"` for packaged store apps.\n- launch_path: what `launch_app` would consume.\n* desktop: full `.exe` commandline (path + any arguments preserved from the source `.lnk`; the exe is quoted when it contains whitespace).\n* uwp: `shell:appsFolder\\{PackageFamilyName}!{AppId}` where `{AppId}` falls back to `App` when the package manifest does not expose a specific Application.Id.\n- last_used: RFC3339 mtime of the launcher (`.lnk` for desktop, package install location for UWP), when readable.\n\nRunning apps are derived from visible top-level windows + the foreground pid (mirrors NSApplicationActivationPolicyRegular's intent: background services and console processes are excluded). Installed apps are merged from Start-Menu `.lnk` enumeration and the WinRT PackageManager — running processes whose executable matches a Start-Menu target, and running packaged apps whose package identity matches a `uwp` entry, are folded into a single entry with `running: true`.\n\nUse this for \"is X installed?\" as well as \"is X running?\". For per-window state — on-screen, minimized, window titles — call list_windows instead. For just opening an app — running or not — call launch_app({path: ...}) directly; list_apps is not a prerequisite.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -25,7 +25,7 @@
     "additionalProperties": false,
     "properties": {
      "app": {
-      "description": "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
+      "description": "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
       "type": "string"
      },
      "on_screen_only": {
@@ -47,7 +47,7 @@
    "read_only": true
   },
   {
-   "description": "Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:\"markdown\"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:\"elements\"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `\"both\"` for both (about twice the size). `Edit` elements carry `is_password` (`true` for a password field), and the Markdown row marks a password field with `password`.\n\nSize: a read is bounded by default (`max_elements` 250). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the platform's walk limits (≤5 000 elements, depth ≤25).\n\nDIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window to get only what changed: `+` added rows, `~` changed rows, `-` removed rows (their ids are the old snapshot's), or `no change since …`. Rows not listed keep their previous `[N]` unless a `reindexed:` line says otherwise. The response carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read and `since_status` says why. The focused element is not reported on Windows yet.\n\nINVARIANT: call `get_window_state` once per turn per (pid, window_id) before any element action against that window. This session's next snapshot of the same (pid, window_id) replaces this one, stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`. A screenshot-only read (`include_accessibility_tree:false`) keeps the current snapshot's rows and tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\nThe UIA tree walked is the window's tree (HWND-scoped); the screenshot and window bounds reported come from the same `window_id`. This is the source of truth for which window the caller intends to reason about — the driver never picks a window implicitly.\n\n`window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. The driver does not auto-fall-back to a different window.\n\nSet `query` to a case-insensitive substring (`a|b` for either) to project the tree to matching rows plus their ancestor chain, or to a `0 of N elements match` line when none matches. Original element indices are preserved. `total_element_count` reports the unprojected walked snapshot; `returned_element_count` reports the projection. `elements_complete` describes the underlying walk and is unaffected by query projection.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; pass 0 for native resolution. Legacy `max_dimension` remains a cap on the configured limit.\n\nUses `IUIAutomationCacheRequest` to batch-fetch all element properties in a single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of timing out at 4s with per-property RPCs).\n\nOptional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. `elements_complete` is false when a bound skips a node or subtree; ending exactly at a bound remains complete. Default: `max_elements` 250, depth ≤25.\n\nCHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.\n\nWindows requires no special permissions.",
+   "description": "Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:\"markdown\"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:\"elements\"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `\"both\"` for both (about twice the size). `Edit` elements carry `is_password` (`true` for a password field), and the Markdown row marks a password field with `password`.\n\nSize: a read is bounded by default (`max_elements` 250, or the saved `get_window_state.max_elements` from `set_config`; `get_config` shows it). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the platform's walk limits (≤5 000 elements, depth ≤25).\n\nDIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window to get only what changed: `+` added rows, `~` changed rows, `-` removed rows (their ids are the old snapshot's), or `no change since …`. Rows not listed keep their previous `[N]` unless a `reindexed:` line says otherwise. The response carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read and `since_status` says why. The focused element is not reported on Windows yet.\n\nINVARIANT: call `get_window_state` once per turn per (pid, window_id) before any element action against that window. This session's next snapshot of the same (pid, window_id) replaces this one, stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`. A screenshot-only read (`include_accessibility_tree:false`) keeps the current snapshot's rows and tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\nThe UIA tree walked is the window's tree (HWND-scoped); the screenshot and window bounds reported come from the same `window_id`. This is the source of truth for which window the caller intends to reason about — the driver never picks a window implicitly.\n\n`window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. The driver does not auto-fall-back to a different window.\n\nSet `query` to a case-insensitive substring (`a|b` for either) to project the tree to matching rows plus their ancestor chain, or to a `0 of N elements match` line when none matches. Original element indices are preserved. `total_element_count` reports the unprojected walked snapshot; `returned_element_count` reports the projection. `elements_complete` describes the underlying walk and is unaffected by query projection.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; pass 0 for native resolution. Legacy `max_dimension` remains a cap on the configured limit.\n\nUses `IUIAutomationCacheRequest` to batch-fetch all element properties in a single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of timing out at 4s with per-property RPCs).\n\nOptional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. `elements_complete` is false when a bound skips a node or subtree; ending exactly at a bound remains complete. Default: `max_elements` 250, depth ≤25, or the saved `get_window_state.max_elements` / `get_window_state.max_depth`.\n\nCHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.\n\nWindows requires no special permissions.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -78,7 +78,7 @@
       "type": "boolean"
      },
      "max_depth": {
-      "description": "Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees.",
+      "description": "Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25, or the saved get_window_state.max_depth on a read without query or full_output). Lower for deep menu / Electron trees.",
       "minimum": 1,
       "type": "integer"
      },
@@ -88,7 +88,7 @@
       "type": "integer"
      },
      "max_elements": {
-      "description": "Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window.",
+      "description": "Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250, or the saved get_window_state.max_elements (5 000 with query or full_output:true); the response states when the tree was cut. Raise it to read further into a large window.",
       "minimum": 1,
       "type": "integer"
      },
@@ -114,7 +114,7 @@
       "type": "string"
      },
      "since": {
-      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise.",
+      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change.",
       "type": "string"
      },
      "timeout_ms": {
@@ -633,6 +633,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "HWND of the target window. Omit when element_token is supplied (the token carries it).",
       "type": "integer"
@@ -689,6 +694,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND for the target window. Omit when element_token is supplied (the token carries it).",
@@ -747,6 +757,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND for the target window. Omit when element_token is supplied (the token carries it).",
@@ -874,6 +889,11 @@
       "description": "Drag-end Y in window-local screenshot pixels.",
       "type": "number"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Target window handle (HWND). Optional — driver picks frontmost window of pid when omitted.",
       "type": "integer"
@@ -963,6 +983,11 @@
      "text": {
       "description": "Text to insert at the focused element's cursor.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND of the target window. Omit when element_token is supplied (the token carries it).",
@@ -1060,6 +1085,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "HWND for the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window.",
       "type": "integer"
@@ -1153,6 +1183,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Explicit HWND when the pid owns multiple windows.",
       "type": "integer"
@@ -1201,6 +1236,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "value": {
       "description": "New value. UIA will coerce to the element's native type.",
@@ -1307,6 +1347,11 @@
        "kind"
       ],
       "type": "object"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "HWND of the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window.",
@@ -1671,7 +1716,7 @@
    "read_only": false
   },
   {
-   "description": "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+   "description": "Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1728,6 +1773,31 @@
    "read_only": false
   },
   {
+   "description": "Show or hide the session label text beneath a session's cursor.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "Public label of the session that owns the cursor.",
+      "type": "string"
+     },
+     "show_session_label": {
+      "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals; `true` shows it again with a fresh reveal. The cursor and its delivery\nand target chips still show. The session's name is unchanged.",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session",
+     "show_session_label"
+    ],
+    "type": "object"
+   },
+   "name": "set_agent_cursor_badge",
+   "read_only": false
+  },
+  {
    "description": "Check required permissions for cua-driver-rs on Windows. How to get them granted: `get_guide({topic:\"permissions\"})`.",
    "destructive": false,
    "idempotent": true,
@@ -1780,7 +1850,7 @@
    "read_only": true
   },
   {
-   "description": "Report the current persistent driver config.\n\nPure read-only. Returns defaults when the underlying state is unset — same fallback the daemon uses at startup. Sibling to `set_config`.\n\nCurrent schema (Windows):\n\n  {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \"source_sha\": \"<maintainer build commit or null>\",\n    \"platform\": \"windows\",\n    \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \"max_image_dimension\": 0\n  }\n\n`capture_mode` is deprecated and no longer affects behavior — `get_window_state` always returns both the UIA tree and a screenshot.",
+   "description": "Report the current persistent driver config.\n\nPure read-only. Returns defaults when the underlying state is unset — same fallback the daemon uses at startup. Sibling to `set_config`.\n\nCurrent schema (Windows):\n\n  {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \"source_sha\": \"<maintainer build commit or null>\",\n    \"platform\": \"windows\",\n    \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \"max_image_dimension\": 0,\n    \"get_window_state\": {\"max_elements\": 250, \"max_depth\": 25, \"saved\": {\"max_elements\": null, \"max_depth\": null}}\n  }\n\n`capture_mode` is deprecated and no longer affects behavior — `get_window_state` always returns both the UIA tree and a screenshot.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1797,7 +1867,7 @@
    "read_only": true
   },
   {
-   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\nReturns the full updated config in the same shape as `get_config`.",
+   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n- `get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 to 25), or `0` to clear — saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. Applies to every session at once.\n\nReturns the full updated config in the same shape as `get_config`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1946,6 +2016,18 @@
       ],
       "type": "string"
      },
+     "get_window_state.max_depth": {
+      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 to 25, or 0 to clear it and use 25. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 25,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "get_window_state.max_elements": {
+      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or 0 to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 5000,
+      "minimum": 0,
+      "type": "integer"
+     },
      "max_image_dimension": {
       "description": "Max dimension for screenshot resizing (0 = no limit).",
       "type": "integer"
@@ -2026,7 +2108,7 @@
    "read_only": true
   },
   {
-   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.",
+   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text. The macOS AX fallback applies only `*` (or a blank selector) and bare tag selectors and refuses any other selector instead of returning every element.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2295,7 +2377,7 @@
       "type": "string"
      },
      "input_route": {
-      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.",
+      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Its effect is confirmed when the target's own state changes or the click's handlers change the page; otherwise refresh page state and verify the expected postcondition.",
       "enum": [
        "trusted",
        "dom_event"
@@ -2816,6 +2898,18 @@
        "desktop"
       ],
       "type": "string"
+     },
+     "cursor_badge": {
+      "additionalProperties": false,
+      "description": "Optional initial cursor badge settings. The host applies them before the cursor is\nfirst made visible. Omitted fields keep the session's current value; a new session\nshows its label. A later `set_agent_cursor_badge` call wins.",
+      "properties": {
+       "show_session_label": {
+        "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals. The cursor and its delivery and target chips still show. Omit to keep\nthe current value (`true` for a new session).",
+        "type": "boolean"
+       }
+      },
+      "required": [],
+      "type": "object"
      },
      "cursor_motion": {
       "additionalProperties": false,

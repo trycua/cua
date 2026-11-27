@@ -24,7 +24,7 @@ on:
         required: true
         type: string
       quick:
-        description: "PR quick lane: only the shared lane, on the Electron harness (not a certification)"
+        description: "PR quick lane: the shared lane on the Electron and WKWebView harnesses plus the native lane (app launch and focus), not a certification"
         required: false
         type: boolean
         default: false
@@ -148,14 +148,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON(inputs.quick && '["shared"]' || '["shared","native","capture","browser"]') }}
+        lane: ${{ fromJSON(inputs.quick && '["shared","native"]' || '["shared","native","capture","browser"]') }}
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
       CUA_E2E_REBUILD: ${{ inputs.rebuild_of_released_source && 'true' || 'false' }}
       CUA_E2E_INTERNAL_LANE: ${{ matrix.lane }}
-      # The PR quick lane runs the core Electron cells only; empty runs every host.
-      CUA_E2E_HARNESS_FILTER: ${{ inputs.quick && 'electron' || '' }}
+      # The PR quick lane runs the Electron (Chromium engine) and WKWebView cells of the shared
+      # lane: #8089 broke type_text into both engines and an Electron-only run cannot see
+      # the WKWebView path (Electron refuses background AX type_text by design). The native lane
+      # always runs whole, because launch_app, focus and installed-app tests live there
+      # (#8220 shipped broken because no PR lane ran them). Empty runs every host.
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.quick && matrix.lane == 'shared' && 'electron,wkwebview' || '' }}
 
     steps:
       - name: Validate requested source SHA

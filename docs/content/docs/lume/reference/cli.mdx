@@ -151,9 +151,12 @@ lume run [OPTIONS] <name>
 | <span id="lume-run--disk-path"></span>`--disk-path` |  | string |  | Use this disk image instead of disk.img in the VM directory. |
 | <span id="lume-run--nvram-path"></span>`--nvram-path` |  | string |  | Use this NVRAM file instead of nvram.bin in the VM directory. |
 | <span id="lume-run--network"></span>`--network` |  | string |  | Network override for this run: nat, bridged, or bridged:&lt;interface&gt; (default: the VM's configured mode). |
+| <span id="lume-run--time-vsock"></span>`--time-vsock` |  | integer |  | Serve the host's UTC time to the guest on this vsock port, for guests with no clock to read at boot. Each connection receives one line, time-v1 &lt;seconds&gt; &lt;nanoseconds&gt;. Off by default. |
 | <span id="lume-run--no-display"></span>`--no-display` | `-d` | boolean | `false` | Compatibility alias for --display none. |
 | <span id="lume-run--detach"></span>`--detach` |  | boolean | `false` | Run the VM in the background and return immediately. |
 | <span id="lume-run--clipboard"></span>`--clipboard` |  | boolean | `false` | Sync the clipboard both ways over SSH. Automatic with the native macOS display. |
+| <span id="lume-run--no-audio-device"></span>`--no-audio-device` |  | boolean | `false` | Leave the virtio sound device (host audio input and output) out of the VM, so the guest has no audio device. |
+| <span id="lume-run--no-clipboard-device"></span>`--no-clipboard-device` |  | boolean | `false` | Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with --clipboard. |
 
 **Examples**
 
@@ -165,6 +168,12 @@ lume run my-vm --shared-dir ~/src:ro --display none
 
 # In the background with no VNC listener
 lume run my-vm --detach --display none --vnc disabled
+
+# With no audio or clipboard-sharing device
+lume run my-vm --no-audio-device --no-clipboard-device
+
+# Serve the host's time to the guest on vsock port 5000
+lume run my-vm --time-vsock 5000
 ```
 
 ### `lume attach`

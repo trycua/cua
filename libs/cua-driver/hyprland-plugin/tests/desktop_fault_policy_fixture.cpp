@@ -22,7 +22,7 @@ struct Client {
     bool dead = false;
     void* source = nullptr;
     int fd = -1;
-    std::string token = "old-target";
+    std::string token = "old-target", cancelled_by;
     std::weak_ptr<Window> window;
     std::weak_ptr<Surface> surface;
     uint64_t approved_deadline = 42, revision = 1;
@@ -174,5 +174,18 @@ int main() {
         }
         l.guard_targets(); l.check_inert(false);
     }
+    // A desktop-driven cancellation names itself to the bound client's next
+    // action; an explicit Stop/Cancel and unbound clients keep stale_target.
+    { Lane l; l.cancel_authority("foreground_interrupted", false, true);
+      check(l.clients.front()->token.empty() && l.clients.front()->cancelled_by == "foreground_interrupted",
+            "user interruption was not reported to the bound client");
+      l.cancel_authority("foreground_interrupted", false, true);
+      check(l.clients.front()->cancelled_by == "foreground_interrupted",
+            "a second cancellation lost the first reason");
+      l.invalidate(*l.clients.front());
+      check(l.clients.front()->cancelled_by.empty(), "invalidation kept a stale cancellation reason"); }
+    { Lane l; l.cancel_authority("stopped");
+      check(l.clients.front()->token.empty() && l.clients.front()->cancelled_by.empty(),
+            "explicit stop changed the stale_target refusal"); }
     std::cout << "production desktop fault policy tests passed\n";
 }

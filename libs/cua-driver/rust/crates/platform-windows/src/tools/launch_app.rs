@@ -577,7 +577,7 @@ impl Tool for LaunchAppTool {
                         unsafe {
                             CreateProcessW(
                                 PCWSTR(file_w.as_ptr()),
-                                PWSTR(command_line.as_mut_ptr()),
+                                Some(PWSTR(command_line.as_mut_ptr())),
                                 None,
                                 None,
                                 false,

@@ -6,7 +6,10 @@ name: "Docs: Swift, Kotlin and Rust blocks compile"
 # wrapped in a function in a library target, so no Rust library is built or
 # linked and nothing runs. Blocks tagged test="rust" type-check (cargo check)
 # against libs/cua/crates/cua-sdk, so a public API change that breaks a Rust
-# snippet fails here.
+# snippet fails here. The capability manifests in the Cua Driver docs load
+# through the driver's own manifest loader
+# (cua-driver-core/tests/docs_capability_manifests.rs), which CI: Rust Linux
+# unit runs only for driver changes.
 
 on:
   pull_request:
@@ -103,3 +106,24 @@ jobs:
           shared-key: docs-rust
       - name: Type-check the Rust blocks
         run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane rust
+
+  driver-manifests:
+    # Not on main pushes: those exist to keep the rust lane's cache warm.
+    if: ${{ github.event_name != 'push' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: driver capability manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: docs-driver-manifests
+          save-if: false
+      - name: Load the documented manifests with the driver's loader
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-core --test docs_capability_manifests

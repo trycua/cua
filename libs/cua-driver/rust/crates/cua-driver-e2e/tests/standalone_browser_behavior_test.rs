@@ -61,12 +61,45 @@ fn standalone_trust_gated_click_html() -> String {
   <span id="standalone-trust-gated-state" data-cua-id="standalone-trust-gated-state">
     activation=idle
   </span>
+  <div id="standalone-focus-only-host"></div>
+  <span id="standalone-focus-only-hint"></span>
 </fieldset>
 <script>
-  document.getElementById('standalone-trust-gated').addEventListener('click', event => {
-    document.getElementById('standalone-trust-gated-state').textContent = event.isTrusted
-      ? 'activation=accepted-trusted'
-      : 'activation=ignored-untrusted';
+  // A shadow button whose focus styles its host and the outer document and
+  // shows a hint beside it, with nothing on click. Focus is not activation,
+  // so none of that may confirm the click.
+  const focusOnlyHost = document.getElementById('standalone-focus-only-host');
+  const focusOnly = focusOnlyHost.attachShadow({ mode: 'open' });
+  focusOnly.innerHTML = '<button aria-label="standalone-shadow-focus-only">Focus only</button>';
+  focusOnly.querySelector('button').addEventListener('focus', () => {
+    focusOnlyHost.classList.add('focus-within');
+    document.body.classList.add('focus-visible');
+    Promise.resolve().then(() => {
+      document.getElementById('standalone-focus-only-hint').textContent = 'focused';
+    });
+  });
+  const trustGated = document.getElementById('standalone-trust-gated');
+  const trustGatedState = document.getElementById('standalone-trust-gated-state');
+  // An app that ignores an untrusted click leaves the page alone, so the
+  // fixture records that outcome for the harness in a later task. A
+  // MessageChannel task is not throttled in a background window.
+  const ignored = new MessageChannel();
+  ignored.port1.onmessage = () => {
+    trustGatedState.textContent = 'activation=ignored-untrusted';
+  };
+  trustGated.addEventListener('click', event => {
+    if (event.isTrusted) {
+      trustGatedState.textContent = 'activation=accepted-trusted';
+    } else {
+      ignored.port2.postMessage(null);
+    }
+  });
+  // A hover change that lands after a long microtask chain belongs to the
+  // hover, and must not confirm the ignored click.
+  trustGated.addEventListener('mouseenter', () => {
+    let chain = Promise.resolve();
+    for (let turn = 0; turn < 50; turn++) chain = chain.then(() => null);
+    chain.then(() => document.body.appendChild(document.createElement('span')));
   });
 </script>
 </body>"#,
@@ -105,6 +138,31 @@ fn standalone_focus_gated_click_html() -> String {
     if (document.hasFocus()) {
       document.getElementById('standalone-focus-gated-state').textContent = 'activation=accepted';
     }
+  });
+</script>
+</body>"#,
+    )
+}
+
+/// The fixture page with every control hidden and a canvas over the lower 60%
+/// of the viewport. The canvas has no accessibility element of its own; it
+/// publishes each pointerdown's viewport point and the window's insets
+/// around the viewport.
+#[cfg(target_os = "macos")]
+fn standalone_canvas_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+<canvas id="pixel-canvas"
+        style="visibility:visible !important;position:fixed;left:0;top:40%;width:100vw;height:60vh"></canvas>
+<span id="canvas-point" data-cua-id="canvas-point">canvas=idle</span>
+<script>
+  let canvasClicks = 0;
+  document.getElementById('pixel-canvas').addEventListener('pointerdown', event => {
+    canvasClicks += 1;
+    document.getElementById('canvas-point').textContent =
+      `canvas=${canvasClicks}:${event.clientX},${event.clientY}` +
+      `@${outerWidth - innerWidth},${outerHeight - innerHeight}`;
   });
 </script>
 </body>"#,
@@ -2004,7 +2062,7 @@ fn run_roundtrip(spec: &BrowserSpec) {
                 "{}",
                 click.raw
             );
-            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(click.action_effect(), Some("confirmed"), "{}", click.raw);
             assert_eq!(
                 click.structured()["evidence"][0]["kind"],
                 "value_readback",
@@ -2100,6 +2158,24 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 "activation=ignored-untrusted",
             );
 
+            let focus_only_ref = ref_by_label(&snapshot, "standalone-shadow-focus-only");
+            let focus_only = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": focus_only_ref,
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                focus_only.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                focus_only.raw
+            );
+
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });
@@ -2180,7 +2256,7 @@ fn run_semantic_state(spec: &BrowserSpec) {
             );
             assert_eq!(
                 clicked.action_effect(),
-                Some("unverifiable"),
+                Some("confirmed"),
                 "{}",
                 clicked.raw
             );
@@ -2690,6 +2766,118 @@ fn run_background_web_click_noop(spec: &BrowserSpec) {
     });
 }
 
+/// #5484: a background pixel click on web content lands at the requested
+/// point. An accessibility press on the element the point hit-tests to drops
+/// the coordinates, so a canvas saw no click, or one at its centre.
+#[cfg(target_os = "macos")]
+fn run_background_canvas_pixel_click(spec: &BrowserSpec) {
+    let scenario = format!(
+        "macos-{}-standalone-background-canvas-pixel-click",
+        spec.name
+    );
+    let case = CaseSpec::delivered(
+        scenario.clone(),
+        spec.name.clone(),
+        "standalone-chromium",
+        "background_canvas_pixel_click",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::MacosCgEventPid,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_canvas_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "canvas-point", "canvas=idle");
+        let session = format!("standalone-canvas-click-{}", fixture.pid);
+        run_with_background_oracles(&mut fixture, |fixture| {
+            // Click at a fraction of the window screenshot and check the
+            // canvas saw that point, converted to viewport coordinates.
+            let click_at = |fixture: &mut BrowserFixture, nth: usize, fx: f64, fy: f64| {
+                let state = fixture.driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                    }),
+                );
+                assert!(!state.is_error(), "window capture: {}", state.raw);
+                let shot = state.structured();
+                let number = |key: &str| {
+                    shot[key]
+                        .as_f64()
+                        .unwrap_or_else(|| panic!("window capture has no {key}: {}", state.raw))
+                };
+                let scale = number("screenshot_scale");
+                let x = (number("screenshot_width") * fx).round();
+                let y = (number("screenshot_height") * fy).round();
+                let click = fixture.driver.call(
+                    "click",
+                    serde_json::json!({
+                        "session": session,
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "x": x,
+                        "y": y,
+                        "capture_id": shot["capture_id"].as_str().expect("capture_id"),
+                        "delivery_mode": "background",
+                    }),
+                );
+                assert!(!click.is_error(), "canvas click: {}", click.raw);
+                assert_eq!(
+                    click.action_delivery_mode(),
+                    Some("background"),
+                    "{}",
+                    click.raw
+                );
+                let prefix = format!("canvas={nth}:");
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let seen = loop {
+                    let seen = fixture.server.text("canvas-point").unwrap_or_default();
+                    if let Some(seen) = seen.strip_prefix(&prefix) {
+                        break seen.to_owned();
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "the canvas saw no click {nth} ({seen}): {}",
+                        click.raw
+                    );
+                    thread::sleep(Duration::from_millis(50));
+                };
+                let numbers = seen
+                    .split(['@', ','])
+                    .map(|part| part.parse::<f64>().expect("canvas report"))
+                    .collect::<Vec<_>>();
+                let [client_x, client_y, inset_x, inset_y] = numbers[..] else {
+                    panic!("canvas report {seen}");
+                };
+                // The viewport sits at the bottom of the window, centred
+                // across its side borders, so its origin in the window is
+                // (inset_x / 2, inset_y) in points.
+                let (want_x, want_y) = (x / scale - inset_x / 2.0, y / scale - inset_y);
+                assert!(
+                    (client_x - want_x).abs() <= 8.0 && (client_y - want_y).abs() <= 8.0,
+                    "click {nth} at screenshot ({x}, {y}) reached viewport ({client_x}, \
+                     {client_y}), not ({want_x}, {want_y}): {}",
+                    click.raw
+                );
+            };
+            // Two points away from the canvas centre (50%, 70% of the
+            // viewport), where an accessibility press would land.
+            click_at(fixture, 1, 0.25, 0.6);
+            click_at(fixture, 2, 0.75, 0.9);
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
 fn run_trusted_click(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-trusted-click",
@@ -2929,7 +3117,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3082,7 +3270,7 @@ fn run_reduced_motion_policy(spec: &BrowserSpec) {
         );
         assert_eq!(
             clicked.action_effect(),
-            Some("unverifiable"),
+            Some("confirmed"),
             "{}",
             clicked.raw
         );
@@ -3319,7 +3507,7 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3494,7 +3682,7 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3733,7 +3921,15 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
             let oopif_button = ref_by_frame_label(&snapshot, "oopif", "id=btn-increment");
             let oopif_input = ref_by_frame_label(&snapshot, "oopif", "id=txt-input");
 
-            for reference in [&shadow_button, &frame_button, &oopif_button] {
+            // The shadow button writes to its host's document and the OOPIF
+            // button to its own document, which the click watches. The
+            // same-process frame button writes only to the parent document,
+            // which the click does not watch.
+            for (reference, effect) in [
+                (&shadow_button, "confirmed"),
+                (&frame_button, "unverifiable"),
+                (&oopif_button, "confirmed"),
+            ] {
                 let clicked = fixture.driver.call(
                     "browser_click",
                     serde_json::json!({
@@ -3744,12 +3940,7 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(
-                    clicked.action_effect(),
-                    Some("unverifiable"),
-                    "{}",
-                    clicked.raw
-                );
+                assert_eq!(clicked.action_effect(), Some(effect), "{}", clicked.raw);
             }
             wait_for_text(&fixture.server, "standalone-shadow-state", "shadow=clicked");
             wait_for_text(&fixture.server, "standalone-frame-state", "iframe=clicked");
@@ -4089,7 +4280,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
             );
             assert_eq!(
                 clicked.action_effect(),
-                Some("unverifiable"),
+                Some("confirmed"),
                 "{}",
                 clicked.raw
             );
@@ -4725,11 +4916,47 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         } else if cfg!(target_os = "macos")
             && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
         {
-            Some(window_chrome_changed_pixel_center(
-                &window_before,
-                &window_after,
-                bounds,
-            ))
+            // Edge draws the collapsed indicator asynchronously after the
+            // page's request resolves, so the first capture can predate it
+            // (a hosted run saw no changed chrome pixels 250 ms after the
+            // request). Recapture until the chrome changes, or the window
+            // changes materially, up to a bounded deadline.
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut indicator =
+                window_chrome_changed_pixel_center(&window_before, &window_after, bounds);
+            while indicator.is_none()
+                && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
+                && Instant::now() < deadline
+            {
+                thread::sleep(Duration::from_millis(250));
+                let recaptured = fixture.driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": after_window_session,
+                        "screenshot_out_file": window_after_path,
+                    }),
+                );
+                assert!(
+                    !recaptured.is_error(),
+                    "recapture while waiting for quiet permission indicator: {}",
+                    recaptured.raw
+                );
+                window_after = load_capture(&window_after_path);
+                assert_eq!(
+                    window_before.dimensions(),
+                    window_after.dimensions(),
+                    "browser window changed size while waiting for the permission indicator"
+                );
+                indicator =
+                    window_chrome_changed_pixel_center(&window_before, &window_after, bounds);
+            }
+            if changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels {
+                Some(indicator)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -5901,6 +6128,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_background_web_click_noop,
     run_background_web_click_noop
+);
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_background_canvas_pixel_click,
+    run_background_canvas_pixel_click
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(

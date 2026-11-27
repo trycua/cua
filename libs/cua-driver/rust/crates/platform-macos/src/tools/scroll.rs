@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_element_attr, copy_string_attr, element_screen_center, kAXErrorSuccess,
-    perform_action, AXUIElementRef,
+    copy_children, copy_element_attr, copy_string_attr, kAXErrorSuccess, perform_action,
+    AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -56,6 +56,16 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 /// schema advertises this range and both delivery paths enforce it.
 const AMOUNT_MIN: u64 = 1;
 const AMOUNT_MAX: u64 = 50;
+
+/// Wheel point for an element: the center of its part inside the window, or
+/// the center of the whole element when the window is unknown or they do not
+/// overlap (the background guard then refuses it as outside the window).
+fn element_wheel_point(rect: [f64; 4], window: Option<[f64; 4]>) -> (f64, f64) {
+    let [x, y, w, h] = window
+        .and_then(|window| crate::ax::reveal_scroll::intersect(rect, window))
+        .unwrap_or(rect);
+    (x + w / 2.0, y + h / 2.0)
+}
 
 fn clamp_amount(requested: u64) -> usize {
     requested.clamp(AMOUNT_MIN, AMOUNT_MAX) as usize
@@ -375,9 +385,9 @@ impl Tool for ScrollTool {
             } else {
                 Ok(())
             };
-            // Element path: wheel at the element's screen-space center. Both AX
-            // coordinates and window bounds are logical top-left points, so no
-            // Retina scaling is needed here.
+            // Element path: wheel at the center of the element's part inside the
+            // window. Both AX coordinates and window bounds are logical top-left
+            // points, so no Retina scaling is needed here.
             let wid = window_id;
             let target_guard = pre_focus_guard.clone();
             let target_task = tokio::task::spawn_blocking(move || {
@@ -395,20 +405,20 @@ impl Tool for ScrollTool {
                     );
                 }
                 std::thread::sleep(std::time::Duration::from_millis(40));
-                let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
                 let rect = unsafe {
                     crate::ax::bindings::element_screen_rect(element_ptr as AXUIElementRef)
                 };
-                Ok(center.map(|(cx, cy)| {
-                    let win_local = wid
-                        .and_then(crate::windows::window_bounds_by_id)
-                        .map(|b| (cx - b.x, cy - b.y));
+                let bounds = wid.and_then(crate::windows::window_bounds_by_id);
+                let window = bounds.as_ref().map(|b| [b.x, b.y, b.width, b.height]);
+                Ok(rect.map(|rect| {
+                    let (cx, cy) = element_wheel_point(rect, window);
+                    let win_local = bounds.as_ref().map(|b| (cx - b.x, cy - b.y));
                     WheelTarget {
                         screen_x: cx,
                         screen_y: cy,
                         win_local,
                         wid,
-                        rect,
+                        rect: Some(rect),
                     }
                 }))
             });
@@ -857,5 +867,48 @@ mod tests {
         assert_eq!(clamp_amount(1100), AMOUNT_MAX as usize);
         assert_eq!(clamp_amount(0), AMOUNT_MIN as usize);
         assert_eq!(clamp_amount(3), 3);
+    }
+
+    #[test]
+    fn element_wheel_point_is_the_center_of_an_element_inside_the_window() {
+        assert_eq!(
+            element_wheel_point([100.0, 100.0, 200.0, 100.0], Some([0.0, 0.0, 800.0, 600.0])),
+            (200.0, 150.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_stays_inside_a_window_shorter_than_the_element() {
+        assert_eq!(
+            element_wheel_point([0.0, 50.0, 800.0, 3000.0], Some([0.0, 0.0, 800.0, 600.0])),
+            (400.0, 325.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_uses_the_visible_part_of_an_element_above_the_window() {
+        assert_eq!(
+            element_wheel_point(
+                [100.0, -400.0, 200.0, 600.0],
+                Some([0.0, 100.0, 800.0, 600.0])
+            ),
+            (200.0, 150.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_falls_back_to_the_element_center_outside_the_window() {
+        assert_eq!(
+            element_wheel_point([0.0, 900.0, 200.0, 100.0], Some([0.0, 0.0, 800.0, 600.0])),
+            (100.0, 950.0)
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_is_the_element_center_without_window_bounds() {
+        assert_eq!(
+            element_wheel_point([0.0, 50.0, 800.0, 3000.0], None),
+            (400.0, 1550.0)
+        );
     }
 }

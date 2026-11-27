@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.11.18](https://github.com/trycua/cua/compare/sandbox-v0.11.17...sandbox-v0.11.18) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.59 ([#8531](https://github.com/trycua/cua/issues/8531)) ([fc65652](https://github.com/trycua/cua/commit/fc6565225647eee294e38f40191454f39d7c81aa))
+
+## [0.11.17](https://github.com/trycua/cua/compare/sandbox-v0.11.16...sandbox-v0.11.17) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.58 ([#8502](https://github.com/trycua/cua/issues/8502)) ([2a15e14](https://github.com/trycua/cua/commit/2a15e141e23d72eb3c73df9a289d2cf079033516))
+
+## [0.11.16](https://github.com/trycua/cua/compare/sandbox-v0.11.15...sandbox-v0.11.16) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.57 ([#8496](https://github.com/trycua/cua/issues/8496)) ([559d62c](https://github.com/trycua/cua/commit/559d62cff589da10caef3f7e868fc6bd8e621212))
+
+## [0.11.15](https://github.com/trycua/cua/compare/sandbox-v0.11.14...sandbox-v0.11.15) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.56 ([#8376](https://github.com/trycua/cua/issues/8376)) ([d8b1a15](https://github.com/trycua/cua/commit/d8b1a151b997e78cbcf85d478baf2c40a28b14da))
+
+## [0.11.14](https://github.com/trycua/cua/compare/sandbox-v0.11.13...sandbox-v0.11.14) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** python security bumps (Twisted, pypdf, filelock, virtualenv, litellm, transformers, pyasn1, GitPython, fsspec, joserfc, black, langgraph-sdk) ([#8312](https://github.com/trycua/cua/issues/8312)) ([ee59258](https://github.com/trycua/cua/commit/ee592588b4a6ff6fc8ea929a4354dcb62c64076f))
+
+## [0.11.13](https://github.com/trycua/cua/compare/sandbox-v0.11.12...sandbox-v0.11.13) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump mcp to 1.30.0+ (GHSA-qx49-fqc8-xw99) ([#8300](https://github.com/trycua/cua/issues/8300)) ([3d9c32f](https://github.com/trycua/cua/commit/3d9c32fc21e9e9326b330da26e230f8f56c69c0b))
+
+## [0.11.12](https://github.com/trycua/cua/compare/sandbox-v0.11.11...sandbox-v0.11.12) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
 ## [0.11.11](https://github.com/trycua/cua/compare/sandbox-v0.11.10...sandbox-v0.11.11) (2026-11-19)
 
 

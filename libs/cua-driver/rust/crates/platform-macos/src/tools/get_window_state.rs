@@ -27,12 +27,19 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 /// call may still be waiting on its messaging timeout.
 const AX_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// The AX walker's own caps, which bound the saved walk defaults.
+pub(crate) const WALK_LIMITS: cua_driver_core::walk_defaults::WalkLimits =
+    cua_driver_core::walk_defaults::WalkLimits {
+        max_elements: crate::ax::tree::DEFAULT_MAX_ELEMENTS,
+        max_depth: Some(crate::ax::tree::DEFAULT_MAX_DEPTH),
+    };
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
-        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
+        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `url` on links, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
             \n\
-            START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
+            START NARROW: a read walks at most 250 nodes by default (or the saved `get_window_state.max_elements` from `set_config`; `get_config` shows it) and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
             DIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
             \n\
@@ -74,12 +81,12 @@ fn def() -> &'static ToolDef {
                 "max_elements": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 250 (2 000 with full_output:true); the response states when the tree was cut."
+                    "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 250, or the saved get_window_state.max_elements (2 000 with query or full_output:true); the response states when the tree was cut."
                 },
                 "max_depth": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Cap on walk depth. Default 25."
+                    "description": "Cap on walk depth. Default 25, or the saved get_window_state.max_depth (25 with query or full_output:true)."
                 },
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension": {
@@ -274,7 +281,9 @@ impl Tool for GetWindowStateTool {
         // Fast path `on`: re-reads skip the screenshot unless asked for one.
         let should_capture = should_capture
             && !cua_driver_core::fast_path::wire::skip_reread_screenshot(
+                &self.state.guard_store,
                 &args,
+                session_id.as_deref(),
                 pid,
                 u64::from(window_id),
             );
@@ -333,19 +342,12 @@ impl Tool for GetWindowStateTool {
                 .get("_observation_only")
                 .and_then(|value| value.as_bool())
                 == Some(true);
-        // Optional caps — when omitted, fall back to the defaults baked into
-        // the AX walker. minimum:1 is keyed in the schema, but defend
-        // against 0 here as well so a misbehaving client can't disable the
-        // walk entirely.
-        let max_elements = view.max_elements(
-            &args,
-            crate::ax::tree::DEFAULT_MAX_ELEMENTS,
-            observation_only,
-        );
-        let max_depth = args
-            .get("max_depth")
-            .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as usize)
+        // Optional caps — when omitted, fall back to the saved defaults or
+        // the AX walker's own.
+        let walk_defaults = cua_driver_core::walk_defaults::active();
+        let max_elements = view.max_elements(&args, WALK_LIMITS, walk_defaults, observation_only);
+        let max_depth = view
+            .max_depth(&args, WALK_LIMITS, walk_defaults, observation_only)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
         let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
 
@@ -456,6 +458,7 @@ impl Tool for GetWindowStateTool {
                     u32,
                     crate::windows::WindowBounds,
                     f64,
+                    Option<cua_driver_core::fast_path::store::ReadImage>,
                 ),
                 super::px_frame::PxFrameError,
             > {
@@ -468,7 +471,9 @@ impl Tool for GetWindowStateTool {
                     &bounds,
                     || crate::capture::screenshot_window_image(window_id),
                 )?;
-                crate::fast_path_guard::record_read_image(pid, window_id, &raw, &bounds);
+                // Published after the join, while this call still holds its
+                // session, so a cancelled read cannot outlive session_end.
+                let guard_read = crate::fast_path_guard::read_image(pid, window_id, &raw, &bounds);
                 // Resize and encode once from the raw pixels; the PNG bytes
                 // are identical to the former encode-decode-resize round trip.
                 let (png, w, h) = raw.encode(max_dim, encoding).map_err(|e| {
@@ -493,6 +498,7 @@ impl Tool for GetWindowStateTool {
                         orig_h,
                         bounds,
                         scale,
+                        guard_read,
                     ))
                 } else {
                     Ok((
@@ -504,11 +510,17 @@ impl Tool for GetWindowStateTool {
                         orig_h,
                         bounds,
                         scale,
+                        guard_read,
                     ))
                 }
             }).await;
             match res {
-                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale))) => {
+                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale, guard_read))) => {
+                    if let Some(read) = guard_read {
+                        self.state
+                            .guard_store
+                            .put_image(session_id.as_deref(), pid, read);
+                    }
                     if !observation_only {
                         screenshot_resize_scale = Some(orig_w as f64 / w as f64);
                     }
@@ -638,13 +650,20 @@ impl Tool for GetWindowStateTool {
         if let (Some(sid), Some(tree)) = (snapshot_id, tree_result.as_ref()) {
             if !observation_only {
                 crate::fast_path_guard::record_snapshot(
+                    &self.state.guard_store,
+                    session_id.as_deref(),
                     pid,
                     u64::from(window_id),
                     sid,
                     &tree.nodes,
                 );
                 if screenshot.is_none() {
-                    crate::fast_path_guard::record_window(pid, window_id);
+                    crate::fast_path_guard::record_window(
+                        &self.state.guard_store,
+                        session_id.as_deref(),
+                        pid,
+                        window_id,
+                    );
                 }
             }
         }
@@ -957,10 +976,7 @@ impl Tool for GetWindowStateTool {
                     key: cua_driver_core::window_state_view::ViewKey {
                         query: query.clone(),
                         max_elements,
-                        max_depth: args
-                            .get("max_depth")
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as usize),
+                        max_depth: Some(max_depth),
                     },
                     focus_probe: Some(&focus_probe),
                 },
@@ -1347,6 +1363,12 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     }
     if node.in_web_content {
         entry["in_web_content"] = serde_json::Value::Bool(true);
+    }
+    // A link's navigation target (AXURL). Without it a caller reading
+    // web content could see a link's text but not where it leads, and
+    // would have to press it to find out.
+    if let Some(url) = node.url.clone() {
+        entry["url"] = serde_json::Value::String(url);
     }
     if let Some(frame) = frame {
         entry["frame"] = frame;
@@ -1846,6 +1868,7 @@ mod tests {
             max_value: None,
             enabled: None,
             selected: None,
+            url: None,
             in_web_content: false,
         }
     }
@@ -2057,6 +2080,22 @@ mod tests {
     }
 
     #[test]
+    fn elements_surface_link_url() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXLink",
+            Some("Background mode"),
+            2,
+            None,
+            None,
+            vec!["AXPress".into()],
+        )];
+        nodes[0].url = Some("https://example.com/docs/guides/background".into());
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
+        assert_eq!(entry["url"], "https://example.com/docs/guides/background");
+    }
+
+    #[test]
     fn checkbox_value_state_normalizes_to_selected() {
         let mut nodes = vec![node(
             Some(0),
@@ -2077,7 +2116,14 @@ mod tests {
         // Stock behaviour is unchanged for elements without control state.
         let nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None, vec![])];
         let entry = &build_elements_array_with_token(&nodes, None)[0];
-        for key in ["value_description", "min", "max", "enabled", "selected"] {
+        for key in [
+            "value_description",
+            "min",
+            "max",
+            "enabled",
+            "selected",
+            "url",
+        ] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
         }
     }

@@ -14,6 +14,7 @@
 //!   - text_input: TextField with mirror Text
 //!   - popover   : .popover() — SwiftUI analogue of WinUI3 CommandBarFlyout
 //!   - menu_button: Menu (AXMenuButton) whose items appear after the press
+//!   - form_labels: grouped Form Toggle named only by AXTitleUIElement
 //!
 //! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_swiftui_test -- --ignored --nocapture
@@ -248,6 +249,67 @@ fn harness_swiftui_verify_state() {
                         item["type"] == "image" && item["mimeType"] == "image/png"
                     })),
                 "verify_state did not return final visual evidence"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+/// A grouped Form Toggle names its checkbox only through AXTitleUIElement
+/// (#6697): the row, `elements[].label`, `query` and a run_steps name lookup
+/// all read that label.
+#[test]
+#[ignore]
+fn harness_swiftui_form_toggle_label() {
+    run_case(
+        native_readonly_case(
+            "swiftui",
+            "form_toggle_label",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let snap = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "query": "Launch at login",
+                    "tree_format": "both",
+                    "include_screenshot": false,
+                    "timeout_ms": 10_000,
+                    "max_elements": 1_000
+                }),
+            );
+            assert!(
+                snap.tree_text().contains("AXCheckBox \"Launch at login\""),
+                "form toggle row is unlabelled:\n{}",
+                snap.tree_text()
+            );
+            let labelled = snap.structured()["elements"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|e| e["role"] == "AXCheckBox" && e["label"] == "Launch at login");
+            assert!(
+                labelled,
+                "no AXCheckBox element labelled \"Launch at login\": {}",
+                snap.structured()["elements"]
+            );
+
+            let found = driver.call(
+                "run_steps",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "steps": [{"wait_for": {"role": "checkbox", "name": "Launch at login"}}]
+                }),
+            );
+            assert!(
+                !found.is_error(),
+                "run_steps could not find the form toggle by name: {}",
+                found.text()
             );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },

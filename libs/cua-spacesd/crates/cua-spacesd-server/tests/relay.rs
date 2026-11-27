@@ -118,7 +118,7 @@ async fn relay_refuses_bad_machine_tokens_and_anonymous_clients() {
     config.max_backoff = Duration::from_millis(100);
     let end = cua_relay::client::session(&config, &CancellationToken::new()).await;
     assert!(
-        matches!(end, cua_relay::client::SessionEnd::Refused(ref r) if r.contains("401")),
+        matches!(end, cua_relay::client::SessionEnd::Unauthorized),
         "{end:?}"
     );
     assert!(relay.machine_ids().is_empty());

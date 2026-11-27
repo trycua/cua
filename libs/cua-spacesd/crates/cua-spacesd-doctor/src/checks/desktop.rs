@@ -911,10 +911,24 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
         }
         let since = events(ctx, &form).await.len();
         if let Err(error) = ctx.client.press("backspace").await {
+            // What the form itself logged after the press: a Backspace
+            // key_press means its thread read the key but not the drain
+            // sentinel behind it (busy in a handler); none means it read
+            // nothing at all.
+            let after: Vec<Value> = events(ctx, &form).await.into_iter().skip(since).collect();
+            let seen: Vec<String> = after
+                .iter()
+                .filter_map(|e| match e["type"].as_str() {
+                    Some("key_press") => Some(format!("key_press {}", e["key"])),
+                    Some("entry_changed") => Some(format!("entry_changed {}", e["text"])),
+                    Some(t) if t.starts_with("focus_") || t == "widget_focus" => Some(t.to_owned()),
+                    _ => None,
+                })
+                .collect();
             return Check::new(
                 "input.type",
                 Status::Fail,
-                format!("Keyboard press: {error}"),
+                format!("Keyboard press: {error}; the form logged after the press: {seen:?}"),
             );
         }
         let edited = wait_event_after(

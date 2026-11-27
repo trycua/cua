@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -17,6 +18,7 @@ thread_local! {
 }
 
 use crate::{
+    dispatch_identity::{DispatchIdentity, RuntimeScope},
     protocol::{Content, ToolResult},
     recording::{now_ms, RecordingSession},
     recording_tools::{
@@ -79,20 +81,139 @@ pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
 /// input call, so a waiting call never outlasts its own budget behind it.
 const STALE_LANE_WAIT: Duration = Duration::from_secs(12);
 
+/// What a call's input is serialized on: the process-wide desktop, or text
+/// input to one process. Each refuses with `input_busy` and its own `lane`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lane {
+    Desktop,
+    Pid(i64),
+}
+
+impl Lane {
+    /// The pid lane a call needs: `type_text` to one process. Desktop-scoped
+    /// text input has no stable process identity and takes only the desktop.
+    fn for_text_input(tool_name: &str, args: &Value) -> Option<Self> {
+        if tool_name != "type_text" {
+            return None;
+        }
+        args.get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0)
+            .map(Lane::Pid)
+    }
+
+    fn busy_refusal(self) -> ToolResult {
+        let (message, lane) = match self {
+            Lane::Desktop => (
+                "a previous call's input is still finishing: its call ended, but its worker still holds the desktop; retry once it has stopped".to_owned(),
+                serde_json::json!({"kind": "desktop"}),
+            ),
+            Lane::Pid(pid) => (
+                format!("text input is already active for pid {pid}"),
+                serde_json::json!({"kind": "pid", "pid": pid}),
+            ),
+        };
+        ToolResult::error(message.clone()).with_structured(serde_json::json!({
+            "status": "refused",
+            "refusal": {
+                "code": "input_busy",
+                "message": message,
+                "lane": lane,
+            }
+        }))
+    }
+}
+
+/// A call's admission to the input lanes it needs. It is taken after
+/// consent, so a call still being authorized holds no lane, and released
+/// as one once the call's physical action returns.
+///
+/// The order is fixed so no two calls can wait on each other:
+///
+/// 1. [`Lane::Pid`] first. Claiming it never waits for its holder: a busy
+///    pid is refused at once.
+/// 2. [`Lane::Desktop`] last. It is the only lane that waits, and a call may
+///    wait for it while holding a pid lane. That cannot deadlock, because
+///    no call ever waits for a pid lane.
+///
+/// Browser tools take neither lane: they are not physical desktop actions,
+/// so [`requires_desktop_coordination`] is false for them. The browser
+/// operations that mutate a tab serialize on the browser engine's
+/// `MutationGates` instead. Nothing takes the desktop lane and then a
+/// browser gate.
+#[derive(Default)]
+struct InputAdmission {
+    pid: Option<PidLane>,
+    desktop: Option<DesktopCall>,
+}
+
+impl InputAdmission {
+    /// Admit the call to `lane`. A pid lane refuses at once while other text
+    /// input to that process runs. The desktop lane waits its turn, and
+    /// refuses only behind a worker that outlived its call.
+    async fn admit(&mut self, lane: Lane) -> Result<(), ToolResult> {
+        match lane {
+            Lane::Pid(pid) => self.pid = Some(PidLane::claim(pid)?),
+            Lane::Desktop => self.desktop = Some(DesktopCall::acquire().await?),
+        }
+        Ok(())
+    }
+}
+
+fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
+    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Text input to one process, released on drop.
+#[derive(Debug)]
+struct PidLane(i64);
+
+impl PidLane {
+    fn claim(pid: i64) -> Result<Self, ToolResult> {
+        let mut active = active_text_input_pids()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !active.insert(pid) {
+            return Err(Lane::Pid(pid).busy_refusal());
+        }
+        Ok(Self(pid))
+    }
+}
+
+impl Drop for PidLane {
+    fn drop(&mut self) {
+        active_text_input_pids()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.0);
+    }
+}
+
 /// The process-wide physical input lane: one desktop action at a time.
 struct DesktopLane {
     lock: Arc<tokio::sync::Mutex<()>>,
-    holder: Arc<Mutex<LaneHolder>>,
+    state: Arc<Mutex<LaneState>>,
+    generations: AtomicU64,
     stale_wait: Duration,
 }
 
-/// Which hold of the lane is current, and when its call ended while a
-/// worker still held the lane. A mark belongs to its holder's generation,
-/// so it never applies to the holder after it.
-#[derive(Default)]
-struct LaneHolder {
-    generation: u64,
-    stale_since: Option<tokio::time::Instant>,
+/// Who holds the desktop lane. Only [`DesktopLane::acquire`], the drop of
+/// the call's [`DesktopCall`] and the drop of the hold's last
+/// [`DesktopLease`] change it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaneState {
+    Free,
+    /// The call that took hold `gen` is still running.
+    Held {
+        gen: u64,
+    },
+    /// Hold `gen`'s call ended at `since`, but a worker it started, or
+    /// cleanup that worker handed off, still holds a lease.
+    Orphaned {
+        gen: u64,
+        since: tokio::time::Instant,
+    },
 }
 
 fn desktop_lane() -> &'static DesktopLane {
@@ -100,8 +221,8 @@ fn desktop_lane() -> &'static DesktopLane {
     LANE.get_or_init(|| DesktopLane::new(STALE_LANE_WAIT))
 }
 
-fn lock_holder(holder: &Mutex<LaneHolder>) -> std::sync::MutexGuard<'_, LaneHolder> {
-    holder
+fn lock_state(state: &Mutex<LaneState>) -> std::sync::MutexGuard<'_, LaneState> {
+    state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -110,7 +231,8 @@ impl DesktopLane {
     fn new(stale_wait: Duration) -> Self {
         Self {
             lock: Arc::new(tokio::sync::Mutex::new(())),
-            holder: Arc::new(Mutex::new(LaneHolder::default())),
+            state: Arc::new(Mutex::new(LaneState::Free)),
+            generations: AtomicU64::new(0),
             stale_wait,
         }
     }
@@ -130,17 +252,13 @@ impl DesktopLane {
                 let wait = self.lock.clone().lock_owned();
                 tokio::pin!(wait);
                 loop {
-                    // Read the holder on every pass, the first one before any
+                    // Read the state on every pass, the first one before any
                     // wait included: a stale worker seen earlier may have
                     // stopped, and its successor be a call still running.
-                    let stale_since = lock_holder(&self.holder).stale_since;
-                    if stale_since
-                        .is_some_and(|since| tokio::time::Instant::now() >= since + self.stale_wait)
-                    {
-                        return Err(protected_refusal(
-                            "input_busy",
-                            "a previous call's input is still finishing: its call ended, but its worker still holds the desktop; retry once it has stopped",
-                        ));
+                    if let LaneState::Orphaned { since, .. } = *lock_state(&self.state) {
+                        if tokio::time::Instant::now() >= since + self.stale_wait {
+                            return Err(Lane::Desktop.busy_refusal());
+                        }
                     }
                     tokio::select! {
                         guard = &mut wait => break guard,
@@ -149,33 +267,37 @@ impl DesktopLane {
                 }
             }
         };
-        let generation = {
-            let mut holder = lock_holder(&self.holder);
-            holder.generation += 1;
-            holder.stale_since = None;
-            holder.generation
-        };
-        Ok(DesktopCall(DesktopLease(Arc::new(HeldLane {
-            holder: self.holder.clone(),
-            generation,
+        let gen = self.generations.fetch_add(1, Ordering::Relaxed) + 1;
+        *lock_state(&self.state) = LaneState::Held { gen };
+        Ok(DesktopCall(Some(DesktopLease(Arc::new(HeldLane {
+            state: self.state.clone(),
+            gen,
             _guard: guard,
-        }))))
+        })))))
+    }
+
+    #[cfg(test)]
+    fn state(&self) -> LaneState {
+        *lock_state(&self.state)
     }
 }
 
 struct HeldLane {
-    holder: Arc<Mutex<LaneHolder>>,
-    generation: u64,
+    state: Arc<Mutex<LaneState>>,
+    gen: u64,
     _guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 impl Drop for HeldLane {
     fn drop(&mut self) {
-        // Runs before `_guard` unlocks the lane for the next holder.
-        let mut holder = lock_holder(&self.holder);
-        if holder.generation == self.generation {
-            holder.stale_since = None;
-        }
+        // Runs before `_guard` unlocks the lane for the next holder, so the
+        // state is still this hold's.
+        let mut state = lock_state(&self.state);
+        debug_assert!(matches!(
+            *state,
+            LaneState::Held { gen } | LaneState::Orphaned { gen, .. } if gen == self.gen
+        ));
+        *state = LaneState::Free;
     }
 }
 
@@ -195,8 +317,8 @@ impl DesktopLease {
 }
 
 /// The dispatching call's own hold on the desktop lane. Dropping it while a
-/// worker still holds a [`DesktopLease`] clone marks that worker stale.
-pub struct DesktopCall(DesktopLease);
+/// worker still holds a [`DesktopLease`] clone orphans the hold.
+pub struct DesktopCall(Option<DesktopLease>);
 
 impl DesktopCall {
     /// Wait for the process-wide input lane, or refuse with `input_busy`
@@ -208,65 +330,32 @@ impl DesktopCall {
     /// Run `action` as the desktop action holding this lane, so that
     /// [`DesktopLease::current`] returns it.
     pub async fn scope<F: std::future::Future>(&self, action: F) -> F::Output {
-        DESKTOP_LEASE.scope(self.0.clone(), action).await
+        let lease = self
+            .0
+            .clone()
+            .expect("a call holds its lease until it drops");
+        DESKTOP_LEASE.scope(lease, action).await
     }
 }
 
 impl Drop for DesktopCall {
     fn drop(&mut self) {
-        let held = &self.0 .0;
-        // Checked under the holder lock that the last clone's drop takes,
-        // so a worker stopping now cannot leave its mark behind.
-        let mut holder = lock_holder(&held.holder);
-        if holder.generation == held.generation && Arc::strong_count(held) > 1 {
-            holder.stale_since = Some(tokio::time::Instant::now());
+        let Some(DesktopLease(held)) = self.0.take() else {
+            return;
+        };
+        let (state, gen) = (held.state.clone(), held.gen);
+        // If this was the hold's last lease, the lane is free now, and a
+        // successor may already hold it. If it was not, a worker still holds
+        // the lane, unless it stopped since: then its drop freed it.
+        drop(held);
+        let mut state = lock_state(&state);
+        if matches!(*state, LaneState::Held { gen: current } if current == gen) {
+            *state = LaneState::Orphaned {
+                gen,
+                since: tokio::time::Instant::now(),
+            };
         }
     }
-}
-
-fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
-    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
-    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-#[derive(Debug)]
-struct TextInputAdmission {
-    pid: i64,
-}
-
-impl Drop for TextInputAdmission {
-    fn drop(&mut self) {
-        active_text_input_pids()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.pid);
-    }
-}
-
-fn try_admit_text_input(
-    tool_name: &str,
-    args: &Value,
-) -> Result<Option<TextInputAdmission>, ToolResult> {
-    if tool_name != "type_text" {
-        return Ok(None);
-    }
-    let Some(pid) = args
-        .get("pid")
-        .and_then(Value::as_i64)
-        .filter(|pid| *pid > 0)
-    else {
-        // Desktop-scoped input has no stable process identity. It continues to
-        // use the process-wide physical action coordinator below.
-        return Ok(None);
-    };
-    let mut active = active_text_input_pids()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !active.insert(pid) {
-        let message = format!("text input is already active for pid {pid}");
-        return Err(protected_refusal("input_busy", &message));
-    }
-    Ok(Some(TextInputAdmission { pid }))
 }
 
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
@@ -785,6 +874,13 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
             .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
             .or_insert_with(crate::post_action_wait::schema);
     }
+    // Dispatch checks `ui_tree_revision` before delivery (see
+    // `crate::ui_tree_revision`).
+    if crate::ui_tree_revision::accepts(tool_name) {
+        properties
+            .entry(crate::ui_tree_revision::UI_TREE_REVISION_ARG)
+            .or_insert_with(crate::ui_tree_revision::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -865,7 +961,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 ///   `session.capture_scope.escalate` compatibility tokens
 /// - `agent_cursor.move`, `agent_cursor.set_enabled`,
 ///   `agent_cursor.set_motion`, `agent_cursor.set_theme`,
-///   `agent_cursor.state`
+///   `agent_cursor.set_badge`, `agent_cursor.state`
 /// - `recording.start`, `recording.stop`, `recording.state`,
 ///   `recording.replay`, `recording.install_dependency`
 /// - `page.action`
@@ -962,6 +1058,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "launch_app" => &["app.launch"],
         "list_apps" => &["app.list"],
         "kill_app" => &["app.kill"],
+        "agent_display" => &["display.virtual"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
         "set_window_frame" => &["window.frame.set"],
@@ -985,6 +1082,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "set_agent_cursor_enabled" => &["agent_cursor.set_enabled"],
         "set_agent_cursor_motion" => &["agent_cursor.set_motion"],
         "set_agent_cursor_theme" => &["agent_cursor.set_theme"],
+        "set_agent_cursor_badge" => &["agent_cursor.set_badge"],
         "get_agent_cursor_state" => &["agent_cursor.state"],
 
         // ── recording / replay ───────────────────────────────────────
@@ -1290,19 +1388,29 @@ impl TrustedInvocationEvidence {
         }
     }
 
+    /// The call's identity, from this evidence and the trusted context. The
+    /// arguments contribute only their public `session` label.
+    fn dispatch_identity(
+        &self,
+        tool_name: &str,
+        public_args: &Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+    ) -> DispatchIdentity {
+        DispatchIdentity::resolve(
+            RuntimeScope::new(context.runtime_scope_key()),
+            self.session_id.as_deref(),
+            self.transport_session_id
+                .as_deref()
+                .or(context.transport_session()),
+            public_args,
+            session_selecting_tool(tool_name),
+        )
+    }
+
     fn apply_runtime_args(&self, args: &mut Value) {
         let Some(arguments) = args.as_object_mut() else {
             return;
         };
-        if let Some(session) = self.session_id.as_ref() {
-            arguments.insert("_session_id".to_owned(), Value::String(session.clone()));
-        }
-        if let Some(session) = self.transport_session_id.as_ref() {
-            arguments.insert(
-                "_transport_session_id".to_owned(),
-                Value::String(session.clone()),
-            );
-        }
         if self.browser_download_mcp_host_approved {
             arguments.insert(
                 crate::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG.to_owned(),
@@ -1335,6 +1443,9 @@ pub struct ToolRegistry {
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
     capture_service: Arc<crate::capture_runtime::CaptureService>,
+    /// Fast-path read-time state, owned by this runtime and cleared per
+    /// session when that session ends.
+    guard_store: Arc<crate::fast_path::store::GuardStore>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -1381,6 +1492,8 @@ impl ToolRegistry {
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
         let weak_captures = Arc::downgrade(&capture_service);
+        let guard_store = Arc::new(crate::fast_path::store::GuardStore::new());
+        let weak_guard_store = Arc::downgrade(&guard_store);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 crate::agent_cursor::forget_input_origin(session_id);
@@ -1395,6 +1508,9 @@ impl ToolRegistry {
                 }
                 if let Some(captures) = weak_captures.upgrade() {
                     captures.retire_session_id(session_id);
+                }
+                if let Some(guard_store) = weak_guard_store.upgrade() {
+                    guard_store.retire_session(session_id);
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -1432,6 +1548,7 @@ impl ToolRegistry {
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
             capture_service,
+            guard_store,
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -1469,6 +1586,11 @@ impl ToolRegistry {
     /// Return the immutable-capture service owned by this runtime registry.
     pub fn capture_service(&self) -> Arc<crate::capture_runtime::CaptureService> {
         self.capture_service.clone()
+    }
+
+    /// Return the fast-path guard store owned by this runtime registry.
+    pub fn guard_store(&self) -> Arc<crate::fast_path::store::GuardStore> {
+        self.guard_store.clone()
     }
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
@@ -1754,6 +1876,11 @@ impl ToolRegistry {
         self.tools.get(name).map(|t| t.def())
     }
 
+    #[cfg(test)]
+    pub(crate) fn registered_tool(&self, name: &str) -> Option<&dyn Tool> {
+        self.tools.get(name).map(|tool| tool.as_ref())
+    }
+
     /// List all tool names in registration order.
     pub fn tool_names(&self) -> impl Iterator<Item = &str> {
         self.order.iter().map(|s| s.as_str())
@@ -1960,7 +2087,7 @@ impl ToolRegistry {
             Ok(crate::post_action_wait::PostActionWait::Default)
         };
         let delta_target = (!in_batch && crate::fast_path::wire::returns_delta(tool))
-            .then(|| crate::fast_path::wire::delta_target(&args))
+            .then(|| crate::fast_path::wire::delta_target(&args, &self.guard_store))
             .flatten();
         let mut result = match wait {
             Ok(wait) => {
@@ -2013,11 +2140,11 @@ impl ToolRegistry {
                 "authorization for this Cua runtime has been suspended by revoke-all",
             );
         }
-        if context.is_revoked() {
-            return protected_refusal(
-                "authorization_revoked",
-                "this session authorization context has been revoked",
-            );
+        // The context's phase is the one authorization clock. Refuse before
+        // any lifecycle work so `start_session` cannot revive an episode
+        // that every later call would be denied in.
+        if let Some(refusal) = authorization_phase_refusal(context.phase()) {
+            return refusal;
         }
 
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
@@ -2096,28 +2223,11 @@ impl ToolRegistry {
         // but mutable core/platform state must not be keyed by that
         // caller-chosen label alone. Translate it only after authorization so
         // policy and manifests continue to evaluate the public request.
-        let runtime_prefix = namespace_runtime_args(&mut args, context, evidence);
-        if session_selecting_tool(resolved_name)
-            && args.get("_session_id").and_then(Value::as_str).is_none()
-        {
-            let implicit = args
-                .get("_transport_session_id")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("{runtime_prefix}implicit-direct"));
-            args["_session_id"] = Value::String(implicit.clone());
-            args["_transport_session_id"] = Value::String(implicit);
-        }
+        let identity = evidence.dispatch_identity(resolved_name, &public_args, context);
+        let runtime_prefix = identity.runtime().prefix();
+        platform_args(&mut args, &identity, context, evidence);
         evidence.record_input_origin(&args);
-        let runtime_session = args
-            .get("_session_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        if let Some(session) = runtime_session.as_deref() {
-            let owner = args
-                .get("_transport_session_id")
-                .and_then(Value::as_str)
-                .unwrap_or(session);
+        if let (Some(session), Some(owner)) = (identity.lifecycle(), identity.owner()) {
             // A session its owner lost to the idle sweep, or a label its
             // closed owner transport released without `end_session`, is
             // recreated at lifecycle admission below; every other ended
@@ -2133,12 +2243,10 @@ impl ToolRegistry {
                     Some(crate::session::DispatchRefusal::TransportClosed) => {
                         Some(transport_closed_refusal())
                     }
-                    Some(_) => Some(session_ended_refusal(
-                        args.get("_public_session_label").and_then(Value::as_str),
-                    )),
+                    Some(_) => Some(session_ended_refusal(identity.public_label())),
                 };
                 if let Some(mut result) = refusal {
-                    restore_public_runtime_result(&mut result, &runtime_prefix);
+                    restore_public_runtime_result(&mut result, runtime_prefix);
                     return result;
                 }
             }
@@ -2151,23 +2259,9 @@ impl ToolRegistry {
             let structured =
                 violation.as_json(args.get("session").and_then(Value::as_str).unwrap_or(""));
             let mut result = ToolResult::error(violation.message).with_structured(structured);
-            restore_public_runtime_result(&mut result, &runtime_prefix);
+            restore_public_runtime_result(&mut result, runtime_prefix);
             return result;
         }
-
-        // A queued text mutation can become stale while another agent is
-        // typing into the same process. Refuse that overlap before consent,
-        // cursor, recording, or platform focus behavior can begin. The guard
-        // is process-global so independent registries cannot interleave text
-        // through separate platform workers, and RAII releases it on task
-        // cancellation as well as normal completion.
-        let _text_input_admission = match try_admit_text_input(resolved_name, &public_args) {
-            Ok(admission) => admission,
-            Err(mut refusal) => {
-                restore_public_runtime_result(&mut refusal, &runtime_prefix);
-                return refusal;
-            }
-        };
 
         let active_adapters =
             crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args);
@@ -2186,8 +2280,7 @@ impl ToolRegistry {
         } else {
             None
         };
-        let process_ownership_key =
-            process_ownership_key(runtime_session.as_deref(), &runtime_prefix);
+        let process_ownership_key = process_ownership_key(&identity);
         let runtime_proves_driver_owned =
             current_process_fingerprint
                 .as_ref()
@@ -2270,58 +2363,67 @@ impl ToolRegistry {
                 &format!("{resolved_name}: unknown {detail}"),
             );
         }
+        let planned_revision = if crate::ui_tree_revision::accepts(resolved_name) {
+            let revision = match crate::ui_tree_revision::parse(resolved_name, &args) {
+                Ok(revision) => revision,
+                Err(refusal) => return refusal,
+            };
+            if let Some(arguments) = args.as_object_mut() {
+                arguments.remove(crate::ui_tree_revision::UI_TREE_REVISION_ARG);
+            }
+            revision
+        } else {
+            None
+        };
 
         // Admit the call into its session before any resource adapter can ask
         // a person, so a call waiting on consent counts as in flight: neither
         // `end_session` nor the idle sweep ends the episode under it.
-        let lifecycle_dispatch =
-            if session_requiring_tool(resolved_name) && resolved_name != "start_session" {
-                let Some(session_id) = runtime_session.as_deref() else {
-                    return protected_refusal(
-                        "session_unavailable",
-                        "an admitted session-requiring call has no lifecycle identity",
-                    );
-                };
-                let owner = args
-                    .get("_transport_session_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or(session_id);
-                let public_label = args.get("_public_session_label").and_then(Value::as_str);
-                let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
-                let admitted = match context.lifecycle_idle_ttl_override() {
-                    Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
-                        session_id,
-                        public_label,
-                        owner,
-                        public_label.is_none(),
-                        transport,
-                        client_kind,
-                        idle_ttl,
-                    ),
-                    None => crate::session::begin_session_dispatch(
-                        session_id,
-                        public_label,
-                        owner,
-                        public_label.is_none(),
-                        transport,
-                        client_kind,
-                    ),
-                };
-                match admitted {
-                    Ok(guard) => Some(guard),
-                    Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
-                        return session_owned_by_other_transport_refusal(public_label, holder);
-                    }
-                    Err(crate::session::DispatchRefusal::TransportClosed) => {
-                        return transport_closed_refusal();
-                    }
-                    Err(refusal) => {
-                        return protected_refusal("session_ended", refusal.message());
-                    }
-                }
-            } else {
-                None
+        let lifecycle_dispatch = if session_requiring_tool(resolved_name)
+            && resolved_name != "start_session"
+        {
+            let (Some(session_id), Some(owner)) = (identity.lifecycle(), identity.owner()) else {
+                return protected_refusal(
+                    "session_unavailable",
+                    "an admitted session-requiring call has no lifecycle identity",
+                );
             };
+            let public_label = identity.public_label();
+            let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
+            let admitted = match context.lifecycle_idle_ttl_override() {
+                Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
+                    session_id,
+                    public_label,
+                    owner,
+                    public_label.is_none(),
+                    transport,
+                    client_kind,
+                    idle_ttl,
+                ),
+                None => crate::session::begin_session_dispatch(
+                    session_id,
+                    public_label,
+                    owner,
+                    public_label.is_none(),
+                    transport,
+                    client_kind,
+                ),
+            };
+            match admitted {
+                Ok(guard) => Some(guard),
+                Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
+                    return session_owned_by_other_transport_refusal(public_label, holder);
+                }
+                Err(crate::session::DispatchRefusal::TransportClosed) => {
+                    return transport_closed_refusal();
+                }
+                Err(refusal) => {
+                    return protected_refusal("session_ended", refusal.message());
+                }
+            }
+        } else {
+            None
+        };
 
         // Resource adapters run at the same canonical boundary as policy and
         // manifest admission, after session capture-scope validation but
@@ -2345,7 +2447,7 @@ impl ToolRegistry {
                     resolved_name,
                     &public_args,
                     context,
-                    runtime_session.as_deref(),
+                    &identity,
                     if history_observation {
                         "computer_history"
                     } else {
@@ -2359,12 +2461,7 @@ impl ToolRegistry {
         }
         if has_adapter("clipboard") {
             if let Err(error) = self
-                .authorize_clipboard(
-                    resolved_name,
-                    &public_args,
-                    context,
-                    runtime_session.as_deref(),
-                )
+                .authorize_clipboard(resolved_name, &public_args, context, &identity)
                 .await
             {
                 return protected_consent_refusal(error);
@@ -2372,12 +2469,7 @@ impl ToolRegistry {
         }
         if has_adapter("file_transfer_and_output") {
             if let Err(refusal) = self
-                .authorize_file_transfer(
-                    resolved_name,
-                    &mut public_args,
-                    context,
-                    runtime_session.as_deref(),
-                )
+                .authorize_file_transfer(resolved_name, &mut public_args, context, &identity)
                 .await
             {
                 return refusal;
@@ -2386,19 +2478,14 @@ impl ToolRegistry {
             // approval. Dispatch must receive those same values, while the
             // private session namespace remains transport-internal.
             args = public_args.clone();
-            namespace_runtime_args(&mut args, context, evidence);
+            platform_args(&mut args, &identity, context, evidence);
         }
         let recording_args = recording_args_for(resolved_name, &public_args);
         if has_adapter("desktop_input")
             && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
         {
             if let Err(error) = self
-                .authorize_desktop_input(
-                    resolved_name,
-                    &public_args,
-                    context,
-                    runtime_session.as_deref(),
-                )
+                .authorize_desktop_input(resolved_name, &public_args, context, &identity)
                 .await
             {
                 return protected_consent_refusal(error);
@@ -2418,7 +2505,7 @@ impl ToolRegistry {
                     crate::authorization::RiskClass::R3,
                     &public_args,
                     context,
-                    runtime_session.as_deref(),
+                    &identity,
                     "Allow Cua to resolve this exact page-owned browser dialog",
                     Duration::from_secs(5 * 60),
                     Duration::from_secs(30 * 60),
@@ -2434,7 +2521,7 @@ impl ToolRegistry {
                     "browser_consequential_action",
                     &public_args,
                     context,
-                    runtime_session.as_deref(),
+                    &identity,
                     &approved_scope,
                 )
                 .await
@@ -2456,7 +2543,7 @@ impl ToolRegistry {
                     crate::authorization::RiskClass::R2,
                     &public_args,
                     context,
-                    runtime_session.as_deref(),
+                    &identity,
                     "Allow Cua to control this exact authenticated browser tab",
                     Duration::from_secs(30 * 60),
                     Duration::from_secs(8 * 60 * 60),
@@ -2472,7 +2559,7 @@ impl ToolRegistry {
                     "browser_bound_input",
                     &public_args,
                     context,
-                    runtime_session.as_deref(),
+                    &identity,
                     &approved_scope,
                 )
                 .await
@@ -2490,7 +2577,7 @@ impl ToolRegistry {
                     crate::authorization::RiskClass::R3,
                     &public_args,
                     context,
-                    runtime_session.as_deref(),
+                    &identity,
                     "Allow Cua to force-terminate this exact process instance",
                     Duration::from_secs(2 * 60),
                     Duration::from_secs(10 * 60),
@@ -2506,7 +2593,7 @@ impl ToolRegistry {
                     "process_control",
                     &public_args,
                     context,
-                    runtime_session.as_deref(),
+                    &identity,
                     &approved_scope,
                 )
                 .await
@@ -2519,12 +2606,7 @@ impl ToolRegistry {
         }
         if has_adapter("driver_configuration") {
             if let Err(refusal) = self
-                .authorize_driver_configuration(
-                    tool.as_ref(),
-                    &public_args,
-                    context,
-                    runtime_session.as_deref(),
-                )
+                .authorize_driver_configuration(tool.as_ref(), &public_args, context, &identity)
                 .await
             {
                 return refusal;
@@ -2534,8 +2616,8 @@ impl ToolRegistry {
         // An end that arrived while the person decided, or while another
         // adapter ran, wins: the call was admitted but never acts.
         if lifecycle_dispatch.is_some()
-            && runtime_session
-                .as_deref()
+            && identity
+                .lifecycle()
                 .is_some_and(crate::session::is_session_ending)
         {
             return protected_refusal(
@@ -2544,8 +2626,25 @@ impl ToolRegistry {
             );
         }
 
-        if let Err(error) = context.commit_authorized_dispatch() {
-            return permission_denied_result(error);
+        // A queued text mutation can become stale while another agent is
+        // typing into the same process. Refuse that overlap before cursor,
+        // recording, or platform focus behavior can begin, but only after
+        // consent, so a call still being authorized holds no lane. The lanes
+        // are process-global so independent registries cannot interleave
+        // input through separate platform workers, and RAII releases them on
+        // task cancellation as well as normal completion.
+        let mut input_admission = InputAdmission::default();
+        if let Some(lane) = Lane::for_text_input(resolved_name, &public_args) {
+            if let Err(mut refusal) = input_admission.admit(lane).await {
+                restore_public_runtime_result(&mut refusal, runtime_prefix);
+                return refusal;
+            }
+        }
+
+        if let Err(phase) = context.commit_authorized_dispatch() {
+            return authorization_phase_refusal(phase).unwrap_or_else(|| {
+                permission_denied_result("authorization context is not active".to_owned())
+            });
         }
 
         // Capture start time for recording timestamps only after validation.
@@ -2557,7 +2656,7 @@ impl ToolRegistry {
         let start_ms = now_ms();
         let cursor_event = crate::cursor_events::begin_tool(resolved_name, &args);
         let pending_history = self.history.as_ref().and_then(|history| {
-            history.begin_action(resolved_name, &public_args, runtime_session.as_deref())
+            history.begin_action(resolved_name, &public_args, identity.lifecycle())
         });
 
         // Reserve and capture the turn before dispatch so recorded evidence
@@ -2576,24 +2675,28 @@ impl ToolRegistry {
                     | "end_session"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let (desktop_call, lane_refusal) = if requires_desktop_coordination(
+        let lane_refusal = if requires_desktop_coordination(
             resolved_name,
             &args,
             tool.has_independent_input_lane(&args),
         ) {
-            match DesktopCall::acquire().await {
-                Ok(call) => (Some(call), None),
-                Err(refusal) => (None, Some(refusal)),
-            }
+            input_admission.admit(Lane::Desktop).await.err()
         } else {
-            (None, None)
+            None
         };
+        // Checked once the action holds its input lanes, so a read that
+        // finished while it waited for them is seen.
+        let lane_refusal = lane_refusal.or_else(|| {
+            planned_revision.and_then(|expected| {
+                crate::ui_tree_revision::check(resolved_name, expected, &args).err()
+            })
+        });
         let pending_turn = should_record
             .then(|| {
                 // Use the same trusted identities the recording owner was minted from.
                 let caller = crate::recording::RecordingCaller {
-                    session: runtime_session.as_deref(),
-                    transport: args.get("_transport_session_id").and_then(Value::as_str),
+                    session: identity.lifecycle(),
+                    transport: identity.transport(),
                 };
                 if private_consent_turn {
                     self.recording.begin_private_turn(
@@ -2634,7 +2737,7 @@ impl ToolRegistry {
         let invoke = tool.invoke(args.clone());
         let mut result =
             crate::recording::scope_dispatch_click_capture(pending_turn.as_ref(), async {
-                match (&desktop_call, lane_refusal) {
+                match (&input_admission.desktop, lane_refusal) {
                     (_, Some(refusal)) => refusal,
                     (Some(call), None) => call.scope(invoke).await,
                     (None, None) => invoke.await,
@@ -2649,17 +2752,13 @@ impl ToolRegistry {
                 );
             }
             "end_session" => {
-                if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
+                if let Some(session) = identity.lifecycle() {
                     crate::desktop_capture_scale::forget_session(session);
                 }
             }
             _ => {}
         }
         drop(lifecycle_dispatch);
-        // The platform worker has exited, so another text operation for this
-        // pid may now start even while result projection and evidence capture
-        // finish for the completed call.
-        drop(_text_input_admission);
         if result.action_record.is_none() {
             if let Some(structured) = result.structured_content.as_ref() {
                 result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
@@ -2697,12 +2796,12 @@ impl ToolRegistry {
         }
         crate::cursor_events::end_tool(cursor_event);
         // Coordinate the physical action itself, not post-action evidence
-        // capture or result shaping. Keeping the global desktop lock through
+        // capture or result shaping. Keeping the input lanes through
         // recording screenshots would unnecessarily block an unrelated
         // runtime after the input side effect has already completed. A
         // platform worker still running keeps its own clone of the lease.
-        drop(desktop_call);
-        restore_public_runtime_result(&mut result, &runtime_prefix);
+        drop(input_admission);
+        restore_public_runtime_result(&mut result, runtime_prefix);
         // Preserve the producer's private summary for recording/replay before
         // the public ActionResult projection deliberately replaces legacy
         // prose. Coordinate recovery and other internal diagnostics must not
@@ -2766,7 +2865,7 @@ impl ToolRegistry {
                     public_args
                         .get("session")
                         .and_then(Value::as_str)
-                        .or(runtime_session.as_deref()),
+                        .or(identity.lifecycle()),
                     name == "start_session",
                 );
             }
@@ -2801,7 +2900,7 @@ impl ToolRegistry {
         tool_name: &str,
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
         adapter_id: &str,
     ) -> Result<(), crate::consent::ConsentError> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
@@ -2943,7 +3042,7 @@ impl ToolRegistry {
                 context,
                 adapter_id,
                 crate::authorization::RiskClass::R2,
-                lifecycle_session,
+                identity,
                 resource,
                 &format!("{summary} using {tool_name}"),
                 Duration::from_secs(30 * 60),
@@ -2958,7 +3057,7 @@ impl ToolRegistry {
         tool_name: &str,
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
     ) -> Result<(), crate::consent::ConsentError> {
         if context.mode() != crate::authorization::PermissionMode::Bounded
             && context.capability_manifest().is_none()
@@ -3047,7 +3146,7 @@ impl ToolRegistry {
                 context,
                 "desktop_input",
                 crate::authorization::RiskClass::R1,
-                lifecycle_session,
+                identity,
                 resource,
                 &format!("{summary} using {tool_name}"),
                 Duration::from_secs(30 * 60),
@@ -3062,7 +3161,7 @@ impl ToolRegistry {
         tool_name: &str,
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
     ) -> Result<(), crate::consent::ConsentError> {
         if context.mode() != crate::authorization::PermissionMode::Bounded
             && context.capability_manifest().is_none()
@@ -3098,7 +3197,7 @@ impl ToolRegistry {
                 context,
                 "clipboard",
                 crate::authorization::RiskClass::R2,
-                lifecycle_session,
+                identity,
                 serde_json::json!({
                     "kind": "system_clipboard",
                     "operation": operation,
@@ -3117,7 +3216,7 @@ impl ToolRegistry {
         tool_name: &str,
         args: &mut Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
     ) -> Result<(), ToolResult> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
@@ -3266,7 +3365,7 @@ impl ToolRegistry {
                 context,
                 "file_transfer_and_output",
                 crate::authorization::RiskClass::R3,
-                lifecycle_session,
+                identity,
                 resource,
                 &format!("{summary} using {tool_name}"),
                 Duration::from_secs(30 * 60),
@@ -3285,7 +3384,7 @@ impl ToolRegistry {
         risk_class: crate::authorization::RiskClass,
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
         human_summary: &str,
         idle_ttl: Duration,
         absolute_ttl: Duration,
@@ -3305,7 +3404,8 @@ impl ToolRegistry {
                 )
             })?;
         if adapter_id == "process_control" {
-            let driver_owned = lifecycle_session
+            let driver_owned = identity
+                .lifecycle()
                 .zip(resource.pointer("/fingerprint/pid").and_then(Value::as_i64))
                 .is_some_and(|(session, pid)| {
                     self.protected_resource_ownership
@@ -3318,7 +3418,7 @@ impl ToolRegistry {
                 context,
                 adapter_id,
                 risk_class,
-                lifecycle_session,
+                identity,
                 resource.clone(),
                 human_summary,
                 idle_ttl,
@@ -3335,7 +3435,7 @@ impl ToolRegistry {
         adapter_id: &str,
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
         approved_scope: &Value,
     ) -> Result<(), ToolResult> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
@@ -3355,12 +3455,10 @@ impl ToolRegistry {
         {
             // Any validation error revokes the grant, whatever code it carries:
             // a CDP timeout here still means the caller must re-bind, not wait.
-            if let Some(grant) = self.protected_resource_grants.revoke_resource(
-                context,
-                lifecycle_session,
-                adapter_id,
-                approved_scope,
-            ) {
+            if let Some(grant) =
+                self.protected_resource_grants
+                    .revoke_resource(identity, adapter_id, approved_scope)
+            {
                 self.approval_broker.revoke(&grant).await;
             }
             return Err(protected_refusal(
@@ -3376,7 +3474,7 @@ impl ToolRegistry {
         tool: &dyn Tool,
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
     ) -> Result<(), ToolResult> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
@@ -3421,7 +3519,7 @@ impl ToolRegistry {
                 context,
                 "driver_configuration",
                 crate::authorization::RiskClass::R2,
-                lifecycle_session,
+                identity,
                 serde_json::json!({
                     "kind": "driver_configuration",
                     "exact_changes": exact,
@@ -3658,7 +3756,11 @@ fn is_physical_desktop_action(tool: &str) -> bool {
     cua_driver_contract::is_desktop_action_result_tool(tool) || tool == "bring_to_front"
 }
 
-fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+pub(crate) fn requires_desktop_coordination(
+    tool: &str,
+    args: &Value,
+    independent_lane: bool,
+) -> bool {
     if !is_physical_desktop_action(tool) {
         return false;
     }
@@ -3687,92 +3789,33 @@ fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: boo
 /// namespaced public session label contains, so it cannot be selected by
 /// passing a crafted `session` argument. Even a collision would only reach
 /// processes this same runtime scope launched.
-fn process_ownership_key(runtime_session: Option<&str>, runtime_prefix: &str) -> String {
-    match runtime_session {
+fn process_ownership_key(identity: &DispatchIdentity) -> String {
+    match identity.lifecycle() {
         Some(session) => session.to_owned(),
-        None => format!("{runtime_prefix}\u{0}anonymous-launch"),
+        None => format!("{}\u{0}anonymous-launch", identity.runtime().prefix()),
     }
 }
 
-fn namespace_runtime_args(
+/// Turn the public arguments of an authorized call into the arguments its
+/// platform tool receives: the call's identity, and the other facts trusted
+/// evidence and the context prove.
+fn platform_args(
     args: &mut Value,
+    identity: &DispatchIdentity,
     context: &crate::session_authorization::EffectiveAuthorizationContext,
     evidence: &TrustedInvocationEvidence,
-) -> String {
-    let runtime_prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
-    if !args.is_object() {
-        return runtime_prefix;
-    }
+) {
     evidence.apply_runtime_args(args);
-    let Some(arguments) = args.as_object_mut() else {
-        return runtime_prefix;
-    };
-    if let Some(public_session) = arguments
-        .get("session")
-        .and_then(Value::as_str)
-        .filter(|value| {
-            !value.is_empty() && *value != "default" && !value.starts_with("__cua_runtime_")
-        })
-        .map(str::to_owned)
+    identity.stamp(args);
+    if let (Some(arguments), Some(idle_ttl)) =
+        (args.as_object_mut(), context.lifecycle_idle_ttl_override())
     {
-        arguments.insert(
-            "_public_session_label".to_owned(),
-            Value::String(public_session),
-        );
-    }
-    if !arguments.contains_key("_transport_session_id") {
-        if let Some(session) = context.transport_session() {
-            arguments.insert(
-                "_transport_session_id".to_owned(),
-                Value::String(session.to_owned()),
-            );
-        }
-    }
-    if let Some(idle_ttl) = context.lifecycle_idle_ttl_override() {
         let idle_ttl_ms = idle_ttl.as_millis().min(u64::MAX as u128) as u64;
         arguments.insert(
             "_session_idle_ttl_ms".to_owned(),
             Value::Number(idle_ttl_ms.into()),
         );
     }
-    // The registry is the first boundary shared by every transport and the
-    // direct SDK. Transport adapters may already have injected `_session_id`,
-    // but a direct runtime call only carries the public `session` field. Mint
-    // the trusted ownership key here, after authorization, so recording and
-    // every other session-owned resource use the same runtime-private identity
-    // regardless of which adapter invoked the registry.
-    if !arguments.contains_key("_session_id") {
-        if let Some(session) = arguments
-            .get("session")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-        {
-            arguments.insert("_session_id".to_owned(), Value::String(session));
-        }
-    }
-    for key in [
-        "session",
-        "_session_id",
-        "_transport_session_id",
-        "cursor_id",
-    ] {
-        let Some(public) = arguments
-            .get(key)
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty() && *value != "default")
-            .map(str::to_owned)
-        else {
-            continue;
-        };
-        let internal = if public.starts_with(&runtime_prefix) {
-            public
-        } else {
-            format!("{runtime_prefix}{public}")
-        };
-        arguments.insert(key.to_owned(), Value::String(internal));
-    }
-    runtime_prefix
 }
 
 fn session_requiring_tool(tool_name: &str) -> bool {
@@ -3898,9 +3941,9 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 #[cfg(test)]
 mod runtime_isolation_tests {
     use super::{
-        canonical_proposed_path, namespace_runtime_args, publish_action_result,
-        restore_public_runtime_result, try_admit_text_input, DesktopCall, DesktopLane,
-        DesktopLease, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
+        canonical_proposed_path, platform_args, publish_action_result,
+        restore_public_runtime_result, DesktopCall, DesktopLane, DesktopLease, InputAdmission,
+        Lane, LaneState, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -4061,8 +4104,18 @@ mod runtime_isolation_tests {
         async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
             self.last_args.lock().unwrap().replace(args.clone());
-            crate::protocol::ToolResult::text("file operation ran")
-                .with_structured(serde_json::json!({"received": args}))
+            let result = crate::protocol::ToolResult::text("file operation ran")
+                .with_structured(serde_json::json!({"received": args}));
+            // Like the real producers, a move_cursor attaches its own record.
+            if self.def.name == "move_cursor" {
+                return result.with_action_record(
+                    crate::action_record::ActionExecutionRecord::cursor_move(
+                        crate::action_record::ActionTransport::MacosCgEventHid,
+                        &args,
+                    ),
+                );
+            }
+            result
         }
     }
 
@@ -5173,6 +5226,90 @@ resources:
     }
 
     #[tokio::test]
+    async fn start_session_cannot_revive_an_episode_its_authorization_phase_denies() {
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(None);
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        for (phase, code) in [
+            ("idle_expired", "permission_denied"),
+            ("expired", "permission_denied"),
+            ("revoked", "authorization_revoked"),
+        ] {
+            let authorization = SessionAuthorizationRegistry::with_ceiling(
+                SessionModeCeiling::for_trusted_sessions(
+                    [PermissionMode::Standard],
+                    false,
+                    Duration::from_secs(60),
+                    Duration::from_secs(30),
+                )
+                .unwrap(),
+            );
+            let (host, connection) = authorization.trusted_in_process_binding();
+            let transport = format!("auth-clock-{phase}");
+            let ttl = if phase == "expired" {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_secs(60)
+            };
+            authorization
+                .bind_delegated_session(
+                    &host,
+                    &connection,
+                    crate::session_authorization::DelegatedSessionRequest {
+                        public_session: "auth-clock".to_owned(),
+                        transport_session: transport.clone(),
+                        mode: PermissionMode::Standard,
+                        ttl,
+                        idle_ttl: ttl.min(Duration::from_secs(30)),
+                        capability_manifest: None,
+                    },
+                )
+                .unwrap();
+            let context = authorization
+                .resolve_delegated(&connection, "auth-clock", &transport)
+                .unwrap();
+            let prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+            let session = context.runtime_session_key("auth-clock");
+            let start = || {
+                registry.invoke_with_context(
+                    "start_session",
+                    serde_json::json!({"session": "auth-clock"}),
+                    context.clone(),
+                )
+            };
+
+            let started = start().await;
+            assert_ne!(started.is_error, Some(true), "{phase}: {started:?}");
+            let ended = registry
+                .invoke_with_context(
+                    "end_session",
+                    serde_json::json!({"session": "auth-clock"}),
+                    context.clone(),
+                )
+                .await;
+            assert_ne!(ended.is_error, Some(true), "{phase}: {ended:?}");
+            assert!(crate::session::is_session_ended(&session));
+
+            match phase {
+                "idle_expired" => context.backdate_idle_for_test(Duration::from_secs(31)),
+                "expired" => tokio::time::sleep(Duration::from_millis(600)).await,
+                _ => assert!(authorization.revoke_connection(&connection)),
+            }
+            let revived = start().await;
+            assert_eq!(revived.is_error, Some(true), "{phase}: {revived:?}");
+            let refusal = &revived.structured_content.as_ref().unwrap()["refusal"];
+            assert_eq!(refusal["code"], code, "{phase}");
+            assert_eq!(refusal["authorization_phase"], phase);
+            assert!(
+                crate::session::is_session_ended(&session),
+                "{phase}: a refused start_session must leave the episode ended"
+            );
+
+            crate::session::forget_ended_sessions_with_prefix(&prefix);
+        }
+    }
+
+    #[tokio::test]
     async fn ended_session_and_runtime_suspend_latches_fail_closed_at_dispatch() {
         let ended_hits = Arc::new(AtomicUsize::new(0));
         let ended_registry = observation_registry(None, ended_hits.clone());
@@ -5793,6 +5930,74 @@ resources:
             assert_eq!(r.structured_content.unwrap()["code"], "invalid_arguments");
         }
         assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_refuses_a_stale_ui_tree_revision_before_delivery() {
+        use crate::ui_tree_revision::{record, UI_TREE_REVISION_ARG, UI_TREE_REVISION_TOOLS};
+        use crate::window_state_view::ViewKey;
+        use serde_json::json;
+        let schema = json!({
+            "type": "object",
+            "properties": {"element_token": {"type": "string"}},
+            "additionalProperties": false
+        });
+        for tool in UI_TREE_REVISION_TOOLS {
+            let advertised = super::advertised_runtime_input_schema(tool, &schema);
+            assert!(
+                advertised["properties"].get(UI_TREE_REVISION_ARG).is_some(),
+                "{tool}"
+            );
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: schema,
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let view = ViewKey {
+            query: None,
+            max_elements: 250,
+            max_depth: None,
+        };
+        let planned = record(9301, 5, &view, Some("s0000d301"), "- [1] Button \"OK\"");
+        let result = registry
+            .invoke_with_context(
+                "click",
+                json!({"element_token": "s0000d301:1", "ui_tree_revision": planned}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+
+        record(9301, 5, &view, Some("s0000d302"), "- [1] Button \"Done\"");
+        let result = registry
+            .invoke_with_context(
+                "click",
+                json!({"element_token": "s0000d301:1", "ui_tree_revision": planned}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["refusal"]["code"], "stale_revision");
+        assert_eq!(structured["refusal"]["reason"], "changed");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "a refused action is not delivered"
+        );
     }
 
     #[tokio::test]
@@ -6679,10 +6884,23 @@ resources:
 
     #[test]
     fn anonymous_process_ownership_key_cannot_be_selected_by_a_session_argument() {
-        let prefix = "__cua_runtime_scope:";
-        let anonymous = super::process_ownership_key(None, prefix);
-        assert_eq!(super::process_ownership_key(Some("s"), prefix), "s");
-        assert!(anonymous.starts_with(prefix));
+        let runtime = crate::dispatch_identity::RuntimeScope::new("scope");
+        let prefix = runtime.prefix().to_owned();
+        let identity = |args: serde_json::Value, selecting| {
+            crate::dispatch_identity::DispatchIdentity::resolve(
+                runtime.clone(),
+                None,
+                None,
+                &args,
+                selecting,
+            )
+        };
+        let anonymous = super::process_ownership_key(&identity(serde_json::json!({}), false));
+        assert_eq!(
+            super::process_ownership_key(&identity(serde_json::json!({"session": "s"}), true)),
+            format!("{prefix}s")
+        );
+        assert!(anonymous.starts_with(&prefix));
         // A namespaced public session label is prefix + the caller's string;
         // the NUL keeps the anonymous bucket outside that space.
         assert!(anonymous.contains('\u{0}'));
@@ -6812,7 +7030,11 @@ resources:
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         let received = last_args.lock().unwrap().clone().unwrap();
         assert!(received.get("_protected_process_fingerprint").is_none());
-        assert!(received.get("_session_id").is_none());
+        // A file adapter's canonical paths reach the platform with the same
+        // implicit session every other sessionless call gets.
+        assert!(received["_session_id"]
+            .as_str()
+            .is_some_and(|session| session.ends_with(":implicit-direct")));
     }
 
     #[tokio::test]
@@ -7018,6 +7240,39 @@ resources:
         let after_end = registry.invoke_with_context("click", args, context).await;
         assert_eq!(after_end.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn guard_state_belongs_to_its_runtime_and_ends_with_its_session() {
+        use crate::fast_path::{pixel::GrayImage, store::ReadImage, window::WindowFingerprint};
+        let image = |snapshot_id| ReadImage {
+            snapshot_id,
+            image: GrayImage::filled(2, 2, 0),
+            window: WindowFingerprint {
+                window_id: 7,
+                pid: 42,
+                frame: crate::fast_path::Rect::new(0.0, 0.0, 10.0, 10.0),
+                scale: 1.0,
+            },
+        };
+        let context = standard_context();
+        let ended = context.runtime_session_key("guard-ended");
+        let kept = context.runtime_session_key("guard-kept");
+        let first = super::ToolRegistry::new();
+        let second = super::ToolRegistry::new();
+        first.guard_store().put_image(Some(&ended), 42, image(1));
+        first.guard_store().put_image(Some(&kept), 42, image(2));
+        assert!(second.guard_store().image(Some(&ended), 42, 7).is_none());
+
+        crate::session::fire_session_end(&ended);
+        assert!(first.guard_store().image(Some(&ended), 42, 7).is_none());
+        assert_eq!(
+            first
+                .guard_store()
+                .image(Some(&kept), 42, 7)
+                .map(|read| read.snapshot_id),
+            Some(2)
+        );
     }
 
     #[tokio::test]
@@ -7300,10 +7555,50 @@ resources:
         let Err(refusal) = next else {
             panic!("the lane was handed out while the stale worker still holds it");
         };
-        assert_eq!(
-            refusal.structured_content.as_ref().unwrap()["refusal"]["code"],
-            "input_busy"
+        let refusal = &refusal.structured_content.as_ref().unwrap()["refusal"];
+        assert_eq!(refusal["code"], "input_busy");
+        assert_eq!(refusal["lane"], serde_json::json!({"kind": "desktop"}));
+    }
+
+    #[tokio::test]
+    async fn a_call_whose_input_has_stopped_frees_the_lane_without_orphaning_it() {
+        let lane = DesktopLane::new(Duration::from_secs(12));
+        assert_eq!(lane.state(), LaneState::Free);
+        let call = lane.acquire().await.unwrap();
+        let LaneState::Held { gen } = lane.state() else {
+            panic!("an acquired lane is held: {:?}", lane.state());
+        };
+        // A worker that stops before its call returns leaves nothing behind.
+        drop(call.scope(async { DesktopLease::current().unwrap() }).await);
+        assert_eq!(lane.state(), LaneState::Held { gen });
+        drop(call);
+        assert_eq!(lane.state(), LaneState::Free);
+        drop(lane.acquire().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_worker_that_outlives_its_call_orphans_the_hold_until_it_stops() {
+        let lane = DesktopLane::new(Duration::from_secs(12));
+        let call = lane.acquire().await.unwrap();
+        let LaneState::Held { gen } = lane.state() else {
+            panic!("an acquired lane is held: {:?}", lane.state());
+        };
+        let worker = call.scope(async { DesktopLease::current().unwrap() }).await;
+        // A cleanup the worker hands off holds the same hold.
+        let cleanup = worker.clone();
+        drop(call);
+        assert!(
+            matches!(lane.state(), LaneState::Orphaned { gen: orphaned, .. } if orphaned == gen),
+            "{:?}",
+            lane.state()
         );
+        drop(worker);
+        assert!(matches!(lane.state(), LaneState::Orphaned { .. }));
+        drop(cleanup);
+        assert_eq!(lane.state(), LaneState::Free);
+        let next = lane.acquire().await.unwrap();
+        assert_eq!(lane.state(), LaneState::Held { gen: gen + 1 });
+        drop(next);
     }
 
     #[tokio::test(start_paused = true)]
@@ -7367,20 +7662,16 @@ resources:
     #[test]
     fn every_native_action_result_tool_takes_the_desktop_lane() {
         use super::is_physical_desktop_action;
-        for name in cua_driver_contract::ACTION_RESULT_TOOLS {
-            assert_eq!(
-                is_physical_desktop_action(name),
-                !name.starts_with("browser_"),
-                "{name}"
-            );
+        // Browser tools are exempt; the browser engine's registration test
+        // owns that contract.
+        for name in cua_driver_contract::ACTION_RESULT_TOOLS
+            .iter()
+            .filter(|name| !name.starts_with("browser_"))
+        {
+            assert!(is_physical_desktop_action(name), "{name}");
         }
         assert!(is_physical_desktop_action("bring_to_front"));
-        for name in [
-            "get_window_state",
-            "screenshot",
-            "launch_app",
-            "browser_click",
-        ] {
+        for name in ["get_window_state", "screenshot", "launch_app"] {
             assert!(!is_physical_desktop_action(name), "{name}");
         }
     }
@@ -7412,36 +7703,181 @@ resources:
         ));
     }
 
-    #[test]
-    fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
+    #[tokio::test]
+    async fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
         let pid = 8_675_410;
-        let first = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-            .expect("first text operation should be admitted")
-            .expect("pid-scoped text operation should receive a guard");
-
-        let refusal = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-            .expect_err("overlapping text operation should fail fast");
-        assert_eq!(refusal.is_error, Some(true));
+        let text_input = |pid: i64| {
+            Lane::for_text_input("type_text", &serde_json::json!({"pid": pid}))
+                .expect("pid-scoped text input takes a pid lane")
+        };
+        assert_eq!(text_input(pid), Lane::Pid(pid));
         assert_eq!(
-            refusal
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("input_busy")
+            Lane::for_text_input("type_text", &serde_json::json!({"pid": 0})),
+            None
+        );
+        assert_eq!(
+            Lane::for_text_input("press_key", &serde_json::json!({"pid": pid})),
+            None
         );
 
-        let other_pid = try_admit_text_input("type_text", &serde_json::json!({"pid": pid + 1}))
-            .expect("a different pid should have an independent input lane")
-            .expect("pid-scoped text operation should receive a guard");
+        let mut first = InputAdmission::default();
+        first.admit(text_input(pid)).await.unwrap();
+
+        let refusal = InputAdmission::default()
+            .admit(text_input(pid))
+            .await
+            .expect_err("overlapping text operation should fail fast");
+        assert_eq!(refusal.is_error, Some(true));
+        let refusal = &refusal.structured_content.as_ref().unwrap()["refusal"];
+        assert_eq!(refusal["code"], "input_busy");
+        assert_eq!(
+            refusal["lane"],
+            serde_json::json!({"kind": "pid", "pid": pid})
+        );
+
+        let mut other_pid = InputAdmission::default();
+        other_pid
+            .admit(text_input(pid + 1))
+            .await
+            .expect("a different pid should have an independent input lane");
         drop(other_pid);
         drop(first);
 
-        assert!(
-            try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-                .expect("completed text operation should release its pid")
-                .is_some()
+        InputAdmission::default()
+            .admit(text_input(pid))
+            .await
+            .expect("completed text operation should release its pid");
+    }
+
+    /// Holds `list_apps`, which manifest enrichment of an input resource
+    /// calls during authorization, until the test releases it.
+    #[cfg(feature = "yaml")]
+    struct ParkedListApps {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        def: super::ToolDef,
+    }
+
+    #[cfg(feature = "yaml")]
+    #[async_trait::async_trait]
+    impl super::Tool for ParkedListApps {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.entered.notify_one();
+            self.release.notified().await;
+            crate::protocol::ToolResult::text("no apps")
+                .with_structured(serde_json::json!({"apps": []}))
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_still_being_authorized_holds_no_input_lane() {
+        let pid = 8_675_430;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "type_text".into(),
+                description: "test text input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(ParkedListApps {
+            entered: entered.clone(),
+            release: release.clone(),
+            def: super::ToolDef {
+                name: "list_apps".into(),
+                description: "test app list".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let manifest = manifest_context(
+            PermissionMode::Standard,
+            &format!(
+                r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [type_text]
+resources:
+  desktop:
+    windows:
+      - pid: {pid}
+        window_id: 7
+"#
+            ),
         );
+        let args = |session: &str| serde_json::json!({"pid": pid, "window_id": 7, "text": "a", "session": session});
+
+        let parked = tokio::spawn({
+            let registry = registry.clone();
+            let args = args("lane-after-consent-parked");
+            async move {
+                registry
+                    .invoke_with_context("type_text", args, manifest)
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("the first call reaches authorization");
+
+        // Text input to the same pid, which also takes the desktop lane,
+        // runs while the first call is still being authorized.
+        let other = tokio::time::timeout(
+            Duration::from_secs(10),
+            registry.invoke_with_context(
+                "type_text",
+                args("lane-after-consent-other"),
+                standard_context(),
+            ),
+        )
+        .await
+        .expect("a call being authorized must not hold the desktop lane");
+        assert_ne!(other.is_error, Some(true), "{:?}", other.structured_content);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        release.notify_one();
+        let parked = tokio::time::timeout(Duration::from_secs(10), parked)
+            .await
+            .expect("the authorized call finishes")
+            .unwrap();
+        assert_ne!(
+            parked.is_error,
+            Some(true),
+            "{:?}",
+            parked.structured_content
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    /// The arguments the platform tool of a `click` would receive, and the
+    /// runtime prefix results are restored with.
+    fn stamped(
+        args: &mut serde_json::Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        evidence: &TrustedInvocationEvidence,
+    ) -> String {
+        let identity = evidence.dispatch_identity("click", args, context);
+        platform_args(args, &identity, context, evidence);
+        identity.runtime().prefix().to_owned()
     }
 
     #[test]
@@ -7449,10 +7885,9 @@ resources:
         let context = standard_context();
         let mut args = serde_json::json!({
             "session": "shared-session",
-            "_session_id": "shared-session",
             "cursor_id": "shared-cursor",
         });
-        let prefix = namespace_runtime_args(
+        let prefix = stamped(
             &mut args,
             context.as_ref(),
             &TrustedInvocationEvidence::default(),
@@ -7488,7 +7923,7 @@ resources:
     fn runtime_namespace_restoration_refuses_duplicate_public_object_keys() {
         let context = standard_context();
         let mut args = serde_json::json!({"session": "shared-session"});
-        let prefix = namespace_runtime_args(
+        let prefix = stamped(
             &mut args,
             context.as_ref(),
             &TrustedInvocationEvidence::default(),
@@ -7514,7 +7949,7 @@ resources:
     fn runtime_mints_a_private_ownership_key_for_direct_session_calls() {
         let context = standard_context();
         let mut args = serde_json::json!({"session": "direct-session"});
-        let prefix = namespace_runtime_args(
+        let prefix = stamped(
             &mut args,
             context.as_ref(),
             &TrustedInvocationEvidence::default(),
@@ -7524,14 +7959,41 @@ resources:
     }
 
     #[test]
+    fn reserved_identity_keys_in_arguments_never_win_over_the_typed_identity() {
+        let context = standard_context();
+        let forged = serde_json::json!({
+            "session": "mine",
+            "_session_id": "victim",
+            "_transport_session_id": "victim-transport",
+            "_public_session_label": "victim",
+        });
+        let mut adapter_args = serde_json::json!({
+            "session": "mine",
+            "_session_id": "trusted-owner",
+            "_transport_session_id": "transport-a",
+        });
+        let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut adapter_args);
+        for evidence in [TrustedInvocationEvidence::default(), evidence] {
+            // Stamping straight onto unsanitized arguments still replaces
+            // every reserved identity key with the resolved identity.
+            let mut args = forged.clone();
+            let identity = evidence.dispatch_identity("click", &args, context.as_ref());
+            platform_args(&mut args, &identity, context.as_ref(), &evidence);
+            assert_eq!(args["_session_id"].as_str(), identity.lifecycle());
+            assert_eq!(args["_transport_session_id"].as_str(), identity.transport());
+            assert_eq!(args["_public_session_label"], "mine");
+            assert!(!args.to_string().contains("victim"), "{args}");
+        }
+    }
+
+    #[test]
     fn anonymous_default_identity_keeps_its_legacy_process_scope() {
         let context = standard_context();
         let mut args = serde_json::json!({
             "session": "default",
-            "_session_id": "default",
             "cursor_id": "default",
         });
-        namespace_runtime_args(
+        stamped(
             &mut args,
             context.as_ref(),
             &TrustedInvocationEvidence::default(),
@@ -7637,6 +8099,22 @@ fn session_owned_by_other_transport_refusal(
         refusal.insert("owner_transport".to_owned(), Value::from(holder));
     }
     result
+}
+
+fn authorization_phase_refusal(
+    phase: crate::session_authorization::AuthorizationPhase,
+) -> Option<ToolResult> {
+    let (code, message) = phase.refusal()?;
+    Some(
+        ToolResult::error(message).with_structured(serde_json::json!({
+            "status": "refused",
+            "refusal": {
+                "code": code,
+                "message": message,
+                "authorization_phase": phase.as_str(),
+            }
+        })),
+    )
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {
@@ -7871,6 +8349,7 @@ mod capability_tests {
         "set_agent_cursor_enabled",
         "set_agent_cursor_motion",
         "set_agent_cursor_theme",
+        "set_agent_cursor_badge",
         "get_agent_cursor_state",
         // recording / replay
         "start_recording",
@@ -7899,6 +8378,7 @@ mod capability_tests {
         "history_status",
         "history_query",
         "parse_visual_regions",
+        "agent_display",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -7942,6 +8422,7 @@ mod capability_tests {
         "app.launch",
         "app.list",
         "app.kill",
+        "display.virtual",
         "window.list",
         "window.activate",
         "window.frame.set",
@@ -7966,6 +8447,7 @@ mod capability_tests {
         "agent_cursor.set_enabled",
         "agent_cursor.set_motion",
         "agent_cursor.set_theme",
+        "agent_cursor.set_badge",
         "agent_cursor.state",
         // recording
         "recording.start",

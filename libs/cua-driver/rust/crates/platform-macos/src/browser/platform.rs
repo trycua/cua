@@ -12,8 +12,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserForegroundWatch, BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind,
+    ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -302,31 +303,57 @@ fn guarded_attach_allowed(window_on_current_space: Option<bool>) -> bool {
 /// background-key turns run, so it never undoes the driver's input.
 struct SelfActivationGuard {
     stop: Arc<std::sync::atomic::AtomicBool>,
+    watch: Option<std::thread::JoinHandle<()>>,
+    /// Set when the watch saw the browser come forward on its own and put
+    /// the user's window back.
+    came_forward: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SelfActivationGuard {
     fn start(pid: i32) -> Self {
         GUARDED_ATTACHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag = stop.clone();
+        let came_forward = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (flag, seen) = (stop.clone(), came_forward.clone());
         let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
-        std::thread::spawn(move || {
+        let watch = std::thread::spawn(move || {
             if let Some(front) = user_front {
-                watch_self_activation(pid, front, &flag);
+                watch_self_activation(pid, front, &flag, &seen);
             }
         });
-        Self { stop }
+        Self {
+            stop,
+            watch: Some(watch),
+            came_forward,
+        }
+    }
+}
+
+impl BrowserForegroundWatch for SelfActivationGuard {
+    fn finish(self: Box<Self>) -> bool {
+        let came_forward = self.came_forward.clone();
+        // Drop joins the watch, so a revert it was making is counted.
+        drop(self);
+        came_forward.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
 impl Drop for SelfActivationGuard {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(watch) = self.watch.take() {
+            let _ = watch.join();
+        }
         GUARDED_ATTACHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
-fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+fn watch_self_activation(
+    pid: i32,
+    front: i32,
+    stop: &std::sync::atomic::AtomicBool,
+    came_forward: &std::sync::atomic::AtomicBool,
+) {
     use crate::focus_arbiter::{Decision, UndoWatch};
     use std::sync::atomic::Ordering;
     use std::time::Instant;
@@ -358,8 +385,11 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
             let front_now = crate::input::skylight::front_process_pid();
             if front_now == Some(pid) {
                 // Not when the user switched to Chrome themselves.
-                if undo.decide() == Decision::Undo && !rekey() {
-                    crate::key_focus_guard::revert_now(pid, front, &undo);
+                if undo.decide() == Decision::Undo {
+                    came_forward.store(true, Ordering::SeqCst);
+                    if !rekey() {
+                        crate::key_focus_guard::revert_now(pid, front, &undo);
+                    }
                 }
                 last_rekey = Instant::now();
             } else if front_now == Some(front) {
@@ -369,6 +399,7 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
                 } {
                     // Chrome orders its window front a few ms after it
                     // activates itself.
+                    came_forward.store(true, Ordering::SeqCst);
                     rekey();
                     if crate::key_focus_guard::target_window_above_front(pid, front) {
                         crate::key_focus_guard::restore_order_now(pid, front);
@@ -383,6 +414,12 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
             }
         }
         std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+impl BrowserForegroundWatch for crate::focus_steal::ActivationRecord {
+    fn finish(self: Box<Self>) -> bool {
+        self.seen()
     }
 }
 
@@ -772,7 +809,7 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
 /// macOS 27 and later answer EPERM when an app without Full Disk Access or a
 /// per-app grant reads a protected browser profile folder, root and
 /// LaunchAgents included.
-const PROFILE_PROTECTION_HINT: &str = "on macOS 27 and later, reading this browser's profile folder needs Full Disk Access or a per-app grant; grant Full Disk Access to CuaDriver.app and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
+const PROFILE_PROTECTION_HINT: &str = "on macOS 27 and later, reading this browser's profile folder needs Full Disk Access or a per-app grant; in System Settings → Privacy & Security → Full Disk Access, click + and choose /Applications/CuaDriver.app, turn its switch on, and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
 
 fn devtools_active_port_read_refusal(error: &std::io::Error) -> BrowserRefusal {
     let message = format!("could not read the browser's DevToolsActivePort file: {error}");
@@ -903,11 +940,19 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         browser_pid: i64,
         window_id: u64,
-    ) -> Option<Box<dyn std::any::Any + Send>> {
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
         let pid = i32::try_from(browser_pid).ok()?;
         let window_id = u32::try_from(window_id).ok()?;
         guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
-            .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn std::any::Any + Send>)
+            .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn BrowserForegroundWatch>)
+    }
+
+    fn watch_browser_foreground(
+        &self,
+        browser_pid: i64,
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
+        let pid = i32::try_from(browser_pid).ok()?;
+        Some(Box::new(crate::focus_steal::ActivationRecord::start(pid)))
     }
 
     fn frontmost_app_pid(&self) -> Option<i64> {
@@ -1929,6 +1974,10 @@ mod tests {
         assert_eq!(detail["resource"], "browser_profile");
         assert_eq!(detail["os_error"], libc::EPERM);
         assert_eq!(detail["hint"], PROFILE_PROTECTION_HINT);
+        assert!(
+            PROFILE_PROTECTION_HINT.contains("click + and choose /Applications/CuaDriver.app"),
+            "{PROFILE_PROTECTION_HINT}"
+        );
 
         let mode_bits =
             devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EACCES));

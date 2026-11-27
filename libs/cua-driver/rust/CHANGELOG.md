@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.63.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.2...cua-driver-rs-v0.63.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-driver:** pin input lane order and keep browser tools off the desktop lane ([#8450](https://github.com/trycua/cua/issues/8450)) ([85737f1](https://github.com/trycua/cua/commit/85737f1646e464e7e28b42ee6c205d6626ce9f26))
+
 ## [0.63.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.1...cua-driver-rs-v0.63.2) (2026-11-26)
 
 

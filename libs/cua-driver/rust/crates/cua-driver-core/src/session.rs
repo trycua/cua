@@ -534,6 +534,9 @@ fn begin_session_dispatch_inner(
         if recreated && cleanup_pending(session_id) {
             return Err(DispatchRefusal::CleanupIncomplete);
         }
+        if closed_label_owner(session_id, owner_transport) {
+            return Err(DispatchRefusal::Ended);
+        }
         let mut records = lifecycle_records().lock().unwrap();
         let record = records
             .entry(session_id.to_owned())
@@ -562,7 +565,7 @@ fn begin_session_dispatch_inner(
         record.in_flight += 1;
         record.last_activity = Instant::now();
         if recreated {
-            remove_tombstone(&mut ended, &records, session_id);
+            remove_tombstone(&mut ended, session_id);
             idle_ended.remove(session_id);
         }
         recreated
@@ -718,6 +721,9 @@ pub fn activate_or_revive_session_for_owner(
         if revived && cleanup_pending(session_id) {
             return Err("session cleanup is incomplete; retry end_session before revival");
         }
+        if closed_label_owner(session_id, owner_transport) {
+            return Err("session is not available to this transport");
+        }
 
         let mut records = lifecycle_records().lock().unwrap();
         if let Some(record) = records.get_mut(session_id) {
@@ -747,7 +753,7 @@ pub fn activate_or_revive_session_for_owner(
             );
         }
         if revived {
-            remove_tombstone(&mut ended, &records, session_id);
+            remove_tombstone(&mut ended, session_id);
             idle_ended_sessions().lock().unwrap().remove(session_id);
         }
         revived
@@ -896,9 +902,22 @@ pub fn list_session_snapshots_with_prefix(
 /// closed. The labels it owned are released once their episodes end: another
 /// transport's next call starts a fresh episode, except on a label it ended
 /// with `end_session` earlier, which any other transport may claim only with
-/// `start_session`. The closed transport itself stays refused. These ends are
-/// never explicit, whatever `reason` the transport reports.
+/// `start_session`. The closed transport itself stays refused, including a
+/// call it sent before the close that lands after it. These ends are never
+/// explicit, whatever `reason` the transport reports.
 pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -> usize {
+    // Refuse the owner before ending what it holds, so a call it sent before
+    // closing cannot bind a new episode while the ends below run. Its labels
+    // are released as each one ends; ends are bound to this owner, so a label
+    // another transport claims in between is not ended by the loop.
+    if is_trackable(owner_transport) {
+        let ended = ended_sessions().lock().unwrap();
+        let records = lifecycle_records().lock().unwrap();
+        let mut closed = closed_transports().lock().unwrap();
+        let now = Instant::now();
+        forget_closed_owners(&ended, &records, &mut closed, now);
+        closed.insert(owner_transport.to_owned(), now);
+    }
     let mut ids = lifecycle_records()
         .lock()
         .unwrap()
@@ -911,19 +930,6 @@ pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -
     // transport cannot end an episode another transport has since claimed.
     for id in &ids {
         end_session_with_reason(id, reason, false, Some(owner_transport));
-    }
-    // Release the labels only once every episode above has ended. Released
-    // earlier, another transport could claim a label in between and the loop
-    // would end that new episode.
-    if is_trackable(owner_transport) {
-        let ended = ended_sessions().lock().unwrap();
-        let records = lifecycle_records().lock().unwrap();
-        if names_labels_of(&ended, &records, owner_transport) {
-            closed_transports()
-                .lock()
-                .unwrap()
-                .insert(owner_transport.to_owned());
-        }
     }
     ids.len()
 }
@@ -1084,16 +1090,29 @@ static IDLE_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 /// `ENDED_SESSIONS` lock, and meaningful only while the matching tombstone
 /// exists.
 static EXPLICITLY_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-/// Owner transports whose connection has closed ([`end_sessions_for_owner`])
-/// while a labelled episode, live or tombstoned, still names them. Their
-/// labels are released: another transport's next call starts a fresh episode
-/// instead of inheriting a refusal it cannot recover from, and its
-/// `start_session` claims a label ended with `end_session`. The closed owner
-/// itself stays refused, so a late call from the dead connection resurrects
-/// nothing. An owner is forgotten once no labelled episode names it, so the
-/// set never outgrows the tombstones and live episodes. Mutated and read only
-/// while holding the `ENDED_SESSIONS` lock.
-static CLOSED_TRANSPORTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Owner transports whose connection has closed ([`end_sessions_for_owner`]),
+/// with when. Their labels are released: another transport's next call
+/// starts a fresh episode instead of inheriting a refusal it cannot recover
+/// from, and its `start_session` claims a label ended with `end_session`. The
+/// closed owner itself stays refused on every label ([`closed_label_owner`]),
+/// so a late call from the dead connection neither resurrects nor binds one.
+/// An owner is forgotten once no labelled episode names it, no call of its
+/// is pending ([`begin_owner_dispatch`]), and [`CLOSED_OWNER_GRACE`] has
+/// passed since its close, so the set holds only the transports that closed
+/// within that window plus those a label or a pending call still names.
+/// Mutated and read only while holding the `ENDED_SESSIONS` lock.
+static CLOSED_TRANSPORTS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+/// How long a closed transport that no label or pending call names stays
+/// refused: long enough for a call it sent before closing that the transport
+/// had read but not yet dispatched. A call already dispatched stays covered
+/// by [`PENDING_OWNER_DISPATCHES`] however long it waits for consent or an
+/// input lane.
+const CLOSED_OWNER_GRACE: Duration = DEFAULT_SESSION_IDLE_TTL;
+/// Calls at the native dispatch boundary that have not finished, per owner
+/// transport. Lifecycle admission comes after consent and input-lane waits
+/// with no deadline, so a call sent before its transport closed can reach it
+/// arbitrarily late; its owner is not forgotten while it is pending.
+static PENDING_OWNER_DISPATCHES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 /// Runtime generations that have received terminal revoke-all.
 ///
 /// This latch is intentionally independent of grants and public session
@@ -1125,8 +1144,74 @@ fn explicitly_ended_sessions() -> &'static Mutex<HashSet<String>> {
     EXPLICITLY_ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn closed_transports() -> &'static Mutex<HashSet<String>> {
-    CLOSED_TRANSPORTS.get_or_init(|| Mutex::new(HashSet::new()))
+fn closed_transports() -> &'static Mutex<HashMap<String, Instant>> {
+    CLOSED_TRANSPORTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn pending_owner_dispatches() -> &'static Mutex<HashMap<String, usize>> {
+    PENDING_OWNER_DISPATCHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// One call from `owner_transport` that has entered the native dispatch
+/// boundary. While it lives, a closed `owner_transport` stays refused.
+pub struct OwnerDispatchGuard {
+    owner_transport: String,
+}
+
+pub fn begin_owner_dispatch(owner_transport: &str) -> OwnerDispatchGuard {
+    *pending_owner_dispatches()
+        .lock()
+        .unwrap()
+        .entry(owner_transport.to_owned())
+        .or_default() += 1;
+    OwnerDispatchGuard {
+        owner_transport: owner_transport.to_owned(),
+    }
+}
+
+impl Drop for OwnerDispatchGuard {
+    fn drop(&mut self) {
+        let mut pending = pending_owner_dispatches().lock().unwrap();
+        if let Some(count) = pending.get_mut(&self.owner_transport) {
+            *count -= 1;
+            if *count == 0 {
+                pending.remove(&self.owner_transport);
+            }
+        }
+    }
+}
+
+/// Forget closed owners past [`CLOSED_OWNER_GRACE`] that no labelled episode,
+/// live or tombstoned, and no pending call names. The caller holds the
+/// `ENDED_SESSIONS` and lifecycle record locks and passes both maps.
+fn forget_closed_owners(
+    ended: &HashMap<String, Option<String>>,
+    records: &HashMap<String, LifecycleRecord>,
+    closed: &mut HashMap<String, Instant>,
+    now: Instant,
+) {
+    if closed
+        .values()
+        .all(|closed_at| now.saturating_duration_since(*closed_at) < CLOSED_OWNER_GRACE)
+    {
+        return;
+    }
+    let named = ended
+        .iter()
+        .filter_map(|(id, owner)| owner.as_deref().filter(|owner| owner != id))
+        .chain(
+            records
+                .iter()
+                .filter(|(id, record)| *id != &record.owner_transport)
+                .map(|(_, record)| record.owner_transport.as_str()),
+        )
+        .collect::<HashSet<_>>();
+    let pending = pending_owner_dispatches().lock().unwrap();
+    closed.retain(|owner, closed_at| {
+        now.saturating_duration_since(*closed_at) < CLOSED_OWNER_GRACE
+            || named.contains(owner.as_str())
+            || pending.contains_key(owner)
+    });
 }
 
 /// Whether `owner_transport` may claim the tombstoned `session_id` with
@@ -1144,7 +1229,18 @@ fn released_to(
     };
     owner != session_id
         && owner != owner_transport
-        && closed_transports().lock().unwrap().contains(owner)
+        && closed_transports().lock().unwrap().contains_key(owner)
+}
+
+/// Whether `owner_transport` has closed and `session_id` is a label rather
+/// than its own unnamed id. A closed transport binds no label again, even with
+/// a call it sent before the close. The caller holds the `ENDED_SESSIONS` lock.
+fn closed_label_owner(session_id: &str, owner_transport: &str) -> bool {
+    session_id != owner_transport
+        && closed_transports()
+            .lock()
+            .unwrap()
+            .contains_key(owner_transport)
 }
 
 /// Whether `owner_transport` may not claim the tombstoned `session_id`: the
@@ -1159,7 +1255,7 @@ fn claim_refused(
 ) -> bool {
     match ended.get(session_id) {
         Some(Some(owner)) if owner == owner_transport => {
-            closed_transports().lock().unwrap().contains(owner)
+            closed_label_owner(session_id, owner_transport)
         }
         Some(Some(_)) => !released_to(ended, session_id, owner_transport),
         _ => false,
@@ -1181,43 +1277,15 @@ fn released_to_next_call(
             .contains(session_id)
 }
 
-/// Whether a labelled episode, live or tombstoned, still names `owner` as its
-/// transport. Its own unnamed id never counts, because it is never released.
-fn names_labels_of(
-    ended: &HashMap<String, Option<String>>,
-    records: &HashMap<String, LifecycleRecord>,
-    owner: &str,
-) -> bool {
-    ended
-        .iter()
-        .any(|(id, ended_owner)| id != owner && ended_owner.as_deref() == Some(owner))
-        || records
-            .iter()
-            .any(|(id, record)| id != owner && record.owner_transport == owner)
-}
-
-/// Drop a tombstone that a new episode or a revival replaces, and forget its
-/// closed owner once no labelled episode names it. Returns whether a
-/// tombstone existed. The caller holds the `ENDED_SESSIONS` and lifecycle
-/// record locks and passes both maps.
-fn remove_tombstone(
-    ended: &mut HashMap<String, Option<String>>,
-    records: &HashMap<String, LifecycleRecord>,
-    session_id: &str,
-) -> bool {
+/// Drop a tombstone that a new episode or a revival replaces. Returns whether
+/// a tombstone existed. The caller holds the `ENDED_SESSIONS` lock and passes
+/// its map.
+fn remove_tombstone(ended: &mut HashMap<String, Option<String>>, session_id: &str) -> bool {
     explicitly_ended_sessions()
         .lock()
         .unwrap()
         .remove(session_id);
-    let Some(owner) = ended.remove(session_id) else {
-        return false;
-    };
-    if let Some(owner) = owner {
-        if !names_labels_of(ended, records, &owner) {
-            closed_transports().lock().unwrap().remove(&owner);
-        }
-    }
-    true
+    ended.remove(session_id).is_some()
 }
 
 /// Dormant session ids whose tombstone owner passes `keep`.
@@ -1777,7 +1845,7 @@ pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
     closed_transports()
         .lock()
         .unwrap()
-        .retain(|owner| !owner.starts_with(prefix));
+        .retain(|owner, _| !owner.starts_with(prefix));
     drop(ended);
     cleanup_progress()
         .lock()
@@ -1855,7 +1923,7 @@ pub fn revive_session(session_id: &str) -> bool {
         return false;
     }
     idle_ended_sessions().lock().unwrap().remove(session_id);
-    remove_tombstone(&mut ended, &lifecycle_records().lock().unwrap(), session_id)
+    remove_tombstone(&mut ended, session_id)
 }
 
 /// Owner-checked revival used by the public `start_session` tool. A public
@@ -1912,7 +1980,7 @@ pub fn revive_session_for_owner(
             Err("session cleanup is incomplete; retry end_session before revival")
         }
         _ => {
-            remove_tombstone(&mut ended, &lifecycle_records().lock().unwrap(), session_id);
+            remove_tombstone(&mut ended, session_id);
             idle_ended_sessions().lock().unwrap().remove(session_id);
             Ok(true)
         }
@@ -2743,12 +2811,58 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_transport_is_forgotten_once_no_tombstone_names_it() {
+    fn a_closed_transport_cannot_claim_a_label_with_a_late_call() {
+        let label = "test-late-closed-owner-label-K3L4M5";
+        let owner_a = "test-late-closed-owner-transport-a";
+        let owner_b = "test-late-closed-owner-transport-b";
+        let begin = |owner: &str| {
+            begin_session_dispatch(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        let start = |owner: &str| {
+            activate_or_revive_session_for_owner(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            )
+        };
+
+        // A closes while it holds no label; a call it sent earlier lands after.
+        assert_eq!(
+            end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
+            0
+        );
+        assert_eq!(begin(owner_a).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(
+            start(owner_a),
+            Err("session is not available to this transport")
+        );
+
+        // The label stays free for every other transport.
+        drop(begin(owner_b).unwrap());
+        assert_eq!(start(owner_b), Ok(false));
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            1
+        );
+    }
+
+    #[test]
+    fn a_closed_transport_stays_refused_until_its_runtime_forgets_it() {
         let label = "test-forgotten-owner-label-F7A8B9";
         let ended_label = "test-forgotten-owner-ended-F7A8B9";
         let owner_a = "test-forgotten-owner-transport-a";
         let owner_b = "test-forgotten-owner-transport-b";
-        let unnamed_only = "test-forgotten-owner-transport-unnamed";
         let begin = |sid: &str, owner: &str| {
             begin_session_dispatch(
                 sid,
@@ -2759,16 +2873,7 @@ mod tests {
                 SessionClientKind::Mcp,
             )
         };
-        let closed = |owner: &str| closed_transports().lock().unwrap().contains(owner);
-
-        // A transport that closes without a labelled episode, like a one-shot
-        // CLI call, is never recorded: it has no label to release.
-        drop(begin(unnamed_only, unnamed_only).unwrap());
-        assert_eq!(
-            end_sessions_for_owner(unnamed_only, SessionEndReason::ProcessExit),
-            1
-        );
-        assert!(!closed(unnamed_only));
+        let closed = |owner: &str| closed_transports().lock().unwrap().contains_key(owner);
 
         drop(begin(owner_a, owner_a).unwrap());
         drop(begin(label, owner_a).unwrap());
@@ -2778,12 +2883,9 @@ mod tests {
             end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
             2
         );
-        assert!(closed(owner_a));
 
-        // Each claim drops one of A's tombstones. A stays recorded while one
-        // still names it, and is forgotten with the last.
+        // Another transport claims both of A's labels.
         drop(begin(label, owner_b).unwrap());
-        assert!(closed(owner_a));
         assert_eq!(
             activate_or_revive_session_for_owner(
                 ended_label,
@@ -2796,23 +2898,85 @@ mod tests {
             ),
             Ok(true)
         );
-        assert!(!closed(owner_a));
 
-        // Forgetting A loosens nothing: its own unnamed id and its late calls
-        // stay refused.
+        // With no tombstone left naming A, its late calls stay refused.
         assert!(is_session_ended(owner_a));
         assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
         assert_eq!(begin(owner_a, owner_a).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(begin(label, owner_a).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
-            begin(label, owner_a).err(),
-            Some(DispatchRefusal::OwnedByOtherTransport(
-                SessionTransport::McpStdio
-            ))
+            begin("test-forgotten-owner-fresh-F7A8B9", owner_a).err(),
+            Some(DispatchRefusal::Ended)
         );
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
             2
         );
+
+        // Destroying the runtime drops the record with its tombstones.
+        assert!(closed(owner_a));
+        forget_ended_sessions_with_prefix("test-forgotten-owner-");
+        assert!(!closed(owner_a) && !closed(owner_b));
+    }
+
+    #[test]
+    fn a_closed_transport_no_label_names_is_forgotten_after_its_grace() {
+        let label = "test-grace-closed-owner-label-G1H2";
+        let idle = "test-grace-closed-owner-transport-idle";
+        let labelled = "test-grace-closed-owner-transport-labelled";
+        let calling = "test-grace-closed-owner-transport-calling";
+        drop(
+            begin_session_dispatch(
+                label,
+                Some("label"),
+                labelled,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            end_sessions_for_owner(idle, SessionEndReason::ProcessExit),
+            0
+        );
+        assert_eq!(
+            end_sessions_for_owner(labelled, SessionEndReason::ProcessExit),
+            1
+        );
+        // A call sent before the close still waits ahead of admission.
+        let call = begin_owner_dispatch(calling);
+        assert_eq!(
+            end_sessions_for_owner(calling, SessionEndReason::ProcessExit),
+            0
+        );
+
+        let ended = ended_sessions().lock().unwrap();
+        let records = lifecycle_records().lock().unwrap();
+        // Prune a copy: pruning the shared set past the grace would forget
+        // owners that tests running in parallel just closed.
+        let mut closed = closed_transports()
+            .lock()
+            .unwrap()
+            .clone()
+            .into_iter()
+            .filter(|(owner, _)| [idle, labelled, calling].contains(&owner.as_str()))
+            .collect::<HashMap<_, _>>();
+        let now = Instant::now();
+        forget_closed_owners(&ended, &records, &mut closed, now);
+        assert!(closed.contains_key(idle) && closed.contains_key(labelled));
+        forget_closed_owners(&ended, &records, &mut closed, now + CLOSED_OWNER_GRACE);
+        assert!(!closed.contains_key(idle), "nothing names it");
+        assert!(
+            closed.contains_key(labelled),
+            "its tombstone still names it"
+        );
+        assert!(closed.contains_key(calling), "its call is still pending");
+        drop(call);
+        forget_closed_owners(&ended, &records, &mut closed, now + CLOSED_OWNER_GRACE);
+        assert!(!closed.contains_key(calling), "its call has finished");
+        drop((records, ended));
+        forget_ended_sessions_with_prefix("test-grace-closed-owner-");
     }
 
     #[test]
@@ -3422,8 +3586,17 @@ mod tests {
     #[test]
     fn observer_distinguishes_explicit_idle_revival_and_control_cleanup() {
         let probe = probe_observer();
-        let _ = set_cursor_outcome_reader(Arc::new(|_| {
-            bounded_cursor_outcome(true, true, true, Some("cua.default"), false, 2)
+        // Observe only this test's sessions: an end stops at the first reader
+        // that observes, so a catch-all would hide other tests' readers.
+        let _ = set_cursor_outcome_reader(Arc::new(|id| {
+            bounded_cursor_outcome(
+                id.contains("test-observer-"),
+                true,
+                true,
+                Some("cua.default"),
+                false,
+                2,
+            )
         }));
         let explicit = "test-observer-explicit-IJ90";
         begin_tool_call(

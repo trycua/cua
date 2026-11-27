@@ -1,4 +1,4 @@
-# Hyprland plugin requalification, 2026-11-27T14:49:35Z
+# Hyprland plugin requalification, 2026-11-27T22:46:00Z
 
 CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.
 
@@ -35,12 +35,19 @@ CI requalification of the Cua Hyprland plugin per Hyprland build. Not native cer
 | Hyprland | Binary SHA-256 | Header inventory SHA-256 | GCC | Module SHA-256 | Plugin tree |
 | --- | --- | --- | --- | --- | --- |
 | 0.57.2-9 | `1ff4a430ad831b036b5222dce6331f6f8c02743085c2729ef7e34d661ed4b16c` | `51daf766bd83c034cd1bc59734548112511b69e1cff807794d6f42b4eeecbdf5` | 16.2.1 20260810 | `0c66fe34feefaf80231a3ad5044099e0dafb74145b14262f70fbf292fe23385e` | `135325af5f0d` |
-| 0.57.2-9 | `1ff4a430ad831b036b5222dce6331f6f8c02743085c2729ef7e34d661ed4b16c` | `51daf766bd83c034cd1bc59734548112511b69e1cff807794d6f42b4eeecbdf5` | 16.2.1 20260810 | `` | `5b3d63841bb6` |
 | 0.57.2-9 | `1ff4a430ad831b036b5222dce6331f6f8c02743085c2729ef7e34d661ed4b16c` | `51daf766bd83c034cd1bc59734548112511b69e1cff807794d6f42b4eeecbdf5` | 16.2.1 20260810 | `08626ce8ce18eeacad1d2b53ce79c1c996585821edbacea7a34a6df94807f08d` | `99899b60460b` |
+| 0.57.2-9 | `1ff4a430ad831b036b5222dce6331f6f8c02743085c2729ef7e34d661ed4b16c` | `51daf766bd83c034cd1bc59734548112511b69e1cff807794d6f42b4eeecbdf5` | 16.2.1 20260810 | `` | `5b3d63841bb6` |
+| 0.57.2-5 | `e77ed7567161a8aa789ebb0bbe3a407f5937e4ec28b900dc4d512afbf39d8f76` | `e35c07e1759d38cf47250ffd517797de5b330856f86e0c5c54f529f04fb9bced` | 16.2.1 20260810 | `0c66fe34feefaf80231a3ad5044099e0dafb74145b14262f70fbf292fe23385e` | `135325af5f0d` |
+| 0.57.2-2 | `d9117121713a84d5b0774f426e3f2f5a9baecb8c02e11726c813429de61ba427` | `546d1e2fd886d9d62f3abd8cf3e0df35b47c6bfa270499171bcc720a8869e345` | 16.2.1 20260810 | `0c66fe34feefaf80231a3ad5044099e0dafb74145b14262f70fbf292fe23385e` | `135325af5f0d` |
+| 0.56.2-4 | `55da553be71222566ee73b973d2f56dbb9939044d8f22f81aa54b66c83f2f6d1` | `1fdefe6ac027a159d04a5dfee4928ec7ebd15544a9a25b5f66d2f5a46fcf364a` | 16.2.1 20260810 | `dfe261eaaa0064125ef877cc01a6b5fd2514367523b72e1a96388d2230eb2a20` | `135325af5f0d` |
+| 0.57.2-7 | `7f5b3dbacab944134f4accdffdd2769c34a245de8a3f76801267d6ae3de5c52b` | `e35c07e1759d38cf47250ffd517797de5b330856f86e0c5c54f529f04fb9bced` | 16.2.1 20260810 | `0c66fe34feefaf80231a3ad5044099e0dafb74145b14262f70fbf292fe23385e` | `135325af5f0d` |
+| 0.57.2-7 | `7f5b3dbacab944134f4accdffdd2769c34a245de8a3f76801267d6ae3de5c52b` | `e35c07e1759d38cf47250ffd517797de5b330856f86e0c5c54f529f04fb9bced` | 16.2.1 20260810 | `0c66fe34feefaf80231a3ad5044099e0dafb74145b14262f70fbf292fe23385e` | `d19599242d42` |
+| 0.57.2-7 | `7f5b3dbacab944134f4accdffdd2769c34a245de8a3f76801267d6ae3de5c52b` | `e35c07e1759d38cf47250ffd517797de5b330856f86e0c5c54f529f04fb9bced` | 16.2.1 20260810 | `08626ce8ce18eeacad1d2b53ce79c1c996585821edbacea7a34a6df94807f08d` | `99899b60460b` |
+| 0.57.2-7 | `7f5b3dbacab944134f4accdffdd2769c34a245de8a3f76801267d6ae3de5c52b` | `e35c07e1759d38cf47250ffd517797de5b330856f86e0c5c54f529f04fb9bced` | 16.2.1 20260810 | `` | `5b3d63841bb6` |
 
 Upstream Hyprland: [v0.57.2](https://github.com/hyprwm/Hyprland/releases/tag/v0.57.2) (packaged).
 
-Omarchy `cua-hyprland-plugin 0.47.8-11` on omarchy-edge: installable.
+Omarchy `cua-hyprland-plugin 0.47.8-12` on omarchy-edge: installable.
 
 Omarchy `cua-hyprland-plugin 0.47.8-10` on omarchy-rc: installable.
 

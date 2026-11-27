@@ -27,10 +27,8 @@
       "omarchy_plugin": {
         "broken_pins": {},
         "installable": true,
-        "pins": {
-          "hyprland": "0.57.2-9"
-        },
-        "version": "0.47.8-11"
+        "pins": {},
+        "version": "0.47.8-12"
       },
       "packages": {
         "aquamarine": "0.16.0-1.2",
@@ -13760,9 +13758,9 @@
       }
     }
   ],
-  "generated_at": "2026-11-27T14:49:35Z",
+  "generated_at": "2026-11-27T22:46:00Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/46018783087",
+  "run_url": "https://github.com/trycua/cua/actions/runs/46078519581",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

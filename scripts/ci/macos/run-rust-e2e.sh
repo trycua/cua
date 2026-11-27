@@ -429,6 +429,9 @@ EOF
     run_test tk-pointer-click env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test tk_pointer_click_macos_test -- \
       --ignored --nocapture --test-threads=1
+    run_test java-awt-click env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test java_awt_click_macos_test -- \
+      --ignored --nocapture --test-threads=1
     run_test tk-pointer-toolkit-detect cargo test -p platform-macos --lib \
       input::pointer_toolkit::tests:: -- --ignored --nocapture --test-threads=1
   fi

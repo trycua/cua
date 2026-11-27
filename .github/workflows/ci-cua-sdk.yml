@@ -750,9 +750,10 @@ jobs:
     name: python smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse, build-sdk, build-fixtures, build-cli]
-    # A cold Windows run builds cua-sdk (release), the fixtures and the CLI:
-    # it passed 45 minutes still compiling.
-    timeout-minutes: 60
+    # A cold Windows or macOS run builds cua-sdk (release), the fixtures and the
+    # CLIs: it passes 45 minutes still compiling, and at 60 the macOS leg was
+    # cancelled before it could save the warm compile.
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 120 }}
     strategy:
       fail-fast: false
       matrix:
@@ -781,16 +782,23 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         if: runner.os != 'Linux'
+      # On macOS the same family as the swift job (the same release cua-sdk
+      # and fixtures), saved even when a step fails or times out.
       - uses: ./.github/actions/rust-cache
+        id: cache
         if: runner.os != 'Linux'
         with:
           workspaces: libs/cua
-          key: cua-sdk-python
+          shared-key: ${{ runner.os == 'macOS' && 'cua-sdk-swift' || '' }}
+          size: ${{ runner.os == 'macOS' && '8G' || '4G' }}
+          save-always: ${{ runner.os == 'macOS' && 'true' || 'false' }}
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       # The wheel ships the MIT `cua`; the suite also runs the daemon of the
       # Cua Spaces build (cua-spaces-cli), a Unix-socket test skipped on Windows.
       - name: Build the SDK, fixtures and CLIs
         if: runner.os != 'Linux'
+        # Leaves the cache save below its time inside the job's 120 minutes.
+        timeout-minutes: 100
         working-directory: libs/cua
         run: |
           cargo build --locked --release -p cua-sdk-native
@@ -818,15 +826,22 @@ jobs:
           WHEEL=$(ls ../../cua/python/dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls ../../cua/python/dist/cua_cli-*.whl)
           uv run --no-project --isolated --python 3.12 --with pytest --with pytest-asyncio \
             --with "$WHEEL" --with "$CLI_WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' && runner.os == 'macOS' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}
 
   node:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled' && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled' && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' && needs.quick.outputs.skip != 'true' }}
     name: node smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse, build-sdk, build-fixtures, build-cli]
-    # A cold macOS run (release cua-sdk, fixtures, both CLIs) passed 45
-    # minutes still compiling, as python smoke did on Windows.
-    timeout-minutes: 60
+    # A cold macOS run (release cua-sdk, fixtures, both CLIs) compiles for more
+    # than 60 minutes. At 60 the job was cancelled before it could save the
+    # warm compile, so the next run started cold again and never finished.
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 120 }}
     strategy:
       fail-fast: false
       matrix:
@@ -840,10 +855,15 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
+      # On macOS the same family as the swift job (the same release cua-sdk
+      # and fixtures), saved even when a step fails or times out.
       - uses: ./.github/actions/rust-cache
+        id: cache
         with:
           workspaces: libs/cua
-          key: cua-sdk-node
+          shared-key: ${{ runner.os == 'macOS' && 'cua-sdk-swift' || '' }}
+          size: ${{ runner.os == 'macOS' && '8G' || '4G' }}
+          save-always: ${{ runner.os == 'macOS' && 'true' || 'false' }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -863,6 +883,8 @@ jobs:
           chmod +x target/debug/cua target/debug/cua-spaces-cli target/debug/cua-test-fixtures
       - name: Build (macOS; Linux uses the shared build)
         if: runner.os != 'Linux'
+        # Leaves the cache save below its time inside the job's 120 minutes.
+        timeout-minutes: 100
         run: |
           cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
@@ -879,6 +901,12 @@ jobs:
         run: |
           npm --prefix typescript/integrations/pi-durable ci --ignore-scripts
           npm --prefix typescript/integrations/pi-durable test
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' && runner.os == 'macOS' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}
 
   browser:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
@@ -928,8 +956,10 @@ jobs:
     needs: quick
     if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) && needs.quick.outputs.skip != 'true' }}
     runs-on: macos-26
-    # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
-    timeout-minutes: 60
+    # Cold, the release cua-sdk build alone nears 45 minutes on macos-26, and the
+    # whole job passed 60 (a run cancelled at 60 saved nothing, so the next one
+    # started cold again).
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: libs/cua
@@ -950,6 +980,8 @@ jobs:
           size: 8G
           save-always: "true"
       - name: Dev dylib
+        # Leaves the cache save below its time inside the job's 120 minutes.
+        timeout-minutes: 100
         run: |
           cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh

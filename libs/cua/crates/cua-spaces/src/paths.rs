@@ -122,6 +122,8 @@ pub async fn tree_paths(spaces: &crate::Spaces, _space: &str) -> Paths {
 mod tests {
     use super::*;
 
+    // The control socket is a Unix socket, so only Unix looks for a mesh node.
+    #[cfg(unix)]
     #[tokio::test]
     async fn no_mesh_says_the_tree_stays_here() {
         let dir = tempfile::tempdir().unwrap();
@@ -130,5 +132,16 @@ mod tests {
         assert!(p.machines.is_empty());
         assert_eq!(p.prefer, "auto");
         assert!(p.note.unwrap().contains("No mesh"), "plain words");
+    }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn this_system_has_no_path_details_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = machine_paths(dir.path()).await;
+        assert!(!p.mesh);
+        assert!(p.machines.is_empty());
+        assert_eq!(p.prefer, "auto");
+        assert!(p.note.unwrap().contains("aren't available"), "plain words");
     }
 }

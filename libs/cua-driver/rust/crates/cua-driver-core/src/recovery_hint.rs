@@ -445,6 +445,15 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
+        codes: &["authorization_session_ended"],
+        build: |_| {
+            RecoveryHint::new(
+                "The session ended while this call held its approval, so the approval ended too. Retry \
+                 the call once; the user will be asked again.",
+            )
+        },
+    },
+    Rule {
         codes: &[crate::security_prompt::SECURITY_PROMPT_PROTECTED],
         build: |_| {
             RecoveryHint::new(

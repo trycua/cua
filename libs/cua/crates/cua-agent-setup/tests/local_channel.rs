@@ -140,7 +140,7 @@ fn local_registers_cua_local_and_skills_of_its_own_and_leaves_stable_untouched()
     // Local, with the same agents and the same configs.
     let cua_local = install_cua_local(&f.home);
     let mut env = f.env(CuaChannel::Local);
-    env.path.push(f.home.join(".local/bin"));
+    env.path.push(common::native(f.home.join(".local/bin")));
     let local = AgentSetup::new(env.clone());
 
     // Stable's `cua` entry is not Local's: nothing reads as configured yet.

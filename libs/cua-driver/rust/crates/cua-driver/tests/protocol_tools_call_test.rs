@@ -247,6 +247,111 @@ fn get_config_and_check_permissions() {
     );
 }
 
+/// Saved `get_window_state` walk defaults (#6345): `set_config` validates and
+/// saves them, `get_config` reports them, and a fresh daemon over the same
+/// home loads them back. The resolution order on each read is owned by
+/// `window_state_view::tests::a_saved_default_applies_only_where_the_argument_is_omitted`.
+#[test]
+fn get_window_state_walk_defaults_persist_across_daemons() {
+    let home = tempfile::tempdir().expect("temp home");
+    let home = home.path().to_str().expect("utf-8 temp home").to_owned();
+    let spawn = || {
+        RawDriver::spawn_with_env(&[
+            ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+            ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+            ("HOME", &home),
+        ])
+    };
+    let call = |d: &mut RawDriver, id: u64, name: &str, arguments: serde_json::Value| {
+        d.send(&serde_json::json!({
+            "jsonrpc":"2.0","id":id,"method":"tools/call",
+            "params":{"name":name,"arguments":arguments}
+        }));
+        d.recv()["result"].clone()
+    };
+    let Some(mut d) = spawn() else {
+        return;
+    };
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    d.recv();
+
+    let built_in = call(&mut d, 2, "get_config", serde_json::json!({}));
+    assert_eq!(
+        built_in["structuredContent"]["get_window_state"],
+        serde_json::json!({
+            "max_elements": 250,
+            "max_depth": 25,
+            "saved": {"max_elements": null, "max_depth": null},
+        })
+    );
+
+    // A refused walk value refuses the whole call: the cursor key beside it
+    // is not saved either.
+    let refused = call(
+        &mut d,
+        3,
+        "set_config",
+        serde_json::json!({"get_window_state.max_depth": 26, "cursor.halo": "off"}),
+    );
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["content"][0]["text"],
+        "get_window_state.max_depth must be a whole number from 1 to 25, or 0 or default to clear it; got 26"
+    );
+    let unchanged = call(&mut d, 5, "get_config", serde_json::json!({}));
+    assert_eq!(
+        unchanged["structuredContent"]["cursor"]["halo"],
+        built_in["structuredContent"]["cursor"]["halo"],
+        "a refused set_config saved cursor.halo"
+    );
+    assert_eq!(
+        unchanged["structuredContent"]["get_window_state"],
+        built_in["structuredContent"]["get_window_state"]
+    );
+
+    let set = call(
+        &mut d,
+        4,
+        "set_config",
+        serde_json::json!({
+            "get_window_state.max_elements": 1500,
+            "get_window_state.max_depth": 12,
+        }),
+    );
+    assert_ne!(set["isError"], true, "{set}");
+    drop(d);
+
+    let Some(mut d) = spawn() else {
+        panic!("second daemon over the same home did not start");
+    };
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    d.recv();
+    let saved = call(&mut d, 2, "get_config", serde_json::json!({}));
+    assert_eq!(
+        saved["structuredContent"]["get_window_state"],
+        serde_json::json!({
+            "max_elements": 1500,
+            "max_depth": 12,
+            "saved": {"max_elements": 1500, "max_depth": 12},
+        })
+    );
+
+    call(
+        &mut d,
+        3,
+        "set_config",
+        serde_json::json!({
+            "get_window_state.max_elements": 0,
+            "get_window_state.max_depth": "default",
+        }),
+    );
+    let cleared = call(&mut d, 4, "get_config", serde_json::json!({}));
+    assert_eq!(
+        cleared["structuredContent"]["get_window_state"],
+        built_in["structuredContent"]["get_window_state"]
+    );
+}
+
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[ignore = "host desktop: walks the real running apps and windows; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]

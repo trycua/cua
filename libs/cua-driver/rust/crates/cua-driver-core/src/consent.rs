@@ -22,6 +22,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::authorization::{ModeBehavior, PermissionMode, RiskClass, ENFORCEMENT_ADAPTERS};
+use crate::dispatch_identity::DispatchIdentity;
+use crate::session::{EpisodeId, EpisodeStatus};
 
 const DEFAULT_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
 
@@ -228,13 +230,30 @@ impl ApprovalBroker {
     }
 }
 
+/// A grant belongs to the runtime, lifecycle session and transport of the
+/// call that was approved, exactly as its [`DispatchIdentity`] names them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ResourceGrantKey {
     runtime_scope: String,
-    public_session: String,
-    transport_session: String,
+    lifecycle: Option<String>,
+    transport: Option<String>,
+    /// The lifecycle episode the grant was approved in, when the session had
+    /// one. A later episode of the same label never finds it.
+    episode: Option<EpisodeId>,
     adapter_id: String,
     resource_digest: String,
+}
+
+impl ResourceGrantKey {
+    fn same_resource(&self, other: &Self) -> bool {
+        Self {
+            episode: None,
+            ..self.clone()
+        } == Self {
+            episode: None,
+            ..other.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -378,7 +397,7 @@ impl ProtectedResourceGrants {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         adapter_id: &str,
         risk_class: RiskClass,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
         resource: Value,
         human_summary: &str,
         idle_ttl: Duration,
@@ -430,23 +449,42 @@ impl ProtectedResourceGrants {
             }
             ModeBehavior::RequireGrant => {}
         }
+        // A grant belongs to the episode it was approved in. A session that is
+        // already ending or ended gets an approval for this call only.
+        let episode = episode_status(identity.lifecycle());
+        let cacheable = matches!(episode, EpisodeStatus::Absent | EpisodeStatus::Live(_));
         let resource_digest = digest_resource(adapter_id, &resource);
-        let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
-        if let Some(grant) = self.lookup(&key, context) {
-            return Ok(Some(grant));
+        let key = resource_grant_key(
+            identity,
+            live_episode(episode),
+            adapter_id,
+            &resource_digest,
+        );
+        if cacheable {
+            if let Some(grant) = self.lookup(&key, context) {
+                return Ok(Some(grant));
+            }
         }
 
         // Collapse concurrent requests for the same or different protected
         // resources into a single provider turn. Re-check after waiting so a
         // peer that just approved the same exact scope supplies the grant.
         let _admission = self.admission.lock().await;
-        if let Some(grant) = self.lookup(&key, context) {
-            return Ok(Some(grant));
+        if cacheable {
+            // An end that landed while this call waited for its turn cancels
+            // it before anyone is asked.
+            if episode_status(identity.lifecycle()) != episode {
+                return Err(ConsentError::Canceled);
+            }
+            if let Some(grant) = self.lookup(&key, context) {
+                return Ok(Some(grant));
+            }
         }
 
+        // The person is shown the context's own labels when it has them.
         let public_session = context
             .public_session()
-            .or(lifecycle_session)
+            .or(identity.lifecycle())
             .unwrap_or("compatibility");
         let transport_session = context.transport_session().unwrap_or(public_session);
         let request = self.broker.request_bound(
@@ -479,7 +517,19 @@ impl ProtectedResourceGrants {
             idle_ttl,
             absolute_ttl,
         };
-        self.grants.lock().unwrap().insert(key, grant.clone());
+        if cacheable {
+            // An episode that ended while the person decided, whether queued
+            // behind another prompt or accepted after the end, keeps nothing.
+            // The check holds the grant lock, which the session-end hook's
+            // revocation takes after the end is recorded, so an end that lands
+            // after the check still revokes this grant.
+            let mut grants = self.grants.lock().unwrap();
+            if episode_status(identity.lifecycle()) != episode {
+                grant.protected.revoke();
+                return Err(ConsentError::Canceled);
+            }
+            grants.insert(key, grant.clone());
+        }
         Ok(Some(grant))
     }
 
@@ -508,7 +558,7 @@ impl ProtectedResourceGrants {
     pub fn revoke_session(&self, session: &str) -> Vec<ProtectedGrant> {
         let mut removed = Vec::new();
         self.grants.lock().unwrap().retain(|key, grant| {
-            let keep = key.public_session != session && key.transport_session != session;
+            let keep = key.lifecycle.as_deref() != Some(session);
             if !keep {
                 grant.protected.revoke();
                 removed.push(grant.protected.clone());
@@ -520,17 +570,22 @@ impl ProtectedResourceGrants {
 
     pub fn revoke_resource(
         &self,
-        context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
         adapter_id: &str,
         resource: &Value,
     ) -> Option<ProtectedGrant> {
         let digest = digest_resource(adapter_id, resource);
-        let key = resource_grant_key(context, lifecycle_session, adapter_id, &digest);
-        self.grants.lock().unwrap().remove(&key).map(|grant| {
-            grant.protected.revoke();
-            grant.protected
-        })
+        let key = resource_grant_key(identity, None, adapter_id, &digest);
+        let mut removed = None;
+        self.grants.lock().unwrap().retain(|granted, grant| {
+            let keep = !granted.same_resource(&key);
+            if !keep {
+                grant.protected.revoke();
+                removed = Some(grant.protected.clone());
+            }
+            keep
+        });
+        removed
     }
 
     pub fn revoke_all(&self) -> Vec<ProtectedGrant> {
@@ -559,24 +614,29 @@ impl Drop for ProtectedResourceGrants {
 }
 
 fn resource_grant_key(
-    context: &crate::session_authorization::EffectiveAuthorizationContext,
-    lifecycle_session: Option<&str>,
+    identity: &DispatchIdentity,
+    episode: Option<EpisodeId>,
     adapter_id: &str,
     resource_digest: &str,
 ) -> ResourceGrantKey {
-    let public_session = context
-        .public_session()
-        .or(lifecycle_session)
-        .unwrap_or("compatibility");
     ResourceGrantKey {
-        runtime_scope: context.runtime_scope_key(),
-        public_session: context.runtime_session_key(public_session),
-        transport_session: context
-            .transport_session()
-            .unwrap_or(public_session)
-            .to_owned(),
+        runtime_scope: identity.runtime().key().to_owned(),
+        lifecycle: identity.lifecycle().map(str::to_owned),
+        transport: identity.transport().map(str::to_owned),
+        episode,
         adapter_id: adapter_id.to_owned(),
         resource_digest: resource_digest.to_owned(),
+    }
+}
+
+fn episode_status(lifecycle_session: Option<&str>) -> EpisodeStatus {
+    lifecycle_session.map_or(EpisodeStatus::Absent, crate::session::episode_status)
+}
+
+fn live_episode(status: EpisodeStatus) -> Option<EpisodeId> {
+    match status {
+        EpisodeStatus::Live(id) => Some(id),
+        EpisodeStatus::Absent | EpisodeStatus::Ending(_) | EpisodeStatus::Ended(_) => None,
     }
 }
 
@@ -698,6 +758,27 @@ mod tests {
             .unwrap()
     }
 
+    fn identity(
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        label: &str,
+    ) -> DispatchIdentity {
+        identity_over(context, label, None)
+    }
+
+    fn identity_over(
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        label: &str,
+        transport: Option<&str>,
+    ) -> DispatchIdentity {
+        DispatchIdentity::resolve(
+            crate::dispatch_identity::RuntimeScope::new(context.runtime_scope_key()),
+            None,
+            transport,
+            &serde_json::json!({ "session": label }),
+            true,
+        )
+    }
+
     #[cfg(feature = "yaml")]
     fn authorization_context_with_manifest(
         mode: PermissionMode,
@@ -772,7 +853,7 @@ mod tests {
                 &context,
                 "private_observation",
                 RiskClass::R2,
-                Some("public-a"),
+                &identity(&context, "public-a"),
                 serde_json::json!({"pid": 42, "window_id": 7}),
                 "Observe app window 7",
                 Duration::from_secs(30),
@@ -786,7 +867,7 @@ mod tests {
                 &context,
                 "private_observation",
                 RiskClass::R2,
-                Some("public-a"),
+                &identity(&context, "public-a"),
                 serde_json::json!({"pid": 42, "window_id": 7}),
                 "Observe app window 7",
                 Duration::from_secs(30),
@@ -809,7 +890,7 @@ mod tests {
                 &standard,
                 "desktop_input",
                 RiskClass::R1,
-                Some("public-a"),
+                &identity(&standard, "public-a"),
                 serde_json::json!({"pid": 42, "window_id": 7}),
                 "Control app window 7",
                 Duration::from_secs(30),
@@ -827,7 +908,7 @@ mod tests {
                 &unrestricted,
                 "desktop_input",
                 RiskClass::R1,
-                Some("public-b"),
+                &identity(&unrestricted, "public-b"),
                 serde_json::json!({"pid": 9, "window_id": 2}),
                 "Control app window 2",
                 Duration::from_secs(30),
@@ -853,7 +934,7 @@ mod tests {
                     &context,
                     "desktop_input",
                     RiskClass::R1,
-                    Some("public-a"),
+                    &identity(&context, "public-a"),
                     serde_json::json!({"kind": "window_input", "pid": 42, "window_id": 7}),
                     "Control the declared window",
                     Duration::from_secs(30),
@@ -866,7 +947,7 @@ mod tests {
                     &context,
                     "desktop_input",
                     RiskClass::R1,
-                    Some("public-a"),
+                    &identity(&context, "public-a"),
                     serde_json::json!({"kind": "window_input", "pid": 42, "window_id": 8}),
                     "Control an undeclared window",
                     Duration::from_secs(30),
@@ -876,6 +957,320 @@ mod tests {
                 .is_err());
             assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         }
+    }
+
+    /// Accepts each prompt only when the test releases it.
+    struct GatedProvider {
+        gate: tokio::sync::Semaphore,
+        requests: AtomicU64,
+    }
+
+    #[async_trait]
+    impl ProtectedConsentProvider for GatedProvider {
+        fn provider_id(&self) -> &'static str {
+            "test.gated-provider"
+        }
+
+        async fn request_consent(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<ProviderDecision, String> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            self.gate.acquire().await.unwrap().forget();
+            Ok(ProviderDecision {
+                action: ConsentAction::Accept,
+                request_digest: request.request_digest.clone(),
+            })
+        }
+    }
+
+    fn gated_grants() -> (Arc<GatedProvider>, Arc<ProtectedResourceGrants>) {
+        let provider = Arc::new(GatedProvider {
+            gate: tokio::sync::Semaphore::new(0),
+            requests: AtomicU64::new(0),
+        });
+        let grants = Arc::new(ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(
+            Some(provider.clone()),
+        ))));
+        (provider, grants)
+    }
+
+    fn ask_history(
+        grants: &Arc<ProtectedResourceGrants>,
+        context: &Arc<crate::session_authorization::EffectiveAuthorizationContext>,
+        caller: &DispatchIdentity,
+    ) -> impl std::future::Future<Output = Result<Option<ResourceGrant>, ConsentError>> {
+        let grants = grants.clone();
+        let context = context.clone();
+        let caller = caller.clone();
+        async move {
+            grants
+                .authorize(
+                    &context,
+                    "computer_history",
+                    RiskClass::R2,
+                    &caller,
+                    serde_json::json!({"kind": "history"}),
+                    "Read history",
+                    Duration::from_secs(60),
+                    Duration::from_secs(120),
+                )
+                .await
+        }
+    }
+
+    /// Start (or revive) `session`'s lifecycle episode, owned by itself.
+    fn start_episode(session: &str) -> bool {
+        crate::session::activate_or_revive_session_for_owner(
+            session,
+            Some("label"),
+            session,
+            false,
+            crate::session::SessionTransport::McpStdio,
+            crate::session::SessionClientKind::Mcp,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_prompt_accepted_after_its_episode_ended_grants_nothing() {
+        let (provider, grants) = gated_grants();
+        let context = authorization_context(PermissionMode::Standard);
+        let caller = identity(&context, "public-accepted-after-end");
+        let session = caller.lifecycle().unwrap().to_owned();
+        assert!(!start_episode(&session));
+
+        let pending = tokio::spawn(ask_history(&grants, &context, &caller));
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // The episode ends while its prompt is open, then the person accepts.
+        assert!(crate::session::end_session_for_owner(&session, &session));
+        provider.gate.add_permits(1);
+        assert_eq!(pending.await.unwrap().unwrap_err(), ConsentError::Canceled);
+
+        // The label's next episode is asked again instead of reusing it.
+        assert!(start_episode(&session));
+        provider.gate.add_permits(1);
+        let next = ask_history(&grants, &context, &caller)
+            .await
+            .unwrap()
+            .expect("a fresh approval");
+        assert!(next.is_live());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        crate::session::end_session(&session);
+        crate::session::forget_ended_sessions_with_prefix(&session);
+    }
+
+    #[tokio::test]
+    async fn a_prompt_queued_behind_another_while_its_episode_ends_grants_nothing() {
+        let (provider, grants) = gated_grants();
+        let context = authorization_context(PermissionMode::Standard);
+        let other_caller = identity(&context, "public-queued-other");
+        let caller = identity(&context, "public-queued");
+        let other = other_caller.lifecycle().unwrap().to_owned();
+        let session = caller.lifecycle().unwrap().to_owned();
+        assert!(!start_episode(&other));
+        assert!(!start_episode(&session));
+
+        // Another session's prompt holds admission; this call waits behind it.
+        let first = tokio::spawn(ask_history(&grants, &context, &other_caller));
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        let queued = tokio::spawn(ask_history(&grants, &context, &caller));
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert!(crate::session::end_session_for_owner(&session, &session));
+        provider.gate.add_permits(1);
+        assert!(first.await.unwrap().unwrap().is_some());
+        // It is canceled when its turn comes, without asking anyone.
+        assert_eq!(queued.await.unwrap().unwrap_err(), ConsentError::Canceled);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+
+        // Its next episode is asked again.
+        assert!(start_episode(&session));
+        provider.gate.add_permits(1);
+        assert!(ask_history(&grants, &context, &caller)
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        for session in [&other, &session] {
+            crate::session::end_session(session);
+            crate::session::forget_ended_sessions_with_prefix(session);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_approval_for_an_already_ended_episode_covers_one_call() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let caller = identity(&context, "public-ended-before-consent");
+        let session = caller.lifecycle().unwrap().to_owned();
+        assert!(!start_episode(&session));
+        assert!(crate::session::end_session_for_owner(&session, &session));
+        for _ in 0..2 {
+            assert!(grants
+                .authorize(
+                    &context,
+                    "computer_history",
+                    RiskClass::R2,
+                    &caller,
+                    serde_json::json!({"kind": "history"}),
+                    "Read history",
+                    Duration::from_secs(60),
+                    Duration::from_secs(120),
+                )
+                .await
+                .unwrap()
+                .is_some());
+        }
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        crate::session::forget_ended_sessions_with_prefix(&session);
+    }
+
+    #[tokio::test]
+    async fn a_grant_is_reused_within_its_episode_only() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let caller = identity(&context, "public-episode-reuse");
+        let session = caller.lifecycle().unwrap().to_owned();
+        let ask = || {
+            grants.authorize(
+                &context,
+                "computer_history",
+                RiskClass::R2,
+                &caller,
+                serde_json::json!({"kind": "history"}),
+                "Read history",
+                Duration::from_secs(60),
+                Duration::from_secs(120),
+            )
+        };
+        assert!(!start_episode(&session));
+        assert!(ask().await.unwrap().is_some());
+        assert!(ask().await.unwrap().is_some());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+
+        // A new episode never finds the old one's grant, even one the
+        // session-end hook did not revoke.
+        assert!(crate::session::end_session_for_owner(&session, &session));
+        assert!(start_episode(&session));
+        assert!(ask().await.unwrap().is_some());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        crate::session::end_session(&session);
+        crate::session::forget_ended_sessions_with_prefix(&session);
+    }
+
+    #[tokio::test]
+    async fn grant_keys_resolve_from_the_dispatch_identity() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let authorize = |identity: DispatchIdentity| {
+            let grants = &grants;
+            let context = context.clone();
+            async move {
+                grants
+                    .authorize(
+                        &context,
+                        "computer_history",
+                        RiskClass::R2,
+                        &identity,
+                        serde_json::json!({"scope": "history"}),
+                        "Read Computer History",
+                        Duration::from_secs(30),
+                        Duration::from_secs(60),
+                    )
+                    .await
+                    .unwrap()
+                    .expect("standard history access needs a grant")
+            }
+        };
+        let a_over_one = identity_over(&context, "a", Some("transport-1"));
+        let a_over_two = identity_over(&context, "a", Some("transport-2"));
+        let b_over_one = identity_over(&context, "b", Some("transport-1"));
+
+        let first = authorize(a_over_one.clone()).await;
+        authorize(a_over_one.clone()).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1, "reused");
+        // Another transport or another session is a different identity, so
+        // it is asked again rather than inheriting the grant.
+        authorize(a_over_two.clone()).await;
+        authorize(b_over_one.clone()).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 3);
+
+        // Ending a session revokes every grant its lifecycle id holds, and
+        // only those. A transport id is not a session end.
+        assert!(grants
+            .revoke_session(a_over_one.transport().unwrap())
+            .is_empty());
+        let revoked = grants.revoke_session(a_over_one.lifecycle().unwrap());
+        assert_eq!(revoked.len(), 2);
+        assert!(!first.is_live());
+        authorize(b_over_one).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 3, "b kept");
+        authorize(a_over_one).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 4, "a re-asked");
+    }
+
+    #[tokio::test]
+    async fn reserved_argument_keys_cannot_select_another_sessions_grant() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let victim = identity_over(&context, "victim", Some("victim-transport"));
+        grants
+            .authorize(
+                &context,
+                "computer_history",
+                RiskClass::R2,
+                &victim,
+                serde_json::json!({"scope": "history"}),
+                "Read Computer History",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+        // A caller that names the victim's private ids in reserved keys still
+        // resolves to its own identity, which holds no grant.
+        let forged = DispatchIdentity::resolve(
+            crate::dispatch_identity::RuntimeScope::new(context.runtime_scope_key()),
+            None,
+            None,
+            &serde_json::json!({
+                "session": "attacker",
+                "_session_id": victim.lifecycle().unwrap(),
+                "_transport_session_id": victim.transport().unwrap(),
+                "_public_session_label": "victim",
+            }),
+            true,
+        );
+        assert_ne!(forged.lifecycle(), victim.lifecycle());
+        grants
+            .authorize(
+                &context,
+                "computer_history",
+                RiskClass::R2,
+                &forged,
+                serde_json::json!({"scope": "history"}),
+                "Read Computer History",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

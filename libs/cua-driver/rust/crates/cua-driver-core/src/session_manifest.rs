@@ -11,9 +11,8 @@ use std::collections::HashSet;
 #[cfg(feature = "yaml")]
 use std::path::Component;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "yaml")]
 use serde::Deserialize;
@@ -56,8 +55,6 @@ pub struct SessionManifest {
     terminable_pids: HashSet<i64>,
     configuration_changes: Vec<(String, serde_json::Value)>,
     computer_history_operations: HashSet<String>,
-    last_authorized_dispatch: Arc<Mutex<Instant>>,
-    idle_expired: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -407,17 +404,15 @@ impl SessionManifest {
             .get("bundle_id")
             .and_then(serde_json::Value::as_str);
         // The process path the platform adapter read from the OS for this
-        // exact pid. Unlike `bundle_id` and `launch_path`, which come from
-        // `list_apps` (and on Windows are matched to a running unpackaged
-        // process by file name only), this cannot be influenced by naming a
-        // program.
+        // exact pid. It is the only identity an `executable` grant accepts.
+        // `bundle_id` and `launch_path` come from `list_apps`, which on Windows
+        // and Linux pairs a running process with an installed app by file name
+        // only, and `launch_path` is a launcher command line, not the running
+        // image. When the OS image path cannot be read, an executable grant
+        // fails closed; `launch_path` is honoured only by `launch_app`, before
+        // any process exists.
         let attested_executable = resource
             .pointer("/fingerprint/executable")
-            .and_then(serde_json::Value::as_str);
-        let executable = resource
-            .pointer("/fingerprint/executable")
-            .or_else(|| resource.get("executable"))
-            .or_else(|| resource.get("launch_path"))
             .and_then(serde_json::Value::as_str);
         self.applications.iter().any(|application| {
             (!require_all_windows || application.all_windows)
@@ -426,7 +421,7 @@ impl SessionManifest {
                 }) || application
                     .executable
                     .as_deref()
-                    .zip(executable)
+                    .zip(attested_executable)
                     .is_some_and(|(allowed, actual)| allowed == actual))
         })
     }
@@ -528,52 +523,6 @@ impl SessionManifest {
             .is_some_and(|expires_unix_ms| expires_unix_ms < now_unix_ms())
     }
 
-    pub fn is_idle_expired(&self) -> bool {
-        self.idle_expired.load(Ordering::Acquire)
-    }
-
-    /// Check the optional idle lease without refreshing it.
-    pub fn check_lifetime(&self) -> Result<(), String> {
-        if self.is_expired() {
-            return Err("capability manifest expired".to_owned());
-        }
-        let Some(idle_timeout) = self.idle_timeout else {
-            return Ok(());
-        };
-        if self.is_idle_expired() {
-            return Err("capability manifest idle timeout exceeded".to_owned());
-        }
-        let last = self.last_authorized_dispatch.lock().unwrap();
-        if Instant::now().duration_since(*last) > idle_timeout {
-            self.idle_expired.store(true, Ordering::Release);
-            return Err("capability manifest idle timeout exceeded".to_owned());
-        }
-        Ok(())
-    }
-
-    /// Refresh the capability-manifest idle lease only after a call passed every
-    /// manifest decision and resource check. Once the idle lease expires it is
-    /// terminal for this daemon instance; a tool call cannot revive it.
-    pub fn commit_authorized_dispatch(&self) -> Result<(), String> {
-        self.check_lifetime()?;
-        let Some(idle_timeout) = self.idle_timeout else {
-            return Ok(());
-        };
-        let now = Instant::now();
-        let mut last = self.last_authorized_dispatch.lock().unwrap();
-        if now.duration_since(*last) > idle_timeout {
-            self.idle_expired.store(true, Ordering::Release);
-            return Err("capability manifest idle timeout exceeded".to_owned());
-        }
-        *last = now;
-        Ok(())
-    }
-
-    /// Compatibility alias retained for downstream callers during migration.
-    pub fn authorize_dispatch(&self) -> Result<(), String> {
-        self.commit_authorized_dispatch()
-    }
-
     pub fn validate_for_mode(
         &self,
         mode: crate::authorization::PermissionMode,
@@ -586,7 +535,10 @@ impl SessionManifest {
                     .to_owned(),
             );
         }
-        self.check_lifetime()
+        if self.is_expired() {
+            return Err("capability manifest expired".to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -1108,8 +1060,6 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             terminable_pids,
             configuration_changes,
             computer_history_operations,
-            last_authorized_dispatch: Arc::new(Mutex::new(Instant::now())),
-            idle_expired: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -2167,35 +2117,7 @@ allow:
 
     #[cfg(feature = "yaml")]
     #[test]
-    fn idle_timeout_is_terminal_and_origin_bypass_tools_are_rejected() {
-        let loaded = manifest(
-            r#"
-version: 1
-mode: bounded
-expires_after: 1h
-idle_timeout: 1s
-resources: {}
-allow:
-  tools: [get_config]
-"#,
-        )
-        .unwrap();
-        *loaded.last_authorized_dispatch.lock().unwrap() =
-            Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
-        for mode in [
-            crate::authorization::PermissionMode::Standard,
-            crate::authorization::PermissionMode::Bounded,
-            crate::authorization::PermissionMode::Unrestricted,
-        ] {
-            assert!(
-                loaded.validate_for_mode(mode).is_err(),
-                "declared idle timeout must be enforced in {mode:?}"
-            );
-        }
-        assert!(loaded.commit_authorized_dispatch().is_err());
-        assert!(loaded.is_idle_expired());
-        assert!(loaded.commit_authorized_dispatch().is_err());
-
+    fn origin_scoped_manifests_reject_origin_bypass_tools() {
         for bypass_tool in ["page", "verify_state"] {
             let policy = format!(
                 r#"
@@ -2425,6 +2347,79 @@ allow:
             assert!(
                 outcome(serde_json::Value::Null).is_err(),
                 "{adapter}/{kind}"
+            );
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn executable_grant_requires_the_attested_process_image() {
+        // Regression for trycua/cua#8565: a running process must be matched by
+        // the image path the OS reports for its pid, never by the `list_apps`
+        // launch command or an unattested `executable` field.
+        let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let executable = executable.to_string_lossy().into_owned();
+        let loaded = manifest(&format!(
+            r#"
+version: 3
+allow:
+  tools: [list_windows, click]
+resources:
+  apps:
+    - executable: {executable:?}
+      windows: all
+"#
+        ))
+        .unwrap();
+        let resource = |kind: &str, extra: serde_json::Value| {
+            let mut value = serde_json::json!({"kind": kind, "pid": 4321, "window_id": 7});
+            for (key, field) in extra.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            value
+        };
+        let attested = |path: Option<&str>| serde_json::json!({"pid": 4321, "start_time": 1, "executable": path});
+
+        for (adapter, kind) in [
+            ("private_observation", "window"),
+            ("private_observation", "application"),
+            ("desktop_input", "window_input"),
+            ("desktop_input", "application_input"),
+        ] {
+            let outcome =
+                |extra| loaded.authorize_protected_resource(adapter, &resource(kind, extra));
+            // The granted image, attested by the OS.
+            outcome(serde_json::json!({
+                "fingerprint": attested(Some(&executable)),
+                "launch_path": "/usr/bin/env",
+            }))
+            .unwrap();
+            // A launch command equal to the grant, with no attested image.
+            assert!(
+                outcome(serde_json::json!({"launch_path": executable})).is_err(),
+                "{adapter}/{kind}: launch_path alone"
+            );
+            assert!(
+                outcome(serde_json::json!({
+                    "fingerprint": attested(None),
+                    "launch_path": executable,
+                }))
+                .is_err(),
+                "{adapter}/{kind}: unreadable image path"
+            );
+            // An unattested top-level executable claim.
+            assert!(
+                outcome(serde_json::json!({"executable": executable})).is_err(),
+                "{adapter}/{kind}: unattested executable"
+            );
+            // A different attested image with a matching launch command.
+            assert!(
+                outcome(serde_json::json!({
+                    "fingerprint": attested(Some("/usr/bin/id")),
+                    "launch_path": executable,
+                }))
+                .is_err(),
+                "{adapter}/{kind}: different image"
             );
         }
     }

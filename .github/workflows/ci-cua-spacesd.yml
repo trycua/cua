@@ -225,7 +225,7 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: >-
-            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev x11-utils sway xwayland
       - name: Format
         run: cargo fmt --all --check
       - uses: ./.github/actions/nextest
@@ -238,6 +238,14 @@ jobs:
           cargo nextest run --workspace --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
         env:
           DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      # The X server of a GNOME or KDE Wayland session is a rootless Xwayland,
+      # whose root grabs black; a desktop stream on it must be refused (#5236).
+      - name: Rootless Xwayland desktop refusal
+        if: runner.os == 'Linux'
+        run: >-
+          ../../scripts/ci/linux/with-rootless-xwayland.sh
+          cargo test -p cua-spacesd-desktop --lib --locked -- --ignored --exact
+          linux_stream::tests::rootless_xwayland_desktop_is_refused_not_streamed_black
       - name: Doctests
         run: cargo test --workspace --doc --locked
         env:

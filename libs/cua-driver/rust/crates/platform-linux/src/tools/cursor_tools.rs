@@ -160,6 +160,41 @@ impl Tool for SetAgentCursorThemeTool {
     }
 }
 
+pub struct SetAgentCursorBadgeTool;
+
+static CURSOR_BADGE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for SetAgentCursorBadgeTool {
+    fn def(&self) -> &ToolDef {
+        CURSOR_BADGE_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_badge"))
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let Some(show_session_label) = args.get("show_session_label").and_then(Value::as_bool)
+        else {
+            return ToolResult::error("Missing required boolean field `show_session_label`.");
+        };
+        let session = resolve_cursor_key(&args);
+        crate::overlay::send_command_for(
+            session.clone(),
+            cursor_overlay::OverlayCommand::SetSessionLabelVisible(show_session_label),
+        );
+        ToolResult::text(format!(
+            "Agent cursor session label for session '{session}' {}.",
+            if show_session_label {
+                "shown"
+            } else {
+                "hidden"
+            }
+        ))
+        .with_structured(json!({
+            "session":session,
+            "badge":{"show_session_label":show_session_label}
+        }))
+    }
+}
+
 pub struct GetAgentCursorStateV2Tool {
     pub(crate) state: Arc<ToolState>,
 }
@@ -176,6 +211,7 @@ impl Tool for GetAgentCursorStateV2Tool {
         let session = resolve_cursor_key(&args);
         let enabled = crate::overlay::is_enabled_for(&session);
         let motion = crate::overlay::current_motion_for(&session);
+        let show_session_label = crate::overlay::current_show_session_label_for(&session);
         let (theme_id, version, profile, fallback, visual) =
             crate::overlay::current_theme_state_for(&session).unwrap_or_else(|| {
                 (
@@ -221,7 +257,8 @@ impl Tool for GetAgentCursorStateV2Tool {
                     "frame":visual.frame(),
                     "preempted_count":visual.preempted_count
                 },
-                "motion":motion.output_json()
+                "motion":motion.output_json(),
+                "badge":{"show_session_label":show_session_label}
             }),
         )
     }

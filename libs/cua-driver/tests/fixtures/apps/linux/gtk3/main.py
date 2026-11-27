@@ -191,21 +191,10 @@ class HarnessWindow(Gtk.Window):
         self.selection_status = Gtk.Label(label="selection=none", xalign=0)
         root.pack_start(self.selection_status, False, False, 0)
 
-        # ── context_menu ──────────────────────────────────────────────────
-        section(root, "context menu")
-        self.ctx = aid(Gtk.Button(label="Right-click for context menu"), "btn-context")
-        self.ctx.connect("button-press-event", self.on_ctx_press)
-        root.pack_start(self.ctx, False, False, 0)
-        self.ctx_status = Gtk.Label(label="menu_action=none", xalign=0)
-        root.pack_start(self.ctx_status, False, False, 0)
-        self.menu = Gtk.Menu()
-        for lbl in ("Cut", "Copy", "Paste"):
-            mi = Gtk.MenuItem(label=lbl)
-            mi.connect("activate", self.on_ctx_item, lbl)
-            self.menu.append(mi)
-        self.menu.show_all()
-
         # ── scroll_target (tall scrollable region) ────────────────────────
+        # PX scroll cells aim at this viewport, so it must stay inside the
+        # default 720 px content height. Sections after it are reached
+        # through AT-SPI or the outer scroller.
         section(root, "scroll-tall")
         inner = aid(Gtk.ScrolledWindow(), "scroll-tall")
         inner.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -225,6 +214,20 @@ class HarnessWindow(Gtk.Window):
         self.scroll_status = Gtk.Label(label="scroll_offset=0", xalign=0)
         root.pack_start(self.scroll_status, False, False, 0)
         inner.get_vadjustment().connect("value-changed", self.on_scroll)
+
+        # ── context_menu ──────────────────────────────────────────────────
+        section(root, "context menu")
+        self.ctx = aid(Gtk.Button(label="Right-click for context menu"), "btn-context")
+        self.ctx.connect("button-press-event", self.on_ctx_press)
+        root.pack_start(self.ctx, False, False, 0)
+        self.ctx_status = Gtk.Label(label="menu_action=none", xalign=0)
+        root.pack_start(self.ctx_status, False, False, 0)
+        self.menu = Gtk.Menu()
+        for lbl in ("Cut", "Copy", "Paste"):
+            mi = Gtk.MenuItem(label=lbl)
+            mi.connect("activate", self.on_ctx_item, lbl)
+            self.menu.append(mi)
+        self.menu.show_all()
 
         # ── popover ───────────────────────────────────────────────────────
         section(root, "popover")

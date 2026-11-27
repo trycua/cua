@@ -393,6 +393,10 @@ pub enum OverlayCommand {
     ApplyMotion(serde_json::Value),
     /// Pin the overlay above a specific window (by platform window id).
     PinAbove(u64),
+    /// Drop the pin target. A move with no target window sends it, so the
+    /// overlay goes back to the top of the normal band instead of staying
+    /// under whatever covers the window the previous action pinned it to.
+    Unpin,
     /// Begin a best-effort semantic cursor cue.
     BeginAction {
         action: CursorAction,
@@ -408,6 +412,9 @@ pub enum OverlayCommand {
     },
     /// Set the sanitized public label shown beneath this cursor.
     SetSessionLabel(String),
+    /// Show or hide the session label text in this cursor's badge. The
+    /// label, the cursor and the delivery/target chips are unaffected.
+    SetSessionLabelVisible(bool),
     /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
     /// minimal badge shows it briefly; other badge modes ignore it.
     ShowKeyCombo(Vec<String>),

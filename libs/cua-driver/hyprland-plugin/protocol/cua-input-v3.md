@@ -170,7 +170,16 @@ Refusals use `{"ok":false,"code":"<code>","detail":"<code>"}`. Codes
 include `lane_busy`, `lane_not_claimed`, `stale_target`, `stale_geometry`,
 `session_unavailable`, `unsupported_layout`, `primary_target_busy`,
 `agent_target_busy`, `lease_expired`, `action_not_admitted`, `lease_busy`,
-`client_not_bound`, `replay`, `unsupported`, and `invalid_request`.
+`client_not_bound`, `replay`, `unsupported`, `invalid_request`, and
+`foreground_interrupted`.
+
+When the user's own input or a focus change on the user's seat retires a bound
+foreground target (`foreground_interrupted`, `primary_target_busy`), the next
+action on that binding is refused with that code, not `stale_target`. A
+pointer notification counts as the user's input only when the cursor moved:
+Hyprland also emits pointer motion for its own refocus passes (a layer surface,
+popup or subsurface mapping, a workspace change) with the cursor where it was,
+and those never retire a target.
 
 ## Exact-target foreground extension
 

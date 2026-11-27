@@ -228,10 +228,10 @@ pub mod teams {
             Err(Unavailable)
         }
 
-        pub fn add_machine(
+        pub async fn add_machine(
             &self,
             _id: &str,
-            _actor: &Actor,
+            _actor: &Actor<'_>,
             _record: &MachineRecord,
             _host: Option<&MachineRecord>,
             _declared_os: Option<&str>,
@@ -239,7 +239,11 @@ pub mod teams {
             Err(Unavailable)
         }
 
-        pub fn accept_email_invites(&self, _actor: &Actor, _device_name: &str) -> Vec<String> {
+        pub async fn accept_email_invites(
+            &self,
+            _actor: &Actor<'_>,
+            _device_name: &str,
+        ) -> Vec<String> {
             Vec::new()
         }
 

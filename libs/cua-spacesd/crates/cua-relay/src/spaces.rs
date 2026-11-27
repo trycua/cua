@@ -39,9 +39,10 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{account_caller, error, visible_machines, LIVE_HEARTBEAT_SECS};
-use crate::assertion::{now_secs, remove_stale_temps, write_private_with};
+use crate::assertion::{now_secs, remove_stale_temps};
 use crate::device_api::{flag_grace, Gate};
 use crate::directory::{MachineRecord, Role};
+use crate::persist::{Durable, Pending, StateFile};
 use crate::server::{Registrant, Relay};
 use crate::storage::{store, Storage};
 
@@ -94,9 +95,8 @@ fn yes() -> bool {
 /// file is configured.
 #[derive(Debug, Default)]
 pub struct SpacesSettings {
-    path: Option<PathBuf>,
+    file: StateFile,
     accounts: Mutex<BTreeMap<String, Settings>>,
-    storage: Arc<Storage>,
 }
 
 impl SpacesSettings {
@@ -116,9 +116,8 @@ impl SpacesSettings {
             Err(e) => return Err(e),
         };
         Ok(Self {
-            path: Some(path),
+            file: StateFile::new(Some(path), store::SPACES, storage),
             accounts: Mutex::new(accounts),
-            storage,
         })
     }
 
@@ -132,53 +131,67 @@ impl SpacesSettings {
             .unwrap_or_default()
     }
 
-    /// Writes `next` and swaps it in; on a failed write the settings stay as
-    /// they were.
+    /// Queues the file's new content (compact JSON, streamed by the writer
+    /// thread to a temp file that replaces it). Never blocks on the disk.
+    fn persist(&self, map: &BTreeMap<String, Settings>) -> Durable {
+        if !self.file.is_persisted() {
+            return Durable::ready();
+        }
+        let snapshot = map.clone();
+        self.file.replace(move |out| {
+            serde_json::to_writer(&mut *out, &snapshot).map_err(std::io::Error::other)
+        })
+    }
+
+    /// Swaps `next` in (in memory) and queues its write; [`Self::settle`]
+    /// waits for it with the lock released.
     fn commit(
         &self,
-        accounts: &mut BTreeMap<String, Settings>,
+        current: &mut BTreeMap<String, Settings>,
         next: BTreeMap<String, Settings>,
-    ) -> Result<(), String> {
-        if let Some(path) = &self.path {
-            let written = (|| {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                write_private_with(path, |out| {
-                    serde_json::to_writer(&mut *out, &next).map_err(std::io::Error::other)
-                })
-            })();
-            self.storage.record(store::SPACES, &written);
-            written.map_err(|e| e.to_string())?;
-        }
-        *accounts = next;
-        Ok(())
+    ) -> Pending<String, Settings> {
+        Pending::swap(current, next, |m| self.persist(m))
+    }
+
+    /// Waits until the change is on disk; on a failed write it is undone
+    /// (unless replaced since) and the caller gets the error.
+    async fn settle(&self, pending: Pending<String, Settings>) -> Result<(), String> {
+        pending
+            .settle(&self.accounts, &self.file, |m| self.persist(m))
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Replaces the account's settings.
-    fn set(&self, account: &str, put: Put) -> Result<Settings, String> {
-        let mut accounts = self.accounts.lock().expect("spaces");
-        let mut next = accounts.clone();
-        let settings = Settings {
-            default_space: put.default_space,
-            fallback: put.fallback,
-            fallback_on: put.fallback_on,
-            updated_at: now_secs(),
+    async fn set(&self, account: &str, put: Put) -> Result<Settings, String> {
+        let (pending, out) = {
+            let mut accounts = self.accounts.lock().expect("spaces");
+            let mut next = accounts.clone();
+            let settings = Settings {
+                default_space: put.default_space,
+                fallback: put.fallback,
+                fallback_on: put.fallback_on,
+                updated_at: now_secs(),
+            };
+            next.insert(account.to_owned(), settings.clone());
+            (self.commit(&mut accounts, next), settings)
         };
-        next.insert(account.to_owned(), settings.clone());
-        self.commit(&mut accounts, next)?;
-        Ok(settings)
+        self.settle(pending).await?;
+        Ok(out)
     }
 
     /// Account deletion: forgets the account's settings. Returns whether
     /// there were any. The file is rewritten every call, so a retry after a
     /// failed write finishes the job.
-    pub fn erase_account(&self, account: &str) -> Result<bool, String> {
-        let mut accounts = self.accounts.lock().expect("spaces");
-        let mut next = accounts.clone();
-        let had = next.remove(account).is_some();
-        self.commit(&mut accounts, next)?;
-        Ok(had)
+    pub async fn erase_account(&self, account: &str) -> Result<bool, String> {
+        let (pending, out) = {
+            let mut accounts = self.accounts.lock().expect("spaces");
+            let mut next = accounts.clone();
+            let had = next.remove(account).is_some();
+            (self.commit(&mut accounts, next), had)
+        };
+        self.settle(pending).await?;
+        Ok(out)
     }
 }
 
@@ -277,7 +290,7 @@ async fn put_settings(
             );
         }
     }
-    match relay.spaces.set(&who.account, put) {
+    match relay.spaces.set(&who.account, put).await {
         Ok(settings) => finish(&relay, &gate, Json(settings).into_response()),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
@@ -438,8 +451,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn settings_persist_and_erase() {
+    #[tokio::test]
+    async fn settings_persist_and_erase() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.spaces.json");
         let store = SpacesSettings::open_with(path.clone(), Default::default()).unwrap();
@@ -453,6 +466,7 @@ mod tests {
                     fallback_on: false,
                 },
             )
+            .await
             .unwrap();
         let again = SpacesSettings::open_with(path.clone(), Default::default()).unwrap();
         assert_eq!(
@@ -460,8 +474,8 @@ mod tests {
             Some("relay:abcd1234")
         );
         assert!(!again.get("ada").fallback_on);
-        assert!(again.erase_account("ada").unwrap());
-        assert!(!again.erase_account("ada").unwrap());
+        assert!(again.erase_account("ada").await.unwrap());
+        assert!(!again.erase_account("ada").await.unwrap());
         let last = SpacesSettings::open_with(path, Default::default()).unwrap();
         assert_eq!(last.get("ada"), Settings::default());
     }

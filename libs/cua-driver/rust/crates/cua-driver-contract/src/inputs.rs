@@ -331,6 +331,11 @@ pub struct StartSessionInput {
     /// built-in `signature_arc`. Reduced motion always wins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_motion: Option<CursorMotionSelection>,
+    /// Optional initial cursor badge settings. The host applies them before the cursor is
+    /// first made visible. Omitted fields keep the session's current value; a new session
+    /// shows its label. A later `set_agent_cursor_badge` call wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_badge: Option<CursorBadgeSelection>,
 }
 
 impl ToolInput for StartSessionInput {
@@ -534,6 +539,33 @@ pub struct SetAgentCursorThemeInput {
 
 impl ToolInput for SetAgentCursorThemeInput {
     const TOOL_NAME: &'static str = "set_agent_cursor_theme";
+}
+
+/// Cursor badge settings for a session, with the fields of `set_agent_cursor_badge` minus
+/// `session`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CursorBadgeSelection {
+    /// `false` hides the session label text beneath the cursor, including its initial and
+    /// hover reveals. The cursor and its delivery and target chips still show. Omit to keep
+    /// the current value (`true` for a new session).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_session_label: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetAgentCursorBadgeInput {
+    /// Public label of the session that owns the cursor.
+    pub session: String,
+    /// `false` hides the session label text beneath the cursor, including its initial and
+    /// hover reveals; `true` shows it again with a fresh reveal. The cursor and its delivery
+    /// and target chips still show. The session's name is unchanged.
+    pub show_session_label: bool,
+}
+
+impl ToolInput for SetAgentCursorBadgeInput {
+    const TOOL_NAME: &'static str = "set_agent_cursor_badge";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]

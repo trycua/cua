@@ -12,6 +12,8 @@ import base64
 import json
 import logging
 import os
+import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -338,6 +340,48 @@ async def _verify_metadata_script(script: str, app_name: str) -> tuple[bool, str
         return False, f"Verification error: {e}"
 
 
+def _icon_width(data: bytes, icon_path: str) -> str:
+    """Icon width in pixels, read from the bytes (PNG header) or the path, else "unknown"."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR" and len(data) >= 24:
+        return str(int.from_bytes(data[16:20], "big"))
+    m = re.search(r"(\d+)x\d+", icon_path)
+    return m.group(1) if m else "unknown"
+
+
+async def _read_sandbox_file(sb: Any, path: str) -> bytes:
+    """Read a sandbox file without handing ``path`` to a shell where possible.
+
+    ``path`` comes from the agent's metadata, so it must never be interpolated
+    into a command unquoted. Prefer the file API; on images without it, fall
+    back to a shell command with the path quoted, passed as stdin so it
+    can never be parsed as an option (macOS and GNU base64 both accept this).
+    """
+    try:
+        return await sb.files.read_bytes(path)
+    except Exception as api_err:
+        logger.info("file API read failed (%s); using quoted shell", api_err)
+        r = await sb.shell.run(f"base64 < {shlex.quote(path)} 2>/dev/null")
+        if r.returncode != 0 or not (r.stdout or "").strip():
+            raise
+        return base64.b64decode(r.stdout.strip())
+
+
+async def _extract_icon(sb: Any, icon_path: Any, output_dir: Path) -> Path | None:
+    """Copy one icon out of the sandbox into ``output_dir``; return the local path."""
+    if not isinstance(icon_path, str) or not icon_path:
+        return None
+    data = await _read_sandbox_file(sb, icon_path)
+    if not data:
+        return None
+    size = _icon_width(data, icon_path)
+    ext = Path(icon_path).suffix
+    if not re.fullmatch(r"\.[A-Za-z0-9]{1,8}", ext):
+        ext = ".png"
+    local_path = output_dir / f"install-icon-{size}x{size}{ext}"
+    local_path.write_bytes(data)
+    return local_path
+
+
 def _make_submit_tool(
     result_holder: list,
     output_dir: Path | None,
@@ -600,30 +644,10 @@ def _make_submit_tool(
         if sb and icon_paths and output_dir:
             for icon_path in icon_paths:
                 try:
-                    # Get icon dimensions and read file from sandbox
-                    r = await sb.shell.run(
-                        f"file {icon_path} 2>/dev/null | grep -oP '\\d+ x \\d+' | head -1"
-                    )
-                    size = "unknown"
-                    if r.returncode == 0 and r.stdout.strip():
-                        dims = r.stdout.strip().split(" x ")
-                        if len(dims) == 2:
-                            size = dims[0].strip()
-                    # Fallback: try to get size from path (e.g. /usr/share/icons/hicolor/256x256/...)
-                    if size == "unknown":
-                        import re
-
-                        m = re.search(r"(\d+)x\d+", icon_path)
-                        if m:
-                            size = m.group(1)
-                    r = await sb.shell.run(f"base64 {icon_path} 2>/dev/null")
-                    if r.returncode == 0 and r.stdout.strip():
-                        icon_bytes = base64.b64decode(r.stdout.strip())
-                        ext = Path(icon_path).suffix or ".png"
-                        local_path = output_dir / f"install-icon-{size}x{size}{ext}"
-                        local_path.write_bytes(icon_bytes)
-                        extracted_icons.append(str(local_path))
-                        logger.info("Extracted icon: %s → %s", icon_path, local_path)
+                    saved = await _extract_icon(sb, icon_path, output_dir)
+                    if saved is not None:
+                        extracted_icons.append(str(saved))
+                        logger.info("Extracted icon: %s → %s", icon_path, saved)
                 except Exception as e:
                     logger.warning("Failed to extract icon %s: %s", icon_path, e)
 

@@ -113,6 +113,80 @@ pub(crate) fn request_repin() {
     }
 }
 
+/// Re-order the overlay when the active application actually changes.
+///
+/// A foreground input raises the target window over the normal-level overlay
+/// and hands the front back to the previous app. Both are asynchronous
+/// WindowServer changes, so one re-order issued by the caller can land before
+/// they finish and leave the overlay behind the target (a hosted macOS run
+/// hid the agent cursor for the rest of a clip). The overlay stays at the
+/// normal window level on purpose: it is ordered directly above its target
+/// window so it never paints over an unrelated foreground app, and it must
+/// appear in `list_windows` (CGWindowList layer 0). So the order is repaired
+/// on the event that changes it, not on a timer: every application
+/// activation requests a repin, after the activation has completed.
+///
+/// An activation of this process never moves another window over the overlay.
+fn repin_on_application_activation(activated_pid: i32, own_pid: i32) {
+    if activated_pid != own_pid {
+        request_repin();
+    }
+}
+
+/// Observe `NSWorkspaceDidActivateApplicationNotification` for the process
+/// lifetime. The block runs on a private background queue, so it needs no
+/// running main run loop, and `request_repin` is thread-safe.
+fn install_activation_repin_observer() {
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{
+        NSWorkspace, NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
+    };
+    use objc2_foundation::{NSNotification, NSOperationQueue};
+    use std::ptr::NonNull;
+
+    let own_pid = std::process::id() as i32;
+    let block = RcBlock::new(move |note: NonNull<NSNotification>| {
+        // SAFETY: AppKit lends the notification for the duration of the block.
+        let note = unsafe { note.as_ref() };
+        let Some(info) = (unsafe { note.userInfo() }) else {
+            return;
+        };
+        let app: *mut AnyObject =
+            unsafe { msg_send![&*info, objectForKey: NSWorkspaceApplicationKey] };
+        if app.is_null() {
+            return;
+        }
+        let pid: i32 = unsafe { msg_send![app, processIdentifier] };
+        repin_on_application_activation(pid, own_pid);
+    });
+    unsafe {
+        let center = NSWorkspace::sharedWorkspace().notificationCenter();
+        let queue = NSOperationQueue::new();
+        queue.setMaxConcurrentOperationCount(1);
+        let token = center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidActivateApplicationNotification),
+            None,
+            Some(&queue),
+            &block,
+        );
+        // Process-lifetime observer: never torn down.
+        std::mem::forget(token);
+        std::mem::forget(queue);
+    }
+}
+
+/// Serialises tests that read or clear the process-wide repin request.
+#[cfg(test)]
+pub(crate) static REPIN_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Read and clear the pending repin request.
+#[cfg(test)]
+pub(crate) fn take_repin_request() -> bool {
+    REPIN_REQUESTED.swap(false, Ordering::AcqRel)
+}
+
 /// Whether the render loop re-orders the overlay above `pinned` this frame.
 fn should_repin(
     pinned: Option<u64>,
@@ -415,6 +489,9 @@ pub fn init(cfg: CursorConfig) {
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
+                CursorEvent::SetSessionLabelVisible { session, visible } => {
+                    (session, OverlayCommand::SetSessionLabelVisible(visible))
+                }
             };
             send_command(session, cmd);
         },
@@ -499,6 +576,13 @@ pub fn current_motion(key: &str) -> MotionConfig {
     map.cursor_or_default(key)
         .map(|rs| rs.core.motion.clone())
         .unwrap_or_default()
+}
+
+/// Whether the cursor `key` (or the `"default"` cursor) may show its
+/// session label text.
+pub fn current_show_session_label(key: &str) -> bool {
+    let guard = RENDER.lock().unwrap();
+    guard.as_ref().is_none_or(|map| map.show_session_label(key))
 }
 
 /// Return the render-owned theme and semantic playback state for one cursor.
@@ -940,6 +1024,8 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         RENDER_LOOP_RUNNING.store(false, Ordering::Release);
     });
 
+    install_activation_repin_observer();
+
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
     OVERLAY_WINDOW_IDS.lock().unwrap().clear();
@@ -1316,6 +1402,21 @@ fn target_is_frontmost_visible_window(
         return false;
     }
 
+    // NSWorkspace can report the target app active while its window stays
+    // behind another app's: a background click's focus-without-raise prologue
+    // does exactly that. Only the live stack says whether the overlay would
+    // paint over a window covering the target.
+    let covered = windows.iter().any(|window| {
+        window.pid != target.pid
+            && window.is_on_screen
+            && window.layer == 0
+            && window.z_index > target.z_index
+            && crate::windows::overlap_area(&window.bounds, &target.bounds) > 0.0
+    });
+    if covered {
+        return false;
+    }
+
     windows
         .iter()
         .filter(|window| {
@@ -1360,7 +1461,8 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
         }
     }
 
-    let windows = crate::windows::visible_windows();
+    let mut windows = crate::windows::visible_windows();
+    windows.retain(|window| !is_overlay_window(window.window_id));
     let raise_front =
         target_is_frontmost_visible_window(target_wid, crate::apps::frontmost_pid(), &windows);
     let payload = Box::new((win_ptr, target_wid, raise_front));
@@ -1508,6 +1610,16 @@ mod tests {
     /// A raised target window must get the overlay back above it at once,
     /// even with no pin change and a parked render loop; nothing re-orders
     /// an overlay that has no pin target.
+    #[test]
+    fn another_apps_activation_requests_a_repin_and_our_own_does_not() {
+        let _serial = REPIN_TEST_LOCK.lock().unwrap();
+        REPIN_REQUESTED.store(false, Ordering::Release);
+        repin_on_application_activation(100, 100);
+        assert!(!REPIN_REQUESTED.load(Ordering::Acquire));
+        repin_on_application_activation(200, 100);
+        assert!(REPIN_REQUESTED.swap(false, Ordering::AcqRel));
+    }
+
     #[test]
     fn a_requested_repin_reorders_the_overlay_above_its_target() {
         assert!(should_repin(Some(7), false, true, 0));
@@ -1859,9 +1971,26 @@ mod tests {
     fn frontmost_target_can_raise_overlay_without_covering_another_app() {
         let target_pid = 100;
         let mut windows = vec![window(10, target_pid, 20), window(11, 200, 10)];
-        // WindowServer may retain another app's window ahead in its global
-        // list; the active app identity is the authoritative cross-app guard.
+        assert!(target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
+
+        // A background click's focus-without-raise prologue makes NSWorkspace
+        // report the target app active while another app's window still
+        // covers the target (#3332). Raising the overlay then paints the agent
+        // cursor over the user's foreground window.
         windows[1].z_index = Some(30);
+        assert!(!target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
+
+        // Another app's window ahead that does not overlap the target leaves
+        // nothing for the overlay to paint over.
+        windows[1].bounds.x = 900.0;
         assert!(target_is_frontmost_visible_window(
             10,
             Some(target_pid),

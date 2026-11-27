@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "base64",
  "chrono",
@@ -1208,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1216,8 +1216,9 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
+ "aes",
  "anyhow",
  "async-trait",
  "base64",
@@ -1230,6 +1231,7 @@ dependencies = [
  "cua-driver-testkit",
  "cua-telemetry",
  "cursor-overlay",
+ "des",
  "embed-resource",
  "flate2",
  "fs2",
@@ -1237,6 +1239,8 @@ dependencies = [
  "image",
  "jsonschema",
  "libc",
+ "md-5",
+ "num-bigint",
  "platform-linux",
  "platform-macos",
  "platform-windows",
@@ -1262,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -1270,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "schemars",
  "serde",
@@ -1280,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1322,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-e2e"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "base64",
  "core-foundation",
@@ -1351,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -1376,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "arbitrary",
  "async-trait",
@@ -1397,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1412,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1435,7 +1439,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1447,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -1467,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-theme-cli"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "cursor-overlay",
@@ -1493,6 +1497,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 dependencies = [
  "powerfmt",
+]
+
+[[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher 0.4.4",
 ]
 
 [[package]]
@@ -3489,7 +3502,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3541,7 +3554,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3580,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.56.5"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "async-trait",

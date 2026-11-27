@@ -222,6 +222,21 @@ impl Detector {
             && (self.explicit || self.silence(now) >= self.threshold().min(Duration::from_secs(30)))
     }
 
+    /// Gone for `long`, for the purpose of a takeover by a machine that does
+    /// not need to order writes. `down_since` is when the verdict turned to
+    /// down. A peer whose link keeps coming back for a few heartbeats and
+    /// dropping again stays "down" in that verdict for as long as it takes
+    /// to be believed alive, which on a slow machine can outlast `long`
+    /// without the peer ever being gone that long. So an unexplained
+    /// silence counts only while it is unbroken: the peer must also not
+    /// have been heard from for `long`. A peer that said goodbye or
+    /// refused connections is not heard from by definition, and counts from
+    /// when it went down.
+    pub fn gone_for(&self, now: Instant, down_since: Option<Instant>, long: Duration) -> bool {
+        down_since.is_some_and(|t| now.saturating_duration_since(t) >= long)
+            && (self.explicit || self.silence(now) >= long)
+    }
+
     pub fn state(&self) -> Health {
         self.state
     }
@@ -278,6 +293,24 @@ mod tests {
         }
         assert_eq!(d.downs, 0);
         assert!(d.threshold() > Duration::from_secs(6));
+    }
+
+    #[test]
+    fn a_peer_that_keeps_coming_back_is_not_gone_for_long() {
+        let b = Instant::now();
+        let mut d = Detector::new(t(), b);
+        let long = Duration::from_secs(50);
+        d.poll(at(b, 7_000));
+        d.poll(at(b, 19_500));
+        assert_eq!(d.state(), Health::Dead);
+        let down = Some(at(b, 19_500));
+        // Verdict still down 60 s on, but it was heard from 5 s ago.
+        d.arrival(at(b, 75_000));
+        assert!(!d.gone_for(at(b, 80_000), down, long));
+        // Unbroken silence counts.
+        assert!(d.gone_for(at(b, 125_000), down, long));
+        // Nothing to count from.
+        assert!(!d.gone_for(at(b, 125_000), None, long));
     }
 
     #[test]

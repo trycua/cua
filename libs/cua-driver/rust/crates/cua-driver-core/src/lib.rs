@@ -138,6 +138,7 @@ pub mod ui_tree_revision;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;
+pub mod walk_defaults;
 pub mod window_inspection;
 pub mod window_observation;
 pub mod window_state_view;

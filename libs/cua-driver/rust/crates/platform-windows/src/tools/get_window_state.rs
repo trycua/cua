@@ -245,6 +245,13 @@ pub struct GetWindowStateTool {
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// The UIA walker's own caps, which bound the saved walk defaults.
+pub(crate) const WALK_LIMITS: cua_driver_core::walk_defaults::WalkLimits =
+    cua_driver_core::walk_defaults::WalkLimits {
+        max_elements: crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
+        max_depth: Some(crate::uia::DEFAULT_MAX_DEPTH),
+    };
+
 /// Slack past `timeout_ms` before the walk task is abandoned.
 const UIA_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 /// Deadline for the window capture, separate from the walk budget.
@@ -268,7 +275,8 @@ impl Tool for GetWindowStateTool {
                 or `\"both\"` for both (about twice the size). `Edit` elements carry \
                 `is_password` (`true` for a password field), and the Markdown row marks a \
                 password field with `password`.\n\n\
-                Size: a read is bounded by default (`max_elements` 250). When the walk stops at \
+                Size: a read is bounded by default (`max_elements` 250, or the saved \
+                `get_window_state.max_elements` from `set_config`; `get_config` shows it). When the walk stops at \
                 that budget the response says `Tree truncated at max_elements=…` and `truncated: \
                 true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. \
                 `_note` is omitted unless `verbose:true`. `full_output:true` restores the \
@@ -321,7 +329,8 @@ impl Tool for GetWindowStateTool {
                 apps produce 10k+ element trees). Markdown and structured elements are \
                 truncated identically. `elements_complete` is false when a bound skips a node \
                 or subtree; ending exactly at a bound remains complete. Default: \
-                `max_elements` 250, depth ≤25.\n\n\
+                `max_elements` 250, depth ≤25, or the saved `get_window_state.max_elements` / \
+                `get_window_state.max_depth`.\n\n\
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
                 snapshots therefore describe this limit in structuredContent.capture_coverage. \
@@ -340,8 +349,8 @@ impl Tool for GetWindowStateTool {
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk. A query that matches nothing says `0 of N elements match`."},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250, or the saved get_window_state.max_elements (5 000 with query or full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25, or the saved get_window_state.max_depth on a read without query or full_output). Lower for deep menu / Electron trees."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default."},
                 "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."}
@@ -462,18 +471,12 @@ impl Tool for GetWindowStateTool {
                 .get("_observation_only")
                 .and_then(|value| value.as_bool())
                 == Some(true);
-        // Optional caps — when omitted, fall back to the walker's built-in
-        // defaults (#22865). minimum:1 enforced in the schema, but defend
-        // against 0 here too.
-        let max_elements = view.max_elements(
-            &args,
-            crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
-            observation_only,
-        );
-        let max_depth = args
-            .get("max_depth")
-            .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as usize)
+        // Optional caps — when omitted, fall back to the saved defaults or
+        // the walker's built-in ones (#22865).
+        let walk_defaults = cua_driver_core::walk_defaults::active();
+        let max_elements = view.max_elements(&args, WALK_LIMITS, walk_defaults, observation_only);
+        let max_depth = view
+            .max_depth(&args, WALK_LIMITS, walk_defaults, observation_only)
             .unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
         let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
 
@@ -918,10 +921,7 @@ impl Tool for GetWindowStateTool {
                             key: cua_driver_core::window_state_view::ViewKey {
                                 query: query.clone(),
                                 max_elements,
-                                max_depth: args
-                                    .get("max_depth")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|v| v as usize),
+                                max_depth: Some(max_depth),
                             },
                             focus_probe: None,
                         },

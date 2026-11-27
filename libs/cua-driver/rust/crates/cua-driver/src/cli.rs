@@ -5082,7 +5082,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once. get_window_state.max_elements and get_window_state.max_depth save the node budget and depth cap for get_window_state reads that omit them and pass no query or full_output; each is bounded by the platform walk cap (max_elements 2000 on macOS, 5000 on Windows and Linux; max_depth 25 on macOS and Windows, uncapped on Linux), and 0 or default clears it. A value passed on the call always wins.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -5357,6 +5357,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver config set cursor.motion.timing fitts", "Scale cursor move time with distance and target size"),
         ("cua-driver config set cursor.motion.timing native", "Drop the 600 ms floor of the default steady timing"),
         ("cua-driver config set cursor.motion.effects.trail true", "Turn the cursor trail on by default"),
+        ("cua-driver config set get_window_state.max_elements 2000", "Walk up to 2000 nodes when a read omits max_elements"),
     ]),
     ("config reset", &[("cua-driver config reset", "Restore the defaults")]),
     ("telemetry", &[("cua-driver telemetry status", "Show the effective telemetry setting")]),
@@ -5894,7 +5895,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, get_window_state.max_elements, get_window_state.max_depth, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                     process::exit(64);
                 }
             };
@@ -5923,7 +5924,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, get_window_state.max_elements, get_window_state.max_depth, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                 process::exit(64);
             }
         }
@@ -5972,8 +5973,8 @@ pub fn run_config_cmd(
                 "max_image_dimension": 0
             });
             call("set_config", defaults);
-            // Also clear the saved cursor motion defaults, badge mode and
-            // opt-in cursor extras.
+            // Also clear the saved cursor motion defaults, badge mode,
+            // opt-in cursor extras and get_window_state walk defaults.
             exit_on_tool_error(&call(
                 "set_config",
                 serde_json::json!({
@@ -5982,6 +5983,8 @@ pub fn run_config_cmd(
                     "cursor.float": "default",
                     "cursor.halo": "default",
                     "cursor.rotate": "default",
+                    "get_window_state.max_elements": "default",
+                    "get_window_state.max_depth": "default",
                 }),
             ));
             println!("Config reset to defaults.");

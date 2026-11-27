@@ -88,7 +88,9 @@ try {
 } finally {
   await driver.endSession(EndSessionInput.new({}));
   await driver.shutdown();
-  driver.uniffiDestroy();
+  if (CuaDriver.instanceOf(driver)) {
+    driver.uniffiDestroy();
+  }
 }
 ```
 
@@ -96,7 +98,8 @@ try {
 </Tabs>
 
 In TypeScript, `shutdown()` stops admitting work and awaits admitted calls;
-`uniffiDestroy()` then frees the native handle. Call both, in that order.
+Call it before releasing the native handle. Use `CuaDriver.instanceOf()` to
+check that the client exposes `uniffiDestroy()`.
 
 ## Act on a window and verify it
 
@@ -209,7 +212,9 @@ try {
   console.log('Verified:', count.value, '->', updated.value);
 } finally {
   await driver.shutdown();
-  driver.uniffiDestroy();
+  if (CuaDriver.instanceOf(driver)) {
+    driver.uniffiDestroy();
+  }
 }
 ```
 
@@ -278,7 +283,9 @@ const driver = CuaDriver.connect(connection.socketPath);
 
 // Shutdown, in order:
 await driver.shutdown();
-driver.uniffiDestroy();
+if (CuaDriver.instanceOf(driver)) {
+  driver.uniffiDestroy();
+}
 await host.stop();
 host.uniffiDestroy();
 ```

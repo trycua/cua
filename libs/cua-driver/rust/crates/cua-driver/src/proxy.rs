@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use cua_driver_core::mcp_wire::{self, ProtocolSession};
-use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
+use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy, PolicyTarget};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
@@ -877,7 +877,9 @@ async fn handle_proxy_tool_request(
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
-                if let Err(error) = authorize_tool_call(&call.name, &call.args) {
+                if let Err(error) =
+                    authorize_tool_call(&call.name, &call.args, PolicyTarget::Pending)
+                {
                     return proxy_tool_result_response(
                         id,
                         cua_driver_core::mcp_result::conforming_proxy_tool_result(

@@ -274,6 +274,70 @@ allow:
           items: { pattern: '^[\w.-]+\.txt$' }
 ```
 
+### Limit actions to one app
+
+`constraints` check the arguments the caller sent. A `pid` or `window_id`
+there is a number the caller chose, so it cannot prove which app an action
+reaches. A rule's `target` block checks what the driver attested instead: it
+reads the window's owner and that process's executable from the operating
+system, and evaluates the rule on that.
+
+```yaml test="config" id="yaml-config-policy-target"
+allow:
+  rules:
+    - tool: click
+      target:                  # driver-attested, never caller input
+        executable:
+          allowed: [/System/Applications/TextEdit.app/Contents/MacOS/TextEdit]
+    - tool: type_text
+      target:
+        kind: { allowed: [window] }   # not desktop-wide typing
+        executable:
+          allowed: [/System/Applications/TextEdit.app/Contents/MacOS/TextEdit]
+```
+
+The attested target has these fields. A field the platform cannot attest is
+absent, and a constraint on an absent field fails unless it sets
+`optional: true`.
+
+| Field | Value |
+|---|---|
+| `kind` | `window` (the call names a `pid` and its `window_id`, or an `element_token` from a window's snapshot) or `desktop` (neither; process fields are absent) |
+| `pid`, `window_id` | The window's owner as the OS verifies it, and the window. On X11 the owner comes from the X server's X-Resource extension, never the `_NET_WM_PID` a client sets; a window whose owner the server cannot report (a remote client, no XRes 1.2) has no attested target. Wayland sessions cannot verify window owners yet, so only desktop targets attest there |
+| `executable`, `process_start_time` | The process instance, read from the OS for that pid. On Windows a packaged app's window belongs to `ApplicationFrameHost.exe`; the driver reports the hosted app's process instead |
+
+App names and bundle ids are not attested fields. `list_apps` matches running
+processes to installed apps by executable or command-line name on Linux and
+Windows, so its names identify what to launch, not which process a window
+belongs to. Use `executable`, with `pattern` for a path that varies.
+
+`target` applies to `click`, `double_click`, `right_click`, `drag`, `scroll`,
+`move_cursor`, `mouse_button_down`, `mouse_button_up`, `mouse_drag`,
+`type_text`, `press_key`, `hotkey`, `set_value`, `bring_to_front`,
+`set_window_frame`, `get_window_state`, `get_accessibility_tree`,
+`get_desktop_state`, and `zoom`. An unknown field, or `target` on any other
+tool, stops the daemon from starting.
+
+Before it checks the policy, the driver refuses with
+`target_identity_unavailable` when the named window is closed or belongs to
+another pid, an `element_token` names no live snapshot window, or the process
+cannot be identified. It also refuses selectors that could name different
+targets, because platforms resolve them differently: a `window_id` without its
+`pid`, a `pid` without its `window_id` (the platform would pick which of the
+process's windows receives the action), an `element_token` whose window
+disagrees with the declared `pid` or `window_id`, or an `element_token` with
+`scope: desktop` and no `pid`.
+`mouse_drag` and `mouse_button_up` deliver to the window `mouse_button_down`
+holds, so under a `target` rule they must name that window's `pid` and
+`window_id`; the tool refuses ones that do not match the hold. As the last step before the platform tool runs, after
+consent, input-lane admission, and any recording capture, it attests the
+target again and refuses with `target_identity_changed` if anything differs, for example a pid reused by a
+new process. A window or process that disappeared by then refuses with
+`target_identity_unavailable`. The OS can still change focus or close a window
+between that last check and input delivery; the check narrows that window,
+it cannot close it. An `allow.tools` entry for the same tool allows every
+target.
+
 ```bash test="cli-shape" id="cua-driver-serve"
 CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve
 ```
@@ -286,7 +350,10 @@ cua-driver call shell_execute '{"command":"echo hello"}'
 For programmable rules, point the variable at a `.rego` file, or a directory
 of `.rego` files loaded in filename order. The rule `data.cua.policy.allow`
 must be a boolean; `undefined` denies. The input is
-`{"server": "cua-driver", "tool": "<name>", "arguments": {…}}`:
+`{"server": "cua-driver", "tool": "<name>", "arguments": {…}, "target": {…}}`,
+where `arguments` is what the caller sent and `target` is the driver-attested
+target described above, or `null` for a tool without one. With a Rego policy
+the driver attests the target of every call to those tools.
 
 ```rego skip="pseudo"
 package cua.policy
@@ -302,6 +369,8 @@ allow if {
 allow if {
     input.tool == "type_text"
     count(input.arguments.text) <= 500
+    input.target.kind == "window"
+    input.target.executable == "/System/Applications/TextEdit.app/Contents/MacOS/TextEdit"
 }
 ```
 

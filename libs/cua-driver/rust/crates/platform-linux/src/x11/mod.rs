@@ -112,6 +112,15 @@ pub fn window_belongs_to_pid(xid: u64, pid: u32) -> bool {
     window_owner_matches(OwnerResolver::new(&conn).owner_pid(xid), pid)
 }
 
+/// The pid the X server attests for the client that created `xid`, through
+/// X-Resource. Never `_NET_WM_PID`, which the client sets itself. `None` when
+/// the window is gone, its client is remote, or the server lacks XRes 1.2.
+pub fn server_attested_window_owner(xid: u64) -> Option<u32> {
+    let xid = u32::try_from(xid).ok()?;
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    OwnerResolver::new(&conn).xres_pid(xid)
+}
+
 fn window_owner_matches(owner: Option<u32>, requested_pid: u32) -> bool {
     owner == Some(requested_pid)
 }

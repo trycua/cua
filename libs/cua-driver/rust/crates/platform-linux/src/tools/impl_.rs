@@ -5185,6 +5185,23 @@ pub fn build_registry_with_provider(
         let state = state.clone();
         r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
     }
+    // list_windows reports an X11 window's `_NET_WM_PID`, which its client
+    // sets. Policy targets take the owner only from the X server.
+    r.set_window_owner_resolver(Arc::new(|window_id| {
+        if crate::wayland::is_wayland() {
+            return Err(format!(
+                "this Wayland session cannot verify which process owns window {window_id}"
+            ));
+        }
+        crate::x11::server_attested_window_owner(window_id)
+            .map(i64::from)
+            .ok_or_else(|| {
+                format!(
+                    "the X server cannot verify which process owns window {window_id}: \
+                     it is closed, its client is remote, or the server lacks X-Resource 1.2"
+                )
+            })
+    }));
     crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);

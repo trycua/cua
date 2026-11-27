@@ -1449,6 +1449,7 @@ pub struct ToolRegistry {
     /// belongs to; set by a platform whose windows can be hosted by another
     /// process.
     window_identity_resolver: Option<WindowIdentityResolver>,
+    window_owner_resolver: Option<WindowOwnerResolver>,
 }
 
 /// Call arguments (carrying an `element_token`) -> the `(pid, window_id)` of
@@ -1460,6 +1461,10 @@ pub type TokenWindowResolver = Arc<dyn Fn(&Value) -> Option<(i32, u64)> + Send +
 /// app's frame is owned by `ApplicationFrameHost.exe`). `None` keeps the
 /// owning pid as the window's identity.
 pub type WindowIdentityResolver = Arc<dyn Fn(i64, u64) -> Option<i64> + Send + Sync + 'static>;
+
+/// `window_id` -> the pid the OS verifies owns it, or why it cannot. Runs on
+/// a blocking thread.
+pub type WindowOwnerResolver = Arc<dyn Fn(u64) -> Result<i64, String> + Send + Sync + 'static>;
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -1543,6 +1548,7 @@ impl ToolRegistry {
             protected_resource_ownership,
             token_window_resolver: None,
             window_identity_resolver: None,
+            window_owner_resolver: None,
         }
     }
 
@@ -1556,6 +1562,15 @@ impl ToolRegistry {
     /// a manifest app grant matches the app rather than its shared host.
     pub fn set_window_identity_resolver(&mut self, resolver: WindowIdentityResolver) {
         self.window_identity_resolver = Some(resolver);
+    }
+
+    /// Install the resolver that attests a window's owner for policy targets.
+    /// A platform whose `list_windows` can report a client-claimed owner (an
+    /// X11 `_NET_WM_PID`) must install one; without it the owner comes from
+    /// `list_windows`, which macOS WindowServer and Win32 report from OS
+    /// state.
+    pub fn set_window_owner_resolver(&mut self, resolver: WindowOwnerResolver) {
+        self.window_owner_resolver = Some(resolver);
     }
 
     /// The `(pid, window_id)` a live `element_token` in `args` names.
@@ -1617,6 +1632,82 @@ impl ToolRegistry {
             .await
             .ok()??;
         serde_json::from_value(scope.get("fingerprint")?.clone()).ok()
+    }
+
+    /// Resolve the call's target from OS state: who owns the named window and
+    /// which process instance that is.
+    /// A named window that is gone or owned by another pid, a token whose
+    /// snapshot window is unknown, or a process that cannot be fingerprinted
+    /// is an error, never a partial descriptor.
+    async fn attest_desktop_target(
+        &self,
+        tool: &str,
+        args: &Value,
+    ) -> Result<crate::attested_target::AttestedTarget, String> {
+        use crate::attested_target::{AttestedTarget, AttestedTargetKind, DeclaredTarget};
+        let declared = DeclaredTarget::from_args(tool, args, self.window_for_token(args))?;
+        let (Some(declared_pid), Some(window_id)) = (declared.pid, declared.window_id) else {
+            return Ok(AttestedTarget::desktop());
+        };
+        let pid = self.attest_window_owner(window_id, declared_pid).await?;
+        let identity_pid = self
+            .window_identity_resolver
+            .as_ref()
+            .and_then(|resolve| resolve(pid, window_id))
+            .unwrap_or(pid);
+        let fingerprint = self
+            .attest_process_fingerprint(identity_pid)
+            .await
+            .ok_or_else(|| format!("process {identity_pid} cannot be attested"))?;
+        Ok(AttestedTarget {
+            kind: AttestedTargetKind::Window,
+            pid: Some(pid),
+            window_id: Some(window_id),
+            executable: fingerprint.executable,
+            process_start_time: fingerprint.start_time,
+        })
+    }
+
+    async fn attest_window_owner(&self, window_id: u64, pid: i64) -> Result<i64, String> {
+        if let Some(resolve) = self.window_owner_resolver.clone() {
+            let owner = tokio::task::spawn_blocking(move || resolve(window_id))
+                .await
+                .map_err(|error| format!("window {window_id} owner lookup failed: {error}"))??;
+            return crate::attested_target::check_window_owner(window_id, Some(owner), Some(pid));
+        }
+        let tool = self
+            .tools
+            .get("list_windows")
+            .ok_or_else(|| "window ownership cannot be attested".to_owned())?;
+        let windows = tool.invoke(serde_json::json!({"pid": pid})).await;
+        if windows.is_error == Some(true) {
+            return Err(format!("window {window_id} could not be listed"));
+        }
+        let windows = windows.structured_content.unwrap_or(Value::Null);
+        crate::attested_target::check_window_owner(
+            window_id,
+            crate::attested_target::listed_window_owner(&windows, window_id),
+            Some(pid),
+        )
+    }
+
+    /// Prove an authorized target again, returning the refusal when it
+    /// changed or can no longer be attested.
+    async fn reattest_desktop_target(
+        &self,
+        approved: Option<&crate::attested_target::AttestedTarget>,
+        tool: &str,
+        args: &Value,
+    ) -> Option<ToolResult> {
+        let approved = approved?;
+        match self.attest_desktop_target(tool, args).await {
+            Ok(current) if current == *approved => None,
+            Ok(_) => Some(protected_refusal(
+                "target_identity_changed",
+                "Permission denied: the action's target changed after it was authorized",
+            )),
+            Err(detail) => Some(target_unattested_refusal(&detail)),
+        }
     }
 
     async fn enrich_application_resource(&self, resource: &mut Value, pid: i64) {
@@ -2200,9 +2291,26 @@ impl ToolRegistry {
         // Transports may still reject earlier for defense in depth, but those
         // checks must remain side-effect free. Active consent/grant adapters
         // run only downstream of this boundary so a call cannot prompt twice.
-        if let Err(error) =
-            crate::authorization::authorize_tool_call_with_context(resolved_name, &args, context)
-        {
+        //
+        // A policy that decides on the call's target sees what the driver
+        // resolved from the OS, never only the pid/window_id the caller chose.
+        let attested_target = if crate::policy::requires_attested_target(resolved_name) {
+            match self.attest_desktop_target(resolved_name, &args).await {
+                Ok(target) => Some(target),
+                Err(detail) => return target_unattested_refusal(&detail),
+            }
+        } else {
+            None
+        };
+        let policy_target = attested_target
+            .as_ref()
+            .map(crate::attested_target::AttestedTarget::to_policy_value);
+        if let Err(error) = crate::authorization::authorize_tool_call_with_context(
+            resolved_name,
+            &args,
+            crate::policy::PolicyTarget::Attested(policy_target.as_ref()),
+            context,
+        ) {
             return permission_denied_result(error.to_string());
         }
 
@@ -2735,6 +2843,16 @@ impl ToolRegistry {
         if has_adapter(crate::security_prompt::ADAPTER_ID) {
             crate::security_prompt::PromptInput::for_mode(context.mode()).stamp(&mut args);
         }
+        // Consent prompts, the input lanes, and pre-action recording capture
+        // above can wait. The policy decision holds only for the target it
+        // saw, so prove that target again as the last step before dispatch.
+        let lane_refusal = match lane_refusal {
+            Some(refusal) => Some(refusal),
+            None => {
+                self.reattest_desktop_target(attested_target.as_ref(), resolved_name, &public_args)
+                    .await
+            }
+        };
         crate::tool_activity::note_tool_activity();
         let invoke = tool.invoke(args.clone());
         let mut result =
@@ -7816,6 +7934,13 @@ fn session_owned_by_other_transport_refusal(
         refusal.insert("owner_transport".to_owned(), Value::from(holder));
     }
     result
+}
+
+fn target_unattested_refusal(detail: &str) -> ToolResult {
+    protected_refusal(
+        "target_identity_unavailable",
+        &format!("Permission denied: the driver could not attest the action's target: {detail}"),
+    )
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {

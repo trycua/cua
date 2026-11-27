@@ -23,6 +23,18 @@ pub enum PolicyDecision {
     Error(String),
 }
 
+/// The driver-attested target a policy layer evaluates alongside the caller's
+/// arguments. See [`crate::attested_target`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PolicyTarget<'a> {
+    /// A transport pre-check that runs before the daemon resolves targets.
+    /// Target-dependent decisions are deferred to the daemon dispatch, which
+    /// is authoritative.
+    Pending,
+    /// What the daemon attested; `None` when the call has no target.
+    Attested(Option<&'a Value>),
+}
+
 #[derive(Debug, Clone)]
 pub enum PolicyEngine {
     #[cfg(feature = "yaml")]
@@ -92,21 +104,42 @@ impl PolicyEngine {
         }
     }
 
-    pub fn evaluate(&self, tool: &str, args: &Value) -> PolicyDecision {
+    pub fn evaluate(&self, tool: &str, args: &Value, target: PolicyTarget<'_>) -> PolicyDecision {
         let tool = canonical_tool_name(tool);
         let mut sanitized_args = args.clone();
         crate::tool_args::sanitize_reserved_args(&mut sanitized_args);
         let args = &sanitized_args;
 
         #[cfg(not(any(feature = "yaml", feature = "rego")))]
-        let _ = (tool, args);
+        let _ = (tool, args, target);
         match self {
             #[cfg(feature = "yaml")]
-            Self::Yaml(policy) => policy.evaluate(tool, args),
+            Self::Yaml(policy) => policy.evaluate(tool, args, target),
             #[cfg(feature = "rego")]
-            Self::Rego(policy) => policy.evaluate(tool, args),
+            Self::Rego(policy) => policy.evaluate(tool, args, target),
             #[cfg(not(any(feature = "yaml", feature = "rego")))]
             Self::Disabled => PolicyDecision::Error("policy support is not enabled".to_owned()),
+        }
+    }
+
+    /// Whether deciding a call to `tool` reads its driver-attested target:
+    /// a YAML rule for the tool constrains `target`, or the layer is Rego,
+    /// whose rule bodies cannot be inspected.
+    pub fn uses_attested_target(&self, tool: &str) -> bool {
+        let tool = canonical_tool_name(tool);
+        if !crate::attested_target::supports_attested_target(tool) {
+            return false;
+        }
+        match self {
+            #[cfg(feature = "yaml")]
+            Self::Yaml(policy) => policy
+                .rules
+                .iter()
+                .any(|rule| rule.tool == tool && !rule.target.is_empty()),
+            #[cfg(feature = "rego")]
+            Self::Rego(_) => true,
+            #[cfg(not(any(feature = "yaml", feature = "rego")))]
+            Self::Disabled => false,
         }
     }
 
@@ -127,7 +160,10 @@ impl PolicyEngine {
             #[cfg(feature = "rego")]
             Self::Rego(policy) => {
                 let empty_args = Value::Object(serde_json::Map::new());
-                matches!(policy.evaluate(tool, &empty_args), PolicyDecision::Allow)
+                matches!(
+                    policy.evaluate(tool, &empty_args, PolicyTarget::Attested(None)),
+                    PolicyDecision::Allow
+                )
             }
             #[cfg(not(any(feature = "yaml", feature = "rego")))]
             Self::Disabled => false,
@@ -275,10 +311,11 @@ pub enum AuthorizationError {
 fn authorize_policy_layers<'a>(
     tool: &str,
     args: &Value,
+    target: PolicyTarget<'_>,
     layers: impl IntoIterator<Item = (&'a str, &'a PolicyEngine)>,
 ) -> Result<(), AuthorizationError> {
     for (name, policy) in layers {
-        match policy.evaluate(tool, args) {
+        match policy.evaluate(tool, args, target) {
             PolicyDecision::Allow => {}
             PolicyDecision::Deny(reason) => {
                 return Err(AuthorizationError::Denied(format!(
@@ -298,9 +335,13 @@ fn authorize_policy_layers<'a>(
 /// Canonical process-wide capability-policy decision for one tool call.
 ///
 /// Every daemon dispatch path must call this function immediately before
-/// registry lookup/invocation. A proxy may also call it as an early denial,
-/// but the daemon remains authoritative.
-pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), AuthorizationError> {
+/// registry lookup/invocation. A proxy may also call it as an early denial
+/// with [`PolicyTarget::Pending`], but the daemon remains authoritative.
+pub fn authorize_tool_call(
+    tool: &str,
+    args: &Value,
+    target: PolicyTarget<'_>,
+) -> Result<(), AuthorizationError> {
     let managed = configured_managed_policy()
         .map_err(|message| AuthorizationError::Loading(format!("managed policy: {message}")))?;
     let user = configured_policy()
@@ -312,7 +353,16 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
     if let Some(policy) = user {
         layers.push(("user", policy));
     }
-    authorize_policy_layers(tool, args, layers)
+    authorize_policy_layers(tool, args, target, layers)
+}
+
+/// Whether any configured layer decides `tool` on its driver-attested target,
+/// so dispatch must resolve one before authorizing the call. A layer that
+/// failed to load reports `false`; [`authorize_tool_call`] refuses it anyway.
+pub fn requires_attested_target(tool: &str) -> bool {
+    [configured_managed_policy(), configured_policy()]
+        .into_iter()
+        .any(|layer| matches!(layer, Ok(Some(policy)) if policy.uses_attested_target(tool)))
 }
 
 /// Returns `true` when the tool should be advertised in `tools/list`.
@@ -392,7 +442,7 @@ impl YamlPolicy {
         })
     }
 
-    fn evaluate(&self, tool: &str, args: &Value) -> PolicyDecision {
+    fn evaluate(&self, tool: &str, args: &Value, target: PolicyTarget<'_>) -> PolicyDecision {
         if self.denied_tools.iter().any(|denied| denied == tool) {
             return PolicyDecision::Deny(format!("tool '{tool}' is explicitly denied"));
         }
@@ -410,7 +460,7 @@ impl YamlPolicy {
 
         let mut failures = Vec::new();
         for rule in matching_rules {
-            match rule.matches(args) {
+            match rule.matches(args, target) {
                 Ok(()) => return PolicyDecision::Allow,
                 Err(reason) => failures.push(reason),
             }
@@ -542,6 +592,10 @@ struct RawYamlRule {
     tool: String,
     #[serde(default)]
     constraints: std::collections::BTreeMap<String, RawConstraint>,
+    /// Constraints on the driver-attested target, kept apart from the
+    /// caller-declared `constraints`.
+    #[serde(default)]
+    target: std::collections::BTreeMap<String, RawConstraint>,
 }
 
 #[cfg(feature = "yaml")]
@@ -563,6 +617,7 @@ struct RawConstraint {
 struct YamlRule {
     tool: String,
     constraints: std::collections::BTreeMap<String, Constraint>,
+    target: std::collections::BTreeMap<String, Constraint>,
 }
 
 #[cfg(feature = "yaml")]
@@ -580,13 +635,41 @@ impl YamlRule {
                     .map(|constraint| (argument, constraint))
             })
             .collect::<Result<_>>()?;
+        if !raw.target.is_empty()
+            && !crate::attested_target::supports_attested_target(canonical_tool_name(&raw.tool))
+        {
+            bail!(
+                "tool '{}' has no driver-attested target; target constraints apply only to {}",
+                raw.tool,
+                crate::attested_target::ATTESTED_TARGET_TOOLS.join(", ")
+            );
+        }
+        let target = raw
+            .target
+            .into_iter()
+            .map(|(field, constraint)| {
+                if !crate::attested_target::ATTESTED_TARGET_FIELDS.contains(&field.as_str()) {
+                    bail!(
+                        "unknown target field '{}.{field}'; expected one of {}",
+                        raw.tool,
+                        crate::attested_target::ATTESTED_TARGET_FIELDS.join(", ")
+                    );
+                }
+                Constraint::compile(constraint)
+                    .with_context(|| {
+                        format!("invalid target constraint for '{}.{field}'", raw.tool)
+                    })
+                    .map(|constraint| (field, constraint))
+            })
+            .collect::<Result<_>>()?;
         Ok(Self {
             tool: raw.tool,
             constraints,
+            target,
         })
     }
 
-    fn matches(&self, args: &Value) -> Result<(), String> {
+    fn matches(&self, args: &Value, target: PolicyTarget<'_>) -> Result<(), String> {
         let object = args
             .as_object()
             .ok_or_else(|| "arguments must be a JSON object".to_owned())?;
@@ -595,6 +678,23 @@ impl YamlRule {
                 Some(value) => constraint.matches(argument, value)?,
                 None if constraint.optional => {}
                 None => return Err(format!("missing required argument '{argument}'")),
+            }
+        }
+        if self.target.is_empty() {
+            return Ok(());
+        }
+        let target = match target {
+            PolicyTarget::Pending => return Ok(()),
+            PolicyTarget::Attested(Some(target)) => target,
+            PolicyTarget::Attested(None) => {
+                return Err("the call has no driver-attested target".to_owned())
+            }
+        };
+        for (field, constraint) in &self.target {
+            match target.get(field) {
+                Some(value) => constraint.matches(&format!("target.{field}"), value)?,
+                None if constraint.optional => {}
+                None => return Err(format!("target field '{field}' was not attested")),
             }
         }
         Ok(())
@@ -757,7 +857,8 @@ impl RegoPolicy {
                 .add_policy_from_file(path)
                 .with_context(|| format!("failed to load Rego policy {}", path.display()))?;
         }
-        engine.set_input_json(r#"{"server":"cua-driver","tool":"","arguments":{}}"#)?;
+        engine
+            .set_input_json(r#"{"server":"cua-driver","tool":"","arguments":{},"target":null}"#)?;
         match engine
             .eval_rule(REGO_ALLOW_RULE.to_owned())
             .context("failed to validate data.cua.policy.allow")?
@@ -768,11 +869,19 @@ impl RegoPolicy {
         Ok(Self { engine })
     }
 
-    fn evaluate(&self, tool: &str, args: &Value) -> PolicyDecision {
+    fn evaluate(&self, tool: &str, args: &Value, target: PolicyTarget<'_>) -> PolicyDecision {
+        let target = match target {
+            PolicyTarget::Pending if crate::attested_target::supports_attested_target(tool) => {
+                return PolicyDecision::Allow
+            }
+            PolicyTarget::Pending => Value::Null,
+            PolicyTarget::Attested(target) => target.cloned().unwrap_or(Value::Null),
+        };
         let input = serde_json::json!({
             "server": "cua-driver",
             "tool": tool,
             "arguments": args,
+            "target": target,
         });
         let input_json = match serde_json::to_string(&input) {
             Ok(input) => input,
@@ -802,6 +911,8 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    const NO_TARGET: PolicyTarget<'static> = PolicyTarget::Attested(None);
+
     #[cfg(feature = "yaml")]
     fn yaml_policy(source: &str) -> PolicyEngine {
         PolicyEngine::Yaml(YamlPolicy::from_str(source).unwrap())
@@ -819,11 +930,11 @@ deny:
 "#,
         );
         assert_eq!(
-            policy.evaluate("get_window_state", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({}), NO_TARGET),
             PolicyDecision::Allow
         );
         assert!(matches!(
-            policy.evaluate("shell_execute", &serde_json::json!({})),
+            policy.evaluate("shell_execute", &serde_json::json!({}), NO_TARGET),
             PolicyDecision::Deny(reason) if reason.contains("explicitly denied")
         ));
     }
@@ -833,7 +944,7 @@ deny:
     fn yaml_is_deny_by_default() {
         let policy = yaml_policy("allow:\n  tools: [get_window_state]\n");
         assert!(matches!(
-            policy.evaluate("click", &serde_json::json!({"x": 10, "y": 10})),
+            policy.evaluate("click", &serde_json::json!({"x": 10, "y": 10}), NO_TARGET),
             PolicyDecision::Deny(_)
         ));
     }
@@ -847,6 +958,7 @@ deny:
         authorize_policy_layers(
             "wait",
             &serde_json::json!({}),
+            NO_TARGET,
             [("managed", &managed), ("user", &user)],
         )
         .unwrap();
@@ -854,6 +966,7 @@ deny:
         let denied = authorize_policy_layers(
             "click",
             &serde_json::json!({"x": 1, "y": 2}),
+            NO_TARGET,
             [("managed", &managed), ("user", &user)],
         )
         .expect_err("user layer must be able to narrow managed allow");
@@ -905,27 +1018,35 @@ allow:
 "#,
         );
         assert_eq!(
-            policy.evaluate("click", &serde_json::json!({"x": 1920, "y": 0})),
+            policy.evaluate("click", &serde_json::json!({"x": 1920, "y": 0}), NO_TARGET),
             PolicyDecision::Allow
         );
         assert!(matches!(
-            policy.evaluate("click", &serde_json::json!({"x": 1921, "y": 0})),
+            policy.evaluate("click", &serde_json::json!({"x": 1921, "y": 0}), NO_TARGET),
             PolicyDecision::Deny(_)
         ));
         assert_eq!(
-            policy.evaluate("type", &serde_json::json!({"text": "hello"})),
+            policy.evaluate("type", &serde_json::json!({"text": "hello"}), NO_TARGET),
             PolicyDecision::Allow
         );
         assert!(matches!(
-            policy.evaluate("type", &serde_json::json!({"text": "hello!"})),
+            policy.evaluate("type", &serde_json::json!({"text": "hello!"}), NO_TARGET),
             PolicyDecision::Deny(_)
         ));
         assert_eq!(
-            policy.evaluate("launch_app", &serde_json::json!({"app": "Calculator"})),
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"app": "Calculator"}),
+                NO_TARGET
+            ),
             PolicyDecision::Allow
         );
         assert!(matches!(
-            policy.evaluate("launch_app", &serde_json::json!({"app": "Terminal"})),
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"app": "Terminal"}),
+                NO_TARGET
+            ),
             PolicyDecision::Deny(_)
         ));
     }
@@ -946,16 +1067,21 @@ allow:
         assert_eq!(
             policy.evaluate(
                 "click",
-                &serde_json::json!({"pid": 1, "element_token": "s:1"})
+                &serde_json::json!({"pid": 1, "element_token": "s:1"}),
+                NO_TARGET
             ),
             PolicyDecision::Allow
         );
         assert_eq!(
-            policy.evaluate("click", &serde_json::json!({"delivery_mode": "background"})),
+            policy.evaluate(
+                "click",
+                &serde_json::json!({"delivery_mode": "background"}),
+                NO_TARGET
+            ),
             PolicyDecision::Allow
         );
         assert!(matches!(
-            policy.evaluate("click", &serde_json::json!({"delivery_mode": "foreground"})),
+            policy.evaluate("click", &serde_json::json!({"delivery_mode": "foreground"}), NO_TARGET),
             PolicyDecision::Deny(reason) if reason.contains("'delivery_mode' is not in the allowed values")
         ));
     }
@@ -978,27 +1104,34 @@ allow:
         );
         let notepad = r"C:\Windows\System32\notepad.exe";
         assert_eq!(
-            policy.evaluate("launch_app", &serde_json::json!({"path": notepad})),
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad}),
+                NO_TARGET
+            ),
             PolicyDecision::Allow
         );
         assert_eq!(
             policy.evaluate(
                 "launch_app",
-                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt"]})
+                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt"]}),
+                NO_TARGET
             ),
             PolicyDecision::Allow
         );
         assert!(matches!(
             policy.evaluate(
                 "launch_app",
-                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt", "/p"]})
+                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt", "/p"]}),
+                NO_TARGET
             ),
             PolicyDecision::Deny(reason) if reason.contains("'additional_arguments[1]' does not match")
         ));
         assert!(matches!(
             policy.evaluate(
                 "launch_app",
-                &serde_json::json!({"path": notepad, "additional_arguments": "notes.txt"})
+                &serde_json::json!({"path": notepad, "additional_arguments": "notes.txt"}),
+                NO_TARGET
             ),
             PolicyDecision::Deny(reason) if reason.contains("'additional_arguments' must be an array")
         ));
@@ -1006,12 +1139,13 @@ allow:
         assert!(matches!(
             policy.evaluate(
                 "launch_app",
-                &serde_json::json!({"path": notepad, "launch_path": r"C:\Windows\System32\cmd.exe"})
+                &serde_json::json!({"path": notepad, "launch_path": r"C:\Windows\System32\cmd.exe"}),
+                NO_TARGET
             ),
             PolicyDecision::Deny(reason) if reason.contains("'launch_path' is not in the allowed values")
         ));
         assert!(matches!(
-            policy.evaluate("launch_app", &serde_json::json!({"name": "cmd"})),
+            policy.evaluate("launch_app", &serde_json::json!({"name": "cmd"}), NO_TARGET),
             PolicyDecision::Deny(reason) if reason.contains("missing required argument 'path'")
         ));
     }
@@ -1033,12 +1167,82 @@ allow:
 
     #[cfg(feature = "yaml")]
     #[test]
+    fn yaml_target_constraints_read_only_the_driver_attested_target() {
+        let policy = yaml_policy(
+            r#"
+allow:
+  rules:
+    - tool: click
+      constraints:
+        pid: { min: 1 }
+      target:
+        executable: { allowed: [/apps/Editor] }
+"#,
+        );
+        let editor = serde_json::json!({"kind": "window", "pid": 7, "executable": "/apps/Editor"});
+        let terminal =
+            serde_json::json!({"kind": "window", "pid": 7, "executable": "/apps/Terminal"});
+        // The caller declares the same arguments either way; only the
+        // attested target differs.
+        let args = serde_json::json!({"pid": 7, "executable": "/apps/Editor"});
+        assert_eq!(
+            policy.evaluate("click", &args, PolicyTarget::Attested(Some(&editor))),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            policy.evaluate("click", &args, PolicyTarget::Attested(Some(&terminal))),
+            PolicyDecision::Deny(reason) if reason.contains("'target.executable' is not in the allowed values")
+        ));
+        assert!(matches!(
+            policy.evaluate("click", &args, NO_TARGET),
+            PolicyDecision::Deny(reason) if reason.contains("the call has no driver-attested target")
+        ));
+        let desktop = serde_json::json!({"kind": "desktop"});
+        assert!(matches!(
+            policy.evaluate("click", &args, PolicyTarget::Attested(Some(&desktop))),
+            PolicyDecision::Deny(reason) if reason.contains("target field 'executable' was not attested")
+        ));
+        // A transport pre-check defers the target to the daemon but still
+        // enforces the caller-argument constraints.
+        assert_eq!(
+            policy.evaluate("click", &args, PolicyTarget::Pending),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            policy.evaluate(
+                "click",
+                &serde_json::json!({"pid": 0}),
+                PolicyTarget::Pending
+            ),
+            PolicyDecision::Deny(_)
+        ));
+        assert!(policy.uses_attested_target("click"));
+        assert!(!policy.uses_attested_target("type_text"));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn yaml_target_constraints_fail_at_load_time_outside_the_attested_contract() {
+        let error = YamlPolicy::from_str(
+            "allow:\n  rules:\n    - tool: click\n      target:\n        bundle: { allowed: [x] }\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("unknown target field 'click.bundle'"));
+        let error = YamlPolicy::from_str(
+            "allow:\n  rules:\n    - tool: launch_app\n      target:\n        executable: { allowed: [x] }\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("tool 'launch_app' has no driver-attested target"));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
     fn explicit_deny_overrides_allow() {
         let policy = yaml_policy(
             "allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n",
         );
         assert!(matches!(
-            policy.evaluate("get_window_state", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({}), NO_TARGET),
             PolicyDecision::Deny(_)
         ));
     }
@@ -1089,21 +1293,70 @@ allow if {
         .unwrap();
         let policy = PolicyEngine::load(&path).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("get_window_state", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({}), NO_TARGET),
             PolicyDecision::Allow
         );
         assert_eq!(
-            policy.evaluate("click", &serde_json::json!({"x": 20, "y": 30})),
+            policy.evaluate("click", &serde_json::json!({"x": 20, "y": 30}), NO_TARGET),
             PolicyDecision::Allow
         );
         assert!(matches!(
-            policy.evaluate("click", &serde_json::json!({"x": 2000, "y": 30})),
+            policy.evaluate("click", &serde_json::json!({"x": 2000, "y": 30}), NO_TARGET),
             PolicyDecision::Deny(_)
         ));
         assert!(matches!(
-            policy.evaluate("shell_execute", &serde_json::json!({})),
+            policy.evaluate("shell_execute", &serde_json::json!({}), NO_TARGET),
             PolicyDecision::Deny(_)
         ));
+    }
+
+    #[cfg(feature = "rego")]
+    #[test]
+    fn rego_receives_the_attested_target_apart_from_the_arguments() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("policy.rego");
+        fs::write(
+            &path,
+            r#"
+package cua.policy
+
+default allow = false
+
+allow if {
+    input.tool == "click"
+    input.target.executable == "/apps/Editor"
+}
+
+allow if {
+    input.tool == "launch_app"
+    input.target == null
+}
+"#,
+        )
+        .unwrap();
+        let policy = PolicyEngine::load(&path).unwrap().unwrap();
+        let args = serde_json::json!({"executable": "/apps/Editor"});
+        let editor = serde_json::json!({"kind": "window", "executable": "/apps/Editor"});
+        let terminal = serde_json::json!({"kind": "window", "executable": "/apps/Terminal"});
+        assert_eq!(
+            policy.evaluate("click", &args, PolicyTarget::Attested(Some(&editor))),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            policy.evaluate("click", &args, PolicyTarget::Attested(Some(&terminal))),
+            PolicyDecision::Deny(_)
+        ));
+        assert_eq!(
+            policy.evaluate("click", &args, PolicyTarget::Pending),
+            PolicyDecision::Allow,
+            "a transport pre-check defers target-dependent Rego to the daemon"
+        );
+        assert_eq!(
+            policy.evaluate("launch_app", &serde_json::json!({}), PolicyTarget::Pending),
+            PolicyDecision::Allow
+        );
+        assert!(policy.uses_attested_target("click"));
+        assert!(!policy.uses_attested_target("launch_app"));
     }
 
     #[cfg(feature = "rego")]
@@ -1122,7 +1375,7 @@ allow if {
         .unwrap();
         let policy = PolicyEngine::load(dir.path()).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("get_window_state", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({}), NO_TARGET),
             PolicyDecision::Allow
         );
     }
@@ -1132,7 +1385,11 @@ allow if {
     fn policy_uses_canonical_tool_names() {
         let policy = yaml_policy("allow:\n  tools: [type_text]\n");
         assert_eq!(
-            policy.evaluate("type_text_chars", &serde_json::json!({"text": "hello"})),
+            policy.evaluate(
+                "type_text_chars",
+                &serde_json::json!({"text": "hello"}),
+                NO_TARGET
+            ),
             PolicyDecision::Allow
         );
     }
@@ -1165,7 +1422,8 @@ allow if {
                     "_session_id": "public-session",
                     "_transport_session_id": "transport-session",
                     "_cua_browser_prepare_mcp_host_approved": true,
-                })
+                }),
+                NO_TARGET
             ),
             PolicyDecision::Allow
         );

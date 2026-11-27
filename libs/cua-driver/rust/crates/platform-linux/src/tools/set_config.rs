@@ -48,7 +48,7 @@ impl Tool for SetConfigTool {
                 `off` or `default`. All apply to every cursor at once. The cursor never draws \
                 action marks (`cursor.marks` is retired and ignored).\n\n\
                 `get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` \
-                (1 or more), or `0` / `default` to clear, are saved defaults for `get_window_state` \
+                (1 or more), or `0` to clear, are saved defaults for `get_window_state` \
                 reads that omit the argument and pass no `query` or `full_output`. A per-call \
                 argument always wins. They apply to every session at once.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{

@@ -247,8 +247,8 @@ pub fn config_schema_properties(limits: WalkLimits) -> Map<String, Value> {
             "maximum": limits.max_elements,
             "description": format!(
                 "Saved get_window_state node budget for reads that omit max_elements and pass no \
-                 query or full_output: 1 to {} (the full_output budget), or 0 (also \"default\" \
-                 or null) to clear it and use {}. A max_elements passed on the call always wins. \
+                 query or full_output: 1 to {} (the full_output budget), or 0 to clear it and \
+                 use {}. A max_elements passed on the call always wins. \
                  Saved to ~/.cua-driver/config.json and applied at once.",
                 limits.max_elements,
                 crate::window_state_view::DEFAULT_MAX_ELEMENTS.min(limits.max_elements),
@@ -268,7 +268,7 @@ pub fn config_schema_properties(limits: WalkLimits) -> Map<String, Value> {
         "minimum": 0,
         "description": format!(
             "Saved get_window_state depth cap for reads that omit max_depth and pass no query or \
-             full_output: {depth_range}, or 0 (also \"default\" or null) to clear it and use \
+             full_output: {depth_range}, or 0 to clear it and use \
              {depth_default}. A max_depth passed on the call always wins. Saved to \
              ~/.cua-driver/config.json and applied at once."
         ),

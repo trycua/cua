@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.64.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.2...cua-driver-rs-v0.64.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep consent grants inside the session episode that approved them ([#8287](https://github.com/trycua/cua/issues/8287)) ([a34ea05](https://github.com/trycua/cua/commit/a34ea05032cf49c9e27c6cf5d7e2710cbaa4d2d4))
+
 ## [0.64.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.1...cua-driver-rs-v0.64.2) (2026-11-27)
 
 

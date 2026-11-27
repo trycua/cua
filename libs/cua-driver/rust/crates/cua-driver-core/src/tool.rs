@@ -2235,11 +2235,20 @@ impl ToolRegistry {
             // identity.
             if !matches!(resolved_name, "start_session" | "end_session")
                 && crate::session::is_session_ended(session)
-                && !crate::session::recreates_on_next_call(session, owner)
             {
-                let mut result = session_ended_refusal(identity.public_label());
-                restore_public_runtime_result(&mut result, runtime_prefix);
-                return result;
+                let refusal = match crate::session::next_call_refusal(session, owner) {
+                    None => None,
+                    // A closed transport can neither restart the label nor
+                    // pick a new one.
+                    Some(crate::session::DispatchRefusal::TransportClosed) => {
+                        Some(transport_closed_refusal())
+                    }
+                    Some(_) => Some(session_ended_refusal(identity.public_label())),
+                };
+                if let Some(mut result) = refusal {
+                    restore_public_runtime_result(&mut result, runtime_prefix);
+                    return result;
+                }
             }
         }
 
@@ -2363,6 +2372,55 @@ impl ToolRegistry {
                 arguments.remove(crate::ui_tree_revision::UI_TREE_REVISION_ARG);
             }
             revision
+        } else {
+            None
+        };
+
+        // Admit the call into its session before any resource adapter can ask
+        // a person, so a call waiting on consent counts as in flight: neither
+        // `end_session` nor the idle sweep ends the episode under it.
+        let lifecycle_dispatch = if session_requiring_tool(resolved_name)
+            && resolved_name != "start_session"
+        {
+            let (Some(session_id), Some(owner)) = (identity.lifecycle(), identity.owner()) else {
+                return protected_refusal(
+                    "session_unavailable",
+                    "an admitted session-requiring call has no lifecycle identity",
+                );
+            };
+            let public_label = identity.public_label();
+            let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
+            let admitted = match context.lifecycle_idle_ttl_override() {
+                Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
+                    session_id,
+                    public_label,
+                    owner,
+                    public_label.is_none(),
+                    transport,
+                    client_kind,
+                    idle_ttl,
+                ),
+                None => crate::session::begin_session_dispatch(
+                    session_id,
+                    public_label,
+                    owner,
+                    public_label.is_none(),
+                    transport,
+                    client_kind,
+                ),
+            };
+            match admitted {
+                Ok(guard) => Some(guard),
+                Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
+                    return session_owned_by_other_transport_refusal(public_label, holder);
+                }
+                Err(crate::session::DispatchRefusal::TransportClosed) => {
+                    return transport_closed_refusal();
+                }
+                Err(refusal) => {
+                    return protected_refusal("session_ended", refusal.message());
+                }
+            }
         } else {
             None
         };
@@ -2555,6 +2613,19 @@ impl ToolRegistry {
             }
         }
 
+        // An end that arrived while the person decided, or while another
+        // adapter ran, wins: the call was admitted but never acts.
+        if lifecycle_dispatch.is_some()
+            && identity
+                .lifecycle()
+                .is_some_and(crate::session::is_session_ending)
+        {
+            return protected_refusal(
+                "session_ended",
+                crate::session::DispatchRefusal::Ending.message(),
+            );
+        }
+
         // A queued text mutation can become stale while another agent is
         // typing into the same process. Refuse that overlap before cursor,
         // recording, or platform focus behavior can begin, but only after
@@ -2575,49 +2646,6 @@ impl ToolRegistry {
                 permission_denied_result("authorization context is not active".to_owned())
             });
         }
-
-        let lifecycle_dispatch = if session_requiring_tool(resolved_name)
-            && resolved_name != "start_session"
-        {
-            let (Some(session_id), Some(owner)) = (identity.lifecycle(), identity.owner()) else {
-                return protected_refusal(
-                    "session_unavailable",
-                    "an admitted session-requiring call has no lifecycle identity",
-                );
-            };
-            let public_label = identity.public_label();
-            let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
-            let admitted = match context.lifecycle_idle_ttl_override() {
-                Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
-                    session_id,
-                    public_label,
-                    owner,
-                    public_label.is_none(),
-                    transport,
-                    client_kind,
-                    idle_ttl,
-                ),
-                None => crate::session::begin_session_dispatch(
-                    session_id,
-                    public_label,
-                    owner,
-                    public_label.is_none(),
-                    transport,
-                    client_kind,
-                ),
-            };
-            match admitted {
-                Ok(guard) => Some(guard),
-                Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
-                    return session_owned_by_other_transport_refusal(public_label, holder);
-                }
-                Err(refusal) => {
-                    return protected_refusal("session_ended", refusal.message());
-                }
-            }
-        } else {
-            None
-        };
 
         // Capture start time for recording timestamps only after validation.
         let launch_snapshot = if resolved_name == "launch_app" {
@@ -4152,6 +4180,31 @@ mod runtime_isolation_tests {
         }
     }
 
+    /// Accepts each prompt only when the test releases it.
+    struct GatedProvider {
+        gate: tokio::sync::Semaphore,
+        requests: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ProtectedConsentProvider for GatedProvider {
+        fn provider_id(&self) -> &'static str {
+            "test.gated-provider"
+        }
+
+        async fn request_consent(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<ProviderDecision, String> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            self.gate.acquire().await.unwrap().forget();
+            Ok(ProviderDecision {
+                action: ConsentAction::Accept,
+                request_digest: request.request_digest.clone(),
+            })
+        }
+    }
+
     fn observation_registry(
         provider: Option<Arc<dyn ProtectedConsentProvider>>,
         hits: Arc<AtomicUsize>,
@@ -4528,6 +4581,179 @@ mod runtime_isolation_tests {
         assert_ne!(allowed.is_error, Some(true));
         assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_call_queued_for_consent_when_its_session_ends_never_prompts() {
+        let provider = Arc::new(GatedProvider {
+            gate: tokio::sync::Semaphore::new(0),
+            requests: AtomicUsize::new(0),
+        });
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry =
+            super::ToolRegistry::new_with_protected_consent_provider(Some(provider.clone()));
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "history_query".into(),
+                description: "test history".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        let registry = Arc::new(registry);
+        let context = standard_context();
+        let call = |name: &'static str| {
+            let registry = registry.clone();
+            let context = context.clone();
+            async move {
+                registry
+                    .invoke_with_context(name, serde_json::json!({"session": "queued"}), context)
+                    .await
+            }
+        };
+
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        let asking = tokio::spawn(call("history_query"));
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // Let the second call be admitted and queue behind the open prompt.
+        let queued = tokio::spawn(call("history_query"));
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        call("end_session").await;
+        provider.gate.add_permits(1);
+        let refusal_code = |result: &ToolResult| {
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        assert_eq!(
+            refusal_code(&asking.await.unwrap()).as_deref(),
+            Some("authorization_canceled")
+        );
+        let queued = tokio::time::timeout(Duration::from_secs(10), queued)
+            .await
+            .expect("the queued call is canceled without a prompt")
+            .unwrap();
+        // Refused at consent, not at admission: it was waiting for its turn.
+        assert_eq!(
+            refusal_code(&queued).as_deref(),
+            Some("authorization_canceled")
+        );
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(crate::session::is_session_ended(
+            &context.runtime_session_key("queued")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_closed_transports_late_call_on_its_label_gets_no_restart_hint() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = observation_registry(None, hits.clone());
+        let context = standard_context();
+        let call = || {
+            let mut args = serde_json::json!({
+                "session": "late",
+                "_transport_session_id": "closed-transport",
+                "pid": 42,
+                "window_id": 7,
+            });
+            let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+            registry.invoke_with_context_and_evidence(
+                "get_window_state",
+                args,
+                context.clone(),
+                evidence,
+            )
+        };
+        assert_ne!(call().await.is_error, Some(true));
+        assert_eq!(
+            crate::session::end_sessions_for_owner(
+                &context.runtime_session_key("closed-transport"),
+                crate::session::SessionEndReason::ProcessExit,
+            ),
+            1
+        );
+
+        let late = call().await;
+        let refusal = &late.structured_content.as_ref().unwrap()["refusal"];
+        assert_eq!(refusal["code"], "session_unavailable");
+        assert_eq!(
+            refusal["message"],
+            "session is not available to this transport"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        crate::session::forget_ended_sessions_with_prefix(&format!(
+            "__cua_runtime_{}:",
+            context.runtime_scope_key()
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_grant_approved_after_end_session_does_not_reach_the_next_episode() {
+        let provider = Arc::new(GatedProvider {
+            gate: tokio::sync::Semaphore::new(0),
+            requests: AtomicUsize::new(0),
+        });
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry =
+            super::ToolRegistry::new_with_protected_consent_provider(Some(provider.clone()));
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "history_query".into(),
+                description: "test history".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        let registry = Arc::new(registry);
+        let context = standard_context();
+        let call = |name: &'static str| {
+            let registry = registry.clone();
+            let context = context.clone();
+            async move {
+                registry
+                    .invoke_with_context(name, serde_json::json!({"session": "b2"}), context)
+                    .await
+            }
+        };
+
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        let pending = tokio::spawn(call("history_query"));
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // The session ends while the person decides, then they approve.
+        call("end_session").await;
+        provider.gate.add_permits(1);
+        assert_eq!(pending.await.unwrap().is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        // The label's next episode is asked again.
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        provider.gate.add_permits(1);
+        assert_ne!(call("history_query").await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_ne!(call("end_session").await.is_error, Some(true));
     }
 
     #[cfg(feature = "yaml")]
@@ -7835,6 +8061,14 @@ pub fn session_ended_refusal(public_label: Option<&str>) -> ToolResult {
         None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
     };
     protected_refusal("session_ended", &message)
+}
+
+/// The refusal for a late call from a transport that has closed, on a label.
+fn transport_closed_refusal() -> ToolResult {
+    protected_refusal(
+        "session_unavailable",
+        crate::session::DispatchRefusal::TransportClosed.message(),
+    )
 }
 
 /// The refusal for a call on a session that is live but held by another

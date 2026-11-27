@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.18.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.7...cua-spacesd-v0.18.0) (2026-11-26)
+
+
+### Features
+
+* **cua-driver:** hide a cursor's session label with set_agent_cursor_badge ([#8680](https://github.com/trycua/cua/issues/8680)) ([e71e5c3](https://github.com/trycua/cua/commit/e71e5c39847bc23a2c92fddb3f4bb8ae997007d0))
+
+## [0.17.7](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.6...cua-spacesd-v0.17.7) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** report why a Windows key press stalled, and what the doctor's form read ([#8627](https://github.com/trycua/cua/issues/8627)) ([3151ed0](https://github.com/trycua/cua/commit/3151ed03b798aa88bf22cf5b8e578be6a6352f69))
+
+## [0.17.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.5...cua-spacesd-v0.17.6) (2026-11-23)
+
+
+### Bug Fixes
+
+* **relay:** refresh the service token in the background; no lock across network calls (CUA-4415) ([#8614](https://github.com/trycua/cua/issues/8614)) ([5f2a04f](https://github.com/trycua/cua/commit/5f2a04f66a60fe5c7021afc555d138619fabd584))
+
+## [0.17.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.4...cua-spacesd-v0.17.5) (2026-11-23)
+
+
+### Bug Fixes
+
+* **relay:** move state persistence off the request path (CUA-4413) ([#8608](https://github.com/trycua/cua/issues/8608)) ([6f47336](https://github.com/trycua/cua/commit/6f4733653c70e54d1e31b7dc5217c7578dcd4dc8))
+
+## [0.17.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.3...cua-spacesd-v0.17.4) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** enable the windows KeyboardAndMouse feature the desktop crate uses ([#8483](https://github.com/trycua/cua/issues/8483)) ([85064e1](https://github.com/trycua/cua/commit/85064e1f98d35bc5ec75d301d2b920ab36e21df7))
+
+## [0.17.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.2...cua-spacesd-v0.17.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** build every Windows crate against windows 0.61 ([#8444](https://github.com/trycua/cua/issues/8444)) ([d0e4f4d](https://github.com/trycua/cua/commit/d0e4f4dc4e734affa6a1aca1464deddf55a71763))
+
+## [0.17.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.1...cua-spacesd-v0.17.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spacesd:** keep jemalloc out of the cua-spacesd build ([#8349](https://github.com/trycua/cua/issues/8349)) ([2b73a16](https://github.com/trycua/cua/commit/2b73a16dfe703e78ec823e71d9120f1785d4c835))
+
+## [0.17.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.0...cua-spacesd-v0.17.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **relay:** cut per-connection memory and give freed memory back ([#8314](https://github.com/trycua/cua/issues/8314)) ([4fd73dd](https://github.com/trycua/cua/commit/4fd73ddca26415f67a5daed89e71530775c12633))
+* **relay:** stop machines retrying a refused token every few seconds ([#8302](https://github.com/trycua/cua/issues/8302)) ([83d9eab](https://github.com/trycua/cua/commit/83d9eab3bb81ac26bc6c993e7911f70da43f932a))
+
 ## [0.17.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.6...cua-spacesd-v0.17.0) (2026-11-20)
 
 

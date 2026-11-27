@@ -75,6 +75,29 @@ use crate::oidc::Identity;
 use crate::server::Relay;
 use crate::storage::{store, Refusal, Storage};
 
+/// One account's pool. An async mutex: its file writes run on the blocking
+/// pool with it held (they must land in order, before the answer), and
+/// every request that waits for it yields its worker instead of blocking
+/// it (CUA-4413).
+type AccountRef = Arc<tokio::sync::Mutex<Account>>;
+
+/// Runs `f` (file I/O) on the blocking pool with the account still locked
+/// and hands the lock back.
+async fn on_disk<T: Send + 'static>(
+    mut a: tokio::sync::OwnedMutexGuard<Account>,
+    f: impl FnOnce(&mut Account) -> T + Send + 'static,
+) -> (tokio::sync::OwnedMutexGuard<Account>, T) {
+    match tokio::task::spawn_blocking(move || {
+        let out = f(&mut a);
+        (a, out)
+    })
+    .await
+    {
+        Ok(done) => done,
+        Err(e) => std::panic::resume_unwind(e.into_panic()),
+    }
+}
+
 /// Shortest and longest lease a holder may ask for.
 const TTL_MIN: Duration = Duration::from_secs(2);
 const TTL_MAX: Duration = Duration::from_secs(120);
@@ -680,7 +703,9 @@ impl std::io::Write for Counted<'_> {
 pub struct PoolState {
     dir: Option<PathBuf>,
     storage: Arc<Storage>,
-    accounts: Mutex<HashMap<String, Arc<Mutex<Account>>>>,
+    /// Opened once each, on the blocking pool (an open reads the files and
+    /// may cut a torn tail).
+    accounts: Mutex<HashMap<String, Arc<tokio::sync::OnceCell<AccountRef>>>>,
     /// Wakes holders waiting for mailbox requests.
     notify: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
 }
@@ -706,34 +731,49 @@ impl PoolState {
         })
     }
 
-    fn account(&self, id: &str) -> Result<Arc<Mutex<Account>>, String> {
-        let mut all = self.accounts.lock().expect("pool accounts");
-        if let Some(a) = all.get(id) {
-            return Ok(a.clone());
-        }
-        let dir = self.dir.as_ref().map(|d| {
-            let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
-            ctx.update(id.as_bytes());
-            d.join(&hex::encode(ctx.finish().as_ref())[..32])
-        });
-        let a = Arc::new(Mutex::new(
-            Account::open(dir, TTL_DEFAULT, self.storage.clone()).map_err(|e| e.to_string())?,
-        ));
-        all.insert(id.to_string(), a.clone());
-        Ok(a)
+    async fn account(&self, id: &str) -> Result<AccountRef, String> {
+        let cell = self
+            .accounts
+            .lock()
+            .expect("pool accounts")
+            .entry(id.to_string())
+            .or_default()
+            .clone();
+        cell.get_or_try_init(|| async {
+            let dir = self.dir.as_ref().map(|d| {
+                let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+                ctx.update(id.as_bytes());
+                d.join(&hex::encode(ctx.finish().as_ref())[..32])
+            });
+            let storage = self.storage.clone();
+            tokio::task::spawn_blocking(move || Account::open(dir, TTL_DEFAULT, storage))
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|a| Arc::new(tokio::sync::Mutex::new(a)))
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .cloned()
     }
 
     /// Account deletion: drops the account's in-memory pool and removes its
     /// on-disk directory. True when either existed. Idempotent.
-    pub fn erase_account(&self, id: &str) -> std::io::Result<bool> {
-        let mut all = self.accounts.lock().expect("pool accounts");
-        let mut existed = all.remove(id).is_some();
+    pub async fn erase_account(&self, id: &str) -> std::io::Result<bool> {
+        let mut existed = self
+            .accounts
+            .lock()
+            .expect("pool accounts")
+            .remove(id)
+            .is_some();
         self.notify.lock().expect("pool notify").remove(id);
         if let Some(d) = &self.dir {
             let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
             ctx.update(id.as_bytes());
             let dir = d.join(&hex::encode(ctx.finish().as_ref())[..32]);
-            match std::fs::remove_dir_all(&dir) {
+            let removed = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir))
+                .await
+                .map_err(std::io::Error::other)?;
+            match removed {
                 Ok(()) => existed = true,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e),
@@ -889,10 +929,11 @@ fn enrolled_devices(relay: &Relay, account: &str) -> HashMap<String, (String, St
         .collect()
 }
 
-fn pool_of(relay: &Relay, who: &Identity) -> Result<Arc<Mutex<Account>>, Response> {
+async fn pool_of(relay: &Relay, who: &Identity) -> Result<AccountRef, Response> {
     relay
         .pool
         .account(&who.account)
+        .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, "storage", e))
 }
 
@@ -928,11 +969,11 @@ async fn status(State(relay): State<Relay>, headers: HeaderMap) -> Response {
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
-    let a = pool.lock().expect("pool");
+    let a = pool.lock().await;
     let mut v = status_view(&a, Instant::now());
     // The account as machines see it (`acct` of the relay's assertions).
     v["account"] = json!(who.account);
@@ -964,7 +1005,7 @@ async fn lease(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -978,7 +1019,7 @@ async fn lease(
     let relay2 = relay.clone();
     let account = who.account.clone();
     tokio::task::spawn_blocking(move || {
-        let mut a = pool.lock().expect("pool");
+        let mut a = pool.blocking_lock();
         let now = Instant::now();
         a.contenders.insert(device.clone(), (me.clone(), now));
         a.contenders
@@ -1094,11 +1135,11 @@ async fn release(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
-    let mut a = pool.lock().expect("pool");
+    let mut a = pool.lock().await;
     let mine = a.lease.holder.as_ref().is_some_and(|h| h.device == device);
     if mine && a.lease.epoch == body.epoch {
         a.expires = Instant::now();
@@ -1131,7 +1172,7 @@ async fn append(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -1142,12 +1183,12 @@ async fn append(
 }
 
 fn append_now(
-    pool: &Mutex<Account>,
+    pool: &tokio::sync::Mutex<Account>,
     device: &str,
     devices: &HashMap<String, (String, String)>,
     body: AppendBody,
 ) -> Response {
-    let mut a = pool.lock().expect("pool");
+    let mut a = pool.blocking_lock();
     let holder_ok = a.lease.holder.as_ref().is_some_and(|h| h.device == device);
     if body.epoch != a.lease.epoch || !holder_ok {
         return (
@@ -1309,11 +1350,11 @@ async fn read_log(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
-    let a = pool.lock().expect("pool");
+    let a = pool.lock().await;
     if q.after < a.lease.snapshot_seq {
         return (
             StatusCode::GONE,
@@ -1353,7 +1394,7 @@ async fn put_snapshot(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -1362,7 +1403,7 @@ async fn put_snapshot(
     };
     let devices = enrolled_devices(&relay, &who.account);
     tokio::task::spawn_blocking(move || {
-        let mut a = pool.lock().expect("pool");
+        let mut a = pool.blocking_lock();
         let holder_ok = a.lease.holder.as_ref().is_some_and(|h| h.device == device);
         if body.epoch != a.lease.epoch || !holder_ok {
             return (
@@ -1433,11 +1474,11 @@ async fn read_snapshot(State(relay): State<Relay>, headers: HeaderMap) -> Respon
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
-    let a = pool.lock().expect("pool");
+    let a = pool.lock().await;
     Json(json!({
         "seq": a.lease.snapshot_seq,
         "hash": a.lease.snapshot_hash,
@@ -1467,14 +1508,14 @@ async fn rpc(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
     let devices = enrolled_devices(&relay, &who.account);
     let (tx, rx) = tokio::sync::oneshot::channel();
     {
-        let mut a = pool.lock().expect("pool");
+        let mut a = pool.lock().await;
         let members = a.members(&devices);
         if let Err(r) = a.key_gate(sealed_gen(&body.params["sealed"]), &members) {
             return r;
@@ -1564,7 +1605,7 @@ async fn take(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -1573,7 +1614,7 @@ async fn take(
     loop {
         let notified = notify.notified();
         {
-            let mut a = pool.lock().expect("pool");
+            let mut a = pool.lock().await;
             let holder_ok = a.lease.holder.as_ref().is_some_and(|h| h.device == device);
             if body.epoch != a.lease.epoch || !holder_ok {
                 return (
@@ -1634,12 +1675,12 @@ async fn reply(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
     let devices = enrolled_devices(&relay, &who.account);
-    let mut a = pool.lock().expect("pool");
+    let mut a = pool.lock().await;
     let holder_ok = a.lease.holder.as_ref().is_some_and(|h| h.device == device);
     if body.epoch != a.lease.epoch || !holder_ok {
         return (
@@ -1680,7 +1721,7 @@ async fn member(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -1708,14 +1749,16 @@ async fn member(
             "the pool key must be 32 bytes, signed by this device's key",
         );
     }
-    let mut a = pool.lock().expect("pool");
+    let mut a = pool.lock_owned().await;
     let new = MemberKey {
         pool_key: body.pool_key,
         sig: body.sig,
     };
     if a.keys.members.get(&device) != Some(&new) {
         let old = a.keys.members.insert(device.clone(), new);
-        if let Err(e) = a.save_keys() {
+        let saved;
+        (a, saved) = on_disk(a, |a| a.save_keys()).await;
+        if let Err(e) = saved {
             match old {
                 Some(o) => a.keys.members.insert(device.clone(), o),
                 None => a.keys.members.remove(&device),
@@ -1739,12 +1782,12 @@ async fn read_keys(State(relay): State<Relay>, headers: HeaderMap) -> Response {
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
     let devices = enrolled_devices(&relay, &who.account);
-    let a = pool.lock().expect("pool");
+    let a = pool.lock().await;
     let members = a.members(&devices);
     let stale = a.keys.keyring.as_ref().is_some_and(|k| k.stale(&members));
     Json(json!({
@@ -1838,12 +1881,12 @@ async fn put_keys(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let pool = match pool_of(&relay, &who) {
+    let pool = match pool_of(&relay, &who).await {
         Ok(p) => p,
         Err(r) => return r,
     };
     let devices = enrolled_devices(&relay, &who.account);
-    let mut a = pool.lock().expect("pool");
+    let mut a = pool.lock_owned().await;
     if body.version != a.keys.version {
         return (
             StatusCode::CONFLICT,
@@ -1867,12 +1910,16 @@ async fn put_keys(
     let old = a.keys.clone();
     a.keys.keyring = Some(body.keyring.clone());
     a.keys.version += 1;
-    if let Err(e) = a.save_keys() {
+    let saved;
+    (a, saved) = on_disk(a, |a| a.save_keys()).await;
+    if let Err(e) = saved {
         a.keys = old;
         return error(StatusCode::INTERNAL_SERVER_ERROR, "storage", e.to_string());
     }
     if body.reset {
-        if let Err(e) = a.reset_log() {
+        let reset;
+        (a, reset) = on_disk(a, |a| a.reset_log()).await;
+        if let Err(e) = reset {
             return error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage",
@@ -1901,9 +1948,9 @@ async fn put_keys(
 }
 
 /// For tests and `/v1/pool` diagnostics: the account's lease.
-pub fn describe(state: &PoolState, account: &str) -> Option<BTreeMap<String, Value>> {
-    let a = state.account(account).ok()?;
-    let a = a.lock().expect("pool");
+pub async fn describe(state: &PoolState, account: &str) -> Option<BTreeMap<String, Value>> {
+    let a = state.account(account).await.ok()?;
+    let a = a.lock().await;
     let v = status_view(&a, Instant::now());
     v.as_object()
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())

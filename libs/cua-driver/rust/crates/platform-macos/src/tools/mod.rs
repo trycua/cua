@@ -3,6 +3,7 @@
 
 //! MCP tool implementations for macOS.
 
+mod agent_display;
 mod bring_to_front;
 mod calc_cell;
 mod capture_binding;
@@ -37,7 +38,7 @@ mod get_config;
 mod get_cursor_position;
 mod get_desktop_state;
 pub(crate) mod get_screen_size;
-mod health_report;
+pub(crate) mod health_report;
 mod move_cursor;
 mod page;
 mod pixel_route;
@@ -381,6 +382,31 @@ fn disabled_refusal(
             serde_json::json!({ "recommended": "foreground", "reason": reason });
     }
     cua_driver_core::protocol::ToolResult::error(text).with_structured(structured)
+}
+
+/// Chromium and Electron renderers often discard a background PID-routed key
+/// event without any sign. No oracle tells that drop apart from a key that
+/// landed, so an unverifiable background key result for such an app names the
+/// foreground rung instead of leaving the caller to find the miss on screen.
+pub(super) const CHROMIUM_BACKGROUND_KEY_NOTE: &str =
+    "Chromium and Electron apps often drop background key events, so this one may not \
+     have arrived. If the window shows no change, retry with delivery_mode:\"foreground\" \
+     and window_id.";
+
+/// The `escalation` for an unverifiable key result: present only for a
+/// background post to a Chromium or Electron app, in the same shape as the
+/// Screen Sharing refusals.
+pub(super) fn chromium_background_key_escalation(
+    foreground: bool,
+    chromium_embedder: bool,
+) -> Option<serde_json::Value> {
+    (!foreground && chromium_embedder).then(|| {
+        serde_json::json!({
+            "recommended": "foreground",
+            "reason": CHROMIUM_BACKGROUND_KEY_NOTE,
+            "requires": ["window_id"]
+        })
+    })
 }
 
 /// Re-read `AXEnabled` on a token target and refuse a disabled one before any
@@ -1042,6 +1068,7 @@ pub fn load_driver_config() -> DriverConfig {
             cfg.max_image_dimension = v32;
         }
     }
+    cua_driver_core::walk_defaults::load_active(get_window_state::WALK_LIMITS);
     cfg
 }
 
@@ -1151,6 +1178,8 @@ pub struct ToolState {
     pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
+    /// The runtime registry's fast-path guard store.
+    pub(crate) guard_store: Arc<cua_driver_core::fast_path::store::GuardStore>,
     /// Global, disk-persisted config — the base layer and the only one the
     /// anonymous session / CLI writes.
     pub config: Arc<std::sync::RwLock<DriverConfig>>,
@@ -1185,16 +1214,18 @@ impl ToolState {
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
     ) -> Self {
-        Self::new_with_capture_service(
+        Self::new_with_runtime_services(
             Arc::new(cua_driver_core::capture_runtime::CaptureService::default()),
+            Arc::new(cua_driver_core::fast_path::store::GuardStore::new()),
             cursor_overlay_available,
             host_owns_permission_ux,
             host_bundle_id,
         )
     }
 
-    fn new_with_capture_service(
+    fn new_with_runtime_services(
         capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
+        guard_store: Arc<cua_driver_core::fast_path::store::GuardStore>,
         cursor_overlay_available: bool,
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
@@ -1203,6 +1234,7 @@ impl ToolState {
             snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
+            guard_store,
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
@@ -1300,8 +1332,9 @@ pub fn register_all(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) {
-    let state = Arc::new(ToolState::new_with_capture_service(
+    let state = Arc::new(ToolState::new_with_runtime_services(
         registry.capture_service(),
+        registry.guard_store(),
         cursor_overlay_available,
         host_owns_permission_ux,
         host_bundle_id,
@@ -1414,6 +1447,7 @@ pub fn register_all(
     ));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
+    registry.register(Box::new(agent_display::AgentDisplayTool));
     let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
     registry.register(pid_window_guarded(
         bring_to_front::BringToFrontTool,
@@ -1479,6 +1513,9 @@ pub fn register_all(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::SetAgentCursorThemeTool::new(
+        state.clone(),
+    )));
+    registry.register(Box::new(cursor_tools::SetAgentCursorBadgeTool::new(
         state.clone(),
     )));
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(

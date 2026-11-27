@@ -9,6 +9,14 @@ repository.workspace = true
 publish = false
 
 [features]
+# jemalloc as the relay binary's allocator (src/main.rs) and its heap
+# gauges (src/process_memory.rs). On by default, so `cargo build -p cua-relay`
+# (the relay image) has it. cua-spacesd embeds this crate as a library and
+# turns it off: it does not use the allocator, and jemalloc does not build
+# for aarch64-unknown-linux-musl, the static cua-spacesd release asset
+# (CD: cua-spacesd failed on 0.17.1).
+default = ["jemalloc"]
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-ctl"]
 # Optional hosted-relay features, on for the hosted relay (cua.ai): plan
 # metering and allowances (`meter`, `plan_source`), Teams (`teams`,
 # `team_api`, `team_sharing`, `org_access`), account erasure and the
@@ -17,6 +25,11 @@ publish = false
 # allowance metering, and the Teams routes answer 410 "not available on
 # this relay" (src/free.rs).
 hosted = []
+
+# Measures the heap with jemalloc's own counters.
+[[test]]
+name = "churn_bounded"
+required-features = ["jemalloc"]
 
 [dependencies]
 # The WireGuard®-based mesh protocol and node (MIT).
@@ -41,7 +54,10 @@ tower.workspace = true
 # EdDSA principal assertions. ring is already the workspace's TLS crypto.
 jsonwebtoken = "9"
 ring = "0.17"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# `hickory-dns`: names are resolved by an async resolver on the runtime,
+# not by blocking getaddrinfo calls on tokio's blocking pool, which the
+# relay's disk work also uses (CUA-4413).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "hickory-dns"] }
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -63,8 +79,8 @@ libc = "0.2"
 # glibc malloc kept what reconnect churn freed in fragmented per-thread
 # arenas (relay.cua.ai, 20 Nov 2026). jemalloc returns freed pages to the
 # system on a timer and reports its own heap (`cua_relay_heap_*_bytes`).
-tikv-jemallocator = "0.7"
-tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
+tikv-jemallocator = { version = "0.7", optional = true }
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"], optional = true }
 
 [dev-dependencies]
 # The list of calls a viewer ticket may make is the machine's: a test keeps the relay's copy equal.

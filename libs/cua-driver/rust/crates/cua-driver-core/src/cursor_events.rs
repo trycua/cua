@@ -8,8 +8,8 @@
 //! subscribers are intentionally invisible to the tool result.
 
 use cua_driver_contract::{
-    classify_cursor_semantics, CursorAction, CursorDelivery, CursorMotionSelection,
-    CursorSemantics, CursorThemeSelection,
+    classify_cursor_semantics, CursorAction, CursorBadgeSelection, CursorDelivery,
+    CursorMotionSelection, CursorSemantics, CursorThemeSelection,
 };
 use serde_json::Value;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -40,6 +40,12 @@ pub enum CursorEvent {
     SelectMotion {
         session: String,
         motion: Value,
+    },
+    /// Initial `start_session.cursor_badge.show_session_label`. Not emitted
+    /// when the call omits it, so the session keeps its current value.
+    SetSessionLabelVisible {
+        session: String,
+        visible: bool,
     },
     /// Keys a key action presses together, such as `["cmd", "c"]`. Emitted
     /// after the action's `Begin` so the badge can show the combo briefly.
@@ -121,6 +127,17 @@ pub fn begin_tool(name: &str, args: &Value) -> Option<(String, CursorAction)> {
                     motion: motion.clone(),
                 });
             }
+        }
+        if let Some(visible) = args
+            .get("cursor_badge")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<CursorBadgeSelection>(value).ok())
+            .and_then(|badge| badge.show_session_label)
+        {
+            emit(CursorEvent::SetSessionLabelVisible {
+                session: session.clone(),
+                visible,
+            });
         }
     }
     let mut semantics = classify_cursor_semantics(name, args)?;
@@ -361,6 +378,40 @@ mod tests {
         );
         // The motion is queued ahead of the action that first shows the cursor.
         assert!(matches!(events[0], CursorEvent::SelectMotion { .. }));
+    }
+
+    #[test]
+    fn start_session_label_visibility_is_emitted_only_when_set() {
+        let _guard = test_sink_guard();
+        let events = capture(|| {
+            begin_tool(
+                "start_session",
+                &json!({"session":"run","cursor_badge":{"show_session_label":false}}),
+            );
+            // Omitted fields keep the session's current value.
+            begin_tool("start_session", &json!({"session":"run"}));
+            begin_tool("start_session", &json!({"session":"run","cursor_badge":{}}));
+            begin_tool(
+                "start_session",
+                &json!({"session":"run","cursor_badge":{"show_session_label":"no"}}),
+            );
+        });
+        let visibility: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(event, CursorEvent::SetSessionLabelVisible { .. }))
+            .collect();
+        assert_eq!(
+            visibility,
+            vec![&CursorEvent::SetSessionLabelVisible {
+                session: "run".into(),
+                visible: false,
+            }]
+        );
+        // Queued ahead of the action that first shows the cursor.
+        assert!(matches!(
+            events[0],
+            CursorEvent::SetSessionLabelVisible { .. }
+        ));
     }
 
     #[test]

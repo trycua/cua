@@ -27,7 +27,7 @@
  * page's shortcuts don't see them); on a Mac, Control+Option pressed and
  * released alone gives it back, Ctrl+Shift+F12 on Windows and Linux. On a
  * Mac, ⌘ goes to a Linux or Windows Space as Control (the Swift app's
- * `commandAsControl`), and a ⌘ chord goes whole (Chromium drops its key-up). Every session closes while the page is hidden (the
+ * `commandAsControl`) and the right ⌘ held alone as Super, and a ⌘ chord goes whole (Chromium drops its key-up). Every session closes while the page is hidden (the
  * window minimized or on another desktop) and reopens with a fresh ticket
  * when it shows again.
  *

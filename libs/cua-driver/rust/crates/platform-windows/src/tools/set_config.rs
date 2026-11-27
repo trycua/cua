@@ -18,6 +18,9 @@ fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
         properties.extend(cursor_overlay::cursor_options::config_schema_properties());
+        properties.extend(cua_driver_core::walk_defaults::config_schema_properties(
+            super::get_window_state::WALK_LIMITS,
+        ));
     }
     schema
 }
@@ -41,7 +44,8 @@ impl Tool for SetConfigTool {
                 - `max_image_dimension` (integer)\n\
                 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\
                 - `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\
-                - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\n\
+                - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\
+                - `get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 to 25), or `0` to clear — saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. Applies to every session at once.\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
@@ -62,6 +66,12 @@ impl Tool for SetConfigTool {
                 "replacement": "action.target",
             }));
         }
+        if let Err(message) = cua_driver_core::walk_defaults::check_config_args(
+            &args,
+            super::get_window_state::WALK_LIMITS,
+        ) {
+            return ToolResult::error(message);
+        }
         let motion_keys = match cursor_overlay::motion_defaults::apply_config_args(&args) {
             Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),
@@ -75,7 +85,17 @@ impl Tool for SetConfigTool {
             Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),
         };
-        let mut applied = !motion_keys.is_empty() || badge_key.is_some() || !option_keys.is_empty();
+        let walk_keys = match cua_driver_core::walk_defaults::apply_config_args(
+            &args,
+            super::get_window_state::WALK_LIMITS,
+        ) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
+        let mut applied = !motion_keys.is_empty()
+            || badge_key.is_some()
+            || !option_keys.is_empty()
+            || !walk_keys.is_empty();
         if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
             cfg.capture_mode = mode.to_owned();
             if let Err(e) = cua_driver_core::config_file::write_config_key(
@@ -120,6 +140,7 @@ impl Tool for SetConfigTool {
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
+            "get_window_state":    cua_driver_core::walk_defaults::config_json(super::get_window_state::WALK_LIMITS),
             "agent_cursor":        { "enabled": cursor_enabled },
             "fast_path":           cua_driver_core::fast_path::wire::config_value(),
         });

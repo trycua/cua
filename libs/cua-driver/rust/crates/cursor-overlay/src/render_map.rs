@@ -294,6 +294,13 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
             .unwrap_or_default()
     }
 
+    /// Whether `key`'s cursor (or the `"default"` cursor) may show its
+    /// session label text.
+    pub fn show_session_label(&self, key: &str) -> bool {
+        self.cursor_or_default(key)
+            .is_none_or(|cursor| cursor.core().show_session_label)
+    }
+
     /// The theme and visual state `key`'s cursor (or the `"default"`
     /// cursor) is painting.
     pub fn theme_state(&self, key: &str) -> Option<CursorThemeState> {
@@ -570,6 +577,35 @@ mod tests {
         let outcome = map.apply_msg(move_msg("sessA", 30.0, 30.0));
         assert_eq!(outcome.applied_key().map(String::as_str), Some("sessA"));
         assert!(map.cursors.contains_key("sessA"));
+    }
+
+    #[test]
+    fn session_label_visibility_is_per_session_and_ends_with_it() {
+        let mut map = map();
+        let hide = |key: &str| {
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: key.to_owned(),
+                cmd: OverlayCommand::SetSessionLabelVisible(false),
+            })
+        };
+        map.apply_msg(hide("sessA"));
+        map.apply_msg(move_msg("sessB", 10.0, 10.0));
+        assert!(!map.show_session_label("sessA"));
+        assert!(
+            map.show_session_label("sessB"),
+            "another session keeps its label"
+        );
+        assert!(map.show_session_label("sessC"), "the default shows it");
+
+        map.apply_msg(OverlayMsg::Remove("sessA".to_owned()));
+        map.apply_msg(hide("sessA"));
+        assert!(map.show_session_label("sessA"), "an ended session drops it");
+        map.apply_msg(OverlayMsg::Revive("sessA".to_owned()));
+        map.apply_msg(move_msg("sessA", 30.0, 30.0));
+        assert!(
+            map.show_session_label("sessA"),
+            "a recreated session shows it"
+        );
     }
 
     #[test]

@@ -139,6 +139,7 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 | <span id="click--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  |  |
 | <span id="click--target-pid"></span>`target.pid` | `integer` |  | Minimum: 0. |
 | <span id="click--target-window_id"></span>`target.window_id` | `integer` |  | Minimum: 0. |
+| <span id="click--ui_tree_revision"></span>`ui_tree_revision` | `integer` |  | The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads. Minimum: 0. |
 
 ## Double-click and right-click tools
 
@@ -216,6 +217,7 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 | <span id="double_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is "s0000002a:11". |
 | <span id="double_click--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
 | <span id="double_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="double_click--ui_tree_revision"></span>`ui_tree_revision` | `integer` |  | The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads. Minimum: 0. |
 
 ### `right_click`
 
@@ -293,6 +295,7 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 | <span id="right_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is "s0000002a:11". |
 | <span id="right_click--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
 | <span id="right_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="right_click--ui_tree_revision"></span>`ui_tree_revision` | `integer` |  | The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads. Minimum: 0. |
 
 ## Typing tools
 
@@ -307,7 +310,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.
 
-Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:"unverifiable"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:"foreground"` only if background still drops the text. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
+Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:"unverifiable"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:"foreground"` only if background still drops the text.
+When key events are needed, an `element_token` target whose keyboard focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect "refused", and no key sent. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
 
 **macOS parameters**
 
@@ -382,6 +386,7 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 | <span id="type_text--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  |  |
 | <span id="type_text--target-pid"></span>`target.pid` | `integer` |  | Minimum: 0. |
 | <span id="type_text--target-window_id"></span>`target.window_id` | `integer` |  | Minimum: 0. |
+| <span id="type_text--ui_tree_revision"></span>`ui_tree_revision` | `integer` |  | The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads. Minimum: 0. |
 
 **Example arguments**
 
@@ -478,6 +483,7 @@ Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, en
 | <span id="press_key--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  |  |
 | <span id="press_key--target-pid"></span>`target.pid` | `integer` |  | Minimum: 0. |
 | <span id="press_key--target-window_id"></span>`target.window_id` | `integer` |  | Minimum: 0. |
+| <span id="press_key--ui_tree_revision"></span>`ui_tree_revision` | `integer` |  | The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads. Minimum: 0. |
 
 **Example arguments**
 
@@ -493,7 +499,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tab value="macOS">
 
 Press a key combination: e.g. `["cmd", "c"]` for Copy, `["cmd", "shift", "4"]` for screenshot selection. Follows the same `delivery_mode` ladder as click/type_text: it does NOT raise the window by default:
-• `background` (default): post the combo to the target pid WITHOUT fronting or raising it; uses the macOS 14+ auth-message envelope so Chromium/Electron accept it as trusted live input. With an AX target, focus that exact element first. No top-level focus steal. `window_id` here only targets the combo; it does not raise. Background key events never reach a native app's menus, so when the combo is a menu item's key equivalent (cmd+s, cmd+w, ...) and the app is not in front, that menu item runs through accessibility instead (a disabled Save is saved through the app's scripting interface using Apple Events and verified on disk; this requires per-app Automation consent and may show macOS’s first-use consent prompt; denied permission refuses the save); a menu item macOS keeps disabled in the background is refused with `background_unavailable`. With serve --no-automation-prompts, scripting without granted consent refuses with `automation_consent_required`, without keyboard fallback.
+• `background` (default): post the combo to the target pid WITHOUT fronting or raising it; uses the macOS 14+ auth-message envelope. Chromium/Electron renderers often drop it anyway; an unverifiable result for one carries `escalation.recommended: "foreground"`. With an AX target, focus that exact element first. No top-level focus steal. `window_id` here only targets the combo; it does not raise. Background key events never reach a native app's menus, so when the combo is a menu item's key equivalent (cmd+s, cmd+w, ...) and the app is not in front, that menu item runs through accessibility instead (a disabled Save is saved through the app's scripting interface using Apple Events and verified on disk; this requires per-app Automation consent and may show macOS’s first-use consent prompt; denied permission refuses the save); a menu item macOS keeps disabled in the background is refused with `background_unavailable`. With serve --no-automation-prompts, scripting without granted consent refuses with `automation_consent_required`, without keyboard fallback.
 • `foreground`: briefly front the window (NSMenu path, &lt; 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost; the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. With an AX target or x,y, the focused field receives the chord through the foreground HID queue (needed by native Chromium fields such as the omnibox). Requires window_id.
 
 A combo is never driver-verifiable (no read-back) → effect:"unverifiable"; confirm via screenshot. NOTE: a keyboard combo does NOT focus a text field; to type into a backgrounded Electron input, establish real renderer focus with a PIXEL click first, then `type_text`. If an app only accepts paste, call `clipboard_write`, then `clipboard_read` and verify its types (and text when applicable) before selecting or replacing editor content; only then send Cmd+V.
@@ -573,6 +579,7 @@ Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier keys u
 | <span id="hotkey--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  |  |
 | <span id="hotkey--target-pid"></span>`target.pid` | `integer` |  | Minimum: 0. |
 | <span id="hotkey--target-window_id"></span>`target.window_id` | `integer` |  | Minimum: 0. |
+| <span id="hotkey--ui_tree_revision"></span>`ui_tree_revision` | `integer` |  | The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads. Minimum: 0. |
 
 **Example arguments**
 
@@ -647,6 +654,7 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 | <span id="set_value--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is "s0000002a:11". |
 | <span id="set_value--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
 | <span id="set_value--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="set_value--ui_tree_revision"></span>`ui_tree_revision` | `integer` |  | The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads. Minimum: 0. |
 
 **Example arguments**
 

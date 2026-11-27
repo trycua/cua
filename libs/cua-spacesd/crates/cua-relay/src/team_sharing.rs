@@ -111,7 +111,7 @@ pub async fn sweep(relay: &Relay) -> Result<SweepReport, String> {
     }
     let mut touched = Vec::new();
     for (id, who) in &remove {
-        match relay.directory.remove_shares(id, who) {
+        match relay.directory.remove_shares(id, who).await {
             Ok(Some(record)) => {
                 report.removed += who.len();
                 touched.push(id.clone());

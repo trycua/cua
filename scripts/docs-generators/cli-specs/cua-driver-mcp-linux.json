@@ -25,7 +25,7 @@
     "additionalProperties": false,
     "properties": {
      "app": {
-      "description": "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
+      "description": "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
       "type": "string"
      },
      "on_screen_only": {
@@ -47,7 +47,7 @@
    "read_only": true
   },
   {
-   "description": "Walk a running app's AT-SPI tree and return it ONCE, as compact Markdown by default (`tree_format:\"markdown\"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:\"elements\"` for the structured `elements` array instead (explicit `element_token`, `role`, `label`, `value`, `enabled`, `selected`, `actions`, `frame: {x,y,w,h}` when AT-SPI reports usable bounds, `parent_index`, `depth`), or `\"both\"` for both (about twice the size). Set `query` to project the tree to matching rows plus their ancestor chain while preserving original indices; `total_element_count` reports the complete snapshot.\n\nSize: a read is bounded by default (`max_elements` 250 actionable nodes). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the walker's own limits (≤5 000 nodes).\n\nDIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window to get only what changed: `+` added rows, `~` changed rows, `-` removed rows (their ids are the old snapshot's), or `no change since …`. Rows not listed keep their previous `[N]` unless a `reindexed:` line says otherwise. The response carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read and `since_status` says why. The focused element is not reported on Linux yet.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored. On Wayland, where output capture cannot prove the requested surface's identity, the truthful tree is returned without a screenshot and `screenshot_error.code` is `surface_identity_unproven`.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_dimension` caps the returned screenshot's long edge in pixels for a cheap thumbnail.\n\nOptional `max_elements` / `max_depth` bound the AT-SPI walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. Default: `max_elements` 250.\n\nTIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI walk. When omitted, a window's first snapshot gets a 2000 ms cold-start budget so Chromium/Electron can finish publishing its initial tree. Explicit values are always honored. Large apps (LibreOffice, GIMP, file managers) can exceed the budget; the call then returns the PARTIAL tree with `truncated: true`, `truncation_reason`, `nodes_visited`/`nodes_pending` and `elements_complete: false`. Every element listed is real and clickable; elements after the cut are simply missing. Retry with a larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` when the element you need is absent.\n\nSCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge <= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools are pixels of the delivered screenshot (`frame` stays in screen coordinates, as on every platform); `frame_scale` < 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.\n\nPOPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_token). Omitting window_id while a popup of this pid is open walks that popup.",
+   "description": "Walk a running app's AT-SPI tree and return it ONCE, as compact Markdown by default (`tree_format:\"markdown\"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:\"elements\"` for the structured `elements` array instead (explicit `element_token`, `role`, `label`, `value`, `enabled`, `selected`, `actions`, `frame: {x,y,w,h}` when AT-SPI reports usable bounds, `parent_index`, `depth`), or `\"both\"` for both (about twice the size). Set `query` to project the tree to matching rows plus their ancestor chain while preserving original indices; `total_element_count` reports the complete snapshot.\n\nSize: a read is bounded by default (`max_elements` 250 actionable nodes, or the saved `get_window_state.max_elements` from `set_config`; `get_config` shows it). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the walker's own limits (≤5 000 nodes).\n\nDIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window to get only what changed: `+` added rows, `~` changed rows, `-` removed rows (their ids are the old snapshot's), or `no change since …`. Rows not listed keep their previous `[N]` unless a `reindexed:` line says otherwise. The response carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read and `since_status` says why. The focused element is not reported on Linux yet.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored. On Wayland, where output capture cannot prove the requested surface's identity, the truthful tree is returned without a screenshot and `screenshot_error.code` is `surface_identity_unproven`.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_dimension` caps the returned screenshot's long edge in pixels for a cheap thumbnail.\n\nOptional `max_elements` / `max_depth` bound the AT-SPI walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. Default: `max_elements` 250, or the saved `get_window_state.max_elements` / `get_window_state.max_depth`.\n\nTIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI walk. When omitted, a window's first snapshot gets a 2000 ms cold-start budget so Chromium/Electron can finish publishing its initial tree. Explicit values are always honored. Large apps (LibreOffice, GIMP, file managers) can exceed the budget; the call then returns the PARTIAL tree with `truncated: true`, `truncation_reason`, `nodes_visited`/`nodes_pending` and `elements_complete: false`. Every element listed is real and clickable; elements after the cut are simply missing. Retry with a larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` when the element you need is absent.\n\nSCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge <= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools are pixels of the delivered screenshot (`frame` stays in screen coordinates, as on every platform); `frame_scale` < 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.\n\nPOPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_token). Omitting window_id while a popup of this pid is open walks that popup.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -78,7 +78,7 @@
       "type": "boolean"
      },
      "max_depth": {
-      "description": "Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps.",
+      "description": "Cap on the AT-SPI tree walk depth. Omit for the default (uncapped, or the saved get_window_state.max_depth on a read without query or full_output). Lower for deeply nested apps.",
       "minimum": 1,
       "type": "integer"
      },
@@ -88,7 +88,7 @@
       "type": "integer"
      },
      "max_elements": {
-      "description": "Cap on total AT-SPI nodes walked. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window.",
+      "description": "Cap on total AT-SPI nodes walked. Default 250, or the saved get_window_state.max_elements (5 000 with query or full_output:true); the response states when the tree was cut. Raise it to read further into a large window.",
       "minimum": 1,
       "type": "integer"
      },
@@ -114,7 +114,7 @@
       "type": "string"
      },
      "since": {
-      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise.",
+      "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change.",
       "type": "string"
      },
      "timeout_ms": {
@@ -596,6 +596,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
       "type": "integer"
@@ -659,6 +664,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
@@ -730,6 +740,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
@@ -870,6 +885,11 @@
      "to_y": {
       "description": "Drag end Y (same frame as from_x).",
       "type": "number"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Target window XID. Required.",
@@ -1249,6 +1269,11 @@
       "description": "Text to type.",
       "type": "string"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y; optional with element_token (the token carries it).",
       "type": "integer"
@@ -1355,6 +1380,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
       "type": "integer"
@@ -1450,6 +1480,11 @@
       ],
       "type": "object"
      },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
+     },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
       "type": "integer"
@@ -1499,6 +1534,11 @@
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "value": {
       "description": "New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back.",
@@ -1618,6 +1658,11 @@
        "kind"
       ],
       "type": "object"
+     },
+     "ui_tree_revision": {
+      "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+      "minimum": 0,
+      "type": "integer"
      },
      "window_id": {
       "description": "Window id from list_windows. Required with x/y; optional with element_token (the token carries it).",
@@ -1983,7 +2028,7 @@
    "read_only": false
   },
   {
-   "description": "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+   "description": "Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2037,6 +2082,31 @@
     "type": "object"
    },
    "name": "set_agent_cursor_theme",
+   "read_only": false
+  },
+  {
+   "description": "Show or hide the session label text beneath a session's cursor.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "Public label of the session that owns the cursor.",
+      "type": "string"
+     },
+     "show_session_label": {
+      "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals; `true` shows it again with a fresh reveal. The cursor and its delivery\nand target chips still show. The session's name is unchanged.",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "session",
+     "show_session_label"
+    ],
+    "type": "object"
+   },
+   "name": "set_agent_cursor_badge",
    "read_only": false
   },
   {
@@ -2109,7 +2179,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).",
+   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\n`get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` (1 or more), or `0` to clear, are saved defaults for `get_window_state` reads that omit the argument and pass no `query` or `full_output`. A per-call argument always wins. They apply to every session at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2258,6 +2328,17 @@
       ],
       "type": "string"
      },
+     "get_window_state.max_depth": {
+      "description": "Saved get_window_state depth cap for reads that omit max_depth and pass no query or full_output: 1 or more, or 0 to clear it and use no depth cap. A max_depth passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "minimum": 0,
+      "type": "integer"
+     },
+     "get_window_state.max_elements": {
+      "description": "Saved get_window_state node budget for reads that omit max_elements and pass no query or full_output: 1 to 5000 (the full_output budget), or 0 to clear it and use 250. A max_elements passed on the call always wins. Saved to ~/.cua-driver/config.json and applied at once.",
+      "maximum": 5000,
+      "minimum": 0,
+      "type": "integer"
+     },
      "max_image_dimension": {
       "description": "Max dimension for screenshot resizing (0 = no limit).",
       "type": "integer"
@@ -2338,7 +2419,7 @@
    "read_only": true
   },
   {
-   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.",
+   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text. The macOS AX fallback applies only `*` (or a blank selector) and bare tag selectors and refuses any other selector instead of returning every element.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2607,7 +2688,7 @@
       "type": "string"
      },
      "input_route": {
-      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.",
+      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Its effect is confirmed when the target's own state changes or the click's handlers change the page; otherwise refresh page state and verify the expected postcondition.",
       "enum": [
        "trusted",
        "dom_event"
@@ -3128,6 +3209,18 @@
        "desktop"
       ],
       "type": "string"
+     },
+     "cursor_badge": {
+      "additionalProperties": false,
+      "description": "Optional initial cursor badge settings. The host applies them before the cursor is\nfirst made visible. Omitted fields keep the session's current value; a new session\nshows its label. A later `set_agent_cursor_badge` call wins.",
+      "properties": {
+       "show_session_label": {
+        "description": "`false` hides the session label text beneath the cursor, including its initial and\nhover reveals. The cursor and its delivery and target chips still show. Omit to keep\nthe current value (`true` for a new session).",
+        "type": "boolean"
+       }
+      },
+      "required": [],
+      "type": "object"
      },
      "cursor_motion": {
       "additionalProperties": false,

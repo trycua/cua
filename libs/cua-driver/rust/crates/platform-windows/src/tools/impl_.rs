@@ -384,8 +384,8 @@ use super::{
     check_permissions::CheckPermissionsTool,
     click::ClickTool,
     cursor_tools::{
-        GetAgentCursorStateV2Tool, SetAgentCursorEnabledV2Tool, SetAgentCursorMotionV2Tool,
-        SetAgentCursorThemeTool,
+        GetAgentCursorStateV2Tool, SetAgentCursorBadgeTool, SetAgentCursorEnabledV2Tool,
+        SetAgentCursorMotionV2Tool, SetAgentCursorThemeTool,
     },
     debug_window_info::DebugWindowInfoTool,
     double_click::DoubleClickTool,
@@ -631,6 +631,7 @@ pub fn load_driver_config() -> DriverConfig {
             cfg.max_image_dimension = v32;
         }
     }
+    cua_driver_core::walk_defaults::load_active(super::get_window_state::WALK_LIMITS);
     cfg
 }
 
@@ -882,7 +883,7 @@ pub(crate) async fn restore_foreground_polling_best_effort(
                     // Foreground changed but to something we didn't
                     // spawn (e.g. user Alt-Tabbed). Don't touch it.
                     None
-                } else if !unsafe { IsWindow(prior) }.as_bool() {
+                } else if !unsafe { IsWindow(Some(prior)) }.as_bool() {
                     tracing::trace!(
                         target: "launch_app.focus_restore",
                         "prior foreground HWND no longer valid — skipping restore (spawned pid {} owns fg)",
@@ -1461,6 +1462,7 @@ pub fn build_registry_with_provider(
     r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));
+    r.register(Box::new(SetAgentCursorBadgeTool));
     r.register(Box::new(CheckPermissionsTool));
     // `health_report` — single-call cross-platform driver diagnostics.
     // Stable schema_version="1" contract for downstream consumers. Windows skips

@@ -34,7 +34,7 @@ impl T {
         let p = self.home.join(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, text).unwrap();
-        p
+        common::native(p)
     }
     fn read(&self, p: &Path) -> String {
         std::fs::read_to_string(p).unwrap()
@@ -580,6 +580,9 @@ fn detection_uses_path_markers_and_app_bundles() {
         // A non-executable file is not a binary.
         std::fs::write(bin.join("claude"), "").unwrap();
     }
+    // Windows has no executable bit: any `codex.exe` file is a binary.
+    #[cfg(not(unix))]
+    std::fs::write(&codex, "MZ").unwrap();
     t.env.path = vec![bin.clone()];
     std::fs::create_dir_all(t.home.join(".kiro")).unwrap();
     std::fs::create_dir_all(t.home.join("Applications/Cursor.app")).unwrap();
@@ -777,7 +780,7 @@ fn update_refreshes_outdated_copies_cua_wrote() {
     let s = t.setup();
     s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
         .unwrap();
-    let dest = t.home.join(".cline/skills/cua-sandboxes");
+    let dest = common::native(t.home.join(".cline/skills/cua-sandboxes"));
     // Pretend an older cua wrote an older version: change the content and
     // record its hash as the one cua wrote.
     std::fs::write(
@@ -879,10 +882,14 @@ fn state_file_records_what_cua_wrote() {
         .unwrap();
     let state: Value = serde_json::from_str(&t.read(s.state_path())).unwrap();
     assert_eq!(state["version"], 1);
-    let file = t.home.join(".kiro/settings/mcp.json").display().to_string();
+    let file = common::native(t.home.join(".kiro/settings/mcp.json"))
+        .display()
+        .to_string();
     assert_eq!(state["mcp"][&file]["value"]["command"], "/opt/cua/bin/cua");
     assert_eq!(state["mcp"][&file]["agents"], json!(["kiro"]));
-    let dir = t.home.join(".kiro/skills/cua-spaces").display().to_string();
+    let dir = common::native(t.home.join(".kiro/skills/cua-spaces"))
+        .display()
+        .to_string();
     assert_eq!(state["skills"][&dir]["skill"], "cua-spaces");
     // Pi supports skills only; MCP is skipped with a reason.
     let o = one(s.configure_mcp(&ids(&["pi"]), &server()).unwrap());
@@ -1026,7 +1033,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
 fn the_driver_command_resolves_from_path_then_local_bin() {
     let t = T::new();
     assert_eq!(McpServer::driver_for(&t.env).command, "cua-driver");
-    let bin = t.home.join(".local/bin");
+    let bin = common::native(t.home.join(".local/bin"));
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join(if cfg!(windows) {
         "cua-driver.exe"
@@ -1168,9 +1175,10 @@ fn cua_driver_is_found_inside_its_app_on_macos() {
     let t = T::new();
     let mut env = t.env.clone();
     env.os = cua_agent_setup::Os::MacOs;
-    let exe = t
-        .home
-        .join("Applications/CuaDriver.app/Contents/MacOS/cua-driver");
+    let exe = common::native(
+        t.home
+            .join("Applications/CuaDriver.app/Contents/MacOS/cua-driver"),
+    );
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
     #[cfg(unix)]
     common::write_executable(&exe, "#!/bin/sh\n");

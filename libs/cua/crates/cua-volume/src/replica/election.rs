@@ -52,8 +52,8 @@ impl Inner {
                 t.elapsed() < self.cfg.timing.confirm * 8 + Duration::from_secs(5)
             });
             let gone_long = op
-                .down_since
-                .is_some_and(|t| t.elapsed() >= self.cfg.idle_takeover);
+                .det
+                .gone_for(Instant::now(), op.down_since, self.cfg.idle_takeover);
             if !(wanted || op.intentional || gone_long) {
                 return;
             }

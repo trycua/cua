@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.5](https://github.com/trycua/cua/compare/cua-sdk-v0.31.4...cua-sdk-v0.31.5) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-agent-setup,cua-volume:** finish the Windows CI lane (CUA-4556) ([#8789](https://github.com/trycua/cua/issues/8789)) ([259a950](https://github.com/trycua/cua/commit/259a950c267f67f37022539d8c2283def0bd307d))
+
 ## [0.31.4](https://github.com/trycua/cua/compare/cua-sdk-v0.31.3...cua-sdk-v0.31.4) (2026-11-27)
 
 

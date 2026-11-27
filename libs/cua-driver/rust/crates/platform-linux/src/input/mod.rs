@@ -608,22 +608,58 @@ fn nonempty(value: Option<&str>) -> bool {
     value.is_some_and(|value| !value.trim().is_empty())
 }
 
-fn desktop_value_is_kde(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
+/// The X11 desktop whose shell crashes when an MPX master pair and its uinput
+/// slave are hotplugged into Xorg.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnsafeHotplugDesktop {
+    /// KDE Plasma 6 / Qt 6.11 applications crash session-wide.
+    Kde,
+    /// Cinnamon (muffin + GTK 3) segfaults on the XI2 hierarchy event for the
+    /// new master: once in `_clutter_input_device_add_slave` from
+    /// `translate_hierarchy_event`, once in GDK's XI2 device handling (#8197).
+    Cinnamon,
+}
+
+impl UnsafeHotplugDesktop {
+    fn from_token(token: &str) -> Option<Self> {
+        // XDG_CURRENT_DESKTOP is "X-Cinnamon"; the session names are "cinnamon".
+        let token = token.trim();
+        let token = token
+            .strip_prefix("X-")
+            .or_else(|| token.strip_prefix("x-"))
+            .unwrap_or(token);
+        if token.eq_ignore_ascii_case("kde") || token.eq_ignore_ascii_case("plasma") {
+            Some(Self::Kde)
+        } else if token.eq_ignore_ascii_case("cinnamon") {
+            Some(Self::Cinnamon)
+        } else {
+            None
+        }
+    }
+
+    fn refusal(self) -> &'static str {
+        match self {
+            Self::Kde => "disabled on KDE Plasma X11; retry with delivery_mode='foreground'",
+            Self::Cinnamon => "disabled on Cinnamon X11; retry with delivery_mode='foreground'",
+        }
+    }
+}
+
+fn desktop_value_unsafe_hotplug(value: Option<&str>) -> Option<UnsafeHotplugDesktop> {
+    value.and_then(|value| {
         value
             .split([':', ';', ','])
-            .map(str::trim)
-            .any(|token| token.eq_ignore_ascii_case("kde") || token.eq_ignore_ascii_case("plasma"))
+            .find_map(UnsafeHotplugDesktop::from_token)
     })
 }
 
-/// KDE Plasma 6 / Qt 6.11 applications on X11 can crash session-wide when an
-/// ephemeral uinput pointer is hotplugged into Xorg. Foreground input does not
-/// need that device: the click, drag, scroll, and keyboard tools already use
-/// XTEST after activating the target window. Disable only the MPX/uinput
-/// capability here so callers retain their existing foreground escalation and
-/// XSendEvent fallback behavior.
-fn kde_x11_uinput_hotplug_is_unsafe(
+/// Some X11 desktops crash when an ephemeral uinput pointer and its MPX master
+/// are hotplugged into Xorg (see [`UnsafeHotplugDesktop`]). Foreground input
+/// does not need that device: the click, drag, scroll, and keyboard tools
+/// already use XTEST after activating the target window. Disable only the
+/// MPX/uinput capability here so callers retain their existing foreground
+/// escalation and XSendEvent fallback behavior.
+fn x11_uinput_hotplug_unsafe_desktop(
     session_type: Option<&str>,
     current_desktop: Option<&str>,
     session_desktop: Option<&str>,
@@ -631,28 +667,32 @@ fn kde_x11_uinput_hotplug_is_unsafe(
     kde_full_session: Option<&str>,
     display: Option<&str>,
     wayland_display: Option<&str>,
-) -> bool {
+) -> Option<UnsafeHotplugDesktop> {
     let explicit_x11 = session_type.is_some_and(|value| value.eq_ignore_ascii_case("x11"));
     let explicit_wayland = session_type.is_some_and(|value| value.eq_ignore_ascii_case("wayland"));
     if explicit_wayland || (!explicit_x11 && nonempty(wayland_display)) {
-        return false;
+        return None;
+    }
+    if !(explicit_x11 || nonempty(display)) {
+        return None;
     }
 
-    let x11 = explicit_x11 || nonempty(display);
-    let kde = desktop_value_is_kde(current_desktop)
-        || desktop_value_is_kde(session_desktop)
-        || desktop_value_is_kde(desktop_session)
-        || kde_full_session.is_some_and(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes"
-            )
-        });
-
-    x11 && kde
+    desktop_value_unsafe_hotplug(current_desktop)
+        .or_else(|| desktop_value_unsafe_hotplug(session_desktop))
+        .or_else(|| desktop_value_unsafe_hotplug(desktop_session))
+        .or_else(|| {
+            kde_full_session
+                .is_some_and(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes"
+                    )
+                })
+                .then_some(UnsafeHotplugDesktop::Kde)
+        })
 }
 
-fn kde_x11_uinput_hotplug_is_unsafe_from_env() -> bool {
+fn x11_uinput_hotplug_unsafe_desktop_from_env() -> Option<UnsafeHotplugDesktop> {
     let session_type = std::env::var("XDG_SESSION_TYPE").ok();
     let current_desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
     let session_desktop = std::env::var("XDG_SESSION_DESKTOP").ok();
@@ -661,7 +701,7 @@ fn kde_x11_uinput_hotplug_is_unsafe_from_env() -> bool {
     let display = std::env::var("DISPLAY").ok();
     let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
 
-    kde_x11_uinput_hotplug_is_unsafe(
+    x11_uinput_hotplug_unsafe_desktop(
         session_type.as_deref(),
         current_desktop.as_deref(),
         session_desktop.as_deref(),
@@ -681,10 +721,10 @@ pub(crate) fn uinput_accessible() -> bool {
 }
 
 pub fn real_pointer_input_available() -> bool {
-    // Do not even probe /dev/uinput on an affected KDE/X11 session. Creating
-    // the device is itself the dangerous operation; a later fallback is too
-    // late once Xorg has announced the hotplug to Qt clients.
-    if kde_x11_uinput_hotplug_is_unsafe_from_env() {
+    // Do not even probe /dev/uinput on an affected X11 desktop. Creating the
+    // device is itself the dangerous operation; a later fallback is too late
+    // once Xorg has announced the hotplug to the shell and its clients.
+    if x11_uinput_hotplug_unsafe_desktop_from_env().is_some() {
         return false;
     }
 
@@ -710,17 +750,15 @@ pub fn real_pointer_input_available() -> bool {
 }
 
 fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
-    ensure_master_pointer_for_session(cursor_id, kde_x11_uinput_hotplug_is_unsafe_from_env())
+    ensure_master_pointer_for_session(cursor_id, x11_uinput_hotplug_unsafe_desktop_from_env())
 }
 
 fn ensure_master_pointer_for_session(
     cursor_id: &str,
-    unsafe_hotplug_session: bool,
+    unsafe_hotplug_desktop: Option<UnsafeHotplugDesktop>,
 ) -> Result<MasterPointerIds> {
-    if unsafe_hotplug_session {
-        return Err(uinput_unavailable(
-            "disabled on KDE Plasma X11; retry with delivery_mode='foreground'",
-        ));
+    if let Some(desktop) = unsafe_hotplug_desktop {
+        return Err(uinput_unavailable(desktop.refusal()));
     }
 
     if let Some(ids) = mpx_pointers().lock().unwrap().get(cursor_id).copied() {
@@ -5824,10 +5862,10 @@ exit 0"#,
 mod path_tests {
     use super::{
         click_event_target, create_uinput_pointer, ensure_master_pointer_for_session,
-        guarded_uinput_creation, is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe,
-        master_pointer_name, modifiers_to_state, mpx_op_guard, normalize_uinput_device_name,
-        path_cumulative, point_on_path, real_pointer_capabilities_available, sample_function,
-        slave_pointer_name, EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
+        guarded_uinput_creation, is_uinput_unavailable, master_pointer_name, modifiers_to_state,
+        mpx_op_guard, normalize_uinput_device_name, path_cumulative, point_on_path,
+        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
     use x11rb::protocol::xproto::{EventMask, KeyButMask};
 
@@ -6224,58 +6262,120 @@ mod path_tests {
     }
 
     #[test]
-    fn kde_x11_sessions_disable_uinput_pointer_hotplug() {
-        assert!(kde_x11_uinput_hotplug_is_unsafe(
-            Some("x11"),
-            Some("KDE"),
-            None,
-            None,
-            None,
-            Some(":0"),
-            None,
-        ));
-        assert!(kde_x11_uinput_hotplug_is_unsafe(
-            Some("x11"),
-            Some("KDE"),
-            None,
-            None,
-            None,
-            Some(":0"),
-            Some("wayland-0"),
-        ));
-        assert!(kde_x11_uinput_hotplug_is_unsafe(
-            None,
-            None,
-            Some("plasma"),
-            None,
-            Some("true"),
-            Some(":1"),
-            None,
-        ));
+    fn unsafe_x11_desktops_disable_uinput_pointer_hotplug() {
+        use super::{x11_uinput_hotplug_unsafe_desktop as unsafe_desktop, UnsafeHotplugDesktop};
 
-        assert!(!kde_x11_uinput_hotplug_is_unsafe(
-            Some("wayland"),
-            Some("KDE"),
-            None,
-            None,
-            Some("true"),
-            Some(":0"),
-            Some("wayland-0"),
-        ));
-        assert!(!kde_x11_uinput_hotplug_is_unsafe(
-            Some("x11"),
-            Some("GNOME"),
-            None,
-            None,
-            None,
-            Some(":0"),
-            None,
-        ));
+        let kde = Some(UnsafeHotplugDesktop::Kde);
+        let cinnamon = Some(UnsafeHotplugDesktop::Cinnamon);
 
-        let error = ensure_master_pointer_for_session("regression-test", true)
-            .expect_err("the creation choke point must refuse before opening X11 or uinput");
-        assert!(is_uinput_unavailable(&error));
-        assert!(error.to_string().contains("delivery_mode='foreground'"));
+        assert_eq!(
+            unsafe_desktop(Some("x11"), Some("KDE"), None, None, None, Some(":0"), None),
+            kde
+        );
+        assert_eq!(
+            unsafe_desktop(
+                Some("x11"),
+                Some("KDE"),
+                None,
+                None,
+                None,
+                Some(":0"),
+                Some("wayland-0"),
+            ),
+            kde
+        );
+        assert_eq!(
+            unsafe_desktop(
+                None,
+                None,
+                Some("plasma"),
+                None,
+                Some("true"),
+                Some(":1"),
+                None
+            ),
+            kde
+        );
+
+        // Linux Mint's own session environment (#8197).
+        assert_eq!(
+            unsafe_desktop(
+                Some("x11"),
+                Some("X-Cinnamon"),
+                Some("cinnamon"),
+                Some("cinnamon"),
+                None,
+                Some(":0"),
+                None,
+            ),
+            cinnamon
+        );
+        assert_eq!(
+            unsafe_desktop(None, None, None, Some("cinnamon"), None, Some(":0"), None),
+            cinnamon
+        );
+
+        assert_eq!(
+            unsafe_desktop(
+                Some("wayland"),
+                Some("KDE"),
+                None,
+                None,
+                Some("true"),
+                Some(":0"),
+                Some("wayland-0"),
+            ),
+            None
+        );
+        assert_eq!(
+            unsafe_desktop(
+                Some("wayland"),
+                Some("X-Cinnamon"),
+                Some("cinnamon-wayland"),
+                None,
+                None,
+                Some(":0"),
+                Some("wayland-0"),
+            ),
+            None
+        );
+        assert_eq!(
+            unsafe_desktop(
+                Some("x11"),
+                Some("GNOME"),
+                None,
+                None,
+                None,
+                Some(":0"),
+                None
+            ),
+            None
+        );
+        // A desktop whose name only contains "cinnamon" is not Cinnamon.
+        assert_eq!(
+            unsafe_desktop(
+                Some("x11"),
+                Some("cinnamon-ish"),
+                None,
+                None,
+                None,
+                Some(":0"),
+                None
+            ),
+            None
+        );
+
+        for (desktop, name) in [
+            (UnsafeHotplugDesktop::Kde, "KDE Plasma X11"),
+            (UnsafeHotplugDesktop::Cinnamon, "Cinnamon X11"),
+        ] {
+            let error = ensure_master_pointer_for_session("regression-test", Some(desktop))
+                .expect_err("the creation choke point must refuse before opening X11 or uinput");
+            assert!(is_uinput_unavailable(&error));
+            let message = error.to_string();
+            assert!(message.contains(name), "{message}");
+            assert!(message.contains("delivery_mode='foreground'"), "{message}");
+        }
     }
 
     #[test]

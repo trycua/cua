@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.3](https://github.com/trycua/cua/compare/cua-sdk-v0.31.2...cua-sdk-v0.31.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-volume:** a write waits for a holder whose link is briefly down ([#8777](https://github.com/trycua/cua/issues/8777)) ([ebc4848](https://github.com/trycua/cua/commit/ebc48482f12e27a395dcc87491ef39df60cb69c8))
+
 ## [0.31.2](https://github.com/trycua/cua/compare/cua-sdk-v0.31.1...cua-sdk-v0.31.2) (2026-11-27)
 
 

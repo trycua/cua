@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.64.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.3...cua-driver-rs-v0.64.0) (2026-11-27)
+
+
+### Features
+
+* **cua-driver:** persist get_window_state max_elements and max_depth defaults ([#8563](https://github.com/trycua/cua/issues/8563)) ([b7ff2e9](https://github.com/trycua/cua/commit/b7ff2e9cb80718ce1f215b4d2b0ab6258dec2388))
+
 ## [0.63.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.2...cua-driver-rs-v0.63.3) (2026-11-27)
 
 

@@ -2140,11 +2140,11 @@ impl ToolRegistry {
                 "authorization for this Cua runtime has been suspended by revoke-all",
             );
         }
-        if context.is_revoked() {
-            return protected_refusal(
-                "authorization_revoked",
-                "this session authorization context has been revoked",
-            );
+        // The context's phase is the one authorization clock. Refuse before
+        // any lifecycle work so `start_session` cannot revive an episode
+        // that every later call would be denied in.
+        if let Some(refusal) = authorization_phase_refusal(context.phase()) {
+            return refusal;
         }
 
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
@@ -2570,8 +2570,10 @@ impl ToolRegistry {
             }
         }
 
-        if let Err(error) = context.commit_authorized_dispatch() {
-            return permission_denied_result(error);
+        if let Err(phase) = context.commit_authorized_dispatch() {
+            return authorization_phase_refusal(phase).unwrap_or_else(|| {
+                permission_denied_result("authorization context is not active".to_owned())
+            });
         }
 
         let lifecycle_dispatch = if session_requiring_tool(resolved_name)
@@ -4995,6 +4997,90 @@ resources:
 
         crate::session::revoke_sessions_with_prefix(&prefix);
         crate::session::forget_ended_sessions_with_prefix(&prefix);
+    }
+
+    #[tokio::test]
+    async fn start_session_cannot_revive_an_episode_its_authorization_phase_denies() {
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(None);
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        for (phase, code) in [
+            ("idle_expired", "permission_denied"),
+            ("expired", "permission_denied"),
+            ("revoked", "authorization_revoked"),
+        ] {
+            let authorization = SessionAuthorizationRegistry::with_ceiling(
+                SessionModeCeiling::for_trusted_sessions(
+                    [PermissionMode::Standard],
+                    false,
+                    Duration::from_secs(60),
+                    Duration::from_secs(30),
+                )
+                .unwrap(),
+            );
+            let (host, connection) = authorization.trusted_in_process_binding();
+            let transport = format!("auth-clock-{phase}");
+            let ttl = if phase == "expired" {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_secs(60)
+            };
+            authorization
+                .bind_delegated_session(
+                    &host,
+                    &connection,
+                    crate::session_authorization::DelegatedSessionRequest {
+                        public_session: "auth-clock".to_owned(),
+                        transport_session: transport.clone(),
+                        mode: PermissionMode::Standard,
+                        ttl,
+                        idle_ttl: ttl.min(Duration::from_secs(30)),
+                        capability_manifest: None,
+                    },
+                )
+                .unwrap();
+            let context = authorization
+                .resolve_delegated(&connection, "auth-clock", &transport)
+                .unwrap();
+            let prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+            let session = context.runtime_session_key("auth-clock");
+            let start = || {
+                registry.invoke_with_context(
+                    "start_session",
+                    serde_json::json!({"session": "auth-clock"}),
+                    context.clone(),
+                )
+            };
+
+            let started = start().await;
+            assert_ne!(started.is_error, Some(true), "{phase}: {started:?}");
+            let ended = registry
+                .invoke_with_context(
+                    "end_session",
+                    serde_json::json!({"session": "auth-clock"}),
+                    context.clone(),
+                )
+                .await;
+            assert_ne!(ended.is_error, Some(true), "{phase}: {ended:?}");
+            assert!(crate::session::is_session_ended(&session));
+
+            match phase {
+                "idle_expired" => context.backdate_idle_for_test(Duration::from_secs(31)),
+                "expired" => tokio::time::sleep(Duration::from_millis(600)).await,
+                _ => assert!(authorization.revoke_connection(&connection)),
+            }
+            let revived = start().await;
+            assert_eq!(revived.is_error, Some(true), "{phase}: {revived:?}");
+            let refusal = &revived.structured_content.as_ref().unwrap()["refusal"];
+            assert_eq!(refusal["code"], code, "{phase}");
+            assert_eq!(refusal["authorization_phase"], phase);
+            assert!(
+                crate::session::is_session_ended(&session),
+                "{phase}: a refused start_session must leave the episode ended"
+            );
+
+            crate::session::forget_ended_sessions_with_prefix(&prefix);
+        }
     }
 
     #[tokio::test]
@@ -7779,6 +7865,22 @@ fn session_owned_by_other_transport_refusal(
         refusal.insert("owner_transport".to_owned(), Value::from(holder));
     }
     result
+}
+
+fn authorization_phase_refusal(
+    phase: crate::session_authorization::AuthorizationPhase,
+) -> Option<ToolResult> {
+    let (code, message) = phase.refusal()?;
+    Some(
+        ToolResult::error(message).with_structured(serde_json::json!({
+            "status": "refused",
+            "refusal": {
+                "code": code,
+                "message": message,
+                "authorization_phase": phase.as_str(),
+            }
+        })),
+    )
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {

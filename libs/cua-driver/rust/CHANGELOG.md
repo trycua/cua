@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.64.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.1...cua-driver-rs-v0.64.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-driver:** give authorization one AuthorizationPhase clock ([#8304](https://github.com/trycua/cua/issues/8304)) ([49633b0](https://github.com/trycua/cua/commit/49633b0fc8f1581d0ba7384e321d6370c96fd3a0))
+
 ## [0.64.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.0...cua-driver-rs-v0.64.1) (2026-11-27)
 
 

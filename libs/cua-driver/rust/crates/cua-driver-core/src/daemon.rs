@@ -322,10 +322,19 @@ fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
     serde_json::from_value(response.result?).ok()
 }
 
+/// Only a regular file counts as a lock. On Unix the file opens without
+/// blocking, so a FIFO left at the lock path cannot hang the probe.
 fn lock_is_held(lock_path: &std::path::Path) -> bool {
-    let Ok(lock) = std::fs::File::open(lock_path) else {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let Ok(lock) = options.open(lock_path) else {
         return false;
     };
+    if !lock.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return false;
+    }
     matches!(lock.try_lock(), Err(std::fs::TryLockError::WouldBlock))
 }
 

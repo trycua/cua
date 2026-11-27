@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.56.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.4...cua-driver-rs-v0.56.5) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** add GNOME/Mutter notes to the skill ([#8303](https://github.com/trycua/cua/issues/8303)) ([5b8a2b4](https://github.com/trycua/cua/commit/5b8a2b47f374e441019db7562423f7e8f5af4cd8))
+* **cua-driver:** wait for the Save sheet's Save button to report enabled in the AppKit E2E ([#8446](https://github.com/trycua/cua/issues/8446)) ([c657f8c](https://github.com/trycua/cua/commit/c657f8c002fead6946bf16c7d1ac3a3e0c3d61df))
+
 ## [0.56.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.3...cua-driver-rs-v0.56.4) (2026-11-21)
 
 

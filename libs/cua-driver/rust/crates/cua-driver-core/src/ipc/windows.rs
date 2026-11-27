@@ -392,6 +392,7 @@ mod tests {
         let policy = ConnectPolicy {
             retry: Duration::from_millis(20),
             budget: Duration::from_secs(3),
+            only_while_busy: false,
         };
         let blocking = name.clone();
         tokio::task::spawn_blocking(move || LocalIpcClient::connect(&blocking, policy).unwrap())

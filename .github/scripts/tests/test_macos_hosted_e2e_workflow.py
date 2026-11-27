@@ -199,9 +199,9 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "github.run_id }}-${{ github.run_attempt" in workflow
     assert "CUA_MACOS_HOSTED_PROBE_DIR: ${{ runner.temp" not in workflow
     assert 'echo "CUA_MACOS_HOSTED_PROBE_DIR=${artifact_dir}" >> "${GITHUB_ENV}"' in workflow
-    # Release gates and manual runs keep all four lanes; only the PR quick lane (quick=true) runs `shared`.
-    assert "matrix:\n        lane: ${{ fromJSON(inputs.quick && '[\"shared\"]' || '[\"shared\",\"native\",\"capture\",\"browser\"]') }}" in workflow
-    assert "CUA_E2E_HARNESS_FILTER: ${{ inputs.quick && 'electron' || '' }}" in workflow
+    # Release gates and manual runs keep all four lanes; the PR quick lane (quick=true) runs `shared` on Electron + WKWebView and the whole `native` lane (#8089, #8220).
+    assert "matrix:\n        lane: ${{ fromJSON(inputs.quick && '[\"shared\",\"native\"]' || '[\"shared\",\"native\",\"capture\",\"browser\"]') }}" in workflow
+    assert "CUA_E2E_HARNESS_FILTER: ${{ inputs.quick && matrix.lane == 'shared' && 'electron,wkwebview' || '' }}" in workflow
     assert "rust-macos-hosted-${{ inputs.quick && 'quick-result' || 'certification' }}" in workflow
     assert "fail-fast: false" in workflow
     assert "needs: probe" in workflow

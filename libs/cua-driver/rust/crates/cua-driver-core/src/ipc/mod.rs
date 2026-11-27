@@ -27,6 +27,9 @@ pub struct ConnectPolicy {
     pub retry: Duration,
     /// How long after the first attempt a failed attempt is retried.
     pub budget: Duration,
+    /// Retry only while the endpoint is there but busy: a Unix listener whose
+    /// accept queue is full. Any other failure ends the connect at once.
+    pub only_while_busy: bool,
 }
 
 impl ConnectPolicy {
@@ -34,23 +37,29 @@ impl ConnectPolicy {
     pub const ONCE: Self = Self {
         retry: Duration::ZERO,
         budget: Duration::ZERO,
+        only_while_busy: false,
     };
 
     /// Retry for up to 3 s, for a daemon that may still be starting.
     pub const STARTUP: Self = Self {
         retry: Duration::from_millis(50),
         budget: Duration::from_secs(3),
+        only_while_busy: false,
     };
 
     /// One request to a daemon that is already serving. A named pipe refuses
     /// a client while every instance is busy, until the daemon creates the
     /// next one, so Windows retries as [`Self::STARTUP`] does. A Unix listener
-    /// queues the connection instead, so a refused connect means no daemon
-    /// and Unix tries once.
+    /// queues the connection instead, so a refused connect means no daemon.
+    /// Unix retries only a full accept queue, for as long as
+    /// [`Self::STARTUP`] would.
     #[cfg(windows)]
     pub const REQUEST: Self = Self::STARTUP;
     #[cfg(not(windows))]
-    pub const REQUEST: Self = Self::ONCE;
+    pub const REQUEST: Self = Self {
+        only_while_busy: true,
+        ..Self::STARTUP
+    };
 
     /// The same policy with its budget cut to `limit`.
     pub fn within(self, limit: Duration) -> Self {
@@ -62,7 +71,10 @@ impl ConnectPolicy {
 
     /// The pause before the next attempt, cut to what is left of the budget,
     /// or `None` once the budget is spent.
-    fn pause(self, give_up: Instant) -> Option<Duration> {
+    fn pause(self, give_up: Instant, error: &std::io::Error) -> Option<Duration> {
+        if self.only_while_busy && error.kind() != std::io::ErrorKind::WouldBlock {
+            return None;
+        }
         let left = give_up.saturating_duration_since(Instant::now());
         (!left.is_zero()).then(|| self.retry.min(left))
     }
@@ -72,7 +84,7 @@ impl ConnectPolicy {
         loop {
             match attempt() {
                 Ok(connected) => return Ok(connected),
-                Err(error) => match self.pause(give_up) {
+                Err(error) => match self.pause(give_up, &error) {
                     Some(pause) => std::thread::sleep(pause),
                     None => return Err(error),
                 },
@@ -101,6 +113,60 @@ pub enum ExchangeError {
 
 #[cfg(unix)]
 type Stream = std::os::unix::net::UnixStream;
+
+/// One connection attempt to the Unix socket at `socket_path` that never
+/// waits. A listener whose accept queue is full answers `WouldBlock` rather
+/// than holding the caller, as a blocking connect does on Linux. The stream it
+/// returns is blocking.
+#[cfg(unix)]
+pub fn try_connect_unix(socket_path: &str) -> std::io::Result<std::os::unix::net::UnixStream> {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+
+    let path = socket_path.as_bytes();
+    // SAFETY: an all-zero sockaddr_un is a valid empty address.
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if path.len() >= address.sun_path.len() {
+        return Err(std::io::Error::from_raw_os_error(libc::ENAMETOOLONG));
+    }
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (slot, byte) in address.sun_path.iter_mut().zip(path) {
+        *slot = libc::c_char::from_ne_bytes([*byte]);
+    }
+    // SAFETY: plain socket creation; the descriptor is owned right away.
+    let raw = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh descriptor nothing else owns.
+    let socket = unsafe { OwnedFd::from_raw_fd(raw) };
+    // SAFETY: fcntl on a descriptor this function owns.
+    let ready = unsafe {
+        libc::fcntl(raw, libc::F_SETFD, libc::FD_CLOEXEC) == 0
+            && libc::fcntl(raw, libc::F_SETFL, libc::O_NONBLOCK) == 0
+    };
+    if !ready {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `address` is a valid, NUL-terminated sockaddr_un of the length
+    // passed.
+    let connected = unsafe {
+        libc::connect(
+            socket.as_raw_fd(),
+            (&address as *const libc::sockaddr_un).cast(),
+            std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+        )
+    };
+    if connected != 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(match error.raw_os_error() {
+            Some(libc::EAGAIN | libc::EINPROGRESS) => std::io::ErrorKind::WouldBlock.into(),
+            _ => error,
+        });
+    }
+    let stream = std::os::unix::net::UnixStream::from(socket);
+    stream.set_nonblocking(false)?;
+    Ok(stream)
+}
 #[cfg(windows)]
 type Stream = self::windows::PipeStream;
 
@@ -114,6 +180,9 @@ pub struct LocalIpcClient {
 
 impl LocalIpcClient {
     pub fn connect(path: &str, policy: ConnectPolicy) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        let stream = policy.retry(|| try_connect_unix(path))?;
+        #[cfg(windows)]
         let stream = policy.retry(|| Stream::connect(path))?;
         // Every read and write waits in `poll` for at most what is left of
         // its slice, so none can outlast the exchange deadline.
@@ -309,7 +378,7 @@ impl LocalIpcStream {
             let attempt = tokio::net::windows::named_pipe::ClientOptions::new().open(path);
             match attempt {
                 Ok(stream) => return Ok(Self(stream)),
-                Err(error) => match policy.pause(give_up) {
+                Err(error) => match policy.pause(give_up, &error) {
                     Some(pause) => tokio::time::sleep(pause).await,
                     None => return Err(error),
                 },
@@ -380,6 +449,7 @@ mod tests {
         let policy = ConnectPolicy {
             retry: Duration::from_secs(5),
             budget: Duration::from_millis(100),
+            only_while_busy: false,
         };
         let started = Instant::now();
         let mut attempts = 0;
@@ -392,6 +462,37 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::NotFound);
         assert_eq!(attempts, 2);
         assert!(started.elapsed() < Duration::from_millis(600));
+    }
+
+    #[test]
+    fn a_busy_only_retry_gives_up_at_once_on_anything_but_a_full_queue() {
+        let policy = ConnectPolicy {
+            retry: Duration::from_millis(10),
+            budget: Duration::from_secs(3),
+            only_while_busy: true,
+        };
+        let mut attempts = 0;
+        let error = policy
+            .retry(|| -> std::io::Result<()> {
+                attempts += 1;
+                Err(Error::new(ErrorKind::ConnectionRefused, "no daemon"))
+            })
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ConnectionRefused);
+        assert_eq!(attempts, 1);
+
+        let mut attempts = 0;
+        policy
+            .retry(|| {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(Error::new(ErrorKind::WouldBlock, "queue full"))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap();
+        assert_eq!(attempts, 3);
     }
 
     fn soon() -> Instant {
@@ -636,6 +737,7 @@ mod tests {
             let policy = ConnectPolicy {
                 retry: Duration::from_millis(20),
                 budget: Duration::from_secs(3),
+                only_while_busy: false,
             };
             LocalIpcClient::connect(path.to_str().unwrap(), policy).unwrap();
             binder.join().unwrap();
@@ -659,6 +761,7 @@ mod tests {
             let policy = ConnectPolicy {
                 retry: Duration::from_millis(20),
                 budget: Duration::from_secs(3),
+                only_while_busy: false,
             };
             LocalIpcStream::connect(path.to_str().unwrap(), policy)
                 .await

@@ -8,6 +8,8 @@
 
 mod common;
 
+use common::JoinRel;
+
 use cua_agent_setup::{
     AgentSetup, Change, CuaChannel, HostEnv, McpServer, Outcome, Parts, Target, hash_dir,
 };
@@ -88,7 +90,7 @@ impl Fixture {
 }
 
 fn write(home: &Path, rel: &str, text: &str) {
-    let p = home.join(rel);
+    let p = home.rel(rel);
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();
     std::fs::write(p, text).unwrap();
 }
@@ -115,7 +117,7 @@ fn json(text: &str) -> Value {
 /// A `cua-local` the way install-local.sh and the first run leave it:
 /// executable, in `~/.local/bin`.
 fn install_cua_local(home: &Path) -> PathBuf {
-    let p = home.join(".local/bin/cua-local");
+    let p = home.rel(".local/bin/cua-local");
     #[cfg(unix)]
     common::write_executable(&p, "#!/bin/sh\n");
     #[cfg(not(unix))]
@@ -140,7 +142,7 @@ fn local_registers_cua_local_and_skills_of_its_own_and_leaves_stable_untouched()
     // Local, with the same agents and the same configs.
     let cua_local = install_cua_local(&f.home);
     let mut env = f.env(CuaChannel::Local);
-    env.path.push(f.home.join(".local/bin"));
+    env.path.push(f.home.rel(".local/bin"));
     let local = AgentSetup::new(env.clone());
 
     // Stable's `cua` entry is not Local's: nothing reads as configured yet.
@@ -206,11 +208,11 @@ fn local_registers_cua_local_and_skills_of_its_own_and_leaves_stable_untouched()
     let md = f.read(".claude/skills/cua-spaces-local/SKILL.md");
     assert!(md.contains("name: cua-spaces-local"), "{md}");
     assert!(md.contains("cua-local"));
-    assert!(f.home.join(".claude/skills/cua-spaces/SKILL.md").is_file());
+    assert!(f.home.rel(".claude/skills/cua-spaces/SKILL.md").is_file());
     assert_eq!(f.stable_files(), before, "Stable's files changed");
 
     // Local's state is its own; Stable's file was not written.
-    assert!(f.home.join(".cua-local/agent-setup.json").is_file());
+    assert!(f.home.rel(".cua-local/agent-setup.json").is_file());
     let state = json(&f.read(".cua-local/agent-setup.json"));
     assert!(state["servers"]["cua-local"].is_object(), "{state}");
     assert!(state["mcp"].as_object().is_none_or(|m| m.is_empty()));
@@ -264,7 +266,7 @@ fn local_registers_cua_local_and_skills_of_its_own_and_leaves_stable_untouched()
             .all(|o| o.change == Change::Removed),
         "{removed:#?}"
     );
-    assert!(!f.home.join(".claude/skills/cua-spaces-local").exists());
+    assert!(!f.home.rel(".claude/skills/cua-spaces-local").exists());
     let claude = json(&f.read(".claude.json"));
     assert!(claude["mcpServers"]["cua-local"].is_null());
     assert_eq!(claude["mcpServers"]["cua"]["command"], STABLE_CUA);

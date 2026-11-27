@@ -621,6 +621,12 @@ const CHROMIUM_MOVE_SETTLE_MS: u64 = 15;
 /// "≥1 frame"). The bound is one frame; this keeps Swift's margin, since it
 /// was never bisected on Chrome, Electron and GPUI.
 const CHROMIUM_PRIMER_GAP_MS: u64 = 100;
+/// The off-screen primer's stamp where the stamp is window-local (macOS 27+).
+/// (-1, -1) there is the window's own corner, on the resize edge of a
+/// resizable window, and AppKit replays a press on that edge to the view the
+/// target click reached about half a second later (#8725). No window edge
+/// reaches this far.
+const PRIMER_WINDOW_LOCAL: (f64, f64) = (-10_000.0, -10_000.0);
 
 fn chromium_click_route_plan(
     screen_x: f64,
@@ -637,6 +643,11 @@ fn chromium_click_route_plan(
         screen_target
     };
     let off_screen = (-1.0, -1.0);
+    let stamped_off_screen = if window_local {
+        PRIMER_WINDOW_LOCAL
+    } else {
+        off_screen
+    };
     let mut steps = vec![
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Move,
@@ -652,8 +663,8 @@ fn chromium_click_route_plan(
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Down,
             event_location: off_screen,
-            skylight_window_location: off_screen,
-            public_window_location: off_screen,
+            skylight_window_location: stamped_off_screen,
+            public_window_location: stamped_off_screen,
             click_state: 1,
             phase: 1,
             button_number: 0,
@@ -663,8 +674,8 @@ fn chromium_click_route_plan(
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Up,
             event_location: off_screen,
-            skylight_window_location: off_screen,
-            public_window_location: off_screen,
+            skylight_window_location: stamped_off_screen,
+            public_window_location: stamped_off_screen,
             click_state: 1,
             phase: 2,
             button_number: 0,
@@ -977,15 +988,17 @@ fn background_drag_plan(
 }
 
 impl BackgroundDragStep {
-    /// The `CGEventSetWindowLocation` stamp. `stamp_origin` is the window's
+    /// The `CGEventSetWindowLocation` stamp. `window_origin` is the window's
     /// screen origin on macOS 27+, which reads the stamp as window-local, and
-    /// `(0, 0)` before, which reads it as the screen point. The off-screen
-    /// primer keeps `(-1, -1)` either way, as the click recipe does.
-    fn window_location(&self, stamp_origin: (f64, f64)) -> (f64, f64) {
-        if self.point == (-1.0, -1.0) {
-            return self.point;
+    /// `None` before, which reads it as the screen point. The off-screen
+    /// primer gets the click recipe's stamp either way.
+    fn window_location(&self, window_origin: Option<(f64, f64)>) -> (f64, f64) {
+        use BackgroundDragEventKind::{PrimerDown, PrimerUp};
+        match (self.kind, window_origin) {
+            (PrimerDown | PrimerUp, Some(_)) => PRIMER_WINDOW_LOCAL,
+            (_, Some(origin)) => (self.point.0 - origin.0, self.point.1 - origin.1),
+            (_, None) => self.point,
         }
-        (self.point.0 - stamp_origin.0, self.point.1 - stamp_origin.1)
     }
 }
 
@@ -1064,11 +1077,7 @@ where
     let route = post_route(MousePostMode::SkyLightPreferred, skylight_available());
     let window_id = wid as i64;
 
-    let stamp_origin = if window_location_is_window_local() {
-        window_origin
-    } else {
-        (0.0, 0.0)
-    };
+    let stamp_origin = window_location_is_window_local().then_some(window_origin);
     let mut session: Option<bool> = None;
     for step in background_drag_plan(from, to, steps, duration_ms) {
         if session.is_some() && step.kind == Dragged {
@@ -2249,7 +2258,8 @@ mod tests {
             .collect();
         assert_eq!(primers.len(), 2);
         for step in primers {
-            assert_eq!(step.skylight_window_location, (-1.0, -1.0));
+            assert_eq!(step.skylight_window_location, (-10_000.0, -10_000.0));
+            assert_eq!(step.public_window_location, (-10_000.0, -10_000.0));
         }
     }
 
@@ -2500,15 +2510,15 @@ mod tests {
         let plan = background_drag_plan((270.0, 294.0), (370.0, 394.0), 2, 0);
         let stamps: Vec<_> = plan
             .iter()
-            .map(|step| (step.kind, step.window_location(origin)))
+            .map(|step| (step.kind, step.window_location(Some(origin))))
             .collect();
         use BackgroundDragEventKind::*;
         assert_eq!(
             stamps,
             [
                 (Move, (100.0, 100.0)),
-                (PrimerDown, (-1.0, -1.0)),
-                (PrimerUp, (-1.0, -1.0)),
+                (PrimerDown, (-10_000.0, -10_000.0)),
+                (PrimerUp, (-10_000.0, -10_000.0)),
                 (Down, (100.0, 100.0)),
                 (Dragged, (150.0, 150.0)),
                 (Dragged, (200.0, 200.0)),
@@ -2517,7 +2527,7 @@ mod tests {
         );
         for step in &plan {
             assert_eq!(
-                step.window_location((0.0, 0.0)),
+                step.window_location(None),
                 step.point,
                 "before macOS 27 the stamp stays the screen point"
             );

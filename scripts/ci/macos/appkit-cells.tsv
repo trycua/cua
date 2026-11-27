@@ -1,5 +1,6 @@
 macos-appkit-ax-tree-ax-not-applicable	harness_appkit_smoke
 macos-appkit-launching-app-snapshot-ax-not-applicable	harness_appkit_first_snapshot_waits_for_a_launching_app
+macos-appkit-accessibility-only-surface-ax-not-applicable	harness_appkit_accessibility_only_surface_contract
 macos-appkit-query-projection-ax-not-applicable	harness_appkit_query_projects_structured_elements
 macos-appkit-stale-element-token-ax-not-applicable	harness_appkit_stale_element_token_fails_closed
 macos-appkit-snapshot-publication-ax-foreground	snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token

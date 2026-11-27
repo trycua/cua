@@ -252,7 +252,10 @@ impl Inner {
 
     /// Copies holding `pos`, copies wanted, and copies that could still
     /// hold it (machines holding it, plus holders that are up and have not
-    /// acknowledged yet) (state lock held).
+    /// acknowledged yet) (state lock held). A holder whose link is down at
+    /// this instant still counts while it is believed up: a link that drops
+    /// and is redialed within a beat is not a machine that went away, and
+    /// the failure detector (or a goodbye) says when one has.
     fn copies_at(&self, st: &State, pos: Pos) -> (usize, usize, usize) {
         let layout = self.layout_locked(st);
         let want = layout.replicas.len().max(1);
@@ -268,8 +271,7 @@ impl Inner {
                 if p.acked >= pos {
                     copies += 1;
                     possible += 1;
-                } else if self.ctl_link(r).is_some()
-                    && p.missed_acks < 2
+                } else if p.missed_acks < 2
                     && p.ack_rtt_ms * 2.0 < self.cfg.ack_wait.as_millis() as f64
                 {
                     possible += 1;

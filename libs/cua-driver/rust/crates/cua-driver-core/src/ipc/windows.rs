@@ -15,7 +15,7 @@ use std::fs::File;
 use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::core::{HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
@@ -84,12 +84,24 @@ impl PipeStream {
             }
         }
 
-        let milliseconds = timeout
-            .as_nanos()
-            .div_ceil(1_000_000)
-            .clamp(1, u128::from(INFINITE - 1)) as u32;
-        // SAFETY: `event` stays open for the whole wait.
-        let waited = unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), milliseconds) };
+        let wait_ms = |timeout: Duration| {
+            timeout
+                .as_nanos()
+                .div_ceil(1_000_000)
+                .clamp(1, u128::from(INFINITE - 1)) as u32
+        };
+        let milliseconds = wait_ms(timeout);
+        // A timed wait can end up to a clock tick early, so wait out what is
+        // left of `timeout` before calling the operation timed out.
+        let give_up = Instant::now() + timeout;
+        let waited = loop {
+            let left = give_up.saturating_duration_since(Instant::now());
+            // SAFETY: `event` stays open for the whole wait.
+            let waited = unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), wait_ms(left)) };
+            if waited != WAIT_TIMEOUT || left.is_zero() {
+                break waited;
+            }
+        };
         let timed_out = if waited == WAIT_OBJECT_0 {
             false
         } else if waited == WAIT_TIMEOUT {

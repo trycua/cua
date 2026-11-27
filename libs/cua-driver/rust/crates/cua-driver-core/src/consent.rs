@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::authorization::{ModeBehavior, PermissionMode, RiskClass, ENFORCEMENT_ADAPTERS};
+use crate::dispatch_identity::DispatchIdentity;
 
 const DEFAULT_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
 
@@ -228,11 +229,13 @@ impl ApprovalBroker {
     }
 }
 
+/// A grant belongs to the runtime, lifecycle session and transport of the
+/// call that was approved, exactly as its [`DispatchIdentity`] names them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ResourceGrantKey {
     runtime_scope: String,
-    public_session: String,
-    transport_session: String,
+    lifecycle: Option<String>,
+    transport: Option<String>,
     adapter_id: String,
     resource_digest: String,
 }
@@ -378,7 +381,7 @@ impl ProtectedResourceGrants {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         adapter_id: &str,
         risk_class: RiskClass,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
         resource: Value,
         human_summary: &str,
         idle_ttl: Duration,
@@ -431,7 +434,7 @@ impl ProtectedResourceGrants {
             ModeBehavior::RequireGrant => {}
         }
         let resource_digest = digest_resource(adapter_id, &resource);
-        let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
+        let key = resource_grant_key(identity, adapter_id, &resource_digest);
         if let Some(grant) = self.lookup(&key, context) {
             return Ok(Some(grant));
         }
@@ -444,9 +447,10 @@ impl ProtectedResourceGrants {
             return Ok(Some(grant));
         }
 
+        // The person is shown the context's own labels when it has them.
         let public_session = context
             .public_session()
-            .or(lifecycle_session)
+            .or(identity.lifecycle())
             .unwrap_or("compatibility");
         let transport_session = context.transport_session().unwrap_or(public_session);
         let request = self.broker.request_bound(
@@ -508,7 +512,7 @@ impl ProtectedResourceGrants {
     pub fn revoke_session(&self, session: &str) -> Vec<ProtectedGrant> {
         let mut removed = Vec::new();
         self.grants.lock().unwrap().retain(|key, grant| {
-            let keep = key.public_session != session && key.transport_session != session;
+            let keep = key.lifecycle.as_deref() != Some(session);
             if !keep {
                 grant.protected.revoke();
                 removed.push(grant.protected.clone());
@@ -520,13 +524,12 @@ impl ProtectedResourceGrants {
 
     pub fn revoke_resource(
         &self,
-        context: &crate::session_authorization::EffectiveAuthorizationContext,
-        lifecycle_session: Option<&str>,
+        identity: &DispatchIdentity,
         adapter_id: &str,
         resource: &Value,
     ) -> Option<ProtectedGrant> {
         let digest = digest_resource(adapter_id, resource);
-        let key = resource_grant_key(context, lifecycle_session, adapter_id, &digest);
+        let key = resource_grant_key(identity, adapter_id, &digest);
         self.grants.lock().unwrap().remove(&key).map(|grant| {
             grant.protected.revoke();
             grant.protected
@@ -559,22 +562,14 @@ impl Drop for ProtectedResourceGrants {
 }
 
 fn resource_grant_key(
-    context: &crate::session_authorization::EffectiveAuthorizationContext,
-    lifecycle_session: Option<&str>,
+    identity: &DispatchIdentity,
     adapter_id: &str,
     resource_digest: &str,
 ) -> ResourceGrantKey {
-    let public_session = context
-        .public_session()
-        .or(lifecycle_session)
-        .unwrap_or("compatibility");
     ResourceGrantKey {
-        runtime_scope: context.runtime_scope_key(),
-        public_session: context.runtime_session_key(public_session),
-        transport_session: context
-            .transport_session()
-            .unwrap_or(public_session)
-            .to_owned(),
+        runtime_scope: identity.runtime().key().to_owned(),
+        lifecycle: identity.lifecycle().map(str::to_owned),
+        transport: identity.transport().map(str::to_owned),
         adapter_id: adapter_id.to_owned(),
         resource_digest: resource_digest.to_owned(),
     }
@@ -698,6 +693,27 @@ mod tests {
             .unwrap()
     }
 
+    fn identity(
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        label: &str,
+    ) -> DispatchIdentity {
+        identity_over(context, label, None)
+    }
+
+    fn identity_over(
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        label: &str,
+        transport: Option<&str>,
+    ) -> DispatchIdentity {
+        DispatchIdentity::resolve(
+            crate::dispatch_identity::RuntimeScope::new(context.runtime_scope_key()),
+            None,
+            transport,
+            &serde_json::json!({ "session": label }),
+            true,
+        )
+    }
+
     #[cfg(feature = "yaml")]
     fn authorization_context_with_manifest(
         mode: PermissionMode,
@@ -772,7 +788,7 @@ mod tests {
                 &context,
                 "private_observation",
                 RiskClass::R2,
-                Some("public-a"),
+                &identity(&context, "public-a"),
                 serde_json::json!({"pid": 42, "window_id": 7}),
                 "Observe app window 7",
                 Duration::from_secs(30),
@@ -786,7 +802,7 @@ mod tests {
                 &context,
                 "private_observation",
                 RiskClass::R2,
-                Some("public-a"),
+                &identity(&context, "public-a"),
                 serde_json::json!({"pid": 42, "window_id": 7}),
                 "Observe app window 7",
                 Duration::from_secs(30),
@@ -809,7 +825,7 @@ mod tests {
                 &standard,
                 "desktop_input",
                 RiskClass::R1,
-                Some("public-a"),
+                &identity(&standard, "public-a"),
                 serde_json::json!({"pid": 42, "window_id": 7}),
                 "Control app window 7",
                 Duration::from_secs(30),
@@ -827,7 +843,7 @@ mod tests {
                 &unrestricted,
                 "desktop_input",
                 RiskClass::R1,
-                Some("public-b"),
+                &identity(&unrestricted, "public-b"),
                 serde_json::json!({"pid": 9, "window_id": 2}),
                 "Control app window 2",
                 Duration::from_secs(30),
@@ -853,7 +869,7 @@ mod tests {
                     &context,
                     "desktop_input",
                     RiskClass::R1,
-                    Some("public-a"),
+                    &identity(&context, "public-a"),
                     serde_json::json!({"kind": "window_input", "pid": 42, "window_id": 7}),
                     "Control the declared window",
                     Duration::from_secs(30),
@@ -866,7 +882,7 @@ mod tests {
                     &context,
                     "desktop_input",
                     RiskClass::R1,
-                    Some("public-a"),
+                    &identity(&context, "public-a"),
                     serde_json::json!({"kind": "window_input", "pid": 42, "window_id": 8}),
                     "Control an undeclared window",
                     Duration::from_secs(30),
@@ -876,6 +892,110 @@ mod tests {
                 .is_err());
             assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn grant_keys_resolve_from_the_dispatch_identity() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let authorize = |identity: DispatchIdentity| {
+            let grants = &grants;
+            let context = context.clone();
+            async move {
+                grants
+                    .authorize(
+                        &context,
+                        "computer_history",
+                        RiskClass::R2,
+                        &identity,
+                        serde_json::json!({"scope": "history"}),
+                        "Read Computer History",
+                        Duration::from_secs(30),
+                        Duration::from_secs(60),
+                    )
+                    .await
+                    .unwrap()
+                    .expect("standard history access needs a grant")
+            }
+        };
+        let a_over_one = identity_over(&context, "a", Some("transport-1"));
+        let a_over_two = identity_over(&context, "a", Some("transport-2"));
+        let b_over_one = identity_over(&context, "b", Some("transport-1"));
+
+        let first = authorize(a_over_one.clone()).await;
+        authorize(a_over_one.clone()).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1, "reused");
+        // Another transport or another session is a different identity, so
+        // it is asked again rather than inheriting the grant.
+        authorize(a_over_two.clone()).await;
+        authorize(b_over_one.clone()).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 3);
+
+        // Ending a session revokes every grant its lifecycle id holds, and
+        // only those. A transport id is not a session end.
+        assert!(grants
+            .revoke_session(a_over_one.transport().unwrap())
+            .is_empty());
+        let revoked = grants.revoke_session(a_over_one.lifecycle().unwrap());
+        assert_eq!(revoked.len(), 2);
+        assert!(!first.is_live());
+        authorize(b_over_one).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 3, "b kept");
+        authorize(a_over_one).await;
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 4, "a re-asked");
+    }
+
+    #[tokio::test]
+    async fn reserved_argument_keys_cannot_select_another_sessions_grant() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let victim = identity_over(&context, "victim", Some("victim-transport"));
+        grants
+            .authorize(
+                &context,
+                "computer_history",
+                RiskClass::R2,
+                &victim,
+                serde_json::json!({"scope": "history"}),
+                "Read Computer History",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+        // A caller that names the victim's private ids in reserved keys still
+        // resolves to its own identity, which holds no grant.
+        let forged = DispatchIdentity::resolve(
+            crate::dispatch_identity::RuntimeScope::new(context.runtime_scope_key()),
+            None,
+            None,
+            &serde_json::json!({
+                "session": "attacker",
+                "_session_id": victim.lifecycle().unwrap(),
+                "_transport_session_id": victim.transport().unwrap(),
+                "_public_session_label": "victim",
+            }),
+            true,
+        );
+        assert_ne!(forged.lifecycle(), victim.lifecycle());
+        grants
+            .authorize(
+                &context,
+                "computer_history",
+                RiskClass::R2,
+                &forged,
+                serde_json::json!({"scope": "history"}),
+                "Read Computer History",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

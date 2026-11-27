@@ -50,16 +50,39 @@ async fn start(
 
 /// A stand-in spacesd: answers every request 200 after `delay`.
 async fn local_machine(delay: Duration) -> std::net::SocketAddr {
+    local_machine_signalling(delay).await.0
+}
+
+/// [`local_machine`] that also signals when a request reaches it, so a test
+/// can stop the relay once the stream is really in flight instead of after a
+/// guessed delay (on a loaded runner the request may not have crossed the
+/// tunnel yet, and the relay then has nothing to drain).
+async fn local_machine_signalling(
+    delay: Duration,
+) -> (std::net::SocketAddr, Arc<tokio::sync::Notify>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = axum::Router::new().fallback(move || async move {
-        tokio::time::sleep(delay).await;
-        "machine says hi"
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let signal = reached.clone();
+    let app = axum::Router::new().fallback(move || {
+        let signal = signal.clone();
+        async move {
+            signal.notify_one();
+            tokio::time::sleep(delay).await;
+            "machine says hi"
+        }
     });
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    addr
+    (addr, reached)
+}
+
+/// Waits until a request has reached the stand-in machine.
+async fn wait_reached(reached: &tokio::sync::Notify) {
+    tokio::time::timeout(Duration::from_secs(10), reached.notified())
+        .await
+        .expect("the request never reached the machine");
 }
 
 async fn register(base: &str, account: &str, id: &str) -> String {
@@ -117,19 +140,15 @@ async fn drain_lets_a_running_request_finish_and_refuses_new_tunnels() {
     let (relay, base, stop, task) = start(&issuer, Duration::from_secs(10)).await;
     let id = format!("m{}", uuid::Uuid::new_v4().simple());
     let token = register(&base, &ada, &id).await;
-    let _machine = join(
-        &base,
-        &id,
-        &token,
-        local_machine(Duration::from_millis(1500)).await,
-    );
+    let (local, reached) = local_machine_signalling(Duration::from_millis(1500)).await;
+    let _machine = join(&base, &id, &token, local);
     wait_connected(&relay, &id).await;
 
     let request = tokio::spawn({
         let (base, id, ada) = (base.clone(), id.clone(), ada.clone());
         async move { get_machine(&base, &id, &ada).await }
     });
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    wait_reached(&reached).await;
     let _ = stop.send(());
     tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -171,18 +190,14 @@ async fn drain_is_bounded() {
     let (relay, base, stop, task) = start(&issuer, Duration::from_secs(1)).await;
     let id = format!("m{}", uuid::Uuid::new_v4().simple());
     let token = register(&base, &ada, &id).await;
-    let _machine = join(
-        &base,
-        &id,
-        &token,
-        local_machine(Duration::from_secs(30)).await,
-    );
+    let (local, reached) = local_machine_signalling(Duration::from_secs(30)).await;
+    let _machine = join(&base, &id, &token, local);
     wait_connected(&relay, &id).await;
     let _request = tokio::spawn({
         let (base, id, ada) = (base.clone(), id.clone(), ada.clone());
         async move { get_machine(&base, &id, &ada).await }
     });
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    wait_reached(&reached).await;
     let started = Instant::now();
     let _ = stop.send(());
     tokio::time::timeout(Duration::from_secs(8), task)

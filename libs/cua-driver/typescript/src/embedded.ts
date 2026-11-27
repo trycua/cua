@@ -6,6 +6,7 @@
 export {
   EmbeddedCuaDriverHost,
   EmbeddedDriverConnection,
+  EmbeddedDriverDiagnostics,
   EmbeddedDriverError,
   EmbeddedDriverExit,
   EmbeddedDriverHostOptions,

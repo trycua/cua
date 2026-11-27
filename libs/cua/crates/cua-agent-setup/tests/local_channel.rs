@@ -115,7 +115,7 @@ fn json(text: &str) -> Value {
 /// A `cua-local` the way install-local.sh and the first run leave it:
 /// executable, in `~/.local/bin`.
 fn install_cua_local(home: &Path) -> PathBuf {
-    let p = home.join(".local/bin/cua-local");
+    let p = common::native(home.join(".local/bin/cua-local"));
     #[cfg(unix)]
     common::write_executable(&p, "#!/bin/sh\n");
     #[cfg(not(unix))]

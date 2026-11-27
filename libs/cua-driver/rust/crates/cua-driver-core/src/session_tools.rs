@@ -209,7 +209,7 @@ impl Tool for StartSessionTool {
         // Tombstone removal and owner binding are one atomic lifecycle
         // transition. A guessed public label cannot be claimed in the gap
         // between revival and activation.
-        let revived = match crate::session::activate_or_revive_session_for_owner(
+        let revived = match crate::session::activate_or_revive_session_for_owner_checked(
             &id,
             public_label.as_deref(),
             &owner,
@@ -219,6 +219,12 @@ impl Tool for StartSessionTool {
             lifecycle_idle_ttl_of(&args),
         ) {
             Ok(revived) => revived,
+            Err(crate::session::StartSessionRefusal::OwnedByOtherTransport(holder)) => {
+                return crate::tool::session_owned_by_other_transport_refusal(
+                    public_label.as_deref(),
+                    holder,
+                );
+            }
             Err(_) => {
                 return ToolResult::error("session is not available to this transport")
                     .with_structured(json!({ "code": "session_unavailable" }));
@@ -696,7 +702,10 @@ mod tests {
 
         let stolen = StartSessionTool.invoke(foreign).await;
         assert_eq!(stolen.is_error, Some(true));
-        assert_eq!(result_code(&stolen), Some("session_unavailable"));
+        assert_eq!(
+            stolen.structured_content.as_ref().unwrap()["refusal"]["code"],
+            "session_owned_by_other_transport"
+        );
 
         EndSessionTool.invoke(owned_args).await;
     }

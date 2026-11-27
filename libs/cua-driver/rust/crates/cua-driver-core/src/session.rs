@@ -681,25 +681,67 @@ pub fn activate_or_revive_session_for_owner(
     client_kind: SessionClientKind,
     idle_ttl: Option<Duration>,
 ) -> Result<bool, &'static str> {
+    activate_or_revive_session_for_owner_checked(
+        session_id,
+        public_label,
+        owner_transport,
+        implicit,
+        transport,
+        client_kind,
+        idle_ttl,
+    )
+    .map_err(StartSessionRefusal::message)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StartSessionRefusal {
+    Unavailable,
+    CleanupIncomplete,
+    OwnedByOtherTransport(SessionTransport),
+}
+
+impl StartSessionRefusal {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Unavailable | Self::OwnedByOtherTransport(_) => {
+                "session is not available to this transport"
+            }
+            Self::CleanupIncomplete => {
+                "session cleanup is incomplete; retry end_session before revival"
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn activate_or_revive_session_for_owner_checked(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    idle_ttl: Option<Duration>,
+) -> Result<bool, StartSessionRefusal> {
     if !is_trackable(session_id) {
-        return Err("session is not available to this transport");
+        return Err(StartSessionRefusal::Unavailable);
     }
 
     let needs_cleanup = {
         let ended = ended_sessions().lock().unwrap();
         match ended.get(session_id) {
             Some(Some(_)) if claim_refused(&ended, session_id, owner_transport) => {
-                return Err("session is not available to this transport");
+                return Err(StartSessionRefusal::Unavailable);
             }
             Some(None) if owner_transport != session_id => {
-                return Err("session is not available to this transport");
+                return Err(StartSessionRefusal::Unavailable);
             }
             Some(_) => true,
             None => false,
         }
     };
     if needs_cleanup && !retry_session_cleanup(session_id).complete {
-        return Err("session cleanup is incomplete; retry end_session before revival");
+        return Err(StartSessionRefusal::CleanupIncomplete);
     }
 
     let now = Instant::now();
@@ -707,22 +749,25 @@ pub fn activate_or_revive_session_for_owner(
         let mut ended = ended_sessions().lock().unwrap();
         let revived = match ended.get(session_id) {
             Some(Some(_)) if claim_refused(&ended, session_id, owner_transport) => {
-                return Err("session is not available to this transport");
+                return Err(StartSessionRefusal::Unavailable);
             }
             Some(None) if owner_transport != session_id => {
-                return Err("session is not available to this transport");
+                return Err(StartSessionRefusal::Unavailable);
             }
             Some(_) => true,
             None => false,
         };
         if revived && cleanup_pending(session_id) {
-            return Err("session cleanup is incomplete; retry end_session before revival");
+            return Err(StartSessionRefusal::CleanupIncomplete);
         }
 
         let mut records = lifecycle_records().lock().unwrap();
         if let Some(record) = records.get_mut(session_id) {
-            if record.owner_transport != owner_transport || record.pending_end.is_some() {
-                return Err("session is not available to this transport");
+            if record.owner_transport != owner_transport {
+                return Err(StartSessionRefusal::OwnedByOtherTransport(record.transport));
+            }
+            if record.pending_end.is_some() {
+                return Err(StartSessionRefusal::Unavailable);
             }
             if idle_ttl.is_some() {
                 record.idle_ttl = idle_ttl;
@@ -2377,6 +2422,68 @@ mod tests {
         assert!(revive_session_for_owner(sid, owner_b).is_err());
         assert!(is_session_ended(sid));
         assert_eq!(revive_session_for_owner(sid, owner_a), Ok(true));
+    }
+
+    #[test]
+    fn atomic_start_reports_the_live_holder_without_mutating_its_session() {
+        for holder in [
+            SessionTransport::McpStdio,
+            SessionTransport::McpHttp,
+            SessionTransport::Cli,
+        ] {
+            let sid = format!("test-atomic-live-owner-7813-{}", holder.as_str());
+            let start = |owner, ttl| {
+                activate_or_revive_session_for_owner_checked(
+                    &sid,
+                    Some("shared-label"),
+                    owner,
+                    false,
+                    holder,
+                    SessionClientKind::Mcp,
+                    ttl,
+                )
+            };
+            assert_eq!(start("owner", Some(Duration::from_secs(120))), Ok(false));
+            let before = lifecycle_records()
+                .lock()
+                .unwrap()
+                .get(&sid)
+                .unwrap()
+                .clone();
+            assert_eq!(
+                start("foreign", Some(Duration::from_secs(1))),
+                Err(StartSessionRefusal::OwnedByOtherTransport(holder))
+            );
+            assert_eq!(
+                activate_or_revive_session_for_owner(
+                    &sid,
+                    Some("shared-label"),
+                    "foreign",
+                    false,
+                    holder,
+                    SessionClientKind::Mcp,
+                    Some(Duration::from_secs(1)),
+                ),
+                Err("session is not available to this transport")
+            );
+            let after = lifecycle_records()
+                .lock()
+                .unwrap()
+                .get(&sid)
+                .unwrap()
+                .clone();
+            assert_eq!(after.owner_transport, before.owner_transport);
+            assert_eq!(after.last_activity, before.last_activity);
+            assert_eq!(after.idle_ttl, before.idle_ttl);
+            assert_eq!(start("owner", None), Ok(false));
+            assert!(end_session_for_owner(&sid, "owner"));
+            assert_eq!(
+                start("foreign", None),
+                Err(StartSessionRefusal::Unavailable)
+            );
+            assert_eq!(start("owner", None), Ok(true));
+            assert!(end_session_for_owner(&sid, "owner"));
+        }
     }
 
     #[test]

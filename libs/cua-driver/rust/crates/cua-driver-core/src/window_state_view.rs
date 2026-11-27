@@ -23,6 +23,7 @@
 //! (static text) that the structured `elements` array omits.
 
 use crate::protocol::{Content, ToolResult};
+use crate::walk_defaults::{WalkDefaults, WalkLimits};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -72,6 +73,8 @@ pub struct ViewOptions {
     pub verbose: bool,
     pub full_output: bool,
     pub since: Option<String>,
+    /// False for a screenshot-only read (`include_accessibility_tree:false`).
+    pub tree_read: bool,
 }
 
 /// JSON schema fragments for the shared arguments, so every backend declares
@@ -85,7 +88,7 @@ pub fn schema_properties() -> Value {
         },
         "since": {
             "type": "string",
-            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise."
+            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change."
         },
         "verbose": {
             "type": "boolean",
@@ -202,45 +205,74 @@ impl ViewOptions {
             verbose: args.get("verbose").and_then(Value::as_bool) == Some(true),
             full_output,
             since: if full_output { None } else { since },
+            tree_read: args
+                .get("include_accessibility_tree")
+                .and_then(Value::as_bool)
+                != Some(false),
         })
     }
 
     /// Node budget for the walk. An explicit `max_elements` always wins;
-    /// otherwise a model-facing read gets [`DEFAULT_MAX_ELEMENTS`], while
-    /// `full_output` and internal observation reads keep the platform default.
+    /// otherwise a plain model-facing read gets the saved
+    /// `get_window_state.max_elements` default, or [`DEFAULT_MAX_ELEMENTS`]
+    /// when none is saved, while `full_output` and internal observation reads
+    /// keep the platform cap.
     ///
     /// A `query` read filters the walked rows afterwards, so a small node
     /// budget would hide matches that sit past it (an Electron form field
     /// after a long list read back as zero matches). The filter already keeps
     /// the response small, so a query searches with at least the platform
-    /// default budget.
+    /// cap.
     pub fn max_elements(
         &self,
         args: &Value,
-        platform_default: usize,
+        limits: WalkLimits,
+        saved: WalkDefaults,
         observation_only: bool,
     ) -> usize {
-        let has_query = args
-            .get("query")
-            .and_then(Value::as_str)
-            .is_some_and(|q| !q.trim().is_empty());
+        let has_query = has_query(args);
         if let Some(n) = args.get("max_elements").and_then(Value::as_u64) {
             let n = n.max(1) as usize;
             return if has_query {
-                n.max(platform_default)
+                n.max(limits.max_elements)
             } else {
                 n
             };
         }
-        if has_query {
-            return platform_default;
+        if has_query || self.full_output || observation_only {
+            return limits.max_elements;
         }
-        if self.full_output || observation_only {
-            platform_default
-        } else {
-            DEFAULT_MAX_ELEMENTS.min(platform_default)
-        }
+        saved
+            .max_elements
+            .unwrap_or(DEFAULT_MAX_ELEMENTS.min(limits.max_elements))
     }
+
+    /// Depth cap for the walk, `None` for no cap. An explicit `max_depth`
+    /// always wins; otherwise a plain model-facing read gets the saved
+    /// `get_window_state.max_depth` default, and every other read the
+    /// platform cap. A saved depth never narrows a `query` read, for the same
+    /// reason as [`ViewOptions::max_elements`].
+    pub fn max_depth(
+        &self,
+        args: &Value,
+        limits: WalkLimits,
+        saved: WalkDefaults,
+        observation_only: bool,
+    ) -> Option<usize> {
+        if let Some(n) = args.get("max_depth").and_then(Value::as_u64) {
+            return Some(n.max(1) as usize);
+        }
+        if has_query(args) || self.full_output || observation_only {
+            return limits.max_depth;
+        }
+        saved.max_depth.or(limits.max_depth)
+    }
+}
+
+fn has_query(args: &Value) -> bool {
+    args.get("query")
+        .and_then(Value::as_str)
+        .is_some_and(|q| !q.trim().is_empty())
 }
 
 /// What a `since` read resolved to.
@@ -274,14 +306,40 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
+    // A tree read records its rows, none included, for the window's
+    // ui_tree_revision. A screenshot-only read leaves the revision alone.
+    let revision = structured
+        .get("tree_markdown")
+        .and_then(Value::as_str)
+        .filter(|_| opts.tree_read)
+        .map(|md| {
+            crate::ui_tree_revision::record(
+                ctx.pid,
+                ctx.window_id,
+                &ctx.key,
+                structured.get("snapshot_id").and_then(Value::as_str),
+                md,
+            )
+        });
+    if let Some(revision) = revision {
+        structured[crate::ui_tree_revision::UI_TREE_REVISION_ARG] = json!(revision);
+    }
     // Publish identity even for full_output and empty trees. It comes from the
     // completed structured result, never a guessed or not-yet-published id.
-    if let Some(sid) = structured.get("snapshot_id").and_then(Value::as_str) {
+    let sid = structured.get("snapshot_id").and_then(Value::as_str);
+    if sid.is_some() || revision.is_some() {
+        let mut identity = String::new();
+        if let Some(sid) = sid {
+            identity.push_str(&format!(" snapshot_id={sid}"));
+        }
+        if let Some(revision) = revision {
+            identity.push_str(&format!(" ui_tree_revision={revision}"));
+        }
         for part in content.iter_mut() {
             if let Content::Text { text, .. } = part {
                 if text.starts_with("window_id=") {
                     let end = text.find('\n').unwrap_or(text.len());
-                    text.insert_str(end, &format!(" snapshot_id={sid}"));
+                    text.insert_str(end, &identity);
                     break;
                 }
             }
@@ -1285,37 +1343,116 @@ mod tests {
             .is_none());
     }
 
+    const MAC: WalkLimits = WalkLimits {
+        max_elements: 2000,
+        max_depth: Some(25),
+    };
+    const LINUX: WalkLimits = WalkLimits {
+        max_elements: 5000,
+        max_depth: None,
+    };
+    const NONE_SAVED: WalkDefaults = WalkDefaults {
+        max_elements: None,
+        max_depth: None,
+    };
+    const SAVED: WalkDefaults = WalkDefaults {
+        max_elements: Some(800),
+        max_depth: Some(10),
+    };
+
     #[test]
     fn max_elements_precedence() {
         let o = opts(json!({}));
         assert_eq!(
-            o.max_elements(&json!({}), 2000, false),
+            o.max_elements(&json!({}), MAC, NONE_SAVED, false),
             DEFAULT_MAX_ELEMENTS
         );
         assert_eq!(
-            o.max_elements(&json!({"max_elements": 900}), 2000, false),
+            o.max_elements(&json!({"max_elements": 900}), MAC, NONE_SAVED, false),
             900
         );
-        assert_eq!(o.max_elements(&json!({}), 2000, true), 2000);
+        assert_eq!(o.max_elements(&json!({}), MAC, NONE_SAVED, true), 2000);
         let full = opts(json!({"full_output": true}));
-        assert_eq!(full.max_elements(&json!({}), 5000, false), 5000);
+        assert_eq!(
+            full.max_elements(&json!({}), LINUX, NONE_SAVED, false),
+            5000
+        );
+    }
+
+    /// A saved default replaces the built-in one on a plain read and nowhere
+    /// else: the call's own argument wins, even a smaller one, and query,
+    /// full_output and observation reads keep the platform cap (#6345).
+    #[test]
+    fn a_saved_default_applies_only_where_the_argument_is_omitted() {
+        let o = opts(json!({}));
+        assert_eq!(o.max_elements(&json!({}), MAC, SAVED, false), 800);
+        assert_eq!(o.max_depth(&json!({}), MAC, SAVED, false), Some(10));
+        assert_eq!(o.max_depth(&json!({}), LINUX, SAVED, false), Some(10));
+
+        let explicit = json!({"max_elements": 40, "max_depth": 3});
+        assert_eq!(o.max_elements(&explicit, MAC, SAVED, false), 40);
+        assert_eq!(o.max_depth(&explicit, MAC, SAVED, false), Some(3));
+        let explicit_large = json!({"max_elements": 4000, "max_depth": 60});
+        assert_eq!(o.max_elements(&explicit_large, MAC, SAVED, false), 4000);
+        assert_eq!(o.max_depth(&explicit_large, MAC, SAVED, false), Some(60));
+
+        let query = json!({"query": "Send"});
+        assert_eq!(o.max_elements(&query, MAC, SAVED, false), 2000);
+        assert_eq!(o.max_depth(&query, MAC, SAVED, false), Some(25));
+        assert_eq!(o.max_depth(&query, LINUX, SAVED, false), None);
+
+        let full = opts(json!({"full_output": true}));
+        assert_eq!(full.max_elements(&json!({}), MAC, SAVED, false), 2000);
+        assert_eq!(full.max_depth(&json!({}), MAC, SAVED, false), Some(25));
+
+        assert_eq!(o.max_elements(&json!({}), MAC, SAVED, true), 2000);
+        assert_eq!(o.max_depth(&json!({}), MAC, SAVED, true), Some(25));
+    }
+
+    #[test]
+    fn max_depth_without_a_saved_default_is_the_platform_cap() {
+        let o = opts(json!({}));
+        assert_eq!(o.max_depth(&json!({}), MAC, NONE_SAVED, false), Some(25));
+        assert_eq!(o.max_depth(&json!({}), LINUX, NONE_SAVED, false), None);
+        assert_eq!(
+            o.max_depth(&json!({"max_depth": 0}), LINUX, NONE_SAVED, false),
+            Some(1)
+        );
     }
 
     #[test]
     fn query_reads_search_past_a_small_node_budget() {
         let o = opts(json!({}));
-        assert_eq!(o.max_elements(&json!({"query": "Log"}), 2000, false), 2000);
         assert_eq!(
-            o.max_elements(&json!({"query": "Log", "max_elements": 80}), 2000, false),
+            o.max_elements(&json!({"query": "Log"}), MAC, NONE_SAVED, false),
             2000
         );
         assert_eq!(
-            o.max_elements(&json!({"query": "Log", "max_elements": 3000}), 2000, false),
+            o.max_elements(
+                &json!({"query": "Log", "max_elements": 80}),
+                MAC,
+                NONE_SAVED,
+                false
+            ),
+            2000
+        );
+        assert_eq!(
+            o.max_elements(
+                &json!({"query": "Log", "max_elements": 3000}),
+                MAC,
+                NONE_SAVED,
+                false
+            ),
             3000
         );
         // A blank query is no query.
         assert_eq!(
-            o.max_elements(&json!({"query": "  ", "max_elements": 80}), 2000, false),
+            o.max_elements(
+                &json!({"query": "  ", "max_elements": 80}),
+                MAC,
+                NONE_SAVED,
+                false
+            ),
             80
         );
     }
@@ -1370,7 +1507,10 @@ mod tests {
         assert_eq!(s["tree_markdown"], OLD);
         assert_eq!(s["tree_format"], "markdown");
         let text = text_of(&content);
-        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000a1\n"));
+        let revision = s["ui_tree_revision"].as_u64().unwrap();
+        assert!(text.starts_with(&format!(
+            "window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000a1 ui_tree_revision={revision}\n"
+        )));
         assert!(text.contains("element_token for row [N] = s000000a1:N"));
         assert!(text.contains("row [1] is \"s000000a1:1\""));
         assert!(!text.contains("this read stops at row"));
@@ -1459,6 +1599,55 @@ mod tests {
         assert_eq!(s3["since"], "s000000f2");
     }
 
+    #[test]
+    fn ui_tree_revision_holds_on_no_change_and_moves_on_a_diff() {
+        let (mut c0, mut s0) = payload("s0000c3b0", OLD);
+        apply(&opts(json!({})), &ctx(7201), &mut c0, &mut s0);
+        let first = s0["ui_tree_revision"].as_u64().unwrap();
+
+        let (mut c1, mut s1) = payload("s0000c3b1", OLD);
+        apply(
+            &opts(json!({"since": "s0000c3b0"})),
+            &ctx(7201),
+            &mut c1,
+            &mut s1,
+        );
+        assert_eq!(s1["since_status"], "no_change");
+        assert_eq!(s1["ui_tree_revision"], first);
+
+        let edited = OLD.replace("\"a\"", "\"ab\"");
+        let (mut c2, mut s2) = payload("s0000c3b2", &edited);
+        apply(
+            &opts(json!({"since": "s0000c3b1"})),
+            &ctx(7201),
+            &mut c2,
+            &mut s2,
+        );
+        assert_eq!(s2["since_status"], "diff");
+        let moved = s2["ui_tree_revision"].as_u64().unwrap();
+        assert!(moved > first, "{moved} > {first}");
+        assert!(text_of(&c2).contains(&format!("ui_tree_revision={moved}")));
+    }
+
+    #[test]
+    fn a_tree_emptied_moves_the_revision_and_a_screenshot_only_read_does_not() {
+        let (mut c0, mut s0) = payload("s0000c3b3", OLD);
+        apply(&opts(json!({})), &ctx(7202), &mut c0, &mut s0);
+        let first = s0["ui_tree_revision"].as_u64().unwrap();
+
+        let (mut c1, mut s1) = payload("s0000c3b4", "");
+        let screenshot_only = opts(json!({"include_accessibility_tree": false}));
+        apply(&screenshot_only, &ctx(7202), &mut c1, &mut s1);
+        assert!(s1.get("ui_tree_revision").is_none());
+        assert!(!text_of(&c1).contains("ui_tree_revision"));
+        assert_eq!(crate::ui_tree_revision::current(9, 7202), Some(first));
+
+        let (mut c2, mut s2) = payload("s0000c3b5", "");
+        apply(&opts(json!({})), &ctx(7202), &mut c2, &mut s2);
+        let emptied = s2["ui_tree_revision"].as_u64().unwrap();
+        assert!(emptied > first, "{emptied} > {first}");
+    }
+
     fn query_ctx(window_id: u64, query: &str) -> ViewContext<'static> {
         let mut ctx = ctx(window_id);
         ctx.key.query = Some(query.into());
@@ -1477,7 +1666,10 @@ mod tests {
             &mut s,
         );
         let text = text_of(&content);
-        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000i1\n"));
+        let revision = s["ui_tree_revision"].as_u64().unwrap();
+        assert!(text.starts_with(&format!(
+            "window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000i1 ui_tree_revision={revision}\n"
+        )));
         assert!(
             text.contains("0 of 150 elements match query \"Build|Reload\"."),
             "{text}"
@@ -1512,6 +1704,7 @@ mod tests {
             &mut content,
             &mut s,
         );
+        s.as_object_mut().unwrap().remove("ui_tree_revision");
         assert_eq!(s, before);
         assert!(text_of(&content).ends_with("\n0 of 4 elements match query \"Build|Reload\". A query is a case-insensitive substring of a row's role, label, value or id; \"a|b\" matches either. Try a shorter or different word, or read without query."));
     }
@@ -1521,7 +1714,7 @@ mod tests {
         let mut content = vec![Content::text("window_id=7 pid=9 size=10x10")];
         let mut s = json!({"window_id": 7, "pid": 9, "tree_markdown": "", "element_count": 0});
         apply(
-            &opts(json!({})),
+            &opts(json!({"include_accessibility_tree": false})),
             &query_ctx(7034, "Settings"),
             &mut content,
             &mut s,
@@ -1636,10 +1829,19 @@ mod tests {
             &mut content,
             &mut s,
         );
+        let revision = s
+            .as_object_mut()
+            .unwrap()
+            .remove("ui_tree_revision")
+            .unwrap();
         assert_eq!(s, before);
         assert_eq!(
             text_of(&content),
-            text_before.replacen("elements=4", "elements=4 snapshot_id=s000000a2", 1)
+            text_before.replacen(
+                "elements=4",
+                &format!("elements=4 snapshot_id=s000000a2 ui_tree_revision={revision}"),
+                1
+            )
         );
         assert_eq!(s["elements"], before["elements"]);
         assert_eq!(s["_note"], before["_note"]);

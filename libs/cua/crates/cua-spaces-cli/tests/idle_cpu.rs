@@ -26,7 +26,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The share of one core the daemon may use while watched at idle.
-const BUDGET: f64 = 0.015;
+///
+/// The daemon's own CPU time (user + system, from the OS), so other jobs on a
+/// shared runner do not count against it, but a slower or busier machine still
+/// makes the same work cost more CPU time. The same build measures about 1.4%
+/// on a quiet Apple silicon laptop and 1.6% to 2.1% on the hosted macOS runner
+/// (five runs of CI: cua SDK on main, 26 and 27 Nov), where the old 1.5% failed
+/// on every run. The bug this guards against used a quarter of a core (25%),
+/// so 3% still catches a hot loop or a per-call root-store read by a wide
+/// margin, and it leaves runner noise out.
+const BUDGET: f64 = 0.03;
 /// How long the daemon is measured.
 const WINDOW: Duration = Duration::from_secs(60);
 /// The apps' list poll.
@@ -186,7 +195,7 @@ async fn idle_daemon(signed_in: bool) {
     );
     assert!(
         share < BUDGET,
-        "the idle daemon ({label}) used {:.2}% of a core (budget {:.0}%)",
+        "the idle daemon ({label}) used {:.2}% of a core (budget {:.1}%)",
         share * 100.0,
         BUDGET * 100.0
     );

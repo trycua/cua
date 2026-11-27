@@ -16,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.16.6"
+version = "0.18.0"
 edition = "2021"
 authors = ["TryCua"]
 license = "FSL-1.1-MIT"

@@ -18,6 +18,9 @@ fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
         properties.extend(cursor_overlay::cursor_options::config_schema_properties());
+        properties.extend(cua_driver_core::walk_defaults::config_schema_properties(
+            super::get_window_state::WALK_LIMITS,
+        ));
     }
     schema
 }
@@ -43,7 +46,11 @@ impl Tool for SetConfigTool {
                 `cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are \
                 `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, \
                 `off` or `default`. All apply to every cursor at once. The cursor never draws \
-                action marks (`cursor.marks` is retired and ignored).".into(),
+                action marks (`cursor.marks` is retired and ignored).\n\n\
+                `get_window_state.max_elements` (1 to 5000) and `get_window_state.max_depth` \
+                (1 or more), or `0` to clear, are saved defaults for `get_window_state` \
+                reads that omit the argument and pass no `query` or `full_output`. A per-call \
+                argument always wins. They apply to every session at once.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
@@ -64,6 +71,12 @@ impl Tool for SetConfigTool {
                 "replacement": "action.target",
             }));
         }
+        if let Err(message) = cua_driver_core::walk_defaults::check_config_args(
+            &args,
+            super::get_window_state::WALK_LIMITS,
+        ) {
+            return ToolResult::error(message);
+        }
         let motion_keys = match cursor_overlay::motion_defaults::apply_config_args(&args) {
             Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),
@@ -76,6 +89,13 @@ impl Tool for SetConfigTool {
             Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),
         };
+        let walk_keys = match cua_driver_core::walk_defaults::apply_config_args(
+            &args,
+            super::get_window_state::WALK_LIMITS,
+        ) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
         let mut cfg = self.state.config.write().unwrap();
         let mut parts: Vec<String> = motion_keys
             .iter()
@@ -85,6 +105,7 @@ impl Tool for SetConfigTool {
             badge_key
                 .into_iter()
                 .chain(option_keys)
+                .chain(walk_keys)
                 .map(|key| format!("{key} (applies now)")),
         );
         if let Some(mode) = args.opt_str("capture_mode") {
@@ -123,6 +144,9 @@ impl Tool for SetConfigTool {
         ToolResult::text(msg).with_structured(json!({
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
+            "get_window_state": cua_driver_core::walk_defaults::config_json(
+                super::get_window_state::WALK_LIMITS,
+            ),
             "fast_path": cua_driver_core::fast_path::wire::config_value()
         }))
     }

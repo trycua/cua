@@ -13,7 +13,7 @@ use crate::ax::bindings::{
     kAXErrorInvalidUIElement, AXUIElementCopyAttributeValue, AXUIElementCopyElementAtPosition,
     AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
 };
-use crate::ax::tree::AXNode;
+use crate::ax::tree::{copy_title_element_text, title_or_title_element, AXNode};
 use core_foundation::base::{CFEqual, CFRelease, CFTypeRef, TCFType};
 use core_foundation::string::CFString;
 use cua_driver_core::fast_path::{
@@ -23,12 +23,13 @@ use cua_driver_core::fast_path::{
     pixel::GrayImage,
     pixel_guard::{self, CropSource, PixelGuardConfig},
     reason::{Reason, Verdict},
-    store::{global, ReadImage, SnapshotFingerprints},
+    store::{GuardStore, ReadImage, SnapshotFingerprints},
     window::{verify_window, PointerDelivery, WindowFingerprint, WindowObservation},
     wire, Rect,
 };
 use cua_driver_core::protocol::ToolResult;
 use serde_json::Value;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Per-element AX messaging timeout for the act-time hit-test, so a hung
@@ -46,7 +47,14 @@ fn label_of(title: Option<&str>, description: Option<&str>) -> Option<String> {
 
 /// Fingerprints for the actionable rows of a published snapshot, in token
 /// index order (the same filter `AxSnapshot::from_nodes` uses).
-pub fn record_snapshot(pid: i32, window_id: u64, snapshot_id: u32, nodes: &[AXNode]) {
+pub fn record_snapshot(
+    store: &GuardStore,
+    session: Option<&str>,
+    pid: i32,
+    window_id: u64,
+    snapshot_id: u32,
+    nodes: &[AXNode],
+) {
     if !fp::mode().checks() {
         return;
     }
@@ -74,9 +82,10 @@ pub fn record_snapshot(pid: i32, window_id: u64, snapshot_id: u32, nodes: &[AXNo
         .iter()
         .filter(|n| n.frame.is_some_and(|f| f[3] <= 1.0))
         .count();
-    global().put_snapshot(
+    store.put_snapshot(
         snapshot_id,
         SnapshotFingerprints {
+            session: session.map(str::to_owned),
             pid,
             window_id,
             elements,
@@ -86,52 +95,49 @@ pub fn record_snapshot(pid: i32, window_id: u64, snapshot_id: u32, nodes: &[AXNo
     );
 }
 
-/// Keep the read-time window image (greyscale, in memory) and the window
-/// fingerprint for the pixel and window guards.
-pub fn record_read_image(
+/// The read-time window image (greyscale, in memory) and the window
+/// fingerprint for the pixel and window guards, for the caller to put in its
+/// guard store.
+pub fn read_image(
     pid: i32,
     window_id: u32,
     raw: &cua_driver_core::image_utils::CapturedImage,
     bounds: &crate::windows::WindowBounds,
-) {
+) -> Option<ReadImage> {
     if !fp::mode().checks() {
-        return;
+        return None;
     }
-    let Some(image) = wire::gray_from_captured(raw) else {
-        return;
-    };
+    let image = wire::gray_from_captured(raw)?;
     let scale = if bounds.width > 0.0 {
         image.width as f64 / bounds.width
     } else {
         1.0
     };
-    global().put_image(
-        pid,
-        ReadImage {
-            snapshot_id: 0,
-            image,
-            window: WindowFingerprint {
-                window_id: u64::from(window_id),
-                pid,
-                frame: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
-                scale,
-            },
+    Some(ReadImage {
+        snapshot_id: 0,
+        image,
+        window: WindowFingerprint {
+            window_id: u64::from(window_id),
+            pid,
+            frame: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
+            scale,
         },
-    );
+    })
 }
 
 /// Record only the window fingerprint (tree-only reads).
-pub fn record_window(pid: i32, window_id: u32) {
+pub fn record_window(store: &GuardStore, session: Option<&str>, pid: i32, window_id: u32) {
     if !fp::mode().checks() {
         return;
     }
     if let Some(info) = crate::windows::window_info_by_id(window_id) {
-        let scale = global()
-            .window(pid, u64::from(window_id))
+        let scale = store
+            .window(session, pid, u64::from(window_id))
             .map(|w| w.scale)
             .unwrap_or(0.0);
         let b = info.bounds;
-        global().put_window(
+        store.put_window(
+            session,
             pid,
             WindowFingerprint {
                 window_id: u64::from(window_id),
@@ -160,8 +166,12 @@ unsafe fn observe(element: AXUIElementRef) -> ElementObservation {
         CFRelease(value);
     }
     let role = copy_string_attr(element, "AXRole");
-    let title = copy_string_attr(element, "AXTitle");
     let description = copy_string_attr(element, "AXDescription");
+    let title = title_or_title_element(
+        copy_string_attr(element, "AXTitle").as_deref(),
+        description.as_deref(),
+        || copy_title_element_text(element, CHECK_TIMEOUT_S),
+    );
     ElementObservation {
         valid: true,
         role,
@@ -366,6 +376,7 @@ fn finish(
 /// `pixel` is true when the action is delivered as a pointer event at the
 /// element's centre (button=middle) rather than an AX action.
 pub async fn guard_element(
+    store: &GuardStore,
     tool: &str,
     pid: i32,
     window_id: u32,
@@ -390,7 +401,7 @@ pub async fn guard_element(
             relocate: None,
         };
     };
-    let Some((_, _, want)) = global().element(snapshot_id, index) else {
+    let Some((_, _, want)) = store.element(snapshot_id, index) else {
         // Read before the flag was on: nothing to compare.
         return Outcome::Proceed {
             summary: Some(wire::check_summary(&Verdict::Ok, None, "none", 0.0)),
@@ -457,7 +468,10 @@ pub async fn guard_element(
 /// The pixel path: window guards for every click, then the AX check where
 /// the tree saw an element at the point, or the pixel check where it did
 /// not (sparse, no tree, remote surfaces).
+#[allow(clippy::too_many_arguments)]
 pub async fn guard_pixel(
+    store: Arc<GuardStore>,
+    session: Option<String>,
     tool: &str,
     pid: i32,
     window_id: u32,
@@ -475,12 +489,12 @@ pub async fn guard_pixel(
     let wid = u64::from(window_id);
     let tool_name = tool.to_owned();
     let (verdict, class, verified, scale) = tokio::task::spawn_blocking(move || unsafe {
-        let store = global();
-        let image = store.image(pid, wid);
+        let session = session.as_deref();
+        let image = store.image(session, pid, wid);
         let window_fp = image
             .as_ref()
             .map(|i| i.window)
-            .or_else(|| store.window(pid, wid));
+            .or_else(|| store.window(session, pid, wid));
         let delivery = if foreground {
             PointerDelivery::Screen
         } else {
@@ -499,13 +513,13 @@ pub async fn guard_pixel(
             .map(|w| w.frame)
             .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0));
         let stats = store
-            .latest_stats(pid, wid)
+            .latest_stats(session, pid, wid)
             .map(|(elements, thin_frames)| TreeStats {
                 elements,
                 thin_frames,
             });
         let class = classify(info.as_ref(), stats.as_ref(), window_rect);
-        let seen = store.element_at(pid, wid, screen.0, screen.1);
+        let seen = store.element_at(session, pid, wid, screen.0, screen.1);
 
         // Rich target the agent saw in the tree: the element there now must
         // be the one it saw (or contain the hit).

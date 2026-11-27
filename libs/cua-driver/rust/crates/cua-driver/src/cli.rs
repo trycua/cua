@@ -28,10 +28,6 @@ pub enum Command {
         /// Own the runtime in this MCP process. On macOS this is an explicit
         /// TCC-attribution choice; it is mutually exclusive with `--socket`.
         direct: bool,
-        /// `--claude-code-computer-use-compat`: legacy compatibility flag.
-        /// It currently has no tool-surface effect and remains accepted so
-        /// existing Claude Code launch configurations keep working.
-        claude_code_compat: bool,
         /// Repeatable trusted launch grants for residual standard-mode
         /// boundaries, for example `--grant existing-profile`.
         grants: Vec<String>,
@@ -42,6 +38,9 @@ pub enum Command {
         tool: String,
         json_args: Option<serde_json::Value>,
         screenshot_out_file: Option<String>,
+        /// Print the result's text content blocks (`--text`) instead of its
+        /// structured JSON. For tools whose real output is text, e.g. `get_guide`.
+        text: bool,
         /// Override the required daemon socket/pipe path (matches `--socket`
         /// semantics for `serve` / `status` / `stop`). Defaults to
         /// `serve::default_socket_path()` when None.
@@ -79,11 +78,6 @@ pub enum Command {
         /// two opt-out signals.
         no_permissions_gate: bool,
         no_automation_prompts: bool,
-        /// True when `--claude-code-computer-use-compat` is on argv. The MCP
-        /// proxy forwards this flag to a daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so existing launch configurations stay
-        /// stable. It currently has no tool-surface effect.
-        claude_code_compat: bool,
         /// Repeatable trusted launch grants.
         grants: Vec<String>,
         /// Admit the encrypted local Computer History early preview for this
@@ -160,6 +154,11 @@ pub enum Command {
     Permissions {
         subcommand: String,
         json: bool,
+    },
+    /// `cua-driver permissions vnc shot|click|type-env`: approve the
+    /// permission prompts through the Mac's Screen Sharing (VNC) server.
+    PermissionsVnc {
+        args: Vec<String>,
     },
     Config {
         /// `show` | `get` | `set` | `reset` (None → show)
@@ -255,7 +254,6 @@ const VALUE_FLAGS: &[&str] = &[
     "--socket",
     "--permission-mode",
     "--grant",
-    "--session-policy",
     "--capability-manifest",
     "--pid-file",
     "--expected-pid",
@@ -279,6 +277,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--style",
     "--timing",
     "--effects",
+    // `permissions vnc` options.
+    "--server",
+    "--label",
 ];
 
 /// Authorization selectors are trusted-daemon startup inputs. Direct MCP
@@ -290,12 +291,40 @@ const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
     "--permission-mode",
     "--capability-manifest",
     "--approve-capability-manifest",
-    "--session-policy",
-    "--approve-session-policy",
     "--dangerously-bypass-approvals",
     "--no-permissions-gate",
     "--no-automation-prompts",
 ];
+
+/// Options that were removed, each with what to do instead. Passing one fails
+/// with that message rather than being ignored or reported as unknown.
+const REMOVED_OPTIONS: &[(&str, &str)] = &[
+    (
+        "--session-policy",
+        "use `cua-driver serve --capability-manifest <path>` instead",
+    ),
+    (
+        "--approve-session-policy",
+        "use `cua-driver serve --approve-capability-manifest` instead",
+    ),
+    (
+        "--claude-code-computer-use-compat",
+        "it had no effect on the tool surface. Remove it and register the server as plain `cua-driver mcp` (see \"Claude Code registration\" in the Cua Driver README, or run `cua-driver mcp-config --client claude`)",
+    ),
+];
+
+fn removed_option_error(args: &[String]) -> Option<String> {
+    REMOVED_OPTIONS.iter().find_map(|(flag, instead)| {
+        args.iter()
+            .any(|arg| {
+                arg == flag
+                    || arg
+                        .strip_prefix(flag)
+                        .is_some_and(|remainder| remainder.starts_with('='))
+            })
+            .then(|| format!("cua-driver: {flag} was removed; {instead}."))
+    })
+}
 
 fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
     SERVE_ONLY_AUTHORIZATION_FLAGS.iter().copied().find(|flag| {
@@ -455,6 +484,7 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
         Some("permissions") => match subcommand.unwrap_or("status") {
             "status" => "status",
             "grant" => "grant",
+            "vnc" => "vnc",
             _ => "other",
         },
         Some("config") => match subcommand.unwrap_or("show") {
@@ -568,6 +598,11 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
 pub fn parse_command() -> Command {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    if let Some(error) = removed_option_error(&args) {
+        eprintln!("{error}");
+        process::exit(64);
+    }
+
     // Handle --version / -V before any other parsing so they are never
     // silently stripped as "bare flags" and swallowed by MCP mode.
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -593,6 +628,14 @@ pub fn parse_command() -> Command {
         println!("                                  the answer is Cua Driver's own, not your terminal's. Add --json for data.");
         println!("  cua-driver permissions grant    Open a short guide that walks you through both switches in System");
         println!("                                  Settings, one at a time, then takes a test screenshot to confirm.");
+        println!("  cua-driver permissions vnc      For a Mac nobody is sitting at: screenshot, click and type through its");
+        println!("                                  Screen Sharing (VNC) server, so the owner (or an agent they authorize)");
+        println!("                                  can approve the prompts that `permissions grant` raises. Runs on any OS:");
+        println!("    shot <out.png>                Save the screen. Coordinates below are pixels in this image.");
+        println!("    click <x> <y> --label <text>  Click, and log what the click approves.");
+        println!("    type-env <NAME>               Type the value of environment variable NAME, then Return.");
+        println!("    --server <host[:port]>        Default $CUA_VNC_SERVER, port 5900. Credentials come only from");
+        println!("                                  CUA_VNC_USER and CUA_VNC_PASSWORD, never from the command line.");
         println!();
         println!("Updating cua-driver:");
         println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
@@ -678,10 +721,6 @@ pub fn parse_command() -> Command {
         );
         println!("  --approve-capability-manifest   Required with --capability-manifest; the trusted launcher asserts");
         println!("                                  that the human reviewed this exact manifest at startup.");
-        println!("  --session-policy <path>         Deprecated alias for --capability-manifest.");
-        println!(
-            "  --approve-session-policy        Deprecated alias for --approve-capability-manifest."
-        );
         println!();
         println!("authorization revocation:");
         println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
@@ -701,12 +740,6 @@ pub fn parse_command() -> Command {
             "  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output."
         );
         println!("  --socket <path>         Select an explicit daemon socket/pipe endpoint.");
-        println!("  --claude-code-computer-use-compat");
-        println!("                          Legacy compatibility flag retained for existing launch configs.");
-        println!(
-            "                          It currently has no tool-surface effect and does not add a"
-        );
-        println!("                          standalone screenshot tool.");
         println!();
         println!("agent cursor overlay (serve only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -777,6 +810,7 @@ pub fn parse_command() -> Command {
 
     // Collect named flag values we care about.
     let screenshot_out_file = flag_value(&args, "--screenshot-out-file");
+    let text_output = args.iter().any(|a| a == "--text");
     let mcp_client = flag_value(&args, "--client");
     let socket = flag_value(&args, "--socket");
     let approval_session = flag_value(&args, "--session");
@@ -833,10 +867,6 @@ pub fn parse_command() -> Command {
         process::exit(64);
     }
 
-    let claude_code_compat = args
-        .iter()
-        .any(|a| a == "--claude-code-computer-use-compat");
-
     let mut pos = positionals.into_iter();
     match pos.next() {
         None => {
@@ -866,14 +896,12 @@ pub fn parse_command() -> Command {
             Command::Mcp {
                 socket: socket.clone(),
                 direct: args.iter().any(|a| a == "--direct"),
-                claude_code_compat,
                 grants: grants.clone(),
             }
         }
         Some("mcp") => Command::Mcp {
             socket: socket.clone(),
             direct: args.iter().any(|a| a == "--direct"),
-            claude_code_compat,
             grants: grants.clone(),
         },
         Some("list-tools") => Command::ListTools,
@@ -894,18 +922,11 @@ pub fn parse_command() -> Command {
             dangerously_bypass_approvals: args
                 .iter()
                 .any(|a| a == "--dangerously-bypass-approvals"),
-            capability_manifest: aliased_flag_value(
-                &args,
-                "--capability-manifest",
-                "--session-policy",
-            ),
-            approve_capability_manifest: args
-                .iter()
-                .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
+            capability_manifest: flag_value(&args, "--capability-manifest"),
+            approve_capability_manifest: args.iter().any(|a| a == "--approve-capability-manifest"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             no_automation_prompts: args.iter().any(|a| a == "--no-automation-prompts"),
-            claude_code_compat,
             grants,
             experimental_history: args.iter().any(|a| a == "--experimental-history"),
         },
@@ -1012,8 +1033,18 @@ pub fn parse_command() -> Command {
         },
         Some("permissions") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
-            let json = args.iter().any(|a| a == "--json");
-            Command::Permissions { subcommand, json }
+            if subcommand == "vnc" {
+                let index = args
+                    .iter()
+                    .position(|value| value == "vnc")
+                    .expect("vnc positional is present");
+                Command::PermissionsVnc {
+                    args: args[index + 1..].to_vec(),
+                }
+            } else {
+                let json = args.iter().any(|a| a == "--json");
+                Command::Permissions { subcommand, json }
+            }
         }
         Some("config") => {
             let subcommand = pos.next().map(str::to_owned);
@@ -1069,6 +1100,7 @@ pub fn parse_command() -> Command {
                 tool,
                 json_args,
                 screenshot_out_file,
+                text: text_output,
                 socket: socket.clone(),
             }
         }
@@ -1166,6 +1198,7 @@ pub fn parse_command() -> Command {
                     tool: "set_agent_cursor_motion".to_owned(),
                     json_args: Some(json_args),
                     screenshot_out_file,
+                    text: text_output,
                     socket: socket.clone(),
                 },
                 Err(message) => {
@@ -1209,6 +1242,7 @@ pub fn parse_command() -> Command {
                 tool,
                 json_args,
                 screenshot_out_file,
+                text: text_output,
                 socket: socket.clone(),
             }
         }
@@ -1459,19 +1493,6 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
     None
 }
 
-fn aliased_flag_value(args: &[String], preferred: &str, deprecated: &str) -> Option<String> {
-    let preferred_value = flag_value(args, preferred);
-    let deprecated_value = flag_value(args, deprecated);
-    if preferred_value.is_some()
-        && deprecated_value.is_some()
-        && preferred_value != deprecated_value
-    {
-        eprintln!("{preferred} conflicts with deprecated {deprecated}");
-        process::exit(64);
-    }
-    preferred_value.or(deprecated_value)
-}
-
 /// Return every value of a repeatable `--flag value` or `--flag=value`.
 fn flag_values(args: &[String], flag: &str) -> Vec<String> {
     let mut values = Vec::new();
@@ -1608,12 +1629,10 @@ impl std::error::Error for LaunchDaemonError {}
 pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
-    claude_code_compat: bool,
     grants: &[String],
     experimental_history: bool,
 ) -> Result<(), LaunchDaemonError> {
     let state = crate::history_runtime::DaemonLaunchState {
-        claude_code_compat,
         grants: grants.to_vec(),
         ..Default::default()
     };
@@ -1962,9 +1981,6 @@ fn append_daemon_launch_state(
     if state.no_automation_prompts {
         args.push("--no-automation-prompts".to_owned());
     }
-    if state.claude_code_compat {
-        args.push("--claude-code-computer-use-compat".to_owned());
-    }
     if experimental_history {
         args.push("--experimental-history".to_owned());
     }
@@ -2003,7 +2019,6 @@ impl McpDaemonStartup {
 
 pub fn run_mcp_via_daemon_proxy<F>(
     socket: Option<String>,
-    claude_code_compat: bool,
     grants: &[String],
     on_startup: F,
 ) -> anyhow::Result<()>
@@ -2066,13 +2081,7 @@ where
             }
             true
         };
-        if let Err(error) = launch_daemon_and_wait(
-            &socket_path,
-            10,
-            claude_code_compat,
-            grants,
-            experimental_history,
-        ) {
+        if let Err(error) = launch_daemon_and_wait(&socket_path, 10, grants, experimental_history) {
             if let Some(on_startup) = on_startup.take() {
                 on_startup(
                     if error.kind == LaunchDaemonErrorKind::Timeout {
@@ -2189,7 +2198,6 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
                   { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag with no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Declare embedding-host mode. Without --direct, requires the host's private service through --socket instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary for a newly launched runtime. Supported value: existing-profile." }
@@ -2203,11 +2211,8 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
                   { "name": "--capability-manifest", "type": "string", "description": "Optional narrow-only tool/resource ceiling; required in bounded mode." },
                   { "name": "--approve-capability-manifest", "type": "flag", "description": "Trusted-launcher confirmation that the exact capability manifest was reviewed." },
-                  { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
-                  { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--no-automation-prompts", "type": "flag", "description": "Refuse scripting actions without granted macOS Automation consent." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag forwarded by the MCP proxy; no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
                   ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
@@ -2244,6 +2249,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "tool", "type": "positional-string", "description": "Tool name." },
                   { "name": "json-args", "type": "positional-json", "description": "Tool input JSON (or read from stdin)." },
                   { "name": "--screenshot-out-file", "type": "string", "description": "Write image content to this path instead of emitting base64." },
+                  { "name": "--text", "type": "flag", "description": "Print the result's text content instead of its structured JSON (for tools whose output is text, such as get_guide)." },
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "connect",
@@ -2319,8 +2325,10 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "permissions",
               "description": "Inspect / raise TCC permission grants (macOS).",
               "args": [
-                  { "name": "subcommand", "type": "positional-string", "description": "status | grant" },
-                  { "name": "--json", "type": "flag", "description": "Machine-readable payload." }
+                  { "name": "subcommand", "type": "positional-string", "description": "status | grant | vnc shot <out.png> | vnc click <x> <y> --label <text> | vnc type-env <NAME>" },
+                  { "name": "--json", "type": "flag", "description": "Machine-readable payload." },
+                  { "name": "--server", "type": "string", "description": "vnc: the Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER." },
+                  { "name": "--label", "type": "string", "description": "vnc click: what the click approves, written to the approval log." }
               ] },
             { "name": "config",
               "description": "Read / write the persistent driver config.",
@@ -2433,14 +2441,6 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
             // defaults to the per-project config (`<cwd>/.claude.json`),
             // which is the source of the "registered cua-driver but
             // Claude Code doesn't see it" surprise users hit.
-            //
-            // The `--claude-code-computer-use-compat` flag is NOT
-            // emitted: the only tool it ever gated (the compat
-            // screenshot) was removed in #1692, so the flag is a no-op
-            // today on every code path. Carrying it confused Claude
-            // Code's tool indexer in observed sessions; dropping it
-            // makes the registration shape match what `--client codex`,
-            // `--client cursor`, etc. already produce.
             //
             // Why `add-json` instead of `add -- BIN --flag`? PowerShell's
             // native-command arg parser mangles long flags after a bare
@@ -2725,32 +2725,19 @@ mod daemon_compatibility_tests {
     }
 }
 
-fn call_text<'a>(
-    tool: &str,
-    args: Option<&serde_json::Value>,
-    result: &'a serde_json::Value,
-    printed: bool,
-) -> Vec<&'a str> {
-    let page_read = tool == "page"
+/// `page` reads (`get_text`, `query_dom`) return the page text as a text
+/// block next to structured metadata, so `call` prints both by default.
+fn call_keeps_text(tool: &str, args: Option<&serde_json::Value>) -> bool {
+    tool == "page"
         && matches!(
             args.and_then(|a| a["action"].as_str()),
             Some("get_text" | "query_dom")
-        );
-    if printed && !page_read {
-        return Vec::new();
-    }
-    result["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|item| item["type"] == "text")
-        .filter_map(|item| item["text"].as_str())
-        .collect()
+        )
 }
 
 #[cfg(test)]
 mod call_tests {
-    use super::call_text;
+    use super::{call_keeps_text, render_call_stdout};
 
     #[test]
     fn call_page_read_preserves_text_with_structured_content() {
@@ -2760,19 +2747,78 @@ mod call_tests {
         });
         for action in ["get_text", "query_dom"] {
             let args = serde_json::json!({"action": action});
-            assert_eq!(
-                call_text("page", Some(&args), &result, true),
-                vec!["Page body"]
-            );
+            let with_text = call_keeps_text("page", Some(&args));
+            let out = render_call_stdout(&result, None, false, with_text).unwrap();
+            assert!(out.ends_with("\nPage body"), "{out}");
         }
-        assert!(call_text("other", None, &result, true).is_empty());
-        assert!(call_text(
+        assert!(!call_keeps_text("other", None));
+        assert!(!call_keeps_text(
             "page",
-            Some(&serde_json::json!({"action": "click"})),
-            &result,
-            true
-        )
-        .is_empty());
+            Some(&serde_json::json!({"action": "click"}))
+        ));
+        let out = render_call_stdout(&result, None, false, false).unwrap();
+        assert!(!out.contains("Page body"), "{out}");
+    }
+}
+
+/// The command that starts a daemon on `socket_path` when a daemon-only
+/// command finds none (#4802).
+///
+/// `call` never starts one itself. On macOS the daemon must run as the Cua
+/// Driver app through LaunchServices, so it uses the app's own Accessibility
+/// and Screen Recording grants. A bare `serve` from a shell would run inside
+/// the caller's process tree and use the caller's grants instead. An embedded
+/// host runs its own daemon in its process tree, so it keeps `serve`.
+fn daemon_start_hint(socket_path: &str) -> String {
+    let cli_name = crate::bundle::cli_name();
+    let default_socket = socket_path == crate::serve::default_socket_path();
+    let socket = shell_argument(socket_path);
+    #[cfg(target_os = "macos")]
+    if !cua_driver_core::embedded_mode() {
+        return if default_socket {
+            format!("Start it with: {cli_name} permissions grant")
+        } else {
+            // LaunchServices starts the app in `/`, so a relative path would
+            // name a different socket than the one this command used.
+            let absolute = std::path::absolute(socket_path)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| socket_path.to_owned());
+            let app = shell_argument(&crate::bundle::app_bundle_path());
+            // `sockaddr_un.sun_path` holds 104 bytes on macOS, NUL included.
+            const MAX_SOCKET_PATH: usize = 103;
+            if absolute.len() > MAX_SOCKET_PATH {
+                format!(
+                    "{} is longer than the {MAX_SOCKET_PATH} bytes macOS allows for a socket path. \
+                     Start it with: open -n -g {app} --args serve --socket <shorter absolute path>, \
+                     then pass the same --socket here.",
+                    shell_argument(&absolute)
+                )
+            } else {
+                format!(
+                    "Start it with: open -n -g {app} --args serve --socket {}",
+                    shell_argument(&absolute)
+                )
+            }
+        };
+    }
+    if default_socket {
+        format!("Start it with: {cli_name} serve")
+    } else {
+        format!("Start it with: {cli_name} serve --socket {socket}")
+    }
+}
+
+/// Quote `value` so a hint stays one argument when pasted into a POSIX
+/// shell. Windows pipe names are printed as they are.
+fn shell_argument(value: &str) -> String {
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+:,@%=".contains(c));
+    if plain || cfg!(target_os = "windows") {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -2780,6 +2826,7 @@ pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
     screenshot_out_file: Option<String>,
+    text_only: bool,
     socket_override: Option<String>,
 ) {
     // One-shot public calls remain service-backed so policy, session state,
@@ -2793,8 +2840,8 @@ pub fn run_call(
     let socket_path = socket_override.unwrap_or_else(crate::serve::default_socket_path);
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
-            "Cua Driver daemon is not running on {socket_path}.\n\
-             Start it first with: cua-driver serve --socket {socket_path}"
+            "Cua Driver daemon is not running on {socket_path}.\n{}",
+            daemon_start_hint(&socket_path)
         );
         process::exit(1);
     }
@@ -2855,7 +2902,6 @@ pub fn run_call(
                         // Walk the content array once: pick up any Image
                         // payloads (either to write to --screenshot-out-file
                         // or to merge into structuredContent below).
-                        let mut printed = false;
                         let mut image_b64: Option<(String, String)> = None;
                         if let Some(content) = result.get("content").and_then(|v| v.as_array()) {
                             for item in content {
@@ -2892,32 +2938,11 @@ pub fn run_call(
                                 }
                             }
                         }
-                        if let Some(sc) = result.get("structuredContent") {
-                            // Merge image data into the structured payload so
-                            // a daemon-routed image response still emits
-                            // `screenshot_png_b64`. Previously this path
-                            // dropped the image entirely when no
-                            // --screenshot-out-file was given.
-                            let mut obj = sc.clone();
-                            if let Some((b64, mime)) = image_b64 {
-                                if let serde_json::Value::Object(ref mut map) = obj {
-                                    map.insert(
-                                        "screenshot_png_b64".into(),
-                                        serde_json::Value::String(b64),
-                                    );
-                                    map.insert(
-                                        "screenshot_mime_type".into(),
-                                        serde_json::Value::String(mime),
-                                    );
-                                }
-                            }
-                            let pretty = serde_json::to_string_pretty(&obj)
-                                .unwrap_or_else(|_| obj.to_string());
-                            println!("{pretty}");
-                            printed = true;
-                        }
-                        for text in call_text(tool, json_args.as_ref(), &result, printed) {
-                            println!("{text}");
+                        let with_text = call_keeps_text(tool, json_args.as_ref());
+                        if let Some(out) =
+                            render_call_stdout(&result, image_b64, text_only, with_text)
+                        {
+                            println!("{out}");
                         }
                         if is_error {
                             process::exit(1);
@@ -2936,6 +2961,65 @@ pub fn run_call(
                 process::exit(1);
             }
         }
+    }
+}
+
+/// What `cua-driver call` prints to stdout for one tool result.
+///
+/// By default a tool's `structuredContent` is printed as JSON (with any image
+/// payload merged in) and its text blocks are left out, because for most tools
+/// the text only restates the structured data. A few tools put their real
+/// output in the text block: `get_guide` returns the guide itself as text and
+/// only its metadata as structured content, so the default output never showed
+/// a guide. `text_only` (`--text`) prints the text blocks instead; a result
+/// with no text blocks falls back to the default output. `with_text` prints
+/// the text blocks after the JSON, for the `page` reads in `call_keeps_text`.
+fn render_call_stdout(
+    result: &serde_json::Value,
+    image: Option<(String, String)>,
+    text_only: bool,
+    with_text: bool,
+) -> Option<String> {
+    let text_blocks: Vec<&str> = result
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .map(|content| {
+            content
+                .iter()
+                .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+                .collect()
+        })
+        .unwrap_or_default();
+    if text_only && !text_blocks.is_empty() {
+        return Some(text_blocks.join("\n"));
+    }
+    if let Some(structured) = result.get("structuredContent") {
+        // Merge image data into the structured payload so a daemon-routed
+        // image response still emits `screenshot_png_b64`.
+        // Previously this path dropped the image entirely when no
+        // --screenshot-out-file was given.
+        let mut obj = structured.clone();
+        if let Some((b64, mime)) = image {
+            if let serde_json::Value::Object(ref mut map) = obj {
+                map.insert("screenshot_png_b64".into(), serde_json::Value::String(b64));
+                map.insert(
+                    "screenshot_mime_type".into(),
+                    serde_json::Value::String(mime),
+                );
+            }
+        }
+        let mut out = serde_json::to_string_pretty(&obj).unwrap_or_else(|_| obj.to_string());
+        if with_text && !text_blocks.is_empty() {
+            out.push('\n');
+            out.push_str(&text_blocks.join("\n"));
+        }
+        return Some(out);
+    }
+    if text_blocks.is_empty() {
+        None
+    } else {
+        Some(text_blocks.join("\n"))
     }
 }
 
@@ -3269,8 +3353,8 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
-            "Cua Driver daemon is not running.\n\
-             Start it first with: cua-driver serve"
+            "Cua Driver daemon is not running.\n{}",
+            daemon_start_hint(&socket_path)
         );
         process::exit(1);
     }
@@ -3706,18 +3790,19 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
         "status" => run_permissions_status(json),
         "grant" => run_permissions_grant(),
         other => {
-            eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant.");
+            eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant, vnc.");
             process::exit(64);
         }
     }
 }
 
-/// Report Cua Driver's own Accessibility and Screen Recording status —
-/// reliably, or not at all.
+/// Report the Accessibility and Screen Recording status Cua Driver runs
+/// with — reliably, or not at all.
 ///
-/// macOS attributes these permissions to the *responsible process*, so only
-/// a process that is the Cua Driver app can read the app's real grants. When
-/// the background service is running, we ask it. When it isn't, we start the
+/// macOS attributes these permissions to the *responsible process*. When
+/// the background service is running, we ask it: its answer is the one its
+/// tool calls get, and its `source` names whose grants they are (Cua
+/// Driver's own, or the app that started it). When it isn't, we start the
 /// app briefly in the background (LaunchServices, so it is its own
 /// responsible process) to read the status, then it exits. We never fall
 /// back to an in-process check: that would report the *calling terminal's*
@@ -3754,7 +3839,7 @@ fn run_permissions_status(json: bool) {
         }
         result
             .and_then(|res| res.get("structuredContent").cloned())
-            .filter(answers_for_cua_driver)
+            .filter(|status| status.get("accessibility").is_some())
     } else {
         None
     };
@@ -3802,6 +3887,7 @@ fn run_permissions_status(json: bool) {
 /// Trust the booleans only when they belong to the Cua Driver app itself
 /// (`driver-daemon`): otherwise they are the launching app's grants. A
 /// missing `source` (non-macOS, no per-app permissions) is trusted as-is.
+#[cfg(any(target_os = "macos", test))]
 fn answers_for_cua_driver(structured: &serde_json::Value) -> bool {
     structured
         .get("source")
@@ -3902,8 +3988,8 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             }
         }
     }
-    let attribution = structured
-        .get("source")
+    let source = structured.get("source");
+    let attribution = source
         .and_then(|s| s.get("attribution"))
         .and_then(|v| v.as_str());
     if attribution == Some("host") {
@@ -3911,6 +3997,35 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             out,
             "These are the permissions of the app Cua Driver runs inside."
         );
+        if !(ax && sr) {
+            let _ = writeln!(
+                out,
+                "Next: turn them on for the app Cua Driver runs inside."
+            );
+        }
+        return out;
+    }
+    if attribution == Some("caller") {
+        let starter = source
+            .and_then(|s| {
+                s.get("responsible_bundle_id")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| s.get("responsible_executable").and_then(|v| v.as_str()))
+            })
+            .unwrap_or("the app that started Cua Driver");
+        let _ = writeln!(
+            out,
+            "These are the permissions of {starter}, not the Cua Driver app. \
+             Cua Driver uses them for as long as it runs this way."
+        );
+        if !(ax && sr) {
+            let _ = writeln!(
+                out,
+                "Next: turn them on for {starter}, or run `{cli_name} stop` and then \
+                 `{cli_name} permissions grant` to use Cua Driver's own permissions."
+            );
+        }
+        return out;
     }
     let direct_capture_unverified = structured.get("direct_capture_status")
         == Some(&serde_json::json!("not_checked"))
@@ -4202,7 +4317,6 @@ fn run_permissions_grant() {
             if let Err(e) = launch_daemon_and_wait(
                 &socket,
                 180,
-                false,
                 &[],
                 crate::history_runtime::preview_admitted_preference(),
             ) {
@@ -4286,6 +4400,10 @@ fn run_permissions_grant() {
                      choose {app_path}, and turn it on."
                 );
             }
+            println!(
+                "Nobody at this Mac? With Screen Sharing on, `{cli_name} permissions vnc` \
+                 can approve the prompts from here or another computer."
+            );
             process::exit(1);
         }
 
@@ -4736,7 +4854,6 @@ fn cli_docs_literal() -> serde_json::Value {
                 ],
                 "flags": [
                     {"name":"direct","short_name":null,"help":"Own the runtime in this MCP process; mutually exclusive with --socket.","default_value":false},
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app.","default_value":false}
                 ],
                 "subcommands": no_subcommands
@@ -4771,7 +4888,7 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"screenshot-out-file","short_name":null,"help":"Write the first image content block from the response to this path.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}
                 ],
-                "flags": no_flags,
+                "flags": [{"name":"text","short_name":null,"help":"Print the result's text content instead of its structured JSON, for tools whose output is text (for example get_guide).","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -4785,7 +4902,6 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"Path","default_value":null,"is_optional":true},
-                    {"name":"session-policy","short_name":null,"help":"Deprecated alias for capability-manifest.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true},
                     {"name":"cursor-theme","short_name":null,"help":"Installed cursor theme id for the agent cursor overlay.","type":"String","default_value":"cua.default","is_optional":true},
                     {"name":"cursor-reduced-motion","short_name":null,"help":"Agent cursor motion: auto follows the OS setting, on forces still frames, off allows animation.","type":"String","default_value":"auto","is_optional":true},
@@ -4794,10 +4910,8 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"idle-hide-ms","short_name":null,"help":"Override how long an idle agent cursor stays visible, in milliseconds.","type":"Number","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.","default_value":false},
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
-                    {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"no-automation-prompts","short_name":null,"help":"Refuse scripting actions without granted macOS Automation consent.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
@@ -4883,7 +4997,12 @@ fn cli_docs_literal() -> serde_json::Value {
                 "flags": [],
                 "subcommands": [
                     {"name": "status", "abstract": "Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. The default subcommand.", "discussion": "", "arguments": [], "options": [], "flags": [{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}], "subcommands": []},
-                    {"name": "grant", "abstract": "Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.", "discussion": "", "arguments": [], "options": [], "flags": [], "subcommands": []}
+                    {"name": "grant", "abstract": "Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.", "discussion": "", "arguments": [], "options": [], "flags": [], "subcommands": []},
+                    {"name": "vnc", "abstract": "Approve the permission prompts through the Mac's Screen Sharing (VNC) server, for a Mac nobody is sitting at.", "discussion": "Screen Sharing input does not depend on Cua Driver's own permissions, so this works before they are granted, from this Mac or another computer. Run `permissions grant` on the Mac to raise the prompts, approve each one from screenshots, then check with `permissions status`; once both are on, Cua Driver works natively. Credentials come only from the environment: CUA_VNC_USER and CUA_VNC_PASSWORD for a macOS account (Apple Remote Desktop authentication), or CUA_VNC_PASSWORD alone for a VNC password. Clicks and typing are logged to $CUA_VNC_LOG, default ~/.cache/cua-driver/vnc-approvals.log. Only with the owner's authorization; see the macOS permissions reference.", "arguments": [], "options": [], "flags": [], "subcommands": [
+                        {"name": "shot", "abstract": "Save a PNG of the whole screen, readable only by you.", "discussion": "", "arguments": [{"name": "out", "help": "PNG path to write.", "type": "Path", "is_optional": false}], "options": [{"name":"server","short_name":null,"help":"The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.","type":"String","default_value":null,"is_optional":true}], "flags": [], "subcommands": []},
+                        {"name": "click", "abstract": "Click at a pixel of the screenshot and log what the click approves.", "discussion": "", "arguments": [{"name": "x", "help": "Pixel column in the screenshot.", "type": "Number", "is_optional": false}, {"name": "y", "help": "Pixel row in the screenshot.", "type": "Number", "is_optional": false}], "options": [{"name":"server","short_name":null,"help":"The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.","type":"String","default_value":null,"is_optional":true}, {"name":"label","short_name":null,"help":"What the click approves, such as 'CuaDriver: Accessibility'. Required.","type":"String","default_value":null,"is_optional":false}], "flags": [], "subcommands": []},
+                        {"name": "type-env", "abstract": "Type the value of an environment variable, then press Return. The value is never printed or logged.", "discussion": "", "arguments": [{"name": "name", "help": "Environment variable that holds the text.", "type": "String", "is_optional": false}], "options": [{"name":"server","short_name":null,"help":"The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.","type":"String","default_value":null,"is_optional":true}], "flags": [], "subcommands": []}
+                    ]}
                 ]
             },
             {
@@ -4963,7 +5082,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once. get_window_state.max_elements and get_window_state.max_depth save the node budget and depth cap for get_window_state reads that omit them and pass no query or full_output; each is bounded by the platform walk cap (max_elements 2000 on macOS, 5000 on Windows and Linux; max_depth 25 on macOS and Windows, uncapped on Linux), and 0 or default clears it. A value passed on the call always wins.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -5179,6 +5298,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver call list_apps", "Call a tool with no arguments"),
         ("cua-driver call click '{\"pid\":844,\"x\":100,\"y\":200}'", "Click at window coordinates"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725}' --screenshot-out-file state.png", "Save the screenshot from a tool response"),
+        ("cua-driver call --text get_guide '{\"topic\":\"overview\"}'", "Print a tool's text output (guides, summaries) instead of its structured JSON"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"since\":\"s0000002a\"}'", "Read only what changed since an earlier snapshot_id"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"tree_format\":\"elements\"}'", "Return the structured elements instead of the markdown tree"),
     ]),
@@ -5208,6 +5328,10 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("permissions", &[("cua-driver permissions", "Report Accessibility and Screen Recording status")]),
     ("permissions status", &[("cua-driver permissions status --json", "Report the grants as JSON")]),
     ("permissions grant", &[("cua-driver permissions grant", "Request the grants for CuaDriver.app")]),
+    ("permissions vnc", &[("cua-driver permissions vnc shot screen.png", "Save the screen of $CUA_VNC_SERVER")]),
+    ("permissions vnc shot", &[("cua-driver permissions vnc shot screen.png --server mac.local", "Save the remote Mac's screen")]),
+    ("permissions vnc click", &[("cua-driver permissions vnc click 640 412 --label \"CuaDriver: Accessibility\"", "Turn on a switch and log it")]),
+    ("permissions vnc type-env", &[("cua-driver permissions vnc type-env VM_PASSWORD", "Type a password the owner gave you")]),
     ("connect", &[
         ("cua-driver connect", "Connect every agent found on this computer"),
         ("cua-driver connect --client claude --dry-run", "Show what would change for Claude Code"),
@@ -5233,6 +5357,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver config set cursor.motion.timing fitts", "Scale cursor move time with distance and target size"),
         ("cua-driver config set cursor.motion.timing native", "Drop the 600 ms floor of the default steady timing"),
         ("cua-driver config set cursor.motion.effects.trail true", "Turn the cursor trail on by default"),
+        ("cua-driver config set get_window_state.max_elements 2000", "Walk up to 2000 nodes when a read omits max_elements"),
     ]),
     ("config reset", &[("cua-driver config reset", "Restore the defaults")]),
     ("telemetry", &[("cua-driver telemetry status", "Show the effective telemetry setting")]),
@@ -5713,8 +5838,8 @@ pub fn run_config_cmd(
 
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
-            "Cua Driver daemon is not running on {socket_path}.\n\
-             Start it first with: cua-driver serve --socket {socket_path}"
+            "Cua Driver daemon is not running on {socket_path}.\n{}",
+            daemon_start_hint(&socket_path)
         );
         process::exit(1);
     }
@@ -5770,7 +5895,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, get_window_state.max_elements, get_window_state.max_depth, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                     process::exit(64);
                 }
             };
@@ -5799,7 +5924,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, get_window_state.max_elements, get_window_state.max_depth, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                 process::exit(64);
             }
         }
@@ -5848,8 +5973,8 @@ pub fn run_config_cmd(
                 "max_image_dimension": 0
             });
             call("set_config", defaults);
-            // Also clear the saved cursor motion defaults, badge mode and
-            // opt-in cursor extras.
+            // Also clear the saved cursor motion defaults, badge mode,
+            // opt-in cursor extras and get_window_state walk defaults.
             exit_on_tool_error(&call(
                 "set_config",
                 serde_json::json!({
@@ -5858,6 +5983,8 @@ pub fn run_config_cmd(
                     "cursor.float": "default",
                     "cursor.halo": "default",
                     "cursor.rotate": "default",
+                    "get_window_state.max_elements": "default",
+                    "get_window_state.max_depth": "default",
                 }),
             ));
             println!("Config reset to defaults.");
@@ -5966,6 +6093,80 @@ mod tests {
             socket.to_str().unwrap(),
             0
         ));
+    }
+
+    /// The shape `get_guide` returns: the guide as a text block, only its
+    /// metadata as structured content.
+    fn guide_shaped_result() -> serde_json::Value {
+        serde_json::json!({
+            "content": [{"type": "text", "text": "# Drag\nPress, move, release."}],
+            "structuredContent": {"topic": "drag", "platform": "macOS"}
+        })
+    }
+
+    #[test]
+    fn call_output_defaults_to_structured_json_and_leaves_text_out() {
+        let out = super::render_call_stdout(&guide_shaped_result(), None, false, false).unwrap();
+        let printed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(printed["topic"], "drag");
+        assert!(!out.contains("Press, move, release."));
+    }
+
+    #[test]
+    fn call_text_flag_prints_the_text_blocks_instead_of_structured_json() {
+        let out = super::render_call_stdout(&guide_shaped_result(), None, true, false).unwrap();
+        assert_eq!(out, "# Drag\nPress, move, release.");
+    }
+
+    #[test]
+    fn call_text_flag_joins_several_text_blocks_and_skips_other_content() {
+        let result = serde_json::json!({
+            "content": [
+                {"type": "text", "text": "first"},
+                {"type": "image", "data": "AAAA", "mimeType": "image/png"},
+                {"type": "text", "text": "second"}
+            ],
+            "structuredContent": {"ok": true}
+        });
+        let out = super::render_call_stdout(&result, None, true, false).unwrap();
+        assert_eq!(out, "first\nsecond");
+    }
+
+    #[test]
+    fn call_text_flag_falls_back_to_structured_json_when_there_is_no_text() {
+        let result = serde_json::json!({"structuredContent": {"x": 1, "y": 2}});
+        let out = super::render_call_stdout(&result, None, true, false).unwrap();
+        let printed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(printed, serde_json::json!({"x": 1, "y": 2}));
+    }
+
+    #[test]
+    fn call_output_without_structured_content_prints_the_text() {
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": "one"}, {"type": "text", "text": "two"}]
+        });
+        assert_eq!(
+            super::render_call_stdout(&result, None, false, false).unwrap(),
+            "one\ntwo"
+        );
+    }
+
+    #[test]
+    fn call_output_with_nothing_printable_prints_nothing() {
+        let result = serde_json::json!({"content": []});
+        assert!(super::render_call_stdout(&result, None, false, false).is_none());
+        assert!(super::render_call_stdout(&result, None, true, false).is_none());
+    }
+
+    #[test]
+    fn call_output_still_merges_the_image_into_structured_json() {
+        let result = serde_json::json!({"structuredContent": {"snapshot_id": "s1"}});
+        let image = Some(("QUJD".to_owned(), "image/png".to_owned()));
+        let out = super::render_call_stdout(&result, image, false, false).unwrap();
+        let printed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(printed["snapshot_id"], "s1");
+        assert_eq!(printed["screenshot_png_b64"], "QUJD");
+        assert_eq!(printed["screenshot_mime_type"], "image/png");
     }
 
     #[test]
@@ -6299,7 +6500,6 @@ mod tests {
             approve_capability_manifest: true,
             no_permissions_gate: true,
             no_automation_prompts: true,
-            claude_code_compat: true,
             grants,
         };
         #[cfg(target_os = "macos")]
@@ -6332,7 +6532,6 @@ mod tests {
         let restored: crate::history_runtime::DaemonLaunchState =
             serde_json::from_value(legacy).unwrap();
         assert!(!restored.no_automation_prompts);
-        assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));
         assert!(launch
             .windows(2)
@@ -6397,7 +6596,6 @@ mod tests {
             &[
                 "serve",
                 "--no-automation-prompts",
-                "--claude-code-computer-use-compat",
                 "--experimental-history",
                 "--grant",
                 "existing-profile",
@@ -6474,6 +6672,18 @@ mod tests {
             // The hosted macOS release gate polls the daemon this way.
             &["--socket", "/s", "permissions", "status", "--json"],
             &["permissions", "status", "--socket", "/s", "--json"],
+            &[
+                "permissions",
+                "vnc",
+                "click",
+                "10",
+                "20",
+                "--label",
+                "CuaDriver: Accessibility",
+                "--server",
+                "mac.local:5901",
+            ],
+            &["permissions", "vnc", "shot", "s.png", "--server=mac.local"],
             &["kwin-capture", "on", "--override-portal-deny"],
             &["dump-docs", "--type", "cli", "-p"],
             &["telemetry", "inspect", "cua_driver_cli_completed", "--json"],
@@ -6570,6 +6780,14 @@ mod tests {
                 &["sessions", "--json=yes"],
                 "cua-driver sessions: unknown option '--json=yes'",
             ),
+            (
+                &["permissions", "vnc", "shot", "s.png", "--password", "x"],
+                "cua-driver permissions vnc shot: unknown option '--password'",
+            ),
+            (
+                &["permissions", "status", "--label", "x"],
+                "cua-driver permissions status: unknown option '--label'",
+            ),
             (&["--bogus"], "cua-driver mcp: unknown option '--bogus'"),
         ];
         for (argv, message) in rejected {
@@ -6604,26 +6822,6 @@ mod tests {
         assert!(launch.contains(&"--dangerously-bypass-approvals".to_owned()));
         assert!(!state.no_automation_prompts);
         assert!(!launch.contains(&"--no-automation-prompts".to_owned()));
-    }
-
-    #[test]
-    fn deprecated_session_policy_flag_remains_a_capability_manifest_alias() {
-        let argv = args(&["serve", "--session-policy", "/tmp/legacy.yaml"]);
-        assert_eq!(
-            aliased_flag_value(&argv, "--capability-manifest", "--session-policy"),
-            Some("/tmp/legacy.yaml".to_owned())
-        );
-
-        let identical = args(&[
-            "serve",
-            "--capability-manifest=/tmp/shared.yaml",
-            "--session-policy",
-            "/tmp/shared.yaml",
-        ]);
-        assert_eq!(
-            aliased_flag_value(&identical, "--capability-manifest", "--session-policy"),
-            Some("/tmp/shared.yaml".to_owned())
-        );
     }
 
     #[test]
@@ -6751,6 +6949,18 @@ mod tests {
         assert_eq!(
             finite_operation_from_args(&args(&["recording", "private-value"])),
             "other"
+        );
+        assert_eq!(
+            finite_operation_from_args(&args(&[
+                "permissions",
+                "vnc",
+                "click",
+                "1",
+                "2",
+                "--label",
+                "private-value"
+            ])),
+            "vnc"
         );
     }
 
@@ -6946,6 +7156,114 @@ mod tests {
             for banned in ["TCC", "daemon", "unknown", "CuaDriver ", "AX "] {
                 assert!(!text.contains(banned), "{text:?} contains {banned:?}");
             }
+        }
+    }
+
+    /// #4802: `call` does not start a daemon. Its hint names a start that
+    /// keeps Cua Driver's own identity on macOS.
+    #[test]
+    fn daemon_start_hint_names_a_launch_that_keeps_the_app_identity() {
+        #[cfg(unix)]
+        {
+            let hint = daemon_start_hint("/tmp/a b;$(x)'q.sock");
+            assert!(
+                hint.ends_with(r#"--socket '/tmp/a b;$(x)'\''q.sock'"#),
+                "{hint}"
+            );
+        }
+        let cli = crate::bundle::cli_name();
+        let default_hint = daemon_start_hint(&crate::serve::default_socket_path());
+        let custom_hint = daemon_start_hint("/tmp/cua-test.sock");
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                default_hint,
+                format!("Start it with: {cli} permissions grant")
+            );
+            assert_eq!(
+                custom_hint,
+                format!(
+                    "Start it with: open -n -g {} --args serve --socket /tmp/cua-test.sock",
+                    crate::bundle::app_bundle_path()
+                )
+            );
+            // Either form names the socket by its absolute path.
+            let relative_hint = daemon_start_hint("rel/cua-test.sock");
+            let expected = std::env::current_dir().unwrap().join("rel/cua-test.sock");
+            assert!(
+                relative_hint.contains(&shell_argument(&expected.to_string_lossy())),
+                "{relative_hint}"
+            );
+            let long_hint = daemon_start_hint(&"s".repeat(100));
+            assert!(
+                long_hint.contains("longer than the 103 bytes")
+                    && long_hint.contains("--socket <shorter absolute path>"),
+                "{long_hint}"
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(default_hint, format!("Start it with: {cli} serve"));
+            assert_eq!(
+                custom_hint,
+                format!("Start it with: {cli} serve --socket /tmp/cua-test.sock")
+            );
+        }
+    }
+
+    /// #4802: a daemon started inside another app's process tree uses that
+    /// app's grants, so status names that app and how to switch.
+    #[test]
+    fn permission_status_text_names_the_app_whose_grants_the_daemon_uses() {
+        let started_by_host = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": false,
+            "source": {
+                "attribution": "caller",
+                "pid": 500,
+                "responsible_pid": 42,
+                "responsible_bundle_id": "com.example.host",
+            },
+        });
+        let text = permission_status_text(&started_by_host, "cua-driver");
+        assert!(
+            text.contains("These are the permissions of com.example.host, not the Cua Driver app."),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Next: turn them on for com.example.host, or run `cua-driver stop` and then \
+                 `cua-driver permissions grant` to use Cua Driver's own permissions."
+            ),
+            "{text}"
+        );
+        assert_eq!(text.matches("Next:").count(), 1);
+
+        let granted = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "source": {"attribution": "caller", "responsible_executable": "/opt/host/bin/agent"},
+        });
+        let text = permission_status_text(&granted, "cua-driver");
+        assert!(
+            text.contains("permissions of /opt/host/bin/agent"),
+            "{text}"
+        );
+        assert!(!text.contains("Next:"), "{text}");
+
+        let embedded = serde_json::json!({
+            "accessibility": false,
+            "screen_recording": true,
+            "source": {"attribution": "host"},
+        });
+        let text = permission_status_text(&embedded, "cua-driver");
+        assert!(
+            text.contains("Next: turn them on for the app Cua Driver runs inside."),
+            "{text}"
+        );
+        assert!(!text.contains("permissions grant"), "{text}");
+        for banned in ["TCC", "daemon", "unknown", "CuaDriver ", "AX "] {
+            assert!(!text.contains(banned), "{text:?} contains {banned:?}");
         }
     }
 

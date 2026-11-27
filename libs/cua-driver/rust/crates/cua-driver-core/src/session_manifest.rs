@@ -404,17 +404,15 @@ impl SessionManifest {
             .get("bundle_id")
             .and_then(serde_json::Value::as_str);
         // The process path the platform adapter read from the OS for this
-        // exact pid. Unlike `bundle_id` and `launch_path`, which come from
-        // `list_apps` (and on Windows are matched to a running unpackaged
-        // process by file name only), this cannot be influenced by naming a
-        // program.
+        // exact pid. It is the only identity an `executable` grant accepts.
+        // `bundle_id` and `launch_path` come from `list_apps`, which on Windows
+        // and Linux pairs a running process with an installed app by file name
+        // only, and `launch_path` is a launcher command line, not the running
+        // image. When the OS image path cannot be read, an executable grant
+        // fails closed; `launch_path` is honoured only by `launch_app`, before
+        // any process exists.
         let attested_executable = resource
             .pointer("/fingerprint/executable")
-            .and_then(serde_json::Value::as_str);
-        let executable = resource
-            .pointer("/fingerprint/executable")
-            .or_else(|| resource.get("executable"))
-            .or_else(|| resource.get("launch_path"))
             .and_then(serde_json::Value::as_str);
         self.applications.iter().any(|application| {
             (!require_all_windows || application.all_windows)
@@ -423,7 +421,7 @@ impl SessionManifest {
                 }) || application
                     .executable
                     .as_deref()
-                    .zip(executable)
+                    .zip(attested_executable)
                     .is_some_and(|(allowed, actual)| allowed == actual))
         })
     }
@@ -2349,6 +2347,79 @@ allow:
             assert!(
                 outcome(serde_json::Value::Null).is_err(),
                 "{adapter}/{kind}"
+            );
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn executable_grant_requires_the_attested_process_image() {
+        // Regression for trycua/cua#8565: a running process must be matched by
+        // the image path the OS reports for its pid, never by the `list_apps`
+        // launch command or an unattested `executable` field.
+        let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let executable = executable.to_string_lossy().into_owned();
+        let loaded = manifest(&format!(
+            r#"
+version: 3
+allow:
+  tools: [list_windows, click]
+resources:
+  apps:
+    - executable: {executable:?}
+      windows: all
+"#
+        ))
+        .unwrap();
+        let resource = |kind: &str, extra: serde_json::Value| {
+            let mut value = serde_json::json!({"kind": kind, "pid": 4321, "window_id": 7});
+            for (key, field) in extra.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            value
+        };
+        let attested = |path: Option<&str>| serde_json::json!({"pid": 4321, "start_time": 1, "executable": path});
+
+        for (adapter, kind) in [
+            ("private_observation", "window"),
+            ("private_observation", "application"),
+            ("desktop_input", "window_input"),
+            ("desktop_input", "application_input"),
+        ] {
+            let outcome =
+                |extra| loaded.authorize_protected_resource(adapter, &resource(kind, extra));
+            // The granted image, attested by the OS.
+            outcome(serde_json::json!({
+                "fingerprint": attested(Some(&executable)),
+                "launch_path": "/usr/bin/env",
+            }))
+            .unwrap();
+            // A launch command equal to the grant, with no attested image.
+            assert!(
+                outcome(serde_json::json!({"launch_path": executable})).is_err(),
+                "{adapter}/{kind}: launch_path alone"
+            );
+            assert!(
+                outcome(serde_json::json!({
+                    "fingerprint": attested(None),
+                    "launch_path": executable,
+                }))
+                .is_err(),
+                "{adapter}/{kind}: unreadable image path"
+            );
+            // An unattested top-level executable claim.
+            assert!(
+                outcome(serde_json::json!({"executable": executable})).is_err(),
+                "{adapter}/{kind}: unattested executable"
+            );
+            // A different attested image with a matching launch command.
+            assert!(
+                outcome(serde_json::json!({
+                    "fingerprint": attested(Some("/usr/bin/id")),
+                    "launch_path": executable,
+                }))
+                .is_err(),
+                "{adapter}/{kind}: different image"
             );
         }
     }

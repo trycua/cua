@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.64.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.0...cua-driver-rs-v0.64.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-driver:** carry call identity as a typed DispatchIdentity ([#8348](https://github.com/trycua/cua/issues/8348)) ([975fe73](https://github.com/trycua/cua/commit/975fe736349c6d8da2618b8219631aefa1882925))
+
 ## [0.64.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.63.3...cua-driver-rs-v0.64.0) (2026-11-27)
 
 

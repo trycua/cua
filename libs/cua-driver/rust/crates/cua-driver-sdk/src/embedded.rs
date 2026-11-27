@@ -653,7 +653,7 @@ impl EmbeddedCuaDriverHost {
             })
             .kill_on_drop(true);
         #[cfg(target_os = "windows")]
-        prevent_console_window(&mut command);
+        prevent_console_window(command.as_std_mut());
         for variable in safe_environment(&self.options.environment) {
             command.env(variable.name, variable.value);
         }
@@ -1426,7 +1426,8 @@ async fn finish_stderr_task(task: Option<JoinHandle<()>>) {
 }
 
 #[cfg(target_os = "windows")]
-fn prevent_console_window(command: &mut Command) {
+pub(crate) fn prevent_console_window(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt as _;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -2144,7 +2145,7 @@ mod tests {
                     .env(ROLE, host.replace("host-", "probe-"))
                     .env(HOST_PID, std::process::id().to_string())
                     .stdin(Stdio::null());
-                prevent_console_window(&mut probe);
+                prevent_console_window(probe.as_std_mut());
                 assert_probe_passed(probe.output().await.unwrap());
             }
             _ => {

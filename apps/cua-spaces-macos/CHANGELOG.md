@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.21](https://github.com/trycua/cua/compare/cua-spaces-v0.41.20...cua-spaces-v0.41.21) (2026-11-27)
+
+
+### Bug Fixes
+
+* **ci:** clear the Windows test failures and show every failure in one run ([#8780](https://github.com/trycua/cua/issues/8780)) ([9aaed68](https://github.com/trycua/cua/commit/9aaed68f618d01ed7ab0080362adeef34e15cea5))
+
 ## [0.41.20](https://github.com/trycua/cua/compare/cua-spaces-v0.41.19...cua-spaces-v0.41.20) (2026-11-27)
 
 

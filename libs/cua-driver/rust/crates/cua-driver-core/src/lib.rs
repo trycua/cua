@@ -84,6 +84,7 @@ pub mod damage_settle;
 pub mod delivery;
 pub mod deprecation;
 pub mod desktop_capture_scale;
+pub mod dispatch_identity;
 pub mod element_frame;
 pub mod element_query;
 pub mod element_token;

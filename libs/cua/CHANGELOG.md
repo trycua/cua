@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.2](https://github.com/trycua/cua/compare/cua-sdk-v0.31.1...cua-sdk-v0.31.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* **ci:** make the cua SDK workflow finish and pass on main ([#8765](https://github.com/trycua/cua/issues/8765)) ([16dc4e3](https://github.com/trycua/cua/commit/16dc4e377940baf38ce6ee5606478103eba8c5fd))
+
 ## [0.31.1](https://github.com/trycua/cua/compare/cua-sdk-v0.31.0...cua-sdk-v0.31.1) (2026-11-25)
 
 

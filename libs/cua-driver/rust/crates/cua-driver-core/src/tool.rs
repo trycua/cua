@@ -126,6 +126,20 @@ impl Lane {
 /// A call's admission to the input lanes it needs. It is taken after
 /// consent, so a call still being authorized holds no lane, and released
 /// as one once the call's physical action returns.
+///
+/// The order is fixed so no two calls can wait on each other:
+///
+/// 1. [`Lane::Pid`] first. Claiming it never waits for its holder: a busy
+///    pid is refused at once.
+/// 2. [`Lane::Desktop`] last. It is the only lane that waits, and a call may
+///    wait for it while holding a pid lane. That cannot deadlock, because
+///    no call ever waits for a pid lane.
+///
+/// Browser tools take neither lane: they are not physical desktop actions,
+/// so [`requires_desktop_coordination`] is false for them. The browser
+/// operations that mutate a tab serialize on the browser engine's
+/// `MutationGates` instead. Nothing takes the desktop lane and then a
+/// browser gate.
 #[derive(Default)]
 struct InputAdmission {
     pid: Option<PidLane>,
@@ -1849,6 +1863,11 @@ impl ToolRegistry {
     /// Get a tool's ToolDef by name, or None if unknown.
     pub fn get_def(&self, name: &str) -> Option<&ToolDef> {
         self.tools.get(name).map(|t| t.def())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn registered_tool(&self, name: &str) -> Option<&dyn Tool> {
+        self.tools.get(name).map(|tool| tool.as_ref())
     }
 
     /// List all tool names in registration order.
@@ -3740,7 +3759,11 @@ fn is_physical_desktop_action(tool: &str) -> bool {
     cua_driver_contract::is_desktop_action_result_tool(tool) || tool == "bring_to_front"
 }
 
-fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+pub(crate) fn requires_desktop_coordination(
+    tool: &str,
+    args: &Value,
+    independent_lane: bool,
+) -> bool {
     if !is_physical_desktop_action(tool) {
         return false;
     }
@@ -7402,20 +7425,16 @@ resources:
     #[test]
     fn every_native_action_result_tool_takes_the_desktop_lane() {
         use super::is_physical_desktop_action;
-        for name in cua_driver_contract::ACTION_RESULT_TOOLS {
-            assert_eq!(
-                is_physical_desktop_action(name),
-                !name.starts_with("browser_"),
-                "{name}"
-            );
+        // Browser tools are exempt; the browser engine's registration test
+        // owns that contract.
+        for name in cua_driver_contract::ACTION_RESULT_TOOLS
+            .iter()
+            .filter(|name| !name.starts_with("browser_"))
+        {
+            assert!(is_physical_desktop_action(name), "{name}");
         }
         assert!(is_physical_desktop_action("bring_to_front"));
-        for name in [
-            "get_window_state",
-            "screenshot",
-            "launch_app",
-            "browser_click",
-        ] {
+        for name in ["get_window_state", "screenshot", "launch_app"] {
             assert!(!is_physical_desktop_action(name), "{name}");
         }
     }

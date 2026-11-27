@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.22](https://github.com/trycua/cua/compare/cua-spaces-v0.41.21...cua-spaces-v0.41.22) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-agent-setup,cua-volume:** finish the Windows CI lane (CUA-4556) ([#8789](https://github.com/trycua/cua/issues/8789)) ([259a950](https://github.com/trycua/cua/commit/259a950c267f67f37022539d8c2283def0bd307d))
+
 ## [0.41.21](https://github.com/trycua/cua/compare/cua-spaces-v0.41.20...cua-spaces-v0.41.21) (2026-11-27)
 
 

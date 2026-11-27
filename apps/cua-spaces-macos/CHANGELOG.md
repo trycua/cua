@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.41.17](https://github.com/trycua/cua/compare/cua-spaces-v0.41.16...cua-spaces-v0.41.17) (2026-11-27)
+
+
+### Bug Fixes
+
+* **ci:** make the cua SDK workflow finish and pass on main ([#8765](https://github.com/trycua/cua/issues/8765)) ([16dc4e3](https://github.com/trycua/cua/commit/16dc4e377940baf38ce6ee5606478103eba8c5fd))
+* **spaces-macos:** bundle Cua Driver 0.63.3 in Cua Spaces ([#8766](https://github.com/trycua/cua/issues/8766)) ([837f6a0](https://github.com/trycua/cua/commit/837f6a0383ad898c4ec1a8e36eab1005076b7cc9))
+
 ## [0.41.16](https://github.com/trycua/cua/compare/cua-spaces-v0.41.15...cua-spaces-v0.41.16) (2026-11-26)
 
 

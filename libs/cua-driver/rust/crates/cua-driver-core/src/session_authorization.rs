@@ -281,10 +281,11 @@ impl AuthorizationClock {
     }
 
     /// Refresh the idle lease, or report the terminal phase that denies the
-    /// call, under one lock so a refused call refreshes nothing.
+    /// call, under one lock so a refused call refreshes nothing. The time is
+    /// read under the lock, so a delayed caller cannot move the lease back.
     fn commit(&self) -> Result<(), AuthorizationPhase> {
-        let now = Instant::now();
         let mut phase = self.phase.lock().unwrap();
+        let now = Instant::now();
         self.advance(&mut phase, now);
         match *phase {
             AuthorizationPhase::Active { .. } => {

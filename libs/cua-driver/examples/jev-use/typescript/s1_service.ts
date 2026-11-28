@@ -85,6 +85,33 @@ export function validateDecision(decision: unknown, request: RequestLike): Recor
   return value;
 }
 
+async function readBody(response: Response, signal: AbortSignal): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytes = 0;
+  const cancel = () => void reader.cancel(signal.reason).catch(() => {});
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new S1ServiceError('S1 response is too large');
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    signal.removeEventListener('abort', cancel);
+  }
+  chunks.push(decoder.decode());
+  return chunks.join('');
+}
+
 /** POST one validated request and return the chosen ID, confidence, and probabilities. */
 export async function chooseS1Service(
   request: Record<string, unknown>,
@@ -92,21 +119,28 @@ export async function chooseS1Service(
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<S1Choice> {
   const validated = validateRequest(request);
-  let response: Response;
+  // A timer we hold, not AbortSignal.timeout, and a body read that cancels
+  // itself on abort: once fetch resolves, GC can drop both the timeout signal
+  // and undici's abort hook on the body, so a stalled body would never end.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let text: string;
   try {
-    response = await fetch(s1ServiceUrl(url), {
+    const response = await fetch(s1ServiceUrl(url), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: controller.signal,
     });
+    if (!response.ok) throw new S1ServiceError(`S1 service returned HTTP ${response.status}`);
+    text = await readBody(response, controller.signal);
   } catch (error) {
     if (error instanceof S1ServiceError) throw error;
+    if (controller.signal.aborted) throw new S1ServiceError('S1 service timed out');
     throw new S1ServiceError(`S1 service is unreachable: ${(error as Error).name}`);
+  } finally {
+    clearTimeout(timer);
   }
-  if (!response.ok) throw new S1ServiceError(`S1 service returned HTTP ${response.status}`);
-  const text = await response.text();
-  if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) throw new S1ServiceError('S1 response is too large');
   let decision: unknown;
   try {
     decision = JSON.parse(text);

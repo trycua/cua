@@ -61,6 +61,7 @@ describe("host labels", () => {
 
   it("says what the global shortcut does, or why it does nothing", () => {
     expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: true })).toBeNull();
+    expect(globalShortcutLine({ label: "", registered: false })).toBeNull();
     expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: false })).toBe(
       "Another app is using \u2318\u21e7Space, so it does nothing here. Free it in that app, then open Settings again.",
     );

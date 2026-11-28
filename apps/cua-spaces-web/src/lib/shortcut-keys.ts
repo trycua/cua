@@ -41,3 +41,24 @@ export function acceleratorOf(e: KeyPress): string | null {
   const parts = [e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Command", key];
   return parts.filter(Boolean).join("+");
 }
+
+const GLYPHS: Record<string, string> = {
+  Control: "\u2303",
+  Alt: "\u2325",
+  Shift: "\u21e7",
+  Command: "\u2318",
+  Return: "\u21a9",
+  Backspace: "\u232b",
+  Up: "\u2191",
+  Down: "\u2193",
+  Left: "\u2190",
+  Right: "\u2192",
+};
+
+/** `Command+Shift+Space` as the Mac writes it: \u2318\u21e7Space. */
+export function shortcutLabel(accelerator: string): string {
+  return accelerator
+    .split("+")
+    .map((p) => GLYPHS[p] ?? p)
+    .join("");
+}

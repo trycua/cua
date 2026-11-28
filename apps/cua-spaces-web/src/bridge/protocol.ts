@@ -182,9 +182,9 @@ export interface CliInfo {
 
 /** A system-wide shortcut the host registered (macOS: ⌘⇧Space). */
 export interface GlobalShortcut {
-  /** As glyphs (`⌘⇧Space`). */
+  /** As glyphs (`⌘⇧Space`); empty while turned off (Settings' `global-shortcut` row, option `off`). */
   label: string;
-  /** False when the system refused it (another app holds the same keys). */
+  /** False when the system refused it (another app holds the same keys) or it is turned off. */
   registered: boolean;
 }
 

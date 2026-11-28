@@ -131,6 +131,8 @@
   "settings.general.shortcut_recording": "Press the keys you want. Esc cancels.",
   "settings.general.shortcut_cancel": "Cancel",
   "settings.general.shortcut_change": "Change",
+  "settings.general.shortcut_turn_off": "Turn off",
+  "settings.general.shortcut_off": "Off",
   "settings.about.open_failed": "Couldn't open {name}",
   "settings.about.version_copied": "Version copied",
   "settings.about.welcome_failed": "Couldn't show the welcome",

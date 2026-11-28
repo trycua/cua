@@ -80,6 +80,18 @@ describe("changing the global shortcut (Settings, General)", () => {
     expect(shortcut.ensure()).toEqual({ label: "\u2318\u21e7Space", registered: true });
   });
 
+  it("turns off, frees the keys and remembers it, then takes keys again", () => {
+    const { shortcut, registered, unregistered, saved } = make({});
+    shortcut.ensure();
+    expect(shortcut.change("off")).toEqual({ label: "", registered: false });
+    expect(unregistered).toEqual(["Command+Shift+Space"]);
+    expect(saved).toEqual([""]);
+    expect(shortcut.ensure()).toEqual({ label: "", registered: false });
+    expect(registered).toEqual(["Command+Shift+Space"]);
+    expect(shortcut.change("Control+Alt+K")).toEqual({ label: "\u2303\u2325K", registered: true });
+    expect(unregistered).toEqual(["Command+Shift+Space"]);
+  });
+
   it("takes only shortcuts with Command, Control or Option and one key", () => {
     for (const ok of ["Command+Shift+Space", "Control+Alt+K", "Alt+1", "Command+F12", "Shift+Command+Up"]) expect(isAccelerator(ok), ok).toBe(true);
     for (const bad of ["K", "Shift+K", "Command", "Command+Shift", "Command+kk", "Command+F25", "", "Command+Shift+Space+K"])
@@ -94,5 +106,8 @@ describe("changing the global shortcut (Settings, General)", () => {
     expect(register).toHaveBeenLastCalledWith("Control+Alt+K", expect.any(Function));
     installGlobalShortcut("darwin", () => {}, { read: () => "nonsense", write: () => {} });
     expect(register).toHaveBeenLastCalledWith("Command+Shift+Space", expect.any(Function));
+    register.mockClear();
+    expect(installGlobalShortcut("darwin", () => {}, { read: () => "", write: () => {} })?.ensure()).toEqual({ label: "", registered: false });
+    expect(register).not.toHaveBeenCalled();
   });
 });

@@ -581,12 +581,13 @@ fn unsupported_host(vmm: Vmm) -> Option<VmmError> {
         return None;
     }
     if vmm == Vmm::Qemu {
-        // WHPX, QEMU and a static init, each with what to do about it.
-        if let Some(why) = whpx::unsupported_reason(&whpx::status()) {
+        // Hardware that cannot work (firmware, a pending restart). The Windows
+        // feature and QEMU are set up by the create itself ([`Self::check_whpx`]).
+        let w = whpx::status();
+        if w != whpx::Whpx::FeatureOff
+            && let Some(why) = whpx::unsupported_reason(&w)
+        {
             return Some(VmmError::other(why));
-        }
-        if whpx::qemu_bin().is_none() {
-            return Some(whpx::qemu_missing());
         }
         return None;
     }
@@ -1555,12 +1556,31 @@ impl MicroVmRuntime {
         Ok(())
     }
 
-    /// What a QEMU microVM needs first: WHPX, QEMU and its version (before
-    /// anything downloads), each with what to do about it.
-    fn check_whpx(&self) -> Result<()> {
-        let w = whpx::status();
-        if let Some(why) = whpx::unsupported_reason(&w) {
+    /// What a QEMU microVM needs first: WHPX, QEMU and its version, each
+    /// with what to do about it. What Cua can set up (the Windows feature,
+    /// QEMU) is set up here, with one administrator prompt; a restart that
+    /// Windows then needs is an error that says so.
+    async fn check_whpx(&self) -> Result<()> {
+        let mut w = whpx::status();
+        // Firmware and restart problems come first: no install fixes them.
+        if w != whpx::Whpx::FeatureOff
+            && let Some(why) = whpx::unsupported_reason(&w)
+        {
             return Err(VmmError::other(why));
+        }
+        let needs = whpx::needs(&w, whpx::qemu_state_now().await);
+        if needs.any() {
+            if whpx::provision(needs).await? == whpx::Enabled::RestartNeeded {
+                return Err(VmmError::other(whpx::restart_message(needs)));
+            }
+            w = whpx::status();
+        }
+        if let Some(why) = whpx::unsupported_reason(&w) {
+            return Err(VmmError::other(if needs.feature {
+                whpx::restart_message(needs)
+            } else {
+                why
+            }));
         }
         whpx::qemu_bin().ok_or_else(whpx::qemu_missing)?;
         whpx::qemu_img_bin().ok_or_else(whpx::qemu_missing)?;
@@ -2259,7 +2279,7 @@ impl MicroVmRuntime {
             assets::ensure_firecracker().await?;
         }
         if self.cfg.vmm == Vmm::Qemu {
-            self.check_whpx()?;
+            self.check_whpx().await?;
         }
         let kernel = assets::ensure_kernel(&self.cfg.root).await?;
         crate::progress::report(crate::progress::Progress::phase(
@@ -3165,6 +3185,10 @@ impl Runtime for MicroVmRuntime {
         validate_name(&spec.name)?;
         if let Some(e) = unsupported_host(self.cfg.vmm) {
             return Err(e);
+        }
+        if self.cfg.vmm == Vmm::Qemu {
+            // Before the image downloads: set up what is missing, or say why not.
+            self.check_whpx().await?;
         }
         reject_sidecars(self.cfg.vmm.backend(), spec)?;
         crate::types::reject_mounts(self.cfg.vmm.backend(), spec)?;

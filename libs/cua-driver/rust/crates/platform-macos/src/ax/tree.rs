@@ -104,6 +104,9 @@ pub struct AXNode {
     pub enabled: Option<bool>,
     /// AXSelected. `None` when the app doesn't report the attribute.
     pub selected: Option<bool>,
+    /// AXURL of a link — the target a press would navigate to. Read only for
+    /// actionable `AXLink` nodes; `None` everywhere else.
+    pub url: Option<String>,
     /// True when this node is an AX web-document root or descends from one.
     /// This trust marker is independent of actionable ancestry because
     /// AXWebArea is commonly non-actionable and therefore has no element index.
@@ -118,6 +121,14 @@ struct ControlState {
     max_value: Option<f64>,
     enabled: Option<bool>,
     selected: Option<bool>,
+    url: Option<String>,
+}
+
+/// Roles whose `AXURL` names a navigation target worth surfacing. `AXWebArea`
+/// also carries `AXURL` (the document URL) but is not actionable, so it never
+/// reaches the structured `elements` array.
+fn role_exposes_link_url(role: &str) -> bool {
+    role == "AXLink"
 }
 
 fn read_control_state_if_actionable<F>(is_actionable: bool, read: F) -> ControlState
@@ -159,6 +170,41 @@ fn read_identity_attrs(
             None
         },
     }
+}
+
+/// AXTitle, or, for a control with neither AXTitle nor AXDescription, the
+/// text of its AXTitleUIElement. A SwiftUI grouped `Form` names its toggles
+/// only through that separate label (#6697), and VoiceOver reads it the same
+/// way. Following it costs round trips only for unnamed controls.
+pub(crate) fn title_or_title_element(
+    title: Option<&str>,
+    description: Option<&str>,
+    title_element_text: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let named = |text: Option<&str>| text.is_some_and(|t| !t.trim().is_empty());
+    if named(title) || named(description) {
+        return title.map(str::to_owned);
+    }
+    title_element_text()
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
+/// The text of `element`'s AXTitleUIElement: its AXValue (a static text
+/// label), else its AXTitle.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef`.
+pub(crate) unsafe fn copy_title_element_text(
+    element: AXUIElementRef,
+    timeout_seconds: f32,
+) -> Option<String> {
+    let label = copy_element_attr(element, "AXTitleUIElement")?;
+    AXUIElementSetMessagingTimeout(label, timeout_seconds);
+    let [value, title] = copy_string_attrs(label, ["AXValue", "AXTitle"]);
+    CFRelease(label as CFTypeRef);
+    value.filter(|v| !v.trim().is_empty()).or(title)
 }
 
 fn role_supports_value_addressing(role: &str) -> bool {
@@ -766,6 +812,13 @@ unsafe fn walk_element(
         None
     };
     let is_actionable = is_addressable(!advertised.is_empty(), value_settable);
+    let title = if is_actionable {
+        title_or_title_element(title.as_deref(), description.as_deref(), || {
+            copy_title_element_text(element, AX_MESSAGING_TIMEOUT_SECONDS)
+        })
+    } else {
+        title
+    };
     let identity = read_identity_attrs(is_actionable, value.is_none(), |attr| attrs.string(attr));
     let value = value.or_else(|| identity.placeholder.clone());
 
@@ -825,6 +878,14 @@ unsafe fn walk_element(
         max_value: attrs.number(NodeAttr::MaxValue),
         enabled,
         selected: attrs.bool(NodeAttr::Selected),
+        url: if role_exposes_link_url(&role) {
+            attrs
+                .url(NodeAttr::Url)
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+        } else {
+            None
+        },
     });
     let node = if is_actionable {
         let idx = *counter;
@@ -866,6 +927,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            url: control_state.url.clone(),
             in_web_content,
         }
     } else {
@@ -903,6 +965,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            url: control_state.url.clone(),
             in_web_content,
         }
     };
@@ -1372,6 +1435,7 @@ mod tests {
             max_value: None,
             enabled: None,
             selected: None,
+            url: None,
             in_web_content: false,
         };
         assert_eq!(
@@ -1414,6 +1478,7 @@ mod tests {
             max_value: None,
             enabled: Some(false),
             selected: None,
+            url: None,
             in_web_content: false,
         };
         assert_eq!(
@@ -1450,6 +1515,7 @@ mod tests {
             max_value: None,
             enabled: Some(true),
             selected: None,
+            url: None,
             in_web_content: false,
         };
         let rendered = format_node_line(&node);
@@ -1533,6 +1599,34 @@ mod tests {
     }
 
     #[test]
+    fn an_unnamed_control_takes_its_title_element_text() {
+        let label = || Some(" Launch at login ".to_owned());
+        assert_eq!(
+            title_or_title_element(None, None, label).as_deref(),
+            Some("Launch at login")
+        );
+        assert_eq!(
+            title_or_title_element(Some(" "), Some(""), label).as_deref(),
+            Some("Launch at login")
+        );
+        assert_eq!(title_or_title_element(None, None, || None), None);
+        assert_eq!(
+            title_or_title_element(None, None, || Some("  ".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_named_control_never_reads_its_title_element() {
+        let unread = || -> Option<String> { panic!("AXTitleUIElement read for a named control") };
+        assert_eq!(
+            title_or_title_element(Some("Save"), None, unread).as_deref(),
+            Some("Save")
+        );
+        assert_eq!(title_or_title_element(None, Some("2"), unread), None);
+    }
+
+    #[test]
     fn actionable_nodes_read_placeholder_and_subrole_once() {
         for value_is_empty in [false, true] {
             let (reads, identity) = identity_reads(true, value_is_empty);
@@ -1542,6 +1636,20 @@ mod tests {
                 Some("raw AXPlaceholderValue")
             );
             assert_eq!(identity.subrole.as_deref(), Some("raw AXSubrole"));
+        }
+    }
+
+    #[test]
+    fn link_url_is_read_only_for_links() {
+        assert!(role_exposes_link_url("AXLink"));
+        for role in [
+            "AXWebArea",
+            "AXButton",
+            "AXStaticText",
+            "AXImage",
+            "AXTextField",
+        ] {
+            assert!(!role_exposes_link_url(role), "{role}");
         }
     }
 }

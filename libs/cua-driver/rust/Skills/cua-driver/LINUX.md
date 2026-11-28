@@ -261,8 +261,12 @@ backend from compositor capabilities:
 - Hyprland has separate discovery and capture adapters. Its optional plugin
   defaults to discovery-only; the opt-in input v3 source candidate has the
   qualification and validation limits below. Do not inherit Sway coverage.
-- GNOME/Mutter uses the bundled WinRects Shell helper for target geometry and
-  activation, plus portal/libei for foreground raw input.
+- GNOME/Mutter uses the bundled WinRects Shell helper for target geometry,
+  activation and window capture, plus portal/libei for foreground raw input.
+  Window capture needs helper API 9 or newer; with an older helper loaded,
+  `get_window_state` returns the tree and `surface_identity_unproven`, whose
+  reason names the API the helper reports, if any. Ask the user to re-run the Cua Driver
+  installer and log in again; `get_desktop_state` still works meanwhile.
 - KDE/KWin uses AT-SPI and portal facilities where available. Where the
   operator has enabled it, it also gets exact window geometry, stacking,
   capture of a covered window, and `bring_to_front`; otherwise window capture

@@ -341,7 +341,8 @@ unsafe fn target_is_obscured(target: HWND) -> bool {
 }
 
 fn monitor_bounds() -> Vec<Bounds> {
-    use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 
     unsafe extern "system" fn collect(
@@ -360,7 +361,7 @@ fn monitor_bounds() -> Vec<Bounds> {
     let mut bounds = Vec::new();
     unsafe {
         let _ = EnumDisplayMonitors(
-            HDC::default(),
+            None,
             None,
             Some(collect),
             LPARAM(&mut bounds as *mut Vec<Bounds> as isize),
@@ -434,26 +435,26 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
         );
     }
 
-    let screen_dc = GetDC(HWND(std::ptr::null_mut())); // NULL HWND → desktop DC
+    let screen_dc = GetDC(Some(HWND(std::ptr::null_mut()))); // NULL HWND → desktop DC
     if screen_dc.is_invalid() {
         bail!("screen-region fallback: GetDC(NULL) returned an invalid desktop DC");
     }
-    let mem_dc = CreateCompatibleDC(screen_dc);
+    let mem_dc = CreateCompatibleDC(Some(screen_dc));
     if mem_dc.is_invalid() {
-        ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+        ReleaseDC(Some(HWND(std::ptr::null_mut())), screen_dc);
         bail!("screen-region fallback: CreateCompatibleDC returned an invalid memory DC");
     }
     let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
     if bitmap.is_invalid() {
         let _ = DeleteDC(mem_dc);
-        ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+        ReleaseDC(Some(HWND(std::ptr::null_mut())), screen_dc);
         bail!("screen-region fallback: CreateCompatibleBitmap returned an invalid bitmap");
     }
-    let old_bitmap = SelectObject(mem_dc, bitmap);
+    let old_bitmap = SelectObject(mem_dc, bitmap.into());
     if old_bitmap.is_invalid() {
-        let _ = DeleteObject(bitmap);
+        let _ = DeleteObject(bitmap.into());
         let _ = DeleteDC(mem_dc);
-        ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+        ReleaseDC(Some(HWND(std::ptr::null_mut())), screen_dc);
         bail!("screen-region fallback: SelectObject failed to select the capture bitmap");
     }
 
@@ -464,7 +465,7 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
         0,
         w,
         h,
-        screen_dc,
+        Some(screen_dc),
         physical_left,
         physical_top,
         SRCCOPY,
@@ -497,9 +498,9 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
         DIB_RGB_COLORS,
     );
 
-    let _ = DeleteObject(bitmap);
+    let _ = DeleteObject(bitmap.into());
     let _ = DeleteDC(mem_dc);
-    ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+    ReleaseDC(Some(HWND(std::ptr::null_mut())), screen_dc);
 
     if blt_ok.is_err() {
         bail!("screen-region fallback: BitBlt failed: {:?}", blt_ok);
@@ -714,14 +715,14 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
     let w = geometry.width;
     let h = geometry.height;
 
-    let screen_dc = GetWindowDC(hwnd);
-    let mem_dc = CreateCompatibleDC(screen_dc);
+    let screen_dc = GetWindowDC(Some(hwnd));
+    let mem_dc = CreateCompatibleDC(Some(screen_dc));
     let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
-    let old_bitmap = SelectObject(mem_dc, bitmap);
+    let old_bitmap = SelectObject(mem_dc, bitmap.into());
 
     let pw_ok = PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT);
     if !pw_ok.as_bool() {
-        BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
+        BitBlt(mem_dc, 0, 0, w, h, Some(screen_dc), 0, 0, SRCCOPY)?;
     }
 
     // Compute the DWM-extended-frame bounds. On Win10+ the OS draws an
@@ -775,9 +776,9 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
         DIB_RGB_COLORS,
     );
 
-    let _ = DeleteObject(bitmap);
+    let _ = DeleteObject(bitmap.into());
     let _ = DeleteDC(mem_dc);
-    ReleaseDC(hwnd, screen_dc);
+    ReleaseDC(Some(hwnd), screen_dc);
 
     if ok != h {
         bail!("window capture: GetDIBits copied {ok} of {h} scanlines");
@@ -906,29 +907,29 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         if w <= 0 || h <= 0 {
             bail!("Could not get screen metrics");
         }
-        let screen_dc = GetDC(HWND::default());
+        let screen_dc = GetDC(None);
         if screen_dc.is_invalid() {
             bail!("GetDC(NULL) returned an invalid desktop DC");
         }
-        let mem_dc = CreateCompatibleDC(screen_dc);
+        let mem_dc = CreateCompatibleDC(Some(screen_dc));
         if mem_dc.is_invalid() {
-            ReleaseDC(HWND::default(), screen_dc);
+            ReleaseDC(None, screen_dc);
             bail!("CreateCompatibleDC returned an invalid memory DC");
         }
         let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
         if bitmap.is_invalid() {
             let _ = DeleteDC(mem_dc);
-            ReleaseDC(HWND::default(), screen_dc);
+            ReleaseDC(None, screen_dc);
             bail!("CreateCompatibleBitmap returned an invalid bitmap");
         }
-        let old_bitmap = SelectObject(mem_dc, bitmap);
+        let old_bitmap = SelectObject(mem_dc, bitmap.into());
         if old_bitmap.is_invalid() {
-            let _ = DeleteObject(bitmap);
+            let _ = DeleteObject(bitmap.into());
             let _ = DeleteDC(mem_dc);
-            ReleaseDC(HWND::default(), screen_dc);
+            ReleaseDC(None, screen_dc);
             bail!("SelectObject failed to select the capture bitmap");
         }
-        let blt_result = BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY);
+        let blt_result = BitBlt(mem_dc, 0, 0, w, h, Some(screen_dc), 0, 0, SRCCOPY);
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -953,9 +954,9 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
             &mut bmi,
             DIB_RGB_COLORS,
         );
-        let _ = DeleteObject(bitmap);
+        let _ = DeleteObject(bitmap.into());
         let _ = DeleteDC(mem_dc);
-        ReleaseDC(HWND::default(), screen_dc);
+        ReleaseDC(None, screen_dc);
         if let Err(error) = blt_result {
             // A locked PC or a disconnected Remote Desktop session: say which.
             if let Some(why) = crate::diagnostics::desktop_unavailable() {

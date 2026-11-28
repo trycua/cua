@@ -175,7 +175,14 @@ impl Source {
                 format!("the macOS Keychain item \u{201c}{service}\u{201d}")
             }
             Source::File(p) => match p.strip_prefix(&env.home) {
-                Ok(rel) => format!("~/{}", rel.display()),
+                Ok(rel) => {
+                    // Always `/`, so the line reads the same on Windows.
+                    let parts: Vec<_> = rel
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect();
+                    format!("~/{}", parts.join("/"))
+                }
                 Err(_) => p.display().to_string(),
             },
         }

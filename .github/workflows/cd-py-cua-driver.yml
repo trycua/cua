@@ -341,6 +341,11 @@ jobs:
         with:
           name: cua-driver-npm-${{ needs.get-version.outputs.version }}
           path: dist
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          sparse-checkout: .github/scripts/npm_dist_tag.py
+          sparse-checkout-cone-mode: false
+          path: repo-scripts
       - name: Publish native packages before the public SDK
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -357,7 +362,12 @@ jobs:
             elif npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
               echo "$NAME@$VERSION already published; skipping"
             else
-              npm publish "./$package" --access public --provenance
+              # Releases can publish out of order (0.63.1 before 0.63.0), and
+              # npm refuses an implicit `latest` below the current latest.
+              # Pick the tag from the registry state instead.
+              LATEST=$(npm view "$NAME" dist-tags.latest 2>/dev/null || true)
+              TAG=$(python3 repo-scripts/.github/scripts/npm_dist_tag.py "$VERSION" "$LATEST")
+              npm publish "./$package" --access public --provenance --tag "$TAG"
             fi
           done
       - name: Publish @trycua/cua-driver
@@ -371,7 +381,9 @@ jobs:
           elif npm view "@trycua/cua-driver@$VERSION" version >/dev/null 2>&1; then
             echo "@trycua/cua-driver@$VERSION already published; skipping"
           else
-            npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --provenance
+            LATEST=$(npm view "@trycua/cua-driver" dist-tags.latest 2>/dev/null || true)
+            TAG=$(python3 repo-scripts/.github/scripts/npm_dist_tag.py "$VERSION" "$LATEST")
+            npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --provenance --tag "$TAG"
           fi
       - name: Attach npm packages to the Cua Driver release
         env:

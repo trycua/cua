@@ -312,6 +312,52 @@ impl Tool for SetAgentCursorThemeTool {
     }
 }
 
+pub struct SetAgentCursorBadgeTool {
+    state: Arc<ToolState>,
+}
+
+impl SetAgentCursorBadgeTool {
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
+}
+
+static BADGE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for SetAgentCursorBadgeTool {
+    fn def(&self) -> &ToolDef {
+        BADGE_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_badge"))
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if !self.state.cursor_overlay_available {
+            return super::cursor_overlay_unavailable();
+        }
+        let Some(show_session_label) = args.get("show_session_label").and_then(Value::as_bool)
+        else {
+            return ToolResult::error("Missing required boolean field `show_session_label`.");
+        };
+        let session = resolve_cursor_key(&args);
+        crate::cursor::overlay::send_command(
+            session.clone(),
+            cursor_overlay::OverlayCommand::SetSessionLabelVisible(show_session_label),
+        );
+        ToolResult::text(format!(
+            "Agent cursor session label for session '{session}' {}.",
+            if show_session_label {
+                "shown"
+            } else {
+                "hidden"
+            }
+        ))
+        .with_structured(serde_json::json!({
+            "session": session,
+            "badge": { "show_session_label": show_session_label }
+        }))
+    }
+}
+
 pub struct GetAgentCursorStateTool {
     state: Arc<ToolState>,
 }
@@ -355,6 +401,7 @@ impl Tool for GetAgentCursorStateTool {
             .and_then(|state| state.position.as_ref())
             .map(|position| serde_json::json!({ "x": position.x, "y": position.y }));
         let motion = crate::cursor::overlay::current_motion(&session);
+        let show_session_label = crate::cursor::overlay::current_show_session_label(&session);
         let (theme_id, version, profile, fallback, visual) =
             crate::cursor::overlay::current_theme_state(&session).unwrap_or_else(|| {
                 (
@@ -392,7 +439,8 @@ impl Tool for GetAgentCursorStateTool {
                     "frame": visual.frame(),
                     "preempted_count": visual.preempted_count
                 },
-                "motion": motion.output_json()
+                "motion": motion.output_json(),
+                "badge": { "show_session_label": show_session_label }
             }),
         )
     }

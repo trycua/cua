@@ -96,6 +96,16 @@ is outlined. Chips stay visible for the active action and fade over 400
 milliseconds when it ends. They do not reveal a session name that has already
 faded. An unlabeled session gets a compact marker-and-chips badge.
 
+A session can hide its name without renaming itself or hiding the cursor:
+`set_agent_cursor_badge` with `show_session_label: false`, or
+`start_session` with `cursor_badge: {"show_session_label": false}` to hide it
+before the cursor first shows. The name then never appears, on reveal, on hover
+or next to other cursors, in any badge mode; the delivery and target chips
+still show on their own. `true` shows it again with a fresh reveal. The setting
+belongs to the session: other sessions keep theirs, a repeated `start_session`
+without `cursor_badge` keeps it, and ending the session drops it.
+`get_agent_cursor_state` reports it as `badge.show_session_label`.
+
 The badge and its context glyphs are not part of the dotLottie theme artifact,
 so custom theme authors do not need to provide badge artwork or a font. Cua
 Driver strips control
@@ -159,12 +169,13 @@ The default theme fill is derived from the declared `session` id. There is no
 separate fill-color tool argument. Installed custom themes keep the colors
 compiled into their own artwork.
 
-The same four typed operations are available on `CuaDriver` and
+The same five typed operations are available on `CuaDriver` and
 `CuaDriverSession` in the Python and TypeScript SDKs:
 
 - `set_agent_cursor_enabled`
 - `set_agent_cursor_motion`
 - `set_agent_cursor_theme`
+- `set_agent_cursor_badge`
 - `get_agent_cursor_state`
 
 `StartSessionInput.cursor_theme` may select an installed theme when the session

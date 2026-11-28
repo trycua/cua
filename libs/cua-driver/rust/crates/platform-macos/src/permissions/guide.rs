@@ -16,7 +16,7 @@
 //! app and starts it again with no arguments.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::permissions::gate::MissingPermission;
 use crate::permissions::status::PermissionsStatus;
@@ -93,14 +93,46 @@ pub const WINDOW_TITLE: &str = "Set up Cua Driver";
 pub const DONE_TITLE: &str = "All set. Cua Driver can now use this Mac.";
 pub const OPEN_SETTINGS_BUTTON: &str = "Open System Settings";
 pub const NOT_NOW_BUTTON: &str = "Not Now";
-pub const DRAG_HINT: &str = "If Cua Driver isn't in the list, drag this into it:";
+pub const ADD_HINT: &str =
+    "If Cua Driver isn't in the list, click + under it and choose Cua Driver in Applications.";
+pub const OR_DRAG: &str = " Or drag this into it:";
 pub const TILE_NAME: &str = "Cua Driver";
 pub const TILE_DRAG_LABEL: &str = "Drag";
+pub const TILE_TOOLTIP: &str = "Drag Cua Driver into the list in System Settings.";
 pub const WAITING_LINE: &str = "Waiting for the switch to turn on…";
 pub const TURNED_ON_LINE: &str = "Turned on.";
 
 pub fn for_app(text: &str, app: &str) -> String {
     text.replace(APP_NAME, app)
+}
+
+/// Whether System Settings' privacy lists take an app dragged in. From
+/// macOS 27 they refuse a drop and only the + button adds an app, so the
+/// drag tile shows only before 27. An unknown version gets no tile.
+pub fn lists_accept_drops(macos_major: Option<u32>) -> bool {
+    macos_major.is_some_and(|major| major < 27)
+}
+
+/// The macOS major version from a product version such as "26.6.2".
+pub fn macos_major(product_version: &str) -> Option<u32> {
+    product_version.split('.').next()?.parse().ok()
+}
+
+/// The line under Open System Settings: the + route with the app's exact
+/// path (`bundle`, when the host runs from one), plus the drag tile's
+/// prompt where the list still takes a drop.
+pub fn add_hint(app: &str, bundle: Option<&Path>, drops: bool) -> String {
+    let mut hint = for_app(ADD_HINT, app);
+    if let Some(path) = bundle {
+        hint = hint.replace(
+            &format!(" choose {app} in Applications."),
+            &format!(" choose {}.", path.display()),
+        );
+    }
+    if drops {
+        hint.push_str(OR_DRAG);
+    }
+    hint
 }
 
 /// What the guide must do after reading a status.
@@ -160,7 +192,7 @@ impl GuideMachine {
         }
     }
 
-    /// Feed a fresh status (the guide checks every second). Returns what to
+    /// Feed a fresh status (see [`PollSchedule`]). Returns what to
     /// do, in order. Requests are marked as made.
     pub fn on_status(&mut self, status: PermissionsStatus) -> Vec<GuideEffect> {
         let mut effects = Vec::new();
@@ -200,6 +232,84 @@ pub fn next_request(
         return Some(MissingPermission::ScreenRecording);
     }
     None
+}
+
+// ── When to check the switches again ───────────────────────────────────────
+
+/// How often the guide and the terminal wait check the switches. Each check
+/// starts a fresh helper process, because macOS caches a "no" in the process
+/// that asked. So checks are quick only for a while after something happens
+/// (the wait starts, a switch turns on, the person opens System Settings) and
+/// slower the rest of the time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PollCadence {
+    /// Time between checks right after something happens.
+    pub quick: Duration,
+    /// How long checks stay quick after something happens.
+    pub quick_for: Duration,
+    /// Time between checks the rest of the time.
+    pub settled: Duration,
+}
+
+impl PollCadence {
+    /// While the guide or the terminal text is up and someone may be in
+    /// System Settings.
+    pub const INTERACTIVE: Self = Self {
+        quick: Duration::from_secs(1),
+        quick_for: Duration::from_secs(30),
+        settled: Duration::from_secs(5),
+    };
+
+    /// One check every `every`, whatever happens.
+    pub const fn steady(every: Duration) -> Self {
+        Self {
+            quick: every,
+            quick_for: Duration::ZERO,
+            settled: every,
+        }
+    }
+}
+
+/// When the next check is due under a [`PollCadence`].
+#[derive(Debug, Clone, Copy)]
+pub struct PollSchedule {
+    cadence: PollCadence,
+    active_since: Instant,
+    last_check: Option<Instant>,
+}
+
+impl PollSchedule {
+    pub fn new(cadence: PollCadence, now: Instant) -> Self {
+        Self {
+            cadence,
+            active_since: now,
+            last_check: None,
+        }
+    }
+
+    /// Something happened: check quickly again for a while.
+    pub fn note_activity(&mut self, now: Instant) {
+        self.active_since = now;
+    }
+
+    /// Record a check made at `now`.
+    pub fn checked(&mut self, now: Instant) {
+        self.last_check = Some(now);
+    }
+
+    /// How long until the next check is due; zero when it is due now.
+    pub fn wait(&self, now: Instant) -> Duration {
+        let Some(last) = self.last_check else {
+            return Duration::ZERO;
+        };
+        let quick = now.saturating_duration_since(self.active_since) < self.cadence.quick_for;
+        let interval = if quick {
+            self.cadence.quick
+        } else {
+            self.cadence.settled
+        };
+        interval.saturating_sub(now.saturating_duration_since(last))
+    }
 }
 
 // ── Resuming after "Quit & Reopen" ─────────────────────────────────────────
@@ -392,6 +502,40 @@ mod tests {
         }
     }
 
+    /// Seconds between the checks a schedule makes over `span`, with
+    /// `activity_at` seconds where something happens.
+    fn check_gaps(cadence: PollCadence, span: u64, activity_at: &[u64]) -> Vec<u64> {
+        let start = Instant::now();
+        let mut schedule = PollSchedule::new(cadence, start);
+        let mut checks = Vec::new();
+        for second in 0..=span {
+            let now = start + Duration::from_secs(second);
+            if activity_at.contains(&second) {
+                schedule.note_activity(now);
+            }
+            if schedule.wait(now).is_zero() {
+                schedule.checked(now);
+                checks.push(second);
+            }
+        }
+        checks.windows(2).map(|pair| pair[1] - pair[0]).collect()
+    }
+
+    #[test]
+    fn checks_are_quick_only_for_a_while_after_something_happens() {
+        let gaps = check_gaps(PollCadence::INTERACTIVE, 120, &[60]);
+        // Every second for the first 30 s, then every 5 s until the activity
+        // at 60 s makes them quick again for 30 s, then every 5 s.
+        let mut expected = vec![1; 29];
+        expected.extend([5; 6]);
+        expected.extend([1; 30]);
+        expected.extend([5; 6]);
+        assert_eq!(gaps, expected);
+
+        let gaps = check_gaps(PollCadence::steady(Duration::from_secs(30)), 120, &[45]);
+        assert_eq!(gaps, vec![30, 30, 30, 30]);
+    }
+
     #[test]
     fn step_follows_the_first_switch_that_is_off() {
         assert_eq!(
@@ -503,8 +647,10 @@ mod tests {
             DONE_TITLE,
             OPEN_SETTINGS_BUTTON,
             NOT_NOW_BUTTON,
-            DRAG_HINT,
+            ADD_HINT,
+            OR_DRAG,
             TILE_NAME,
+            TILE_TOOLTIP,
             WAITING_LINE,
             TURNED_ON_LINE,
         ];
@@ -547,7 +693,7 @@ mod tests {
 
     #[test]
     fn every_name_in_the_copy_follows_the_host_app() {
-        let mut all = vec![WINDOW_TITLE, DONE_TITLE, DRAG_HINT, TILE_NAME];
+        let mut all = vec![WINDOW_TITLE, DONE_TITLE, ADD_HINT, TILE_NAME, TILE_TOOLTIP];
         for step in [
             GuideStep::Accessibility,
             GuideStep::ScreenRecording,
@@ -566,6 +712,38 @@ mod tests {
             "In System Settings, turn on the switch next to Host App."
         );
         assert_eq!(for_app(TILE_NAME, "Host App"), "Host App");
+    }
+
+    #[test]
+    fn add_hint_gives_the_plus_route_and_the_exact_path() {
+        let bundle = Path::new("/Applications/CuaDriver.app");
+        assert_eq!(
+            add_hint(APP_NAME, Some(bundle), false),
+            "If Cua Driver isn't in the list, click + under it and choose \
+             /Applications/CuaDriver.app."
+        );
+        assert_eq!(
+            add_hint("Host App", Some(Path::new("/Users/u/Apps/Host.app")), true),
+            "If Host App isn't in the list, click + under it and choose \
+             /Users/u/Apps/Host.app. Or drag this into it:"
+        );
+        assert_eq!(
+            add_hint(APP_NAME, None, false),
+            "If Cua Driver isn't in the list, click + under it and choose \
+             Cua Driver in Applications."
+        );
+    }
+
+    #[test]
+    fn the_drag_tile_shows_only_before_macos_27() {
+        assert_eq!(macos_major("26.6.2"), Some(26));
+        assert_eq!(macos_major("27.0"), Some(27));
+        assert_eq!(macos_major(""), None);
+        assert!(lists_accept_drops(macos_major("26.6.2")));
+        assert!(lists_accept_drops(Some(15)));
+        assert!(!lists_accept_drops(macos_major("27.0")));
+        assert!(!lists_accept_drops(Some(28)));
+        assert!(!lists_accept_drops(None));
     }
 
     #[test]

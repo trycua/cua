@@ -317,9 +317,12 @@ mod tests {
 
     #[test]
     fn the_linux_card_follows_the_hosts_architecture() {
-        assert_eq!(
-            empty_linux_detail_on("arm64"),
-            "About 3 minutes \u{b7} 3.3\u{2013}7.3 GB of disk"
+        // The sizes come from the catalog pins, which the image-pin bot moves
+        // on every cua-spacesd release: assert the shape, not the figures.
+        let arm = empty_linux_detail_on("arm64");
+        assert!(
+            arm.starts_with("About 3 minutes \u{b7} ") && arm.ends_with(" GB of disk"),
+            "{arm}"
         );
         assert_ne!(
             empty_linux_detail_on("amd64"),

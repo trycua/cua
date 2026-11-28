@@ -64,7 +64,8 @@ fn def() -> &'static ToolDef {
         name: "type_text".into(),
         description: "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\
             \n\
-            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.".into(),
+            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.\n\
+            When key events are needed, an `element_token` target whose keyboard focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key sent.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["text"],
@@ -687,14 +688,17 @@ fn applies_write_before_axvalue_updates(bundle_id: &str) -> bool {
     bundle_id.starts_with("org.mozilla.") || GECKO_BUNDLE_IDS.contains(&bundle_id)
 }
 
-/// `progress` is `None` when the write was refused. `unchanged_web_readback`
-/// is an unchanged read-back from inside an `AXWebArea`.
+/// `progress` is `None` when the write was refused. `write_applies_late` is
+/// an accepted write into a Gecko browser's `AXWebArea`, whose read-back
+/// proves nothing either way until the page applies it.
 fn after_unlanded_ax_write(
     progress: Option<TypedProgress>,
-    unchanged_web_readback: bool,
+    write_applies_late: bool,
 ) -> UnlandedAxWrite {
     match progress {
-        Some(TypedProgress::Unchanged) if unchanged_web_readback => UnlandedAxWrite::MayHaveLanded,
+        Some(TypedProgress::Unchanged | TypedProgress::Unverifiable) if write_applies_late => {
+            UnlandedAxWrite::MayHaveLanded
+        }
         Some(TypedProgress::Unchanged) => UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged),
         Some(TypedProgress::Unverifiable) => UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable),
         None => UnlandedAxWrite::TypeKeys(AxAttempt::Rejected),
@@ -892,11 +896,6 @@ const UNCHANGED_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(
 
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
-
-/// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
-/// an app that installs its own first responder just after activation is
-/// observable, which would otherwise clobber the first write.
-const FOCUS_REAPPLY_DELAY: std::time::Duration = std::time::Duration::from_millis(30);
 
 /// Keyboard-rung policy for one window-addressed background insert, decided
 /// once by the pure exact-target core before any input is posted.
@@ -1319,6 +1318,10 @@ const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
+///
+/// With `exact_keys_window`, no key is sent while another window of the app
+/// holds the focus, since the pid-routed keys would reach it instead. A send
+/// stopped that way is an error that says whether part of the text went out.
 #[allow(clippy::too_many_arguments)]
 fn cgevent_type_verified(
     pid: i32,
@@ -1329,24 +1332,46 @@ fn cgevent_type_verified(
     settle_ms: u64,
     window_id: Option<u32>,
     is_terminal_target: bool,
+    exact_keys_window: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
+    // Every key press first checks that no sibling window holds the focus; a
+    // send stopped that way returns how many characters it posted.
+    let send = |text: &str, delay_ms: u64| match exact_keys_window {
+        Some(wid) => crate::input::keyboard::type_text_while(pid, text, delay_ms, || {
+            !crate::input::skylight::sibling_window_focused(pid, wid)
+        }),
+        None => crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
+            .map(|()| text.chars().count()),
+    };
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
-    // wrong field). AXFocused is best-effort — harmless when unsupported.
+    // wrong field).
     //
     // Ordering matters as much as the write itself. `with_foreground_assist` has
     // already waited for the activation to land, so AppKit has installed the
     // window's remembered first responder by now and this write lands *after*
-    // it rather than being clobbered by it. Re-applying once on a failed
-    // read-back covers apps that install their responder slightly late.
-    if let Some((ptr, _)) = element_ptr_and_idx {
-        let _ = crate::input::ax_actions::focus_element(ptr);
-        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
-            std::thread::sleep(FOCUS_REAPPLY_DELAY);
-            let _ = crate::input::ax_actions::focus_element(ptr);
-        }
-    }
+    // it rather than being clobbered by it. The focus write is re-applied for up
+    // to 200ms, which covers apps that install their responder slightly late.
+    //
+    // Keystrokes go to whatever holds the app's keyboard focus, not to the
+    // target. A target that cannot take focus (a toolbar button) is refused
+    // before any key is posted, exactly as press_key refuses it: typing anyway
+    // put the text into the field that did hold focus (Chrome's address bar),
+    // and the target's unchanged read-back then asked for a retype or a
+    // foreground retry that typed it there a second time.
+    let confirm_key_focus = || {
+        crate::input::ax_actions::with_confirmed_key_focus(
+            element_ptr_and_idx.map(|(ptr, _)| ptr),
+            |ptr| {
+                let _ = crate::input::ax_actions::focus_element(ptr);
+                Ok(())
+            },
+            |ptr| crate::input::ax_actions::element_has_keyboard_focus(pid, ptr),
+            || Ok(()),
+        )
+    };
+    confirm_key_focus()?;
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
     // Even once the window is front and the element focused, the surface isn't
     // ready to accept input for a few tens of ms, so the FIRST synthesized
@@ -1355,8 +1380,17 @@ fn cgevent_type_verified(
     // sites pass 0 — they have no front transition and must not pay this latency.
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+        // AppKit can install another first responder during the settle.
+        confirm_key_focus()?;
     }
-    crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    let sent = send(text, delay_ms)?;
+    if let Some(wid) = exact_keys_window.filter(|_| sent < text.chars().count()) {
+        return Err(crate::input::skylight::sibling_focus_refusal(
+            pid,
+            wid,
+            sent > 0,
+        ));
+    }
     let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
@@ -1384,8 +1418,18 @@ fn cgevent_type_verified(
             if !appends_prefix(before, after.as_deref(), text, done) {
                 return Ok((false, None));
             }
+            // The first batch already went out, so lost focus reports the
+            // partial delivery instead of a refusal.
+            if confirm_key_focus().is_err() {
+                return Ok(outcome);
+            }
             let tail: String = text.chars().skip(done).collect();
-            crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
+            let sent = send(&tail, RETYPE_TAIL_DELAY_MS)?;
+            if let Some(wid) = exact_keys_window.filter(|_| sent < tail.chars().count()) {
+                return Err(crate::input::skylight::sibling_focus_refusal(
+                    pid, wid, true,
+                ));
+            }
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
             return Ok(await_typed_delivery(
                 before,
@@ -1618,7 +1662,7 @@ fn type_text_in_key_window(
             ),
             None => Ok(()),
         };
-        let do_type = |element: Option<(usize, Option<usize>)>| {
+        let do_type = |element: Option<(usize, Option<usize>)>, exact_keys_window: Option<u32>| {
             ensure_enabled()?;
             cgevent_type_verified(
                 pid,
@@ -1629,6 +1673,7 @@ fn type_text_in_key_window(
                 foreground_settle_ms,
                 window_id,
                 is_terminal_target,
+                exact_keys_window,
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
@@ -1704,7 +1749,7 @@ fn type_text_in_key_window(
                         }
                         // The remembered field is focused again; the read-back
                         // follows the focused element.
-                        typed_delivery = do_type(element_ptr_and_idx)?;
+                        typed_delivery = do_type(element_ptr_and_idx, None)?;
                         Ok(())
                     });
                 unsafe {
@@ -1724,20 +1769,26 @@ fn type_text_in_key_window(
                 // Front → type → restore. The closure returns the read-back
                 // result; with_foreground_assist returns whether it actually
                 // fronted (Ok(false) when the fronting SPIs are unavailable —
-                // the keystrokes still ran, just as background input).
+                // the keystrokes still ran, just as background input). Either
+                // way no key is sent while a sibling window keeps the focus.
                 let mut typed_delivery = (false, None);
                 let fronted = crate::input::skylight::with_foreground_assist(
                     pid as libc::pid_t,
                     wid,
                     || {
-                        typed_delivery = do_type(element_ptr_and_idx)?;
+                        // Making the window key alone can leave a sibling
+                        // document focused.
+                        if crate::input::skylight::sibling_window_focused(pid, wid) {
+                            crate::input::skylight::focus_exact_window(pid, wid);
+                        }
+                        typed_delivery = do_type(element_ptr_and_idx, Some(wid))?;
                         Ok(())
                     },
                 )?;
                 (typed_delivery, fronted)
             }
             // No window to front — best-effort background keystrokes instead.
-            None => (do_type(element_ptr_and_idx)?, false),
+            None => (do_type(element_ptr_and_idx, None)?, false),
         };
         // Only claim the `_fg` path when a front actually happened; when no
         // foregrounding occurred (no window, or SPIs unavailable) these were
@@ -1771,6 +1822,7 @@ fn type_text_in_key_window(
             /*settle_ms=*/ 0,
             window_id,
             true,
+            None,
         )?;
         return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
             detail: format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
@@ -1852,14 +1904,17 @@ fn type_text_in_key_window(
         } else {
             None
         };
-        // AXValue is not renderer evidence in web content. An unchanged echo
-        // there cannot prove that zero characters landed, so blind retry is
-        // unsafe even though no synthesis has run yet.
-        let unchanged_web_readback = ax_progress == Some(TypedProgress::Unchanged)
-            && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id)
-            && crate::apps::bundle_id_for_pid(pid)
-                .as_deref()
-                .is_some_and(applies_write_before_axvalue_updates);
+        // AXValue is not renderer evidence in web content. An unchanged or
+        // unreadable echo there cannot prove that zero characters landed, so
+        // blind retry is unsafe even though no synthesis has run yet.
+        let write_applies_late =
+            matches!(
+                ax_progress,
+                Some(TypedProgress::Unchanged | TypedProgress::Unverifiable)
+            ) && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id)
+                && crate::apps::bundle_id_for_pid(pid)
+                    .as_deref()
+                    .is_some_and(applies_write_before_axvalue_updates);
         // An AX insert bypasses NSTextView's edit model, so a document is
         // not marked edited and would never save the new text (DS-07).
         let document = if ax_progress == Some(TypedProgress::Complete) {
@@ -1953,7 +2008,7 @@ fn type_text_in_key_window(
                 delivered_chars: Some(delivered_chars),
             }));
         }
-        ax_attempt = match after_unlanded_ax_write(ax_progress, unchanged_web_readback) {
+        ax_attempt = match after_unlanded_ax_write(ax_progress, write_applies_late) {
             UnlandedAxWrite::TypeKeys(attempt) => attempt,
             // Firefox accepts the write but updates AXValue later (#5383).
             UnlandedAxWrite::MayHaveLanded => {
@@ -2014,6 +2069,7 @@ fn type_text_in_key_window(
         /*settle_ms=*/ 0,
         window_id,
         false,
+        None,
     )?;
     Ok(TypeTextDelivery::Typed(TypeTextOutcome {
         detail: format!(" via CGEvent ({delay_ms}ms delay)"),
@@ -2455,6 +2511,12 @@ mod tests {
         assert_eq!(
             after_unlanded_ax_write(Some(Unchanged), false),
             UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged)
+        );
+        // An unreadable AXValue there is no evidence either: Zen doubled
+        // "BONSAI_TOKEN abc123" the same way (#6269).
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unverifiable), true),
+            UnlandedAxWrite::MayHaveLanded
         );
         assert_eq!(
             after_unlanded_ax_write(Some(Unverifiable), false),

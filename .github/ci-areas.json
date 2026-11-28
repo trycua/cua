@@ -117,6 +117,7 @@
     "ci-ts-cursor-motion.yml",
     "clawhub-cua-driver.yml",
     "docs-driver-first-run-smoke.yml",
+    "docs-page-tests.yml",
     "e2e-cua-sdk.yml",
     "e2e-rust-linux.yml",
     "fuzz-cua-driver.yml",

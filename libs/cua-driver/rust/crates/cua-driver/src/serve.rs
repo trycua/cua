@@ -347,8 +347,31 @@ pub fn default_socket_path() -> String {
     socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
+/// Where `serve` records its PID.
+pub enum PidFile {
+    /// The file `--pid-file` names, on any socket.
+    At(String),
+    /// The default pid file, only while serving the default endpoint. That
+    /// file identifies the default daemon, so a daemon on another socket must
+    /// not overwrite it.
+    DefaultEndpoint,
+}
+
+impl PidFile {
+    pub fn from_arg(pid_file: Option<String>) -> Self {
+        pid_file.map_or(Self::DefaultEndpoint, Self::At)
+    }
+
+    fn path(&self, serves_default_endpoint: impl FnOnce() -> bool) -> Option<String> {
+        match self {
+            Self::At(path) => Some(path.clone()),
+            Self::DefaultEndpoint => serves_default_endpoint().then(default_pid_file_path),
+        }
+    }
+}
+
 /// Returns the platform default PID file path.
-pub fn default_pid_file_path() -> String {
+fn default_pid_file_path() -> String {
     let namespace = crate::bundle::state_namespace();
     #[cfg(target_os = "macos")]
     {
@@ -619,7 +642,7 @@ fn claim_daemon_lock(
 // ── Server ────────────────────────────────────────────────────────────────────
 
 #[cfg(unix)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct SocketIdentity {
     device: u64,
     inode: u64,
@@ -640,7 +663,7 @@ fn remove_owned_socket(socket_path: &str, identity: SocketIdentity) {
     let Ok(current) = socket_identity(socket_path) else {
         return;
     };
-    if current.device == identity.device && current.inode == identity.inode {
+    if current == identity {
         let _ = std::fs::remove_file(socket_path);
     }
 }
@@ -733,10 +756,10 @@ fn claim_socket(socket_path: &str) -> anyhow::Result<Option<std::fs::File>> {
 async fn run_serve(
     sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
-    pid_file_path: Option<&str>,
+    pid_file: Option<&PidFile>,
 ) -> anyhow::Result<()> {
     let socket_lock = claim_socket(socket_path)?;
-    serve_claimed_socket(sdk, socket_path, pid_file_path, socket_lock).await
+    serve_claimed_socket(sdk, socket_path, pid_file, socket_lock).await
 }
 
 /// Resolve once an update has replaced the executable this daemon runs.
@@ -1086,7 +1109,7 @@ mod peer_authentication_tests {
 }
 
 /// Serve on a socket path [`claim_socket`] reserved. Binds `socket_path`,
-/// writes `pid_file_path`, accepts connections, and serves requests until
+/// writes `pid_file`, accepts connections, and serves requests until
 /// `{"method":"shutdown"}`.
 ///
 /// This is `async` and must be called from a tokio runtime.
@@ -1094,7 +1117,7 @@ mod peer_authentication_tests {
 async fn serve_claimed_socket(
     sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
-    pid_file_path: Option<&str>,
+    pid_file: Option<&PidFile>,
     // Held until return so a racing launch cannot unlink this daemon's socket.
     socket_lock: Option<std::fs::File>,
 ) -> anyhow::Result<()> {
@@ -1122,8 +1145,19 @@ async fn serve_claimed_socket(
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
-    // Write PID file.
-    if let Some(pid_path) = pid_file_path {
+    // Compare the bound socket itself, not the spelling of its path. Follow a
+    // symlinked default socket: clients reach whatever it points at.
+    let serves_default_endpoint = || {
+        use std::os::unix::fs::MetadataExt as _;
+        std::fs::metadata(default_socket_path()).is_ok_and(|metadata| {
+            SocketIdentity {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            } == bound_socket
+        })
+    };
+    let pid_file_path = pid_file.and_then(|pid_file| pid_file.path(serves_default_endpoint));
+    if let Some(pid_path) = &pid_file_path {
         if let Some(dir) = std::path::Path::new(pid_path).parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -1575,7 +1609,7 @@ async fn serve_claimed_socket(
 
     // Do not unlink a replacement socket created after this listener was bound.
     remove_owned_socket(socket_path, bound_socket);
-    if let Some(pid_path) = pid_file_path {
+    if let Some(pid_path) = &pid_file_path {
         remove_owned_pid_file(pid_path);
     }
     sdk.shutdown()
@@ -1840,7 +1874,7 @@ struct SecurityAttributesRaw {
 async fn serve_claimed_socket(
     sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
-    pid_file_path: Option<&str>,
+    pid_file: Option<&PidFile>,
     socket_lock: Option<std::fs::File>,
 ) -> anyhow::Result<()> {
     use std::os::windows::io::AsRawHandle as _;
@@ -1864,6 +1898,11 @@ async fn serve_claimed_socket(
         Some((attrs, _sd_ptr)) => attrs as *const _ as *mut _,
         None => std::ptr::null_mut(),
     };
+
+    // Pipe names are case-insensitive.
+    let pid_file_path = pid_file.and_then(|pid_file| {
+        pid_file.path(|| socket_path.eq_ignore_ascii_case(&default_socket_path()))
+    });
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
@@ -1960,7 +1999,7 @@ async fn serve_claimed_socket(
             // launch that lost the pipe never claims it or overwrites the PID
             // file of the daemon that holds it.
             eprintln!("Cua Driver daemon listening on {socket_path}");
-            if let Some(pid_path) = pid_file_path {
+            if let Some(pid_path) = &pid_file_path {
                 if let Some(dir) = std::path::Path::new(pid_path).parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }
@@ -2353,7 +2392,7 @@ async fn serve_claimed_socket(
         }
     }
 
-    if let Some(pid_path) = pid_file_path {
+    if let Some(pid_path) = &pid_file_path {
         remove_owned_pid_file(pid_path);
     }
     // The listening instance is gone, so a successor may take the name while
@@ -2409,7 +2448,7 @@ mod named_pipe_authentication_tests {
 mod pipe_release_tests {
     use super::{
         claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serve_claimed_socket,
-        serving_daemon, stop_daemon, DaemonPresence, StopOutcome,
+        serving_daemon, stop_daemon, DaemonPresence, PidFile, StopOutcome,
     };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -2514,7 +2553,12 @@ mod pipe_release_tests {
         std::fs::write(&pid_file, "4242").unwrap();
         let error = tokio::time::timeout(
             Duration::from_secs(10),
-            serve_claimed_socket(sdk, &pipe, pid_file.to_str(), Some(lock)),
+            serve_claimed_socket(
+                sdk,
+                &pipe,
+                Some(&PidFile::At(pid_file.to_str().unwrap().to_owned())),
+                Some(lock),
+            ),
         )
         .await
         .expect("the launch gives up at once")
@@ -2533,7 +2577,7 @@ mod pipe_release_tests {
 async fn serve_claimed_socket(
     _sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     _socket_path: &str,
-    _pid_file_path: Option<&str>,
+    _pid_file: Option<&PidFile>,
     _socket_lock: Option<std::fs::File>,
 ) -> anyhow::Result<()> {
     anyhow::bail!("cua-driver serve is not supported on this platform");
@@ -2619,11 +2663,10 @@ pub fn claim_socket_for_launch(socket_path: &str) -> Option<std::fs::File> {
 pub fn run_serve_cmd(
     driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     socket_path: &str,
-    pid_file_path: Option<&str>,
+    pid_file: PidFile,
     socket_lock: Option<std::fs::File>,
 ) {
     let socket_path = socket_path.to_owned();
-    let pid_file_path = pid_file_path.map(str::to_owned);
 
     // Session-0 warning banner (Windows). The daemon runs fine in services
     // / SSH contexts for tools that don't touch the desktop, but every
@@ -2662,7 +2705,7 @@ pub fn run_serve_cmd(
     let result = rt.block_on(serve_claimed_socket(
         sdk,
         &socket_path,
-        pid_file_path.as_deref(),
+        Some(&pid_file),
         socket_lock,
     ));
     rt.shutdown_timeout(std::time::Duration::from_secs(30));
@@ -2843,10 +2886,11 @@ pub(crate) fn wait_for_release(socket_path: &str) {
     }
 }
 
-/// `cua-driver status` implementation.
-pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
+/// `cua-driver status` implementation. The PID comes from the file named by
+/// `--pid-file` when given, else from the daemon serving `socket_path`.
+pub fn run_status_cmd(socket_path: &str, pid_file_path: Option<&str>) {
     let presence = probe_presence(socket_path);
-    if let DaemonPresence::Serving { gate, .. } = presence {
+    if let DaemonPresence::Serving { gate, pid } = presence {
         let request = DaemonRequest {
             method: "authorization_status".to_owned(),
             name: None,
@@ -2869,10 +2913,12 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
         }
         println!("Cua Driver daemon is running");
         println!("  socket: {socket_path}");
-        if let Some(pid) = read_pid_file(pid_file_path) {
-            println!("  pid: {pid}");
-        } else {
-            println!("  pid: unknown (no pid file)");
+        match pid_file_path {
+            Some(path) => match read_pid_file(path) {
+                Some(pid) => println!("  pid: {pid}"),
+                None => println!("  pid: unknown (no pid file)"),
+            },
+            None => println!("  pid: {pid}"),
         }
         match gate {
             ToolGate::Open => println!("  tool calls: open"),

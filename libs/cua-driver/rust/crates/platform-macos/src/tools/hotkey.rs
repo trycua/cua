@@ -388,6 +388,11 @@ impl Tool for HotkeyTool {
                         }
                         _ => None,
                     };
+                    let mut focused = match (element_index, focus_xy) {
+                        (Some(index), _) => Some(format!("element [{index}]")),
+                        (None, Some((x, y))) => Some(format!("the element at ({x:.0}, {y:.0})")),
+                        (None, None) => None,
+                    };
                     if let Some((x, y)) = focus_xy {
                         let lease = match super::gate_background_window_action(
                             pid,
@@ -402,7 +407,7 @@ impl Tool for HotkeyTool {
                             Ok(lease) => lease,
                             Err(refusal) => return refusal,
                         };
-                        if let Err(error) = super::focus_by_pixel(
+                        match super::focus_by_pixel(
                             &self.state,
                             pid,
                             Some(wid),
@@ -418,7 +423,9 @@ impl Tool for HotkeyTool {
                         )
                         .await
                         {
-                            return error;
+                            Ok(true) => {}
+                            Ok(false) => focused = None,
+                            Err(error) => return error,
                         }
                     } else if let Some(ptr) = element_ptr {
                         let focused =
@@ -438,10 +445,17 @@ impl Tool for HotkeyTool {
                         super::invoke_menu::MenuRequest::KeyEquivalent(key_display.clone()),
                     )
                     .await;
-                    // Only unavailable background menus may fall back to keys;
-                    // target-safety refusals must survive this route unchanged.
-                    if !menu_allows_key_fallback(&menu_result) {
-                        return menu_result;
+                    // Only LibreOffice's VCL takes a disabled item's shortcut as
+                    // keys (#5306); target-safety refusals survive unchanged.
+                    let vcl = menu_allows_key_fallback(&menu_result)
+                        && tokio::task::spawn_blocking(move || {
+                            crate::input::pointer_toolkit::detect(pid)
+                                == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                        })
+                        .await
+                        .unwrap_or(false);
+                    if let Some(result) = menu_route_result(menu_result, vcl, focused.as_deref()) {
+                        return result;
                     }
                 }
             }
@@ -715,6 +729,51 @@ fn menu_allows_key_fallback(result: &ToolResult) -> bool {
             == Some("background_unavailable")
 }
 
+/// The result of a background hotkey whose menu route answered `result`, or
+/// `None` when the combo goes out as keys.
+fn menu_route_result(
+    mut result: ToolResult,
+    vcl: bool,
+    focused: Option<&str>,
+) -> Option<ToolResult> {
+    let unavailable = menu_allows_key_fallback(&result);
+    if unavailable && vcl {
+        return None;
+    }
+    if let Some(focused) = focused.filter(|_| result.is_error == Some(true)) {
+        note_focus(&mut result, focused);
+    }
+    if !unavailable {
+        return Some(result);
+    }
+    if let Some(structured) = result.structured_content.as_mut() {
+        structured["escalation"] = serde_json::json!({
+            "recommended": "foreground",
+            "reason": "macOS keeps this menu item disabled while the app is in the background, \
+                       and background key events never reach a native app's menus.",
+            "requires": ["window_id"]
+        });
+    }
+    Some(result)
+}
+
+fn note_focus(result: &mut ToolResult, focused: &str) {
+    let note = format!(" Before the menu command, the call wrote the keyboard focus to {focused}.");
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&note);
+    }
+    if let Some(message) = result
+        .structured_content
+        .as_mut()
+        .and_then(|structured| structured.pointer_mut("/refusal/message"))
+    {
+        if let Some(text) = message.as_str() {
+            *message = format!("{text}{note}").into();
+        }
+    }
+}
+
 fn delivered_structured(foreground: bool, chromium_embedder: bool) -> Value {
     let mut structured = serde_json::json!({
         "path": if foreground { "key_events_fg" } else { "key_events" },
@@ -764,6 +823,67 @@ mod tests {
         }
         assert!(!menu_allows_key_fallback(&ToolResult::error("unknown")));
         assert!(!menu_allows_key_fallback(&ToolResult::text("done")));
+    }
+
+    #[test]
+    fn a_disabled_menu_item_is_refused_unless_the_app_takes_its_shortcut_as_keys() {
+        let unavailable = || {
+            ToolResult::error("disabled").with_structured(serde_json::json!({
+                "status": "refused",
+                "code": "background_unavailable",
+                "effect": "refused",
+            }))
+        };
+        let refused = menu_route_result(unavailable(), false, None).expect("a native app refuses");
+        assert_eq!(refused.is_error, Some(true));
+        let structured = refused.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+        assert!(
+            menu_route_result(unavailable(), true, None).is_none(),
+            "LibreOffice takes the shortcut as keys"
+        );
+        let unbound = ToolResult::error("refused")
+            .with_structured(serde_json::json!({ "code": "window_not_key" }));
+        assert!(menu_route_result(unbound, true, None).is_some());
+        assert!(menu_route_result(ToolResult::text("done"), true, None).is_some());
+    }
+
+    #[test]
+    fn a_disabled_menu_refusal_names_the_element_the_call_focused() {
+        let text = |result: ToolResult| match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text.clone(),
+            _ => panic!("a text reply"),
+        };
+        let unavailable = || {
+            ToolResult::error("disabled").with_structured(serde_json::json!({
+                "code": "background_unavailable",
+                "refusal": { "code": "background_unavailable", "message": "disabled" },
+            }))
+        };
+        let note = " Before the menu command, the call wrote the keyboard focus to element [3].";
+        let refused =
+            menu_route_result(unavailable(), false, Some("element [3]")).expect("refused");
+        let message = refused.structured_content.as_ref().expect("structured")["refusal"]
+            ["message"]
+            .as_str()
+            .expect("message")
+            .to_owned();
+        let focused = text(refused);
+        assert!(focused.ends_with(note), "{focused}");
+        assert_eq!(message, focused, "the text and the refusal message match");
+        let unfocused = text(menu_route_result(unavailable(), false, None).expect("refused"));
+        assert_eq!(unfocused, "disabled");
+        let consent = ToolResult::error("no consent").with_structured(serde_json::json!({
+            "code": "automation_consent_required",
+        }));
+        let consent = text(menu_route_result(consent, true, Some("element [3]")).expect("refused"));
+        assert!(consent.ends_with(note), "{consent}");
+        let done = text(
+            menu_route_result(ToolResult::text("done"), true, Some("element [3]")).expect("done"),
+        );
+        assert_eq!(done, "done");
     }
 
     #[test]

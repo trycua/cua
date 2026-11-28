@@ -64,10 +64,19 @@ pub fn defaults_checks() -> Vec<Check> {
             )];
         }
     };
+    defaults_checks_for(&settings)
+}
+
+fn defaults_checks_for(settings: &cua_sandbox_core::settings::Settings) -> Vec<Check> {
     let mut checks = Vec::new();
     for e in settings.list() {
         let id = format!("host.defaults.{}", e.key.name.replace('.', "_"));
-        let valid = cua_sandbox_core::settings::normalize(e.key, &e.value);
+        // Empty built-in paths mean no override, not an invalid program path.
+        let valid = if !e.source.is_user_set() && e.value.is_empty() {
+            Ok(String::new())
+        } else {
+            cua_sandbox_core::settings::normalize(e.key, &e.value)
+        };
         let check = match valid {
             Ok(_) => Check::new(
                 &id,
@@ -617,7 +626,72 @@ mod host_service_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cua_sandbox_core::settings::{self, Settings, Source};
     use cua_spacesd_client::diagnose::{Image, Spacesd};
+
+    #[test]
+    fn unset_runtime_paths_pass_defaults_checks() {
+        let home = tempfile::tempdir().unwrap();
+        let settings = Settings::load_with(home.path().join("config.toml"), |_| None).unwrap();
+        let checks = defaults_checks_for(&settings);
+        for kind in settings::RUNTIME_KINDS {
+            let key = settings::key(&format!("runtime.{kind}_path")).unwrap();
+            let entry = settings.entry(key);
+            assert_eq!(entry.source, Source::Default);
+            assert_eq!(entry.value, "");
+            let id = format!("host.defaults.runtime_{kind}_path");
+            let check = checks.iter().find(|c| c.id == id).unwrap();
+            assert_eq!(check.status, Status::Pass, "{check:?}");
+            assert_eq!(check.severity, Severity::Info);
+        }
+        assert!(
+            checks.iter().all(|c| c.status == Status::Pass),
+            "{checks:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_runtime_paths_are_still_validated() {
+        let home = tempfile::tempdir().unwrap();
+        let config = home.path().join("config.toml");
+        let absolute = home.path().join("runtime").display().to_string();
+        for kind in settings::RUNTIME_KINDS {
+            let key = settings::key(&format!("runtime.{kind}_path")).unwrap();
+            for value in ["relative-runtime", absolute.as_str()] {
+                for from_env in [false, true] {
+                    std::fs::write(
+                        &config,
+                        if from_env {
+                            String::new()
+                        } else {
+                            format!("[runtime]\n{kind}_path = '{value}'\n")
+                        },
+                    )
+                    .unwrap();
+                    let settings = Settings::load_with(&config, |env| {
+                        (from_env && env == key.env).then(|| value.to_string())
+                    })
+                    .unwrap();
+                    let checks = defaults_checks_for(&settings);
+                    let id = format!("host.defaults.runtime_{kind}_path");
+                    let check = checks.iter().find(|c| c.id == id).unwrap();
+                    if value == "relative-runtime" {
+                        assert_eq!(check.status, Status::Fail, "{check:?}");
+                        assert_eq!(check.severity, Severity::Required);
+                        assert!(
+                            check
+                                .message
+                                .contains("expected the full path of a program"),
+                            "{check:?}"
+                        );
+                    } else {
+                        assert_eq!(check.status, Status::Pass, "{check:?}");
+                        assert_eq!(check.severity, Severity::Info);
+                    }
+                }
+            }
+        }
+    }
 
     fn resolved(spacesd: Option<bool>) -> cua_image::ResolvedImage {
         cua_image::ResolvedImage {

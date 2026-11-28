@@ -153,15 +153,18 @@ jobs:
         if: matrix.shard == 1 && steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p platform-windows --lib win32::windows::hung_window_tests::list_windows_does_not_wait_on_a_hung_window -- --ignored --exact --nocapture
+      - name: Prove foreground text reaches a target that was busy when activated
+        if: matrix.shard == 1 && steps.runner-session.outputs.session_id != '0'
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p platform-windows --lib input::keyboard::busy_target_activation_tests -- --ignored --nocapture --test-threads=1
       - name: Run MCP proxy lifecycle regressions
         if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver proxy::tests:: --locked"
-      # The whole binary suite, so a new test module there is never left out.
-      - name: Run cua-driver binary unit tests
+      - name: Run daemon release regressions
         if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
-        run: cargo test -p cua-driver --bin cua-driver --locked
+        run: "cargo test -p cua-driver --bin cua-driver serve::pipe_release_tests:: --locked"
       - name: Run real MCP proxy recovery regression
         if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
@@ -216,6 +219,10 @@ jobs:
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: cargo test -p cua-driver --test launch_app_standard_user_test --locked -- --ignored --nocapture
+      - name: Run cua-driver unit tests
+        if: matrix.shard == 3
+        working-directory: libs/cua-driver/rust
+        run: cargo test -p cua-driver --bin cua-driver --locked
       - name: Run transport-independent authorization and SDK tests
         if: matrix.shard == 3
         working-directory: libs/cua-driver/rust

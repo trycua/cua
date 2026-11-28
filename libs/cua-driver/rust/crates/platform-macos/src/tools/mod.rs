@@ -1433,7 +1433,9 @@ pub fn register_all(
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));
-    registry.register(Box::new(list_windows::ListWindowsTool));
+    registry.register(cua_driver_core::read_cache::list_windows_reply_cache(
+        Arc::new(list_windows::ListWindowsTool),
+    ));
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(
         state.clone(),
     )));

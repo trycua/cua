@@ -754,6 +754,19 @@ pub fn list_all_apps() -> Vec<AppInfo> {
     merge_app_lists(running, installed, &running_states)
 }
 
+/// Run [`list_all_apps`] once on a background thread so a `list_apps` call
+/// soon after the daemon starts finds the installed-app scan cached. It reads
+/// only the process table and bundle plists, so it needs no TCC grant and can
+/// never raise a permission prompt.
+pub fn warm_session_caches() {
+    let spawned = std::thread::Builder::new()
+        .name("cua-warm-caches".into())
+        .spawn(|| drop(list_all_apps()));
+    if let Err(error) = spawned {
+        tracing::debug!("skip session cache warm-up: {error}");
+    }
+}
+
 /// Pure merge behind [`list_all_apps`] — extracted so the identity rules
 /// are testable without a live NSWorkspace:
 ///

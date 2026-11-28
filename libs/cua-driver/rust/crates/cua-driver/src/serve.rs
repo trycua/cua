@@ -1125,6 +1125,8 @@ async fn serve_claimed_socket(
     let bound_socket = socket_identity(socket_path)?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
+    #[cfg(target_os = "macos")]
+    platform_macos::apps::warm_session_caches();
 
     // Compare the bound socket itself, not the spelling of its path. Follow a
     // symlinked default socket: clients reach whatever it points at.

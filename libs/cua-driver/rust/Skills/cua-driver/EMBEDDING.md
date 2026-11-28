@@ -284,6 +284,31 @@ example to record a demo, sets `CUA_DRIVER_BATCH_PACING=full` in the same
 environment as the variables above. Any other value, or none, applies the
 shortened waits. No tool argument can change it.
 
+### Serving recent `list_windows` replies
+
+An agent loop that calls `list_windows` back to back recomputes the same window
+list each time. A host that accepts slightly old answers sets
+`CUA_DRIVER_LIST_WINDOWS_CACHE_MS` in the same environment as the variables
+above. A reply younger than that many milliseconds is served again for the
+same arguments. A reply up to 20 times that age is also served, and the first
+such call starts one background recompute. Calls after that recompute succeeds
+get the new list; calls before it finishes get the same old reply. A reply 20
+times the value old or older is recomputed before the call returns. Any action (a tool call
+that is not read-only) retires every cached reply when it starts and when its
+call ends, including a call its client cancels, so the next `list_windows`
+after it reads the live window list. A change that lands after that is not
+seen until the reply ages out, up to 20 times the value. That covers a window a
+person or another app opens or closes, a window an app opens after `launch_app`
+returns, and work a cancelled call's platform worker still finishes.
+
+| Variable                           | Meaning                                    | Default    | Accepted range                       |
+| ---------------------------------- | ------------------------------------------ | ---------- | ------------------------------------ |
+| `CUA_DRIVER_LIST_WINDOWS_CACHE_MS` | How long a `list_windows` reply is fresh.  | 0 (off)    | 0 to 1000; larger values are clamped |
+
+Unset, empty, `0`, or unparsable values leave every call live. Errors are never
+cached. The driver's own post-action window watch and `verify_state` always
+read live. No tool argument can change the value.
+
 ### Skipping the report wait per call (macOS)
 
 An agent that reads the window state after every action does not need the

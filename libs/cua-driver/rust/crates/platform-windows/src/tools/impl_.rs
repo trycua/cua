@@ -1348,7 +1348,9 @@ pub fn build_registry_with_provider(
         });
     }
     r.register(Box::new(ListAppsTool));
-    r.register(Box::new(ListWindowsTool));
+    r.register(cua_driver_core::read_cache::list_windows_reply_cache(
+        std::sync::Arc::new(ListWindowsTool),
+    ));
     r.register(Box::new(GetWindowStateTool {
         state: state.clone(),
     }));

@@ -131,6 +131,7 @@ pub mod snapshot_store;
 #[cfg(test)]
 pub(crate) mod snapshot_test_support;
 pub mod step_pacing;
+pub mod text_key_events;
 pub mod text_sanitize;
 pub mod timestamp;
 pub mod tool;

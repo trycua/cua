@@ -110,6 +110,7 @@ pub mod perception_tools;
 pub mod pointer_shape;
 pub mod policy;
 pub mod post_action_wait;
+pub mod process;
 pub mod protocol;
 pub mod recording;
 pub mod recording_loader;

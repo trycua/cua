@@ -13,3 +13,21 @@ The VM runs `cua-spacesd` (gRPC + gRPC-Web on port 3211) from the
 inside the VM; place a file named `env-token` next to the setup scripts
 (`/oem`) at image-build time to choose it. The Windows release artifact name is a
 placeholder until the cua-spacesd release workflow publishes it.
+
+## First boot
+
+For a local build of this container, set `WINDOWS_LOCAL_IMAGE` to your local
+image tag. To supply Windows installation media for first boot, mount the ISO
+read-only at `/storage/custom.iso`:
+
+```bash
+docker run --device /dev/kvm --device /dev/net/tun --cap-add NET_ADMIN \
+  -p 8006:8006 -p 5000:5000 \
+  -v /path/to/windows.iso:/storage/custom.iso:ro \
+  -v cua-win-storage:/storage \
+  "$WINDOWS_LOCAL_IMAGE"
+```
+
+For a multi-edition ISO that needs a specific Windows image selected during
+setup, provide an answer file at `/storage/custom.xml` with an explicit
+`InstallFrom` selection.

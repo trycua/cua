@@ -38,6 +38,16 @@ echo "Waiting for Windows to boot and cua-spacesd to start..."
 
 VM_IP=""
 while true; do
+  if ! kill -0 "$VM_PID" 2>/dev/null; then
+    VM_EXIT_STATUS=0
+    wait "$VM_PID" || VM_EXIT_STATUS=$?
+    echo "Windows VM exited before readiness (status $VM_EXIT_STATUS). Check container logs; for first boot, mount a Windows ISO at /storage/custom.iso as documented in the Windows container README."
+    if [ "$VM_EXIT_STATUS" -eq 0 ]; then
+      exit 1
+    fi
+    exit "$VM_EXIT_STATUS"
+  fi
+
   # Wait from VM and get the IP
   if [ -z "$VM_IP" ]; then
     VM_IP=$(ps aux | grep dnsmasq | grep -oP '(?<=--dhcp-range=)[0-9.]+' | head -1)

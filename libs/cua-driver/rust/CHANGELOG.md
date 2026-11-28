@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.64.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.3...cua-driver-rs-v0.64.4) (2026-11-28)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep answering the browser's remote-debugging prompt while the connection is pending ([#8817](https://github.com/trycua/cua/issues/8817)) ([89b6b39](https://github.com/trycua/cua/commit/89b6b3980db457786abd0fe36d76de11ae43bdc5))
+
 ## [0.64.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.2...cua-driver-rs-v0.64.3) (2026-11-27)
 
 

@@ -50,6 +50,11 @@ class GitHubApi:
                     return max(0.0, float(retry_after))
                 except ValueError:
                     pass
+            if error.headers.get("X-RateLimit-Remaining") == "0":
+                try:
+                    return max(0.0, float(error.headers["X-RateLimit-Reset"]) - time.time())
+                except (KeyError, ValueError):
+                    pass
         return self.retry_base_seconds * (2 ** (attempt - 1))
 
     def request(
@@ -83,7 +88,13 @@ class GitHubApi:
                     return json.load(response)
             except HTTPError as error:
                 detail = error.read().decode("utf-8", errors="replace")
-                retryable = error.code in self.RETRYABLE_STATUS_CODES
+                retryable = error.code in self.RETRYABLE_STATUS_CODES or (
+                    error.code == 403
+                    and (
+                        error.headers.get("Retry-After")
+                        or error.headers.get("X-RateLimit-Remaining") == "0"
+                    )
+                )
                 if retryable and attempt < self.max_attempts:
                     delay = self._retry_delay(error, attempt)
                     print(

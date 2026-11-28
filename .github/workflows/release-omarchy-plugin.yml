@@ -1,0 +1,96 @@
+name: "Release: Omarchy plugin"
+
+# Cuts the Hyprland plugin release when the plugin pin changes on main
+# (CUA-3108). The plugin ships inside the Cua Driver release, so this reuses
+# that path and adds nothing of its own:
+#
+#   1. After "Release: Prepare component releases" has run for a main commit
+#      that changed plugin_pin in omarchy-qualified.json, build the release
+#      kit for that commit with packaging/release/bundle.py (the check the
+#      Driver release runs again from the tag).
+#   2. Release Please has by then opened or updated the cua-driver-rs release
+#      PR (the pin PR is a fix: commit under libs/cua-driver). Queue
+#      auto-merge on it; release PRs are pre-approved.
+#   3. Merging it tags cua-driver-rs-v*, and cd-rust-cua-driver.yml builds the
+#      pinned plugin source archive and build kit and publishes them with the
+#      release. omarchy-outreach.yml then prepares the Omarchy request.
+
+on:
+  workflow_run:
+    workflows: ["Release: Prepare component releases"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-omarchy-plugin
+  cancel-in-progress: false
+
+env:
+  PLUGIN_DIR: libs/cua-driver/hyprland-plugin
+  QUALIFIED: libs/cua-driver/hyprland-plugin/omarchy-qualified.json
+
+jobs:
+  release:
+    if: >-
+      github.repository == 'trycua/cua' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Did this commit move the plugin pin?
+        id: pin
+        run: |
+          set -euo pipefail
+          now=$(git show "$SHA:$QUALIFIED" | jq -r .plugin_pin.hyprland)
+          before=$(git show "$SHA^:$QUALIFIED" 2>/dev/null | jq -r .plugin_pin.hyprland || echo none)
+          echo "pin: $before -> $now"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$now" != "$before" ]; then
+            echo "moved=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.pin.outputs.moved == 'true'
+        with:
+          python-version: "3.12"
+      - name: Build the plugin release kit for this commit
+        if: steps.pin.outputs.moved == 'true'
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("libs/cua-driver/rust/Cargo.toml","rb"))["workspace"]["package"]["version"])')
+          python3 "$PLUGIN_DIR/packaging/release/bundle.py" --repo . --revision "$SHA" \
+            --driver-version "$version" --output "$RUNNER_TEMP/plugin-kit"
+          ls -l "$RUNNER_TEMP/plugin-kit" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Generate release GitHub App token
+        if: steps.pin.outputs.moved == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Queue auto-merge on the Cua Driver release PR
+        if: steps.pin.outputs.moved == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --state open --label "autorelease: pending" --json number,headRefName \
+                 --jq '[.[] | select(.headRefName | endswith("components--cua-driver-rs"))][0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "::notice::No Cua Driver release PR is open; Release Please finds no releasable commit yet."
+            echo "No Cua Driver release PR yet." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh pr merge "$pr" --auto --squash
+          echo "Auto-merge queued on release PR #$pr." | tee -a "$GITHUB_STEP_SUMMARY"

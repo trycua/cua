@@ -1,0 +1,32 @@
+name: offline-flips-fast
+title: A computer that goes offline shows as offline within a minute
+issues: [CUA-3413]
+os: [linux, windows]
+setup:
+  build: spaces-app
+  account: canary
+  hosts:
+    - {id: 1, role: app}
+    - {id: 2, role: computer, joined: true, terminal: Second computer}
+prompt: |
+  Open the list of your computers in Cua Spaces, find {{host.2.name}} (the
+  list is long: search for it) and open it, so its details show. Check that
+  it shows as online. Then turn it off by running
+  `cua-e2e-power off` in the terminal window titled "Second computer".
+  Go back to Cua Spaces and leave {{host.2.name}}'s details showing. Do not
+  reload or restart the app. Stop as soon as the command has run and Cua
+  Spaces is showing its details again.
+budget:
+  steps: 70
+  minutes: 15
+expect:
+  - ui:
+      name: its details flip to Offline within 60 s of the power-off, without a reload
+      app: Cua Spaces
+      row: {has: "{{host.2.name}} details", and: [Offline]}
+      after_event: power_off:2
+      within_s: 60
+  - relay:
+      name: the relay has it offline
+      get: /v1/machines
+      jq: '[.machines[] | select(.name == "{{host.2.name}}" and (.online | not))] | length == 1'

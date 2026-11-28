@@ -1,0 +1,38 @@
+name: staging-prod-isolation
+title: Staging setup on a PC that already runs a production host leaves it alone
+issues: [CUA-3512, trycua/cua#6557]
+os: [linux, windows]
+setup:
+  build: spaces-app
+  account: canary
+  hosts:
+    # The production host: production service names (no CUA_ENV), already
+    # set up with this OS's real service manager. It points at the staging
+    # relay because the canary account exists only there.
+    - {id: 1, role: computer, env: production-names, home: default, joined: true, service: real}
+    # The staging app the person uses.
+    - {id: 2, role: app, env: staging, home: default}
+prompt: |
+  Set up this computer in Cua Spaces so that your agents can use it, the way a
+  new user would, and wait until Cua Spaces shows this computer as online in
+  your account.
+budget:
+  steps: 50
+  minutes: 15
+expect:
+  - cli:
+      name: the production host is still online, with its own id
+      host: 1
+      run: cua host status --json
+      jq: '.online == true and .machineId == "{{host.1.initial_machine_id}}"'
+  - cli:
+      name: the staging host is online as a different computer
+      host: 2
+      run: cua host status --json
+      jq: '.online == true and .machineId != "{{host.1.initial_machine_id}}"'
+      within_s: 60
+  - relay:
+      name: both computers are online on the relay
+      get: /v1/machines
+      jq: '[.machines[] | select((.id == "{{host.1.initial_machine_id}}" or .id == "{{host.2.machine_id}}") and .online)] | length == 2'
+      within_s: 60

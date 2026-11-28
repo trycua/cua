@@ -1,0 +1,244 @@
+name: "E2E: prompt tests"
+
+# Prompt tests (tests/agentic, design: docs/rfcs/prompt-tests.md): an agent
+# drives the real Cua Spaces app through Cua Driver toward a plain-English
+# goal; hard checks (relay API, `cua ... --json`, the accessibility tree,
+# dialog titles, files) decide pass or fail. The model never does.
+#
+#   nightly   live runs of every test on Windows, Linux and macOS (each OS a
+#             test lists), against the rolling cua-spaces-nightly build. A
+#             failure opens or updates ONE issue.
+#   release   `workflow_call` with mode live: the release gate runs every test.
+#   PR        validates the specs and the runner (no model, no secrets).
+#             Replaying recorded trajectories for the areas a PR touches is v2
+#             (`bin/agentic-e2e select --changed`).
+#   dispatch  any test, OS, build and mode; `record` saves trajectories as an
+#             artifact to commit.
+#
+# Secrets: ANTHROPIC_API_KEY (the agent model, pinned in
+# tests/agentic/config.yaml) and CUA_E2E_CANARY_USERNAME /
+# CUA_E2E_CANARY_PASSWORD (the staging canary test account; never a person's
+# account). A missing secret fails the job with its name.
+
+on:
+  schedule:
+    - cron: "40 9 * * *" # after "Nightly: Cua Spaces" (07:30 UTC) publishes
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: "Spec paths or area/name, space separated; empty = all"
+        default: ""
+      os:
+        description: "Only this OS (linux, windows, macos); empty = every OS a test lists"
+        default: ""
+      build:
+        description: "release:<tag>, run:<id> (a CD: Cua Spaces build run) or empty for the nightly"
+        default: ""
+      mode:
+        description: "live, replay or auto"
+        type: choice
+        default: live
+        options: [live, replay, auto]
+      record:
+        description: "Save the trajectories of passing live runs (artifact agentic-trajectories-<os>)"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      build:
+        type: string
+        default: ""
+      mode:
+        type: string
+        default: live
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      CUA_E2E_CANARY_USERNAME:
+        required: true
+      CUA_E2E_CANARY_PASSWORD:
+        required: true
+  pull_request:
+    paths:
+      - ".github/workflows/e2e-agentic.yml"
+      - "tests/agentic/**"
+      - "bin/agentic-e2e"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+
+concurrency:
+  group: e2e-agentic-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: Validate specs and runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet pyyaml pytest
+      - name: Validate every spec
+        run: bin/agentic-e2e validate
+      - name: Runner unit tests
+        run: python -m pytest tests/agentic/runner/tests -q
+      - name: Plan the OS lanes
+        id: plan
+        env:
+          ONLY_OS: ${{ inputs.os }}
+        run: |
+          python - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+          sys.path.insert(0, "tests/agentic")
+          from runner import spec
+          runners = {"linux": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
+          oses = sorted({o for p in spec.discover() for o in spec.load(p).os})
+          only = os.environ.get("ONLY_OS", "").strip()
+          if only:
+              oses = [o for o in oses if o == only]
+          print("matrix=" + json.dumps({"include": [{"os": o, "runner": runners[o]} for o in oses]}, separators=(",", ":")))
+          EOF
+
+  live:
+    name: ${{ matrix.os }} / prompt tests
+    needs: validate
+    if: github.event_name != 'pull_request' && needs.validate.outputs.matrix != '{"include":[]}'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CUA_E2E_CANARY_USERNAME: ${{ secrets.CUA_E2E_CANARY_USERNAME }}
+      CUA_E2E_CANARY_PASSWORD: ${{ secrets.CUA_E2E_CANARY_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+      CUA_E2E_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TESTS: ${{ inputs.tests }}
+      BUILD: ${{ inputs.build }}
+      MODE: ${{ inputs.mode || 'live' }}
+      RECORD: ${{ inputs.record && '--record' || '' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Secrets present
+        run: |
+          missing=()
+          for s in ANTHROPIC_API_KEY CUA_E2E_CANARY_USERNAME CUA_E2E_CANARY_PASSWORD; do
+            [[ -n "${!s}" ]] || missing+=("$s")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository secret(s): ${missing[*]}. Prompt tests cannot sign in or run the agent."
+            echo "Blocked: missing repository secret(s) ${missing[*]}" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Runner tools and the pinned agent CLI
+        run: |
+          python -m pip install --quiet pyyaml
+          cli=$(python -c "import yaml; print(yaml.safe_load(open('tests/agentic/config.yaml'))['agent_cli'])")
+          npm install --global --no-fund --no-audit "$cli"
+          claude --version
+      - name: Desktop tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox xterm ffmpeg jq \
+            libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
+      - name: FFmpeg for the run video (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\ci\windows\setup-ffmpeg.ps1
+      - name: Install the published Cua Driver (Linux, macOS)
+        if: runner.os != 'Windows'
+        env:
+          CUA_DRIVER_RS_INSTALL_DIR: ${{ runner.temp }}/cua-driver-bin
+          CUA_DRIVER_RS_NO_MODIFY_PATH: "1"
+        run: |
+          bash libs/cua-driver/scripts/install.sh --no-modify-path
+          echo "CUA_DRIVER_BINARY=$CUA_DRIVER_RS_INSTALL_DIR/cua-driver" >> "$GITHUB_ENV"
+      - name: Install the published Cua Driver (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "cua-driver-installer"
+          $env:CUA_DRIVER_RS_HOME = Join-Path $root "home"
+          $env:CUA_DRIVER_RS_INSTALL_DIR = Join-Path $root "bin"
+          & ./libs/cua-driver/scripts/install.ps1 -NoAutoStart -NoPathUpdate
+          $binary = Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR "cua-driver.exe"
+          if (-not (Test-Path -LiteralPath $binary)) { throw "installer did not create $binary" }
+          & $binary --version
+          "CUA_DRIVER_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          exit 0
+      - name: Run the prompt tests
+        run: |
+          read -r -a tests <<< "$TESTS"
+          args=(run "${tests[@]}" --ephemeral --mode "$MODE" --driver-bin "$CUA_DRIVER_BINARY" --out artifacts/agentic-e2e)
+          [[ -n "$RECORD" ]] && args+=("$RECORD")
+          [[ -n "$BUILD" ]] && args+=(--build "$BUILD")
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a --server-args="-screen 0 1600x1000x24" dbus-run-session -- bash -c \
+              'openbox >/tmp/openbox.log 2>&1 & /usr/libexec/at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 & sleep 2; bin/agentic-e2e "$@"' _ "${args[@]}"
+          else
+            python bin/agentic-e2e "${args[@]}"
+          fi
+      - name: Upload the reports, screenshots and videos
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agentic-e2e-${{ matrix.os }}
+          path: artifacts/agentic-e2e
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload recorded trajectories
+        if: always() && inputs.record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agentic-trajectories-${{ matrix.os }}
+          path: tests/agentic/trajectories
+          if-no-files-found: ignore
+          retention-days: 30
+
+  report:
+    name: Open or update the nightly issue
+    needs: live
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title='Nightly prompt tests are failing'
+          body="One or more prompt tests failed in the nightly run: $RUN_URL. Each OS job's summary has the table; the agentic-e2e-<os> artifact has every report, screenshot and video."
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

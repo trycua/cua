@@ -1,0 +1,34 @@
+name: add-remove-no-ghost
+title: Add a second computer, remove it, and no ghost row comes back
+issues: [CUA-3525, trycua/cua#6552]
+os: [linux, windows]
+setup:
+  build: spaces-app
+  account: canary
+  hosts:
+    - {id: 1, role: app}
+    - {id: 2, role: computer, signed_in: false, terminal: Second computer}
+prompt: |
+  In Cua Spaces, add another computer to your account. Use the app's own way of
+  adding a computer, and run the command it gives you in the terminal window
+  titled "Second computer". Skip any install step: `cua` is already installed
+  there. Wait until Cua Spaces lists that computer, {{host.2.name}}, as online.
+
+  Then turn that computer off by running `cua-e2e-power off` in the same
+  terminal, and wait until Cua Spaces shows it as offline.
+
+  Then remove {{host.2.name}} from your account in Cua Spaces. Leave any option
+  to also delete its Spaces unticked. Stop once it has left the list.
+budget:
+  steps: 80
+  minutes: 20
+expect:
+  - relay:
+      name: the computer left the account
+      get: /v1/machines
+      jq: '[.machines[] | select(.name == "{{host.2.name}}")] | length == 0'
+  - ui:
+      name: no ghost row (name or raw id) for 45 s after Remove
+      app: Cua Spaces
+      absent: ["{{host.2.name}}", "{{host.2.machine_id}}"]
+      hold_s: 45

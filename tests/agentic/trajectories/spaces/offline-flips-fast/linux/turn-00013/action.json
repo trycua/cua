@@ -1,0 +1,33 @@
+{
+  "action_truth": {
+    "actual_delivery": "foreground",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "unverifiable",
+    "escalation": null,
+    "evidence": [],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "foreground",
+    "route": "global_input",
+    "transport": "linux_x_test"
+  },
+  "arguments": {
+    "delivery_mode": "foreground",
+    "pid": 72965,
+    "window_id": 65011720,
+    "x": 272,
+    "y": 161
+  },
+  "click_point": {
+    "x": 272.0,
+    "y": 161.0
+  },
+  "result_error": true,
+  "result_summary": "No screenshot of window 65011720 in this session: it has not been read yet. Call get_window_state(pid:72965, window_id:65011720) and take x,y from that window's own screenshot; pixels read off another window's screenshot do not apply to it.",
+  "t_ms_from_session_start": 78071,
+  "t_start_ms_from_session_start": 77957,
+  "timestamp": "2026-11-06T00:12:36.407Z",
+  "tool": "click"
+}

@@ -1,0 +1,41 @@
+name: remove-readd-rejoins
+title: A removed computer added again rejoins with the same id
+issues: [CUA-3413]
+os: [linux, windows]
+setup:
+  build: spaces-app
+  account: canary
+  hosts:
+    - {id: 1, role: app}
+    - {id: 2, role: computer, joined: true, terminal: Second computer}
+prompt: |
+  The computer {{host.2.name}} is in your account. Turn it off by running
+  `cua-e2e-power off` in the terminal window titled "Second computer", and wait
+  until Cua Spaces shows it as offline. Then remove it from your account in
+  Cua Spaces, leaving any option to also delete its Spaces unticked.
+
+  Then add the same computer back: use Cua Spaces' own way of adding a
+  computer, and run the command it gives you in the "Second computer"
+  terminal. Skip any install step: `cua` is already installed there. Wait
+  until Cua Spaces lists {{host.2.name}} as online again, and leave its
+  details showing.
+budget:
+  steps: 90
+  minutes: 20
+expect:
+  - cli:
+      name: the computer says it is set up and online
+      host: 2
+      run: cua host status --json
+      jq: '.configured == true and .online == true'
+      within_s: 60
+  - relay:
+      name: it rejoined with the id it had before
+      get: /v1/machines
+      jq: '[.machines[] | select(.id == "{{host.2.initial_machine_id}}" and .online)] | length == 1'
+      within_s: 60
+  - ui:
+      name: the app shows it online again
+      app: Cua Spaces
+      row: {has: "{{host.2.name}} details", and: [Online]}
+      within_s: 60

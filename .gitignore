@@ -205,6 +205,8 @@ ignore
 shared
 # Trajectories
 trajectories/
+# Prompt test trajectories are committed (tests/agentic, docs/rfcs/prompt-tests.md).
+!tests/agentic/trajectories/
 # Installation ID Storage
 .storage/
 # Gradio settings

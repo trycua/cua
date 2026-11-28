@@ -1,0 +1,31 @@
+{
+  "action_truth": {
+    "actual_delivery": "foreground",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "unverifiable",
+    "escalation": null,
+    "evidence": [],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "foreground",
+    "route": "global_input",
+    "transport": "linux_x_test"
+  },
+  "arguments": {
+    "amount": 15,
+    "delivery_mode": "foreground",
+    "direction": "down",
+    "pid": 71756,
+    "window_id": 46137348,
+    "x": 420,
+    "y": 500
+  },
+  "result_error": false,
+  "result_summary": "Scrolled down 15 ticks (delivery_mode=foreground).",
+  "t_ms_from_session_start": 69952,
+  "t_start_ms_from_session_start": 65710,
+  "timestamp": "2026-11-06T00:12:28.288Z",
+  "tool": "scroll"
+}

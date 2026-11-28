@@ -1287,6 +1287,7 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     for (key, value) in [
         ("title", node.title.as_deref()),
         ("description", node.description.as_deref()),
+        ("help", node.help.as_deref()),
         ("placeholder", node.placeholder.as_deref()),
         ("subrole", node.subrole.as_deref()),
     ] {
@@ -2158,6 +2159,33 @@ mod tests {
         assert_eq!(element["placeholder"], "Search chatrooms, participants");
         assert_eq!(element["subrole"], "AXSearchField");
         assert_eq!(element["value"], "Search-like AXValue");
+    }
+
+    #[test]
+    fn element_help_survives_protocol_conformance() {
+        for help in [Some("  Open settings\n"), Some("Open"), Some(" \n\t"), None] {
+            let mut button = node(Some(0), "AXButton", Some("Open"), 1, None, None, vec![]);
+            button.description = Some("Open".into());
+            button.help = help.map(str::to_owned);
+            let wire = cua_driver_core::mcp_result::conforming_tool_result(
+                "get_window_state",
+                serde_json::json!({
+                    "content": [],
+                    "isError": false,
+                    "structuredContent": {
+                        "pid": 7,
+                        "window_id": 9,
+                        "elements": [element_entry(&button, None)],
+                    }
+                }),
+            );
+            assert_eq!(wire["isError"], false, "{wire}");
+            let element = &wire["structuredContent"]["elements"][0];
+            match help.map(str::trim).filter(|value| !value.is_empty()) {
+                Some(expected) => assert_eq!(element["help"], expected),
+                None => assert!(element.get("help").is_none()),
+            }
+        }
     }
 
     #[test]

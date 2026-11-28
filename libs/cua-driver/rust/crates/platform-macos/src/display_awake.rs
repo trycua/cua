@@ -120,24 +120,29 @@ pub fn note_activity(idle: Duration) {
 }
 
 fn release_when_idle(idle: Duration) {
-    loop {
-        let wait = {
-            let guard = GUARD
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Some(held) = guard.as_ref() else {
-                return;
-            };
-            remaining(held.last_activity.elapsed(), idle)
-        };
-        match wait {
-            Some(wait) => std::thread::sleep(wait),
-            None => {
-                release_now();
-                return;
-            }
-        }
+    while let Some(wait) = release_if_idle(&GUARD, idle) {
+        std::thread::sleep(wait);
     }
+}
+
+/// Check the idle window and take the assertion under the same lock, so
+/// activity cannot refresh the window between the decision and the take.
+fn release_if_idle(state: &Mutex<Option<Guard>>, idle: Duration) -> Option<Duration> {
+    let held = {
+        let mut guard = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let held = guard.as_ref()?;
+        if let Some(wait) = remaining(held.last_activity.elapsed(), idle) {
+            return Some(wait);
+        }
+        guard.take()
+    };
+    if let Some(held) = held {
+        unsafe { IOPMAssertionRelease(held.assertion) };
+        tracing::debug!("display-awake guard released");
+    }
+    None
 }
 
 /// Time left before release, or `None` once the idle window has passed.
@@ -212,6 +217,43 @@ mod tests {
         );
         assert_eq!(remaining(idle, idle), None);
         assert_eq!(remaining(Duration::from_secs(700), idle), None);
+    }
+
+    #[test]
+    fn refreshed_activity_survives_a_previously_expired_idle_decision() {
+        // Local state avoids interference with the process-wide activity hook.
+        // This path must never release its synthetic assertion.
+        let idle = Duration::from_secs(600);
+        let state = Mutex::new(Some(Guard {
+            assertion: 0,
+            last_activity: Instant::now() - idle,
+        }));
+        {
+            let guard = state.lock().unwrap();
+            assert_eq!(
+                remaining(guard.as_ref().unwrap().last_activity.elapsed(), idle),
+                None
+            );
+        }
+        // Reproduce the report's interleaving without sleeps or timing hooks.
+        state.lock().unwrap().as_mut().unwrap().last_activity = Instant::now();
+        let wait =
+            release_if_idle(&state, idle).expect("new activity must keep the assertion held");
+        assert!(wait > Duration::ZERO && wait <= idle);
+        assert!(state.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn idle_release_takes_only_an_expired_guard() {
+        let idle = Duration::from_secs(600);
+        let state = Mutex::new(Some(Guard {
+            assertion: create_assertion().expect("IOPMAssertionCreateWithName"),
+            last_activity: Instant::now() - idle,
+        }));
+        assert_eq!(release_if_idle(&state, idle), None);
+        assert!(state.lock().unwrap().is_none());
+        // Already released: stop the watcher without another release.
+        assert_eq!(release_if_idle(&state, idle), None);
     }
 
     /// Holding and releasing the real assertion works and leaves nothing

@@ -24,8 +24,8 @@ use crate::host::{HostEffects, default_host};
 use crate::keychain;
 pub use crate::layout::electron::ElectronApp;
 use crate::layout::electron::{
-    DISCORD, NOTION, PROFILE_DIRS, PROFILE_FILES, SLACK, UNITY_HUB, VSCODE, app_support_root,
-    home_rel, rel,
+    CLAUDE_DESKTOP, DISCORD, NOTION, PROFILE_DIRS, PROFILE_FILES, SLACK, UNITY_HUB, VSCODE,
+    app_support_root, home_rel, rel,
 };
 use crate::providers::util::{add_dir_recursive, add_file_best_effort, dir_len, file_len};
 use crate::{
@@ -118,6 +118,11 @@ impl ElectronProvider {
     /// Notion.
     pub fn notion() -> Self {
         Self::new(NOTION)
+    }
+
+    /// Claude (the desktop app).
+    pub fn claude_desktop() -> Self {
+        Self::new(CLAUDE_DESKTOP)
     }
 
     /// Unity Hub.

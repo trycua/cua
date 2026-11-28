@@ -12,11 +12,12 @@ use std::sync::Arc;
 use crate::atspi::native::{OptionPick, OptionPickSent};
 
 use super::impl_::{
-    attach_focus_guard, background_virtual_key, background_virtual_text, foreground_budget,
-    input_error_result, non_ax_escalation, position_named_session_keyboard_cursor,
-    prove_token_element, refuse_if_disabled, resolve_cursor_key, resolve_element_local_coords,
-    spawn_blocking_bounded, stale_observed_element, values_agree, window_local_to_screen,
-    with_cleanup_warning, x11_pixel_click_no_focus_steal, ToolState,
+    attach_focus_guard, background_virtual_key, background_virtual_text,
+    checked_element_local_coords, element_screen_center, foreground_budget, input_error_result,
+    non_ax_escalation, position_named_session_keyboard_cursor, prove_token_element,
+    refuse_if_disabled, resolve_cursor_key, resolve_element_local_coords, spawn_blocking_bounded,
+    stale_observed_element, values_agree, with_cleanup_warning, x11_pixel_click_no_focus_steal,
+    ToolState,
 };
 
 // ── set_value ─────────────────────────────────────────────────────────────────
@@ -169,30 +170,32 @@ impl Tool for SetValueTool {
             "set_value keyboard fallback",
             foreground_budget(value.len()),
             move || -> anyhow::Result<(Option<crate::input::FocusGuardReport>, Option<String>)> {
-                let (win, lx, ly) = resolve_element_local_coords(pid, &target, xid_opt)?;
-                if is_combo {
-                    return pick_from_popup(
-                        &cursor_id,
-                        pid,
-                        &target,
-                        (win, lx, ly),
-                        &value_for_keys,
-                        foreground_route,
-                    );
-                }
                 if foreground_route {
-                    let (sx, sy) = window_local_to_screen(win, lx, ly)?;
+                    ensure_element_showing(&target)?;
+                    let (win, _, _) = checked_element_local_coords(pid, &target, xid_opt)
+                        .map_err(map_bounds_lookup_error)?;
+                    let (sx, sy) = element_screen_center(pid, &target, Some(win))
+                        .map_err(map_bounds_lookup_error)?;
+                    let (sx_i, sy_i) = (sx.round() as i32, sy.round() as i32);
+                    ensure_element_owns_point(pid, win, &target, sx_i, sy_i)?;
+                    if is_combo {
+                        return pick_from_popup(
+                            &cursor_id,
+                            pid,
+                            &target,
+                            win,
+                            PopupClickTarget::ForegroundScreen(sx_i, sy_i),
+                            &value_for_keys,
+                        );
+                    }
                     crate::interaction::with_x11_foreground(
                         win,
                         crate::input::ForegroundOptions::pointer(),
                         crate::interaction::session_policy().menu,
                         || {
-                            crate::input::send_click_xtest_desktop(
-                                sx.round() as i32,
-                                sy.round() as i32,
-                                1,
-                                1,
-                            )?;
+                            ensure_element_owns_point(pid, win, &target, sx_i, sy_i)?;
+                            ensure_window_owns_screen_point(win, sx_i, sy_i)?;
+                            crate::input::send_click_xtest_desktop(sx_i, sy_i, 1, 1)?;
                             std::thread::sleep(std::time::Duration::from_millis(80));
                             crate::input::send_key_xtest("a", &["ctrl"])?;
                             crate::input::send_type_text_xtest(&value_for_keys)?;
@@ -200,6 +203,17 @@ impl Tool for SetValueTool {
                         },
                     )?;
                     return Ok((None, None));
+                }
+                let (win, lx, ly) = resolve_element_local_coords(pid, &target, xid_opt)?;
+                if is_combo {
+                    return pick_from_popup(
+                        &cursor_id,
+                        pid,
+                        &target,
+                        win,
+                        PopupClickTarget::BackgroundLocal(lx, ly),
+                        &value_for_keys,
+                    );
                 }
                 let (_, guard) = crate::input::focus_guard::guarded(Some(pid), || {
                     x11_pixel_click_no_focus_steal(&cursor_id, win, lx as i32, ly as i32, 1, 1)?;
@@ -254,7 +268,8 @@ impl Tool for SetValueTool {
                 let readback = read_back(token).await;
                 pick_sent_result(idx, &value, path, readback, &error)
             }
-            Ok(Err(error)) => input_error_result(error),
+            Ok(Err(error)) => keyboard_fallback_refusal(idx, pid, &error)
+                .unwrap_or_else(|| input_error_result(error)),
             Err(error) => ToolResult::error(format!("Task error: {error}")),
         }
     }
@@ -278,21 +293,199 @@ fn no_such_option_result(idx: usize, error: &anyhow::Error) -> ToolResult {
 /// options.
 const POPUP_OPTIONS_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// Pre-click refusal on foreground keyboard fallback routes: either the cached
+/// element vanished before any input (`StaleElement`), or it is not on screen,
+/// its point lies outside the target window, another window covers the point,
+/// or `point_ownership` reports a different control there (`BoundsUnavailable`).
+#[derive(Debug)]
+enum PreClickRefusal {
+    BoundsUnavailable {
+        reason: String,
+        owner: Option<String>,
+    },
+    StaleElement(anyhow::Error),
+}
+
+impl std::fmt::Display for PreClickRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BoundsUnavailable { reason, .. } => f.write_str(reason),
+            Self::StaleElement(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+impl std::error::Error for PreClickRefusal {}
+
+fn ensure_element_showing(target: &crate::atspi::TokenElement) -> anyhow::Result<()> {
+    match crate::atspi::element_showing_observed(&target.observed) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(PreClickRefusal::BoundsUnavailable {
+            reason: format!(
+                "the {} is not showing (scrolled out of view or hidden)",
+                target.observed.role
+            ),
+            owner: None,
+        }
+        .into()),
+        Err(error) if error.is::<crate::atspi::native::CachedElementGone>() => {
+            Err(PreClickRefusal::StaleElement(error).into())
+        }
+        Err(error) => {
+            tracing::debug!(
+                "set_value element [{}] showing-state unavailable: {error:#}",
+                target.index
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Reuse the click tool's `point_ownership` hit test before clicking a non-web
+/// element: if another control owns the cached centre, refuse before sending
+/// pointer or keyboard input.
+fn ensure_element_owns_point(
+    pid: u32,
+    win: u64,
+    target: &crate::atspi::TokenElement,
+    sx: i32,
+    sy: i32,
+) -> anyhow::Result<()> {
+    if target.observed.in_web_content {
+        return Ok(());
+    }
+    let Some(oref) = target.observed.object_ref.as_ref() else {
+        return Ok(());
+    };
+    match crate::atspi::native::hit_test::point_ownership(pid, win, oref, sx, sy) {
+        crate::atspi::native::hit_test::PointOwnership::Mismatch { owner }
+        | crate::atspi::native::hit_test::PointOwnership::Redirect { owner, .. } => {
+            Err(PreClickRefusal::BoundsUnavailable {
+                reason: "point_owned_by_another_element".to_owned(),
+                owner: Some(owner.describe()),
+            }
+            .into())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn map_bounds_lookup_error(error: anyhow::Error) -> anyhow::Error {
+    if error.is::<crate::atspi::native::CachedElementGone>() {
+        return PreClickRefusal::StaleElement(error).into();
+    }
+    PreClickRefusal::BoundsUnavailable {
+        reason: error.to_string(),
+        owner: None,
+    }
+    .into()
+}
+
+/// Verify on live X11 state right before an XTest click that `(sx, sy)` is
+/// inside `win`'s visible bounds and that `win` owns that screen point.
+fn ensure_window_owns_screen_point(win: u64, sx: i32, sy: i32) -> anyhow::Result<()> {
+    use crate::x11::WindowPointOwnership;
+    let ownership = crate::x11::point_owned_by_window(win, sx, sy).map_err(|error| {
+        anyhow::Error::new(PreClickRefusal::BoundsUnavailable {
+            reason: format!("could not verify X11 window ownership ({error})"),
+            owner: None,
+        })
+    })?;
+    match ownership {
+        WindowPointOwnership::Owned => Ok(()),
+        WindowPointOwnership::NotViewable => Err(PreClickRefusal::BoundsUnavailable {
+            reason: format!("window {win} is not viewable"),
+            owner: None,
+        }
+        .into()),
+        WindowPointOwnership::OutsideWindow {
+            bounds: (wx, wy, ww, wh),
+        } => Err(PreClickRefusal::BoundsUnavailable {
+            reason: format!(
+                "point ({sx}, {sy}) lies outside window {win} visible bounds ({wx}, {wy}, {ww}x{wh})"
+            ),
+            owner: None,
+        }
+        .into()),
+        WindowPointOwnership::Occluded { covering } => Err(PreClickRefusal::BoundsUnavailable {
+            reason: match covering {
+                Some(other) => format!(
+                    "point ({sx}, {sy}) is covered by topmost window {other} instead of target window {win}"
+                ),
+                None => format!(
+                    "point ({sx}, {sy}) is over bare desktop instead of target window {win}"
+                ),
+            },
+            owner: None,
+        }
+        .into()),
+    }
+}
+
+/// Map a foreground pre-click refusal (`anyhow::Error::downcast_ref` reaches
+/// through the focus-restore `.context(...)` wrapper added by
+/// `with_x11_foreground`). Errors raised after input was sent, or on background
+/// MPX routes, are never wrapped in `PreClickRefusal` and fall through to
+/// `input_error_result`.
+fn keyboard_fallback_refusal(idx: usize, pid: u32, error: &anyhow::Error) -> Option<ToolResult> {
+    let refusal = error.downcast_ref::<PreClickRefusal>()?;
+    let (reason, owner) = match refusal {
+        PreClickRefusal::StaleElement(inner) => {
+            return stale_observed_element("set_value", idx, inner);
+        }
+        PreClickRefusal::BoundsUnavailable { reason, owner } => (reason, owner),
+    };
+    let mut structured = json!({
+        "code": "element_bounds_unavailable",
+        "effect": "none",
+        "element_index": idx,
+        "reason": reason,
+    });
+    if let Some(owner) = owner {
+        structured["owner"] = json!(owner);
+    }
+    let detail = if let Some(owner) = owner {
+        let context = if error.source().is_some() {
+            format!(" ({error})")
+        } else {
+            String::new()
+        };
+        format!(
+            "set_value: element [{idx}] (pid {pid}) screen point is owned by {owner} rather \
+             than the observed element{context}; no pointer or keyboard input was sent. \
+             Re-snapshot with get_window_state or scroll the element into view."
+        )
+    } else {
+        format!(
+            "set_value: element [{idx}] (pid {pid}) cannot be clicked safely ({error}); \
+             no pointer or keyboard input was sent. Re-snapshot with get_window_state or \
+             scroll the element into view."
+        )
+    };
+    Some(ToolResult::error(detail).with_structured(structured))
+}
+
+enum PopupClickTarget {
+    ForegroundScreen(i32, i32),
+    BackgroundLocal(f64, f64),
+}
+
 /// Keyboard-fallback `set_value` on a combo box whose options cannot be
 /// selected while it is closed: click it open (the real pointer: XTest in
-/// the foreground, the session's MPX pointer in the background), activate
-/// the option `value` names from the popup, and press Escape if the popup
-/// is still open afterwards (an unknown option, or a toolkit that keeps it
-/// open), so no popup is left behind. Returns the focus guard report and a
-/// warning when the popup could not be closed after the pick.
+/// the foreground for `ForegroundScreen`, the session's MPX pointer in the
+/// background for `BackgroundLocal`), activate the option `value` names from
+/// the popup, and press Escape if the popup is still open afterwards (an
+/// unknown option, or a toolkit that keeps it open), so no popup is left
+/// behind. Returns the focus guard report and a warning when the popup could
+/// not be closed after the pick.
 fn pick_from_popup(
     cursor_id: &str,
     pid: u32,
     token: &crate::atspi::TokenElement,
-    (win, lx, ly): (u64, f64, f64),
+    win: u64,
+    click_target: PopupClickTarget,
     value: &str,
-    foreground: bool,
 ) -> anyhow::Result<(Option<crate::input::FocusGuardReport>, Option<String>)> {
+    let foreground = matches!(click_target, PopupClickTarget::ForegroundScreen(..));
     let close_popup = || -> anyhow::Result<()> {
         if !crate::atspi::options_showing_token(token) {
             return Ok(());
@@ -310,26 +503,31 @@ fn pick_from_popup(
         })
     };
     let open_and_pick = || pick_then_close(pick, close_popup);
-    if foreground {
-        // Open, pick and close in one transaction, so the restore runs once
-        // the popup is gone instead of closing it before the pick.
-        let (sx, sy) = window_local_to_screen(win, lx, ly)?;
-        let (warning, _report) = crate::interaction::with_x11_foreground(
-            win,
-            crate::input::ForegroundOptions::pointer(),
-            crate::interaction::session_policy().menu,
-            || {
-                crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1)?;
+    match click_target {
+        PopupClickTarget::ForegroundScreen(sx_i, sy_i) => {
+            // Open, pick and close in one transaction, so the restore runs once
+            // the popup is gone instead of closing it before the pick.
+            let (warning, _report) = crate::interaction::with_x11_foreground(
+                win,
+                crate::input::ForegroundOptions::pointer(),
+                crate::interaction::session_policy().menu,
+                || {
+                    ensure_element_owns_point(pid, win, token, sx_i, sy_i)?;
+                    ensure_window_owns_screen_point(win, sx_i, sy_i)?;
+                    crate::input::send_click_xtest_desktop(sx_i, sy_i, 1, 1)?;
+                    open_and_pick()
+                },
+            )?;
+            Ok((None, warning))
+        }
+        PopupClickTarget::BackgroundLocal(lx, ly) => {
+            let (warning, guard) = crate::input::focus_guard::guarded(Some(pid), || {
+                x11_pixel_click_no_focus_steal(cursor_id, win, lx as i32, ly as i32, 1, 1)?;
                 open_and_pick()
-            },
-        )?;
-        return Ok((None, warning));
+            })?;
+            Ok((guard, warning))
+        }
     }
-    let (warning, guard) = crate::input::focus_guard::guarded(Some(pid), || {
-        x11_pixel_click_no_focus_steal(cursor_id, win, lx as i32, ly as i32, 1, 1)?;
-        open_and_pick()
-    })?;
-    Ok((guard, warning))
 }
 
 /// Pick the option, then close the popup if it is still open. The pick's
@@ -550,6 +748,57 @@ mod set_value_tests {
         assert_eq!(s["readback"], "10.0");
         let blind = set_value_result(3, "40", "ax", None, None);
         assert_eq!(blind.structured_content.unwrap()["effect"], "unverifiable");
+    }
+
+    #[test]
+    fn keyboard_fallback_refusal_preserves_bounds_unavailable_when_wrapped() {
+        let wrapped = anyhow::Error::new(PreClickRefusal::BoundsUnavailable {
+            reason: "point_owned_by_another_element".into(),
+            owner: Some("push button \"Other\"".into()),
+        })
+        .context("the prior focus also could not be restored");
+        let refused = keyboard_fallback_refusal(29, 7, &wrapped).expect("mapped refusal");
+        assert_eq!(refused.is_error, Some(true));
+        let s = refused.structured_content.unwrap();
+        assert_eq!(s["code"], "element_bounds_unavailable");
+        assert_eq!(s["effect"], "none");
+        assert_eq!(s["owner"], "push button \"Other\"");
+        let Some(cua_driver_core::protocol::Content::Text { text, .. }) = refused.content.first()
+        else {
+            panic!("expected text content");
+        };
+        assert!(
+            text.contains("the prior focus also could not be restored"),
+            "{text}"
+        );
+
+        let unwrapped = anyhow::Error::new(PreClickRefusal::BoundsUnavailable {
+            reason: "window 9 is not viewable".into(),
+            owner: None,
+        });
+        let refused = keyboard_fallback_refusal(29, 7, &unwrapped).expect("mapped refusal");
+        assert_eq!(refused.is_error, Some(true));
+        let s = refused.structured_content.unwrap();
+        assert_eq!(s["code"], "element_bounds_unavailable");
+        assert_eq!(s["effect"], "none");
+        assert!(s.get("owner").is_none(), "{s}");
+
+        let preclick_stale = map_bounds_lookup_error(anyhow::Error::new(
+            crate::atspi::native::CachedElementGone("gone before click".into()),
+        ));
+        let refused =
+            keyboard_fallback_refusal(29, 7, &preclick_stale).expect("mapped pre-click stale");
+        assert_eq!(refused.is_error, Some(true));
+        let s = refused.structured_content.unwrap();
+        assert_eq!(s["code"], "stale_element_token");
+        assert_eq!(s["effect"], "none");
+
+        // A raw CachedElementGone raised after a click (e.g. click_select_fg
+        // popup pick) or on MPX routes must NOT map to effect: "none".
+        let raw_stale = anyhow::Error::new(crate::atspi::native::CachedElementGone(
+            "gone after click".into(),
+        ));
+        assert!(keyboard_fallback_refusal(29, 7, &raw_stale).is_none());
     }
 
     #[test]

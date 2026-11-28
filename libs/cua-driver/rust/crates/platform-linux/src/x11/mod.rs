@@ -458,6 +458,115 @@ pub fn focused_window_among(candidates: &[u64]) -> Option<u64> {
     None
 }
 
+/// Ownership of a screen point relative to one target X11 window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPointOwnership {
+    /// The target window is viewable, contains the point, and walking topmost
+    /// input-receiving children from `root` reaches the target window itself.
+    /// Descendants of the target window are not walked: toolkit child windows
+    /// (GTK/Qt/Chromium render and input subwindows) are treated as the
+    /// target's own client area, and intra-window widget ownership is left to
+    /// AT-SPI `point_ownership`.
+    Owned,
+    /// The target window is not mapped/viewable.
+    NotViewable,
+    /// The screen point lies outside the target window's live bounds.
+    OutsideWindow { bounds: (i32, i32, u32, u32) },
+    /// Another toplevel, a sibling subwindow inside the WM frame, or bare root
+    /// (when `covering` is `None`) sits above the target window at that screen
+    /// point before the walk from `root` reaches the target window.
+    Occluded { covering: Option<u64> },
+}
+
+fn bounds_contain((wx, wy, ww, wh): (i32, i32, u32, u32), (sx, sy): (i32, i32)) -> bool {
+    ww > 0
+        && wh > 0
+        && sx >= wx
+        && sy >= wy
+        && i64::from(sx) < i64::from(wx) + i64::from(ww)
+        && i64::from(sy) < i64::from(wy) + i64::from(wh)
+}
+
+fn is_bad_window(err: &x11rb::errors::ReplyError) -> bool {
+    matches!(
+        err,
+        x11rb::errors::ReplyError::X11Error(xerr)
+            if xerr.error_kind == x11rb::protocol::ErrorKind::Window
+    )
+}
+
+/// Verify on live X11 state that screen point `(sx, sy)` falls inside `xid`'s
+/// viewable bounds and that walking topmost input-receiving children from
+/// `root` reaches `xid` itself (catching covering toplevels and sibling
+/// subwindows inside the WM frame). The walk stops once it reaches `xid`:
+/// child windows inside `xid` (GTK/Qt/Chromium render and input subwindows,
+/// which normally do not publish `_NET_WM_PID`) are intentionally treated as
+/// `xid`'s own client area, leaving intra-window widget ownership to AT-SPI
+/// `point_ownership` (foreign XEmbed plugs reparented inside `xid` are not
+/// distinguished here). Kept separate from `input::occluding_window`, which
+/// retargets same-pid dialogs and only checks root children; `set_value` must
+/// refuse any covering window before clicking.
+pub fn point_owned_by_window(xid: u64, sx: i32, sy: i32) -> Result<WindowPointOwnership> {
+    let win = u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    let attrs = match conn.get_window_attributes(win)?.reply() {
+        Ok(reply) => reply,
+        Err(err) if is_bad_window(&err) => return Ok(WindowPointOwnership::NotViewable),
+        Err(err) => return Err(err.into()),
+    };
+    if attrs.map_state != MapState::VIEWABLE {
+        return Ok(WindowPointOwnership::NotViewable);
+    }
+    let geom = match conn.get_geometry(win)?.reply() {
+        Ok(reply) => reply,
+        Err(err) if is_bad_window(&err) => return Ok(WindowPointOwnership::NotViewable),
+        Err(err) => return Err(err.into()),
+    };
+    let origin = match conn.translate_coordinates(win, root, 0, 0)?.reply() {
+        Ok(reply) => reply,
+        Err(err) if is_bad_window(&err) => return Ok(WindowPointOwnership::NotViewable),
+        Err(err) => return Err(err.into()),
+    };
+    let bounds = (
+        i32::from(origin.dst_x),
+        i32::from(origin.dst_y),
+        u32::from(geom.width),
+        u32::from(geom.height),
+    );
+    if !bounds_contain(bounds, (sx, sy)) {
+        return Ok(WindowPointOwnership::OutsideWindow { bounds });
+    }
+    let (Ok(sx16), Ok(sy16)) = (i16::try_from(sx), i16::try_from(sy)) else {
+        return Ok(WindowPointOwnership::OutsideWindow { bounds });
+    };
+    let mut cur = root;
+    let mut covering = None;
+    let mut reached_target = false;
+    for _ in 0..64 {
+        let child = conn
+            .translate_coordinates(root, cur, sx16, sy16)?
+            .reply()?
+            .child;
+        if child == 0 {
+            break;
+        }
+        if child == win {
+            reached_target = true;
+            break;
+        }
+        covering = Some(child);
+        cur = child;
+    }
+    Ok(if reached_target {
+        WindowPointOwnership::Owned
+    } else {
+        WindowPointOwnership::Occluded {
+            covering: covering.map(u64::from),
+        }
+    })
+}
+
 /// `WM_TRANSIENT_FOR` of a toplevel: the window it is a dialog of. `None`
 /// when unset or pointing at the root (group-transient utility windows).
 pub fn transient_for(xid: u64) -> Option<u64> {
@@ -1115,5 +1224,21 @@ mod tests {
         let cross =
             list_cross_pid_transient_windows_with(7, windows, |xid| (xid == 90).then_some(10));
         assert!(cross.is_empty());
+    }
+
+    #[test]
+    fn window_bounds_contain_handles_edges_empty_and_large_extents() {
+        let bounds = (100, 60, 420, 220);
+        assert!(bounds_contain(bounds, (100, 60)));
+        assert!(bounds_contain(bounds, (519, 279)));
+        assert!(!bounds_contain(bounds, (99, 60)));
+        assert!(!bounds_contain(bounds, (520, 150)));
+        assert!(!bounds_contain(bounds, (250, 280)));
+        assert!(!bounds_contain((100, 60, 0, 220), (100, 60)));
+        assert!(!bounds_contain((100, 60, 420, 0), (100, 60)));
+        assert!(bounds_contain(
+            (i32::MAX - 10, 0, u32::MAX, 100),
+            (i32::MAX, 50)
+        ));
     }
 }

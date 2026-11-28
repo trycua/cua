@@ -478,6 +478,10 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
       cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test x11_foreground_restore_linux_test -- \
         --ignored --nocapture --test-threads=1
+    run_test x11-set-value-wrong-window \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test x11_set_value_wrong_window_linux_test -- \
+        --ignored --nocapture --test-threads=1
   else
     limitation="The unpublished-_NET_WM_PID case maps a bare X11 client and runs in the canonical X11 lane."
     jq -n \

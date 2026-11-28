@@ -238,6 +238,13 @@ Disk Access or a per-app grant, so attachment through the daemon refuses with
 Disk Access in System Settings, then restart the daemon. A runtime started with
 `cua-driver mcp --direct` reads the folder with its host app's access instead.
 
+Dia is supported on macOS. Its setup page is `dia://inspect/#remote-debugging`,
+opened and closed through Dia's AppleScript, and its checkbox is clicked with
+the window briefly in front, so `delivery_mode: "foreground"` is required while
+remote debugging is off. Dia shows its own **Allow debugging connection?**
+prompt, which the driver accepts. Arc is not supported: it has no Chromium
+browser window to host the connection prompt, so it rejects every connection.
+
 ## Refusals
 
 | Code | Meaning |

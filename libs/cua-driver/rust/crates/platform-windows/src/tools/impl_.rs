@@ -278,8 +278,25 @@ pub(crate) fn minimized_element_refusal(
 /// the capture fallback which also keeps the full PrintWindow bitmap
 /// without crop.
 pub(crate) fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
-    let (left, top) = crate::capture::window_capture_origin(hwnd).unwrap_or((0, 0));
+    let (left, top) =
+        crate::capture::window_capture_frame(hwnd).map_or((0, 0), |frame| (frame.left, frame.top));
     (left + px, top + py)
+}
+
+/// [`bitmap_to_screen`] for a pointer action: refuses a point outside the
+/// window's screenshot with `point_outside_window` before any input is sent,
+/// so screen pixels passed as window pixels never become a click on another
+/// window or monitor (#3613). With no readable frame the point maps as
+/// [`bitmap_to_screen`] does.
+pub(crate) fn bitmap_to_screen_in_window(
+    hwnd: u64,
+    px: f64,
+    py: f64,
+) -> Result<(i32, i32), ToolResult> {
+    match crate::capture::window_capture_frame(hwnd) {
+        Some(frame) => crate::window_point::window_point_to_screen(hwnd, frame, px, py),
+        None => Ok((px as i32, py as i32)),
+    }
 }
 
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the

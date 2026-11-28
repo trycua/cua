@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::{
-    bitmap_to_screen, chromium_click_short_circuit, element_target_rect, overlay_glide_to,
-    overlay_glide_to_target, pin_overlay_above, resolve_cursor_key,
+    bitmap_to_screen_in_window, chromium_click_short_circuit, element_target_rect,
+    overlay_glide_to, overlay_glide_to_target, pin_overlay_above, resolve_cursor_key,
     resolve_onscreen_point_with_scroll, restore_foreground_polling_best_effort, screenshot_scale,
     winui3_background_gesture, ToolState,
 };
@@ -283,7 +283,10 @@ impl Tool for DoubleClickTool {
             }
             // bitmap pixels -> screen via DWM-frame origin (see
             // `bitmap_to_screen` doc for why ClientToScreen is wrong).
-            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx_i, sy_i) = match bitmap_to_screen_in_window(hwnd, px, py) {
+                Ok(point) => point,
+                Err(refusal) => return refusal,
+            };
             let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;

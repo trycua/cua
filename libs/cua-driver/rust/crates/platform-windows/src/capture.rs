@@ -219,10 +219,15 @@ unsafe fn window_geometry(hwnd: HWND) -> Result<(FrameGeometry, Option<Bounds>)>
 }
 
 /// Use the exact same crop validation for capture and pixel/element mapping.
-pub(crate) fn window_capture_origin(hwnd: u64) -> Option<(i32, i32)> {
+pub(crate) fn window_capture_frame(hwnd: u64) -> Option<crate::window_point::WindowFrame> {
     let (geometry, dwm) = unsafe { window_geometry(HWND(hwnd as *mut _)) }.ok()?;
     let geometry = geometry.cropped(dwm);
-    Some((geometry.left, geometry.top))
+    Some(crate::window_point::WindowFrame {
+        left: geometry.left,
+        top: geometry.top,
+        width: geometry.width,
+        height: geometry.height,
+    })
 }
 
 /// Normalize either documented whole-window or DWM-frame WGC dimensions to

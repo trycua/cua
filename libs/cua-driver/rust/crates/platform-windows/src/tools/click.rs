@@ -13,10 +13,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::{
-    bitmap_to_screen, element_target_rect, is_windowless_desktop_action, minimized_element_refusal,
-    overlay_glide_to, overlay_glide_to_target, pin_overlay_above, resolve_cursor_key,
-    resolve_onscreen_point_with_scroll, restore_foreground_polling_best_effort, screenshot_scale,
-    winui3_background_gesture, ToolState,
+    bitmap_to_screen_in_window, element_target_rect, is_windowless_desktop_action,
+    minimized_element_refusal, overlay_glide_to, overlay_glide_to_target, pin_overlay_above,
+    resolve_cursor_key, resolve_onscreen_point_with_scroll, restore_foreground_polling_best_effort,
+    screenshot_scale, winui3_background_gesture, ToolState,
 };
 
 fn tool_result_text(result: ToolResult) -> String {
@@ -1054,13 +1054,11 @@ impl Tool for ClickTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if let Some((mapped_x, mapped_y)) = capture_point {
-                let (mapped_x, mapped_y) =
-                    match crate::capture_admission::round_action_point(mapped_x, mapped_y) {
-                        Ok(point) => point,
-                        Err(error) => return capture_admission_refusal(error),
-                    };
-                px = f64::from(mapped_x);
-                py = f64::from(mapped_y);
+                // Admission checked these against the capture; keep the
+                // fraction so the window mapping picks the containing pixel
+                // instead of rounding a last-half-pixel point past the edge.
+                px = mapped_x;
+                py = mapped_y;
             } else if from_zoom {
                 match self.state.zoom_context(&args, pid, Some(hwnd)) {
                     Ok(ctx) => {
@@ -1080,7 +1078,10 @@ impl Tool for ClickTool {
             }
             // px/py are bitmap pixels — see `bitmap_to_screen` for the
             // mapping (DWM-frame top-left + 1-px inset, NOT ClientToScreen).
-            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx_i, sy_i) = match bitmap_to_screen_in_window(hwnd, px, py) {
+                Ok(point) => point,
+                Err(refusal) => return refusal,
+            };
             let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;

@@ -137,6 +137,7 @@ pub(crate) mod test_env {
     pub(crate) struct DisplayOverride {
         display: Option<OsString>,
         wayland_display: Option<OsString>,
+        xauthority: Option<OsString>,
         _lock: MutexGuard<'static, ()>,
     }
 
@@ -147,7 +148,9 @@ pub(crate) mod test_env {
         x11_display(":9999999")
     }
 
-    /// Point `DISPLAY` at `display` and hide `WAYLAND_DISPLAY`.
+    /// Point `DISPLAY` at `display`, hide `WAYLAND_DISPLAY`, and point
+    /// `XAUTHORITY` at an empty file, so a connect never reads the host's
+    /// cookies.
     pub(crate) fn x11_display(display: &str) -> DisplayOverride {
         let lock = ENV_LOCK
             .lock()
@@ -155,9 +158,11 @@ pub(crate) mod test_env {
         let guard = DisplayOverride {
             display: std::env::var_os("DISPLAY"),
             wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
+            xauthority: std::env::var_os("XAUTHORITY"),
             _lock: lock,
         };
         std::env::set_var("DISPLAY", display);
+        std::env::set_var("XAUTHORITY", "/dev/null");
         std::env::remove_var("WAYLAND_DISPLAY");
         crate::desktop::reclassify();
         guard
@@ -168,6 +173,7 @@ pub(crate) mod test_env {
             for (name, value) in [
                 ("DISPLAY", self.display.take()),
                 ("WAYLAND_DISPLAY", self.wayland_display.take()),
+                ("XAUTHORITY", self.xauthority.take()),
             ] {
                 match value {
                     Some(value) => std::env::set_var(name, value),

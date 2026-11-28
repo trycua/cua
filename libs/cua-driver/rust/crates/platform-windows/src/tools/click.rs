@@ -111,6 +111,34 @@ enum BackgroundElementClick {
     },
 }
 
+/// A background `expand` refused before any call because the element is a
+/// classic Win32 menu item.
+#[derive(Debug)]
+struct OpensWin32Menu;
+
+impl std::fmt::Display for OpensWin32Menu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("expanding a classic Win32 menu item opens its menu")
+    }
+}
+
+impl std::error::Error for OpensWin32Menu {}
+
+/// Whether a UIA element is an item of a classic Win32 menu (the system's
+/// menu proxy reports framework `Win32`), as opposed to a WPF, WinForms or
+/// XAML menu that expands without the modal menu loop.
+unsafe fn is_classic_win32_menu_item(
+    element: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+) -> bool {
+    use windows::Win32::UI::Accessibility::UIA_MenuItemControlTypeId;
+    element
+        .CurrentControlType()
+        .is_ok_and(|control_type| control_type == UIA_MenuItemControlTypeId)
+        && element
+            .CurrentFrameworkId()
+            .is_ok_and(|framework| framework.to_string() == "Win32")
+}
+
 fn background_element_click_result(
     message: String,
     transport: ActionTransport,
@@ -653,6 +681,7 @@ impl Tool for ClickTool {
             // WPF/WinUI menus and tree nodes whose visual click target is
             // transient or scroll-adjusted.
             if action_req.as_deref() == Some("expand") {
+                let background = delivery.is_background();
                 let expand = tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
                     move || -> anyhow::Result<()> {
@@ -672,6 +701,12 @@ impl Tool for ClickTool {
                         let element = std::mem::ManuallyDrop::new(unsafe {
                             IUIAutomationElement::from_raw(retained.as_ptr() as *mut _)
                         });
+                        // A classic Win32 menu opens only in its window's
+                        // modal menu loop, which activates the window and
+                        // takes the user's keyboard and pointer (#6823).
+                        if background && unsafe { is_classic_win32_menu_item(&element) } {
+                            return Err(OpensWin32Menu.into());
+                        }
                         let pattern = unsafe {
                             element
                                 .GetCurrentPattern(UIA_ExpandCollapsePatternId)
@@ -697,6 +732,19 @@ impl Tool for ClickTool {
                         "✅ Expanded UIA element [{idx}] via ExpandCollapsePattern."
                     ))
                     .with_structured(json!({ "path": "uia_expand_collapse", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(error)) if error.is::<OpensWin32Menu>() => {
+                        cua_driver_core::delivery::background_unavailable_result(
+                            format!(
+                                "Expanding element [{idx}] opens a Windows menu, which activates \
+                                 its window and takes the keyboard and pointer from the user. \
+                                 Use invoke_menu with the item's menu path, or retry with \
+                                 delivery_mode:\"foreground\"."
+                            ),
+                            "background_unavailable",
+                            "opening a Windows menu activates its window and takes the keyboard and pointer from the user",
+                            json!({}),
+                        )
+                    }
                     Ok(Err(error)) => ToolResult::error(error.to_string()),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };

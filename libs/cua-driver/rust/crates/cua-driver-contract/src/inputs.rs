@@ -717,8 +717,9 @@ pub struct InvokeMenuInput {
     pub path: Vec<String>,
     /// `background` (default) never takes the user's keyboard or pointer and refuses with
     /// `background_unavailable` when the item can only be reached by opening a menu. `foreground`
-    /// is the explicit escalation that may activate the window and open menus. Linux honors it;
-    /// macOS and Windows accept it and keep their existing menu behavior.
+    /// is the explicit escalation that may activate the window and open menus. Linux and Windows
+    /// honor it; on Windows, background posts the command of a classic Win32 menu bar item
+    /// without opening a menu. macOS accepts it and keeps its existing menu behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "input_delivery_mode_schema")]
     pub delivery_mode: Option<InputDeliveryMode>,

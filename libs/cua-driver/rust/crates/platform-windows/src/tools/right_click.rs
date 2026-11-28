@@ -3,6 +3,9 @@
 
 use async_trait::async_trait;
 use cua_driver_core::{
+    action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    },
     protocol::ToolResult,
     tool::{Tool, ToolDef},
 };
@@ -17,6 +20,31 @@ use super::impl_::{
 };
 
 // ── right_click ───────────────────────────────────────────────────────────────
+
+/// A successful right-click with the route it actually took, so the result
+/// does not fall back to an inferred `global_input` route with an unknown
+/// delivery (#6823).
+fn right_click_result(message: String, transport: ActionTransport) -> ToolResult {
+    let foreground = transport == ActionTransport::WindowsSendInput;
+    ToolResult::text(message).with_action_record(
+        ActionExecutionRecord::builder(
+            ActionEffect::Unverifiable,
+            transport,
+            if foreground {
+                RequestedDelivery::Foreground
+            } else {
+                RequestedDelivery::Background
+            },
+        )
+        .actual_delivery(if foreground {
+            ActualDelivery::Foreground
+        } else {
+            ActualDelivery::Background
+        })
+        .build()
+        .expect("right_click record is valid"),
+    )
+}
 
 pub struct RightClickTool {
     pub(crate) state: Arc<ToolState>,
@@ -206,9 +234,9 @@ impl Tool for RightClickTool {
                 })
                 .await;
                 return match inj {
-                    Ok(Ok(())) => ToolResult::text(format!(
+                    Ok(Ok(())) => right_click_result(format!(
                         "✅ Injected right-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
-                    )),
+                    ), ActionTransport::WindowsTargetedInjection),
                     Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
@@ -234,9 +262,9 @@ impl Tool for RightClickTool {
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
-                    Ok(Ok(())) => ToolResult::text(format!(
+                    Ok(Ok(())) => right_click_result(format!(
                         "✅ Sent right-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
-                    )),
+                    ), ActionTransport::WindowsSendInput),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -260,7 +288,7 @@ impl Tool for RightClickTool {
             })
             .await;
             match result {
-                Ok(Ok(msg)) => ToolResult::text(msg),
+                Ok(Ok(msg)) => right_click_result(msg, ActionTransport::WindowsPostMessage),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
@@ -320,9 +348,9 @@ impl Tool for RightClickTool {
                 })
                 .await;
                 return match inj {
-                    Ok(Ok(())) => ToolResult::text(format!(
+                    Ok(Ok(())) => right_click_result(format!(
                         "✅ Injected right-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
-                    )),
+                    ), ActionTransport::WindowsTargetedInjection),
                     Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
@@ -348,9 +376,9 @@ impl Tool for RightClickTool {
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
-                    Ok(Ok(())) => ToolResult::text(format!(
+                    Ok(Ok(())) => right_click_result(format!(
                         "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
-                    )),
+                    ), ActionTransport::WindowsSendInput),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -373,8 +401,9 @@ impl Tool for RightClickTool {
             match result {
                 Ok(Ok(())) => {
                     // Swift pixel-path text 1:1.
-                    ToolResult::text(format!(
-                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
+                    right_click_result(format!(
+                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."),
+                        ActionTransport::WindowsPostMessage)
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),

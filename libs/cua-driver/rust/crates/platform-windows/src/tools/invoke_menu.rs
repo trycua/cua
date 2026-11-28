@@ -10,6 +10,8 @@ use cua_driver_core::{
 };
 use serde_json::{json, Value};
 
+use crate::menu_command::MenuCommandError;
+
 // ── invoke_menu ───────────────────────────────────────────────────────────
 
 pub struct InvokeMenuTool;
@@ -37,6 +39,23 @@ fn menu_refusal(message: String) -> ToolResult {
         "status": "refused",
         "refusal": { "code": "menu_path_unavailable", "message": message }
     }))
+}
+
+/// A background invocation that would have to open a menu is refused as
+/// `background_unavailable`: a classic Win32 menu opens only in its window's
+/// modal menu loop, which activates the window and takes the user's keyboard
+/// and pointer (trycua/cua#6823). Nothing was actuated.
+fn background_menu_refusal(detail: String) -> ToolResult {
+    cua_driver_core::delivery::background_unavailable_result(
+        format!(
+            "invoke_menu: {detail}. Reaching this item in the background would open a menu, \
+             which activates the window and takes the keyboard and pointer from the user. \
+             Retry with delivery_mode:\"foreground\" to open the menus."
+        ),
+        "background_unavailable",
+        "opening a Windows menu activates its window and takes the keyboard and pointer from the user",
+        json!({ "menu_detail": detail }),
+    )
 }
 
 /// Activate a window for a visible native-menu operation. Windows may reject
@@ -82,6 +101,7 @@ impl Tool for InvokeMenuTool {
             GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
         };
 
+        let delivery = cua_driver_core::delivery::DeliveryMode::from_args(&args);
         let input: InvokeMenuInput = match parse_typed_input("invoke_menu", args) {
             Ok(input) => input,
             Err(result) => return result,
@@ -99,6 +119,48 @@ impl Tool for InvokeMenuTool {
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner_pid)) };
         if owner_pid != input.pid {
             return menu_refusal("invoke_menu: window_id does not belong to pid".into());
+        }
+
+        // Background resolves the path through the window's HMENU and posts
+        // the command; it never opens a menu or activates the window.
+        if delivery.is_background() {
+            if let Some(cause) = crate::input::post_message_blocked_by_uipi(hwnd_value) {
+                return cua_driver_core::delivery::background_unavailable_result(
+                    format!("invoke_menu: {cause}"),
+                    "background_uipi_blocked",
+                    "the target runs at a higher integrity level than Cua Driver",
+                    json!({}),
+                );
+            }
+            let outcome = tokio::task::spawn_blocking(move || {
+                crate::menu_command::post_menu_command(hwnd_value, &path)
+            })
+            .await;
+            return match outcome {
+                Ok(Ok(())) => ToolResult::text(
+                    "Resolved the menu path in the window's menu and posted its command without opening a menu (delivery_mode=background); verify the command's semantic effect from fresh state.",
+                )
+                .with_action_record(
+                    ActionExecutionRecord::builder(
+                        ActionEffect::Unverifiable,
+                        ActionTransport::WindowsPostMessage,
+                        RequestedDelivery::Background,
+                    )
+                    .actual_delivery(ActualDelivery::Background)
+                    .evidence(ActionEvidence {
+                        kind: EvidenceKind::NativeApiResult,
+                        detail: "Every menu hop resolved uniquely in the window's menu and the command was posted"
+                            .into(),
+                    })
+                    .build()
+                    .expect("invoke_menu record is valid"),
+                ),
+                Ok(Err(MenuCommandError::MustOpen(detail))) => background_menu_refusal(detail),
+                Ok(Err(MenuCommandError::Path(detail))) => {
+                    menu_refusal(format!("invoke_menu: {detail}"))
+                }
+                Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
+            };
         }
 
         let outcome = tokio::task::spawn_blocking(move || {

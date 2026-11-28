@@ -28,7 +28,7 @@ use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, GetProcessWindowStation, GetThreadDesktop, GetUserObjectInformationW,
-    OpenInputDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, HDESK, UOI_NAME,
+    OpenInputDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, UOI_NAME,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
@@ -40,6 +40,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 pub struct DesktopState {
     pub session_id: Option<u32>,
     pub has_process_window_station: bool,
+    pub process_window_station_name: Option<String>,
     pub process_window_station_error: Option<String>,
     pub thread_desktop_name: Option<String>,
     pub thread_desktop_error: Option<String>,
@@ -112,11 +113,11 @@ pub fn current_session_id() -> Option<u32> {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn desktop_name(handle: HDESK) -> Result<String, String> {
+unsafe fn user_object_name(handle: HANDLE) -> Result<String, String> {
     let mut buf = vec![0u16; 256];
     let mut needed = 0u32;
     GetUserObjectInformationW(
-        HANDLE(handle.0),
+        handle,
         UOI_NAME,
         Some(buf.as_mut_ptr() as *mut std::ffi::c_void),
         (buf.len() * std::mem::size_of::<u16>()) as u32,
@@ -132,19 +133,27 @@ unsafe fn desktop_name(handle: HDESK) -> Result<String, String> {
 pub fn desktop_state() -> DesktopState {
     unsafe {
         let session_id = current_session_id();
-        let (has_process_window_station, process_window_station_error) =
+        let (has_process_window_station, process_window_station_name, process_window_station_error) =
             match GetProcessWindowStation() {
-                Ok(h) if !h.0.is_null() => (true, None),
+                Ok(h) if !h.0.is_null() => match user_object_name(HANDLE(h.0)) {
+                    Ok(name) => (true, Some(name), None),
+                    Err(e) => (
+                        true,
+                        None,
+                        Some(format!("GetProcessWindowStation name: {e}")),
+                    ),
+                },
                 Ok(_) => (
                     false,
+                    None,
                     Some("GetProcessWindowStation returned null".to_owned()),
                 ),
-                Err(e) => (false, Some(format!("GetProcessWindowStation: {e}"))),
+                Err(e) => (false, None, Some(format!("GetProcessWindowStation: {e}"))),
             };
 
         let (thread_desktop_name, thread_desktop_error) =
             match GetThreadDesktop(GetCurrentThreadId()) {
-                Ok(h) => match desktop_name(h) {
+                Ok(h) => match user_object_name(HANDLE(h.0)) {
                     Ok(name) => (Some(name), None),
                     Err(e) => (None, Some(format!("GetThreadDesktop name: {e}"))),
                 },
@@ -154,7 +163,7 @@ pub fn desktop_state() -> DesktopState {
         let (input_desktop_name, input_desktop_error) =
             match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS) {
                 Ok(h) => {
-                    let name = desktop_name(h);
+                    let name = user_object_name(HANDLE(h.0));
                     let _ = CloseDesktop(h);
                     match name {
                         Ok(name) => (Some(name), None),
@@ -170,6 +179,7 @@ pub fn desktop_state() -> DesktopState {
         DesktopState {
             session_id,
             has_process_window_station,
+            process_window_station_name,
             process_window_station_error,
             thread_desktop_name,
             thread_desktop_error,
@@ -288,6 +298,29 @@ pub fn interactive_desktop_check() -> Result<bool, String> {
     classify_interactive_desktop(&state)
 }
 
+/// Whether this process is attached to the live `WinSta0\Default` desktop.
+/// This composes the existing session/station/foreground probe with the input
+/// desktop and RDP connection checks; process liveness is never sufficient.
+#[cfg(target_os = "windows")]
+pub fn siren_interactive_session_ready() -> bool {
+    let state = desktop_state();
+    classify_siren_interactive_session(session_disconnected(), &state)
+}
+
+#[cfg(target_os = "windows")]
+fn classify_siren_interactive_session(disconnected: bool, state: &DesktopState) -> bool {
+    classify_interactive_desktop(state).is_ok_and(|interactive| interactive)
+        && state
+            .process_window_station_name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("WinSta0"))
+        && state
+            .thread_desktop_name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Default"))
+        && classify_desktop_unavailable(disconnected, state.input_desktop_name.as_deref()).is_none()
+}
+
 #[cfg(target_os = "windows")]
 fn classify_interactive_desktop(state: &DesktopState) -> Result<bool, String> {
     match state.session_id {
@@ -335,6 +368,7 @@ pub fn desktop_state() -> DesktopState {
     DesktopState {
         session_id: None,
         has_process_window_station: false,
+        process_window_station_name: None,
         process_window_station_error: Some("not a Windows host".to_owned()),
         thread_desktop_name: None,
         thread_desktop_error: Some("not a Windows host".to_owned()),
@@ -385,6 +419,7 @@ mod tests {
         DesktopState {
             session_id: Some(session_id),
             has_process_window_station: attached,
+            process_window_station_name: attached.then(|| "WinSta0".into()),
             process_window_station_error: (!attached).then(|| "no station".into()),
             thread_desktop_name: None,
             thread_desktop_error: None,
@@ -417,6 +452,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn siren_health_requires_the_real_live_default_desktop() {
+        let mut ready = state(2, true, true);
+        ready.thread_desktop_name = Some("Default".into());
+        ready.input_desktop_name = Some("Default".into());
+        assert!(classify_siren_interactive_session(false, &ready));
+
+        let mut session_zero = ready.clone();
+        session_zero.session_id = Some(0);
+        assert!(!classify_siren_interactive_session(false, &session_zero));
+
+        let mut wrong_station = ready.clone();
+        wrong_station.process_window_station_name = Some("Service-0x0-1$".into());
+        assert!(!classify_siren_interactive_session(false, &wrong_station));
+
+        let mut wrong_thread_desktop = ready.clone();
+        wrong_thread_desktop.thread_desktop_name = Some("Winlogon".into());
+        assert!(!classify_siren_interactive_session(
+            false,
+            &wrong_thread_desktop
+        ));
+
+        let mut wrong_input_desktop = ready.clone();
+        wrong_input_desktop.input_desktop_name = Some("Winlogon".into());
+        assert!(!classify_siren_interactive_session(
+            false,
+            &wrong_input_desktop
+        ));
+
+        assert!(!classify_siren_interactive_session(true, &ready));
+
+        let mut no_foreground = ready;
+        no_foreground.foreground_hwnd = None;
+        assert!(!classify_siren_interactive_session(false, &no_foreground));
+    }
     #[test]
     fn current_session_id_returns_some_on_windows() {
         // ProcessIdToSessionId on the current process must always succeed.

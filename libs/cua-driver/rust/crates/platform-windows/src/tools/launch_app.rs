@@ -9,9 +9,7 @@ use cua_driver_core::{
 };
 use serde_json::{json, Value};
 
-use super::impl_::{
-    is_chromium_browser_target, restore_foreground_polling_best_effort, split_launchable_target,
-};
+use super::impl_::{is_chromium_browser_target, split_launchable_target};
 
 /// Index of the first URL not already consumed as the primary shell target.
 /// An explicit app target consumes no URL; a URLs-only launch consumes index 0.
@@ -19,29 +17,22 @@ fn first_unopened_shell_url_index(has_app_target: bool) -> usize {
     usize::from(!has_app_target)
 }
 
-/// Anti-throttling flags injected on hidden Chromium launches (#1620).
-///
-/// `launch_app` uses `SW_SHOWNOACTIVATE` so the launched window is
-/// non-foreground from birth. Chromium's `CalculateNativeWinOcclusion`
-/// feature treats that as occluded and suspends the renderer process for
-/// the tab's entire lifetime — UIA tree exposes only browser chrome, no
-/// page DOM, and `PrintWindow` returns a blank body.
-///
-/// `CalculateNativeWinOcclusion` is the root cause; the two
-/// `--disable-backgrounding-*` flags backstop the same effect through the
-/// process-priority and renderer-throttling layers (Chromium suspends
-/// renderers on multiple signals).
-const CHROMIUM_ANTI_THROTTLING_FLAGS: &[&str] = &[
-    "--disable-features=CalculateNativeWinOcclusion",
-    "--disable-backgrounding-occluded-windows",
-    "--disable-renderer-backgrounding",
-];
+/// Whether the Siren downstream build suppresses upstream's implicit Chromium
+/// anti-throttling flags. Unset preserves upstream behavior; `0` and `false`
+/// preserve the caller's exact argument vector instead.
+fn suppress_chromium_anti_throttling_flags(value: Option<&std::ffi::OsStr>) -> bool {
+    value
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value == "0" || value.eq_ignore_ascii_case("false"))
+}
 
-/// Prepend the Chromium anti-throttling flags to `extra_args` unless the
-/// caller already has each one. Merges into an existing `--disable-features=`
-/// list rather than appending a second `--disable-features=` entry (Chromium
-/// has subtle merging rules across duplicate flags).
-fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
+/// Prepend the Chromium anti-throttling flags unless Siren disabled injection
+/// or the caller already has each one. Merge into an existing
+/// `--disable-features=` list rather than appending a duplicate entry.
+fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>, suppress: bool) {
+    if suppress {
+        return;
+    }
     const OCCLUSION_FEATURE: &str = "CalculateNativeWinOcclusion";
 
     // Merge `CalculateNativeWinOcclusion` into any existing
@@ -71,52 +62,18 @@ fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
             extra_args.insert(0, (*flag).to_string());
         }
     }
-    let _ = CHROMIUM_ANTI_THROTTLING_FLAGS; // referenced for docs alignment
 }
 
 // ── launch_app ───────────────────────────────────────────────────────────────
 
-/// Shape of the resolved launch-target params, used to decide whether the
-/// best-effort foreground-restore guard should fire.
-///
-/// The decision is intentionally a pure function of the params (not of any
-/// HWND state) so it can be unit-tested. See
-/// [`should_restore_foreground_after_launch`].
-#[derive(Clone, Copy, Debug)]
-struct LaunchTargetShape {
-    has_aumid: bool,
-    has_bundle_id: bool,
-    has_name: bool,
-    has_path: bool,
-    has_launch_path: bool,
-    has_urls: bool,
-}
-
-/// True iff the launch is "open an app in the background" (so we want to
-/// restore the user's foreground after the spawn activates the new window)
-/// rather than "open a URL in the default browser" (where the user
-/// explicitly asked for that page to come up).
-///
-/// Rule, matching the audit spec:
-/// - URLs-only call (no app-identifying field set) → SKIP restore. The
-///   user asked for `https://…` to be openable in their default browser;
-///   a browser instance freshly launched for that URL is the legitimate
-///   foreground.
-/// - Any app-identifying field present (`aumid` / `bundle_id` / `name` /
-///   `path` / `launch_path`) → RESTORE. The intent is hidden-launch +
-///   background drive; the no-foreground contract applies.
-fn should_restore_foreground_after_launch(shape: LaunchTargetShape) -> bool {
-    let has_app_identifier = shape.has_aumid
-        || shape.has_bundle_id
-        || shape.has_name
-        || shape.has_path
-        || shape.has_launch_path;
-    // URLs-only carve-out: when the caller passed urls AND no
-    // app-identifying field, skip the restore.
-    if shape.has_urls && !has_app_identifier {
-        return false;
+/// `nShow` for ShellExecuteEx launches. Ordinary launches use Windows' natural
+/// foreground behavior; only an explicit minimized request suppresses activation.
+fn shell_show_command(start_minimized: bool) -> i32 {
+    if start_minimized {
+        windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0
+    } else {
+        windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0
     }
-    has_app_identifier
 }
 
 /// Bound on one standard-user shell launch helper. It stays inside the 15 s
@@ -140,12 +97,12 @@ impl Tool for LaunchAppTool {
             // route through `IApplicationActivationManager` so packaged
             // (Microsoft Store / UWP / MSIX) apps return the real
             // process pid instead of a stub-redirect pid.
-            description: "Launch a Windows app hidden — the driver never brings the target to \
-                the foreground, the target's window is launched with SW_SHOWNOACTIVATE so it \
-                does not steal focus from whatever is currently frontmost.\n\n\
+            description: "Launch a Windows app. Ordinary desktop launches use SW_SHOWNORMAL and \
+                Windows' natural foreground behavior; `start_minimized:true` explicitly requests \
+                a non-activating minimized launch instead.\n\n\
                 Provide either `bundle_id` / `name` / `aumid` (resolved as below) or `path` \
                 (full path to an executable). If both `name` and `path` are given, `path` wins. \
-                `urls` opens each URL in the default browser without activating it.\n\n\
+                `urls` opens each URL in the default browser.\n\n\
                 Routing order: explicit `aumid` (or a `bundle_id` containing `!`) activates the \
                 packaged app via `IApplicationActivationManager::ActivateApplication`, returning \
                 the real packaged-process pid — required on Win11 for built-in apps like \
@@ -173,11 +130,11 @@ impl Tool for LaunchAppTool {
                 "name":{"type":"string","description":"App display name. Tried against the `shell:AppsFolder` index first for packaged-app lookup; on a miss, passed to ShellExecuteEx's PATH search."},
                 "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id/aumid (but not over `launch_path`)."},
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps`. Highest precedence — when set, this exact string is handed to ShellExecuteEx unchanged. For Windows desktop apps it's the full `.exe` commandline (path + arguments preserved from the source shortcut); for UWP apps it's `shell:appsFolder\\{PackageFamilyName}!{AppId}`. For precise UWP pid capture, prefer `aumid` over `launch_path`."},
-                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
+                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
-                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only window screenshots and `delivery_mode:\"foreground\"` need it restored."}
+                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar without activation. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only window screenshots and `delivery_mode:\"foreground\"` need it restored."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: true,
         })
@@ -211,19 +168,7 @@ impl Tool for LaunchAppTool {
             .get("start_minimized")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // `nShow` for the ShellExecuteEx-based launches. SW_SHOWNOACTIVATE
-        // keeps the new window from grabbing focus but still renders it on
-        // top of the previous frontmost window. SW_SHOWMINNOACTIVE both
-        // skips activation AND drops the window to the taskbar, which is
-        // what an agent doing background work wants — the user's terminal
-        // stays visually on top. UIA / PostMessage / set_value all keep
-        // working against a minimized window; only screenshot and
-        // delivery_mode:"foreground" pay a cost.
-        let n_show: i32 = if start_minimized {
-            windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0
-        } else {
-            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE.0
-        };
+        let n_show = shell_show_command(start_minimized);
         // Snapshot the set of currently-running pids BEFORE we launch. The
         // detached start_minimized polling task uses this to detect "any
         // process that came into existence as a result of our launch", so
@@ -243,35 +188,6 @@ impl Tool for LaunchAppTool {
             std::sync::Arc::new(std::collections::HashSet::new())
         };
 
-        // Capture the foreground window BEFORE any launch path runs so the
-        // post-spawn polling restore (below) has a target HWND to flip back
-        // to. Mirrors the macOS `FocusRestoreGuard` behavior. Best-effort —
-        // see `restore_foreground_polling_best_effort` for the actual
-        // restoration semantics.
-        //
-        // The UWP/AUMID path already restores foreground synchronously
-        // (see `launch_uwp::restore_foreground_best_effort`), so this only
-        // gates the legacy ShellExecuteExW path. We capture early so the
-        // value is consistent regardless of which sub-path runs.
-        //
-        // Stored as `usize` (not `HWND`) so this `invoke` future stays
-        // `Send` — `HWND` wraps `*mut c_void` and would taint the future
-        // for the multi-threaded tokio runtime if held across `.await`.
-        let foreground_before_addr: usize =
-            unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize };
-
-        // Pure-function decision on whether to fire the post-launch
-        // restore. Shape mirrors the resolved params — see
-        // `should_restore_foreground_after_launch` for the rule.
-        let launch_shape = LaunchTargetShape {
-            has_aumid: aumid_opt.is_some(),
-            has_bundle_id: bundle_id_opt.is_some(),
-            has_name: name_opt.is_some(),
-            has_path: path_opt.is_some(),
-            has_launch_path: launch_path_opt.is_some(),
-            has_urls: !urls.is_empty(),
-        };
-        let restore_foreground = should_restore_foreground_after_launch(launch_shape);
         let mut extra_args: Vec<String> = args
             .get("additional_arguments")
             .and_then(|v| v.as_array())
@@ -310,22 +226,18 @@ impl Tool for LaunchAppTool {
             .or(name_opt.clone())
             .or(bundle_id_opt.clone());
 
-        // #1620: auto-inject Chromium anti-throttling flags when the resolved
-        // target names a Chromium-based browser (Edge / Chrome / Brave /
-        // Vivaldi / Opera / Chromium / Arc / Thorium / Iridium / Yandex).
-        // launch_app hides the window via SW_SHOWNOACTIVATE; Chromium's
-        // occlusion logic suspends the renderer in that case, leaving the
-        // UIA tree empty and PrintWindow capturing a blank body. The three
-        // flags below defeat that for the lifetime of the launched process
-        // without affecting normal interactive use.
-        //
-        // Skipped when `aumid` or `bundle_id` route through the UWP path
-        // (packaged Edge is the exception; the desktop Edge channel is what
-        // ships now and that goes through the ShellExecuteEx path below).
+        // #1620: upstream injects anti-throttling flags for Chromium targets.
+        // Siren deployments set SIREN_CHROMIUM_FLAGS=0/false to keep the exact
+        // requested argv; an unset variable retains upstream behavior.
         if launch_path_opt.is_some() || path_opt.is_some() || name_opt.is_some() {
             if let Some(t) = target.as_deref() {
                 if is_chromium_browser_target(t) {
-                    inject_chromium_anti_throttling_flags(&mut extra_args);
+                    inject_chromium_anti_throttling_flags(
+                        &mut extra_args,
+                        suppress_chromium_anti_throttling_flags(
+                            std::env::var_os("SIREN_CHROMIUM_FLAGS").as_deref(),
+                        ),
+                    );
                 }
             }
         }
@@ -633,9 +545,9 @@ impl Tool for LaunchAppTool {
                     }
                 };
 
-                // Open any additional URLs in the default browser (no focus
-                // steal, no pid capture for these — Swift's NSWorkspace flow
-                // behaves the same way for secondary URLs).
+                // Open any additional URLs in the default browser (no pid
+                // capture for these — Swift's NSWorkspace flow behaves the
+                // same way for secondary URLs).
                 // When an app target was launched above, none of the URLs has
                 // been consumed yet. URLs-only launches use the first URL as
                 // `lpFile`, so only their remaining URLs belong here.
@@ -698,30 +610,6 @@ impl Tool for LaunchAppTool {
                 }
             }
         };
-
-        // Best-effort foreground-restore for the legacy ShellExecuteExW
-        // path. The UWP/AUMID branch already restores foreground
-        // synchronously inside `launch_uwp::launch_uwp`, so we only spawn
-        // the polling task when we went through the ShellExecuteExW
-        // branch. URLs-only invocations are excluded via `restore_foreground`
-        // (see `should_restore_foreground_after_launch`).
-        //
-        // `HWND` wraps a raw `*mut c_void` which is `!Send`, so we marshal
-        // the foreground handle across the spawn boundary as a `usize` and
-        // reconstruct the `HWND` only inside the synchronous probes (see
-        // `restore_foreground_polling_best_effort`). Mirrors how
-        // `launch_uwp.rs` carries its restore target.
-        if aumid_for_uwp.is_none() && restore_foreground {
-            let spawned_pid_for_restore = pid;
-            let target_foreground_addr = foreground_before_addr;
-            tokio::spawn(async move {
-                restore_foreground_polling_best_effort(
-                    target_foreground_addr,
-                    spawned_pid_for_restore,
-                )
-                .await;
-            });
-        }
 
         // When the packaged path was taken we still need to fan out any
         // extra URLs to the default browser (ShellExecuteEx — no pid
@@ -1063,8 +951,17 @@ impl Tool for LaunchAppTool {
             .await;
         }
 
-        // Match Swift text format 1:1.
-        let mut summary = format!("✅ Launched {display} (pid {pid}) in background.");
+        let foreground = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        let foreground = foreground.0 as usize;
+        let active = foreground != 0
+            && windows_json
+                .iter()
+                .any(|window| window["window_id"].as_u64() == Some(foreground as u64));
+        let mut summary = if start_minimized {
+            format!("✅ Launched {display} (pid {pid}) in background.")
+        } else {
+            format!("✅ Launched {display} (pid {pid}).")
+        };
         if !windows_json.is_empty() {
             summary.push_str("\n\nWindows:");
             for w in &windows_json {
@@ -1094,7 +991,7 @@ impl Tool for LaunchAppTool {
             "bundle_id": bundle_id_response,
             "name":      display,
             "running":   true,
-            "active":    false,  // SW_SHOWNOACTIVATE — Swift's background-launch invariant
+            "active":    active,
             "windows":   windows_json,
         });
         ToolResult::text(summary).with_structured(structured)
@@ -1102,46 +999,28 @@ impl Tool for LaunchAppTool {
 }
 
 #[cfg(test)]
-mod launch_focus_restore_decision_tests {
-    use super::{
-        first_unopened_shell_url_index, should_restore_foreground_after_launch, LaunchTargetShape,
-    };
+mod launch_behavior_tests {
+    use super::{first_unopened_shell_url_index, shell_show_command};
 
     #[test]
-    fn only_app_identifying_launches_restore_foreground() {
-        for (fields, restore) in [
-            // A urls-only launch explicitly asks for navigation in the default
-            // browser; that browser is the legitimate foreground.
-            (&["urls"][..], false),
-            (&["name"], true),
-            (&["path"], true),
-            // The AUMID path restores synchronously in launch_uwp.rs; the
-            // caller gates the polling restore on `aumid_for_uwp.is_none()`.
-            (&["aumid"], true),
-            (&["bundle_id"], true),
-            (&["launch_path"], true),
-            // An app-identifying field alongside urls opens them in that app
-            // in the background, so the prior foreground is restored.
-            (&["name", "urls"], true),
-            (&["path", "urls"], true),
-            (&["aumid", "urls"], true),
-            // Nothing was launched.
-            (&[], false),
-        ] {
-            let shape = LaunchTargetShape {
-                has_aumid: fields.contains(&"aumid"),
-                has_bundle_id: fields.contains(&"bundle_id"),
-                has_name: fields.contains(&"name"),
-                has_path: fields.contains(&"path"),
-                has_launch_path: fields.contains(&"launch_path"),
-                has_urls: fields.contains(&"urls"),
-            };
-            assert_eq!(
-                should_restore_foreground_after_launch(shape),
-                restore,
-                "{fields:?}"
-            );
-        }
+    fn ordinary_shell_launch_uses_natural_foreground() {
+        assert_eq!(
+            shell_show_command(false),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0
+        );
+        assert_eq!(
+            shell_show_command(true),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0
+        );
+    }
+
+    #[test]
+    fn launch_has_no_detached_foreground_restore_task() {
+        // This is a structural contract: launch must not leave desktop polling
+        // running after its response enters Siren's silent window.
+        let source = include_str!("launch_app.rs");
+        let restore_helper = ["restore_foreground_polling", "_best_effort"].concat();
+        assert!(!source.contains(&restore_helper));
     }
 
     #[test]
@@ -1157,7 +1036,10 @@ mod launch_focus_restore_decision_tests {
 
 #[cfg(test)]
 mod chromium_flag_injection_tests {
-    use super::{inject_chromium_anti_throttling_flags, is_chromium_browser_target};
+    use super::{
+        inject_chromium_anti_throttling_flags, is_chromium_browser_target,
+        suppress_chromium_anti_throttling_flags,
+    };
 
     #[test]
     fn detects_bare_browser_names() {
@@ -1216,7 +1098,7 @@ mod chromium_flag_injection_tests {
     #[test]
     fn injects_three_flags_into_empty_args() {
         let mut args: Vec<String> = vec![];
-        inject_chromium_anti_throttling_flags(&mut args);
+        inject_chromium_anti_throttling_flags(&mut args, false);
         assert!(args.contains(&"--disable-features=CalculateNativeWinOcclusion".to_string()));
         assert!(args.contains(&"--disable-backgrounding-occluded-windows".to_string()));
         assert!(args.contains(&"--disable-renderer-backgrounding".to_string()));
@@ -1226,7 +1108,7 @@ mod chromium_flag_injection_tests {
     #[test]
     fn merges_into_existing_disable_features_list() {
         let mut args = vec!["--disable-features=Foo,Bar".to_string()];
-        inject_chromium_anti_throttling_flags(&mut args);
+        inject_chromium_anti_throttling_flags(&mut args, false);
         // Should NOT have two --disable-features= entries.
         let dfe: Vec<_> = args
             .iter()
@@ -1246,14 +1128,14 @@ mod chromium_flag_injection_tests {
             "--disable-renderer-backgrounding".to_string(),
         ];
         let before = args.clone();
-        inject_chromium_anti_throttling_flags(&mut args);
+        inject_chromium_anti_throttling_flags(&mut args, false);
         assert_eq!(args, before, "must not duplicate flags");
     }
 
     #[test]
     fn preserves_user_url_argument_after_flags() {
         let mut args = vec!["file:///C:/test_page.html".to_string()];
-        inject_chromium_anti_throttling_flags(&mut args);
+        inject_chromium_anti_throttling_flags(&mut args, false);
         // URL must still be present.
         assert!(args.iter().any(|a| a == "file:///C:/test_page.html"));
         // All three flags now in args.
@@ -1264,5 +1146,28 @@ mod chromium_flag_injection_tests {
             .iter()
             .any(|a| a == "--disable-backgrounding-occluded-windows"));
         assert!(args.iter().any(|a| a == "--disable-renderer-backgrounding"));
+    }
+
+    #[test]
+    fn siren_gate_preserves_exact_requested_argv() {
+        for value in [Some("0"), Some("false"), Some("FALSE")] {
+            assert!(suppress_chromium_anti_throttling_flags(
+                value.map(std::ffi::OsStr::new)
+            ));
+        }
+        for value in [None, Some(""), Some("1"), Some("true")] {
+            assert!(!suppress_chromium_anti_throttling_flags(
+                value.map(std::ffi::OsStr::new)
+            ));
+        }
+
+        let requested = vec![
+            "--user-data-dir=C:\\Siren\\profile".to_string(),
+            "--new-window".to_string(),
+            "https://example.test/".to_string(),
+        ];
+        let mut args = requested.clone();
+        inject_chromium_anti_throttling_flags(&mut args, true);
+        assert_eq!(args, requested);
     }
 }

@@ -7,7 +7,7 @@ as a Space). One binary serves the `cua.env.v1` contract
 | Surface | What |
 |---|---|
 | gRPC and gRPC-Web (same port) | `System`, `Process`, `Filesystem`, `Computer`, `Windows`, `Accessibility`, `Driver`, `Stream`, `Presence`, `Teleport`, `Tunnel` services, plus gRPC reflection |
-| `GET /health` | Unauthenticated, 204 while serving |
+| `GET /health` | Non-Windows: unauthenticated 204 while serving; Windows: bearer-authenticated Siren readiness JSON, 200 only on a live `WinSta0\Default` session |
 | `/files` | Signed-URL upload and download (HMAC, mandatory expiry) |
 | `/mcp` | Streamable-HTTP MCP over the cua-driver tool registry |
 | `/tunnel`, `/hotspot` | Port forwarding and reverse SOCKS egress (ticketed WebSockets) |

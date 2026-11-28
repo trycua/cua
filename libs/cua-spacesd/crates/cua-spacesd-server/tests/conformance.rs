@@ -91,12 +91,26 @@ async fn auth_is_required_and_either_header_works() {
             .await
             .unwrap_or_else(|e| panic!("{transport:?} x-cua-env-authorization: {e}"));
     }
-    // /health is unauthenticated plain HTTP.
-    let response = http_client()
-        .get(t.endpoint().http_url("/health").parse().unwrap())
-        .await
-        .unwrap();
-    assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Non-Windows /health remains unauthenticated plain HTTP with the
+        // original empty 204 response.
+        let response = http_client()
+            .get(t.endpoint().http_url("/health").parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Windows /health is Siren readiness and uses the same bearer check
+        // as /mcp instead of treating listener liveness as an interactive session.
+        let response = http_client()
+            .get(t.endpoint().http_url("/health").parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
+    }
     t.cleanup().await;
 }
 

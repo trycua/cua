@@ -127,6 +127,21 @@ pub(super) struct FixtureState {
     /// Extra page targets living in the bound window, after T1 in the
     /// browser's `Target.getTargets` order.
     sibling_tabs: Vec<Value>,
+    /// The window's tab strip, as Chromium exposes it to a `Target.getTargets`
+    /// filtered to `tab` targets: (tab target id, whether it is the selected
+    /// tab, the page target that tab auto-attaches).
+    tab_strip: Vec<(String, bool, String)>,
+    /// The tab strip's targets carry no `embedderData.tabActive`, as on a
+    /// Chromium that does not report it.
+    tab_strip_unmarked: bool,
+    /// The native window's geometry proves nothing and it may not be the only
+    /// one, so the window binds by title alone: a heuristic bind.
+    heuristic_window: bool,
+    /// Every detach of a tab-strip session fails, leaving it attached.
+    tab_strip_detach_fails: bool,
+    /// The tab-strip sessions attached now: added on attach and auto-attach,
+    /// removed by a detach that succeeds.
+    strip_attached: std::collections::BTreeSet<String>,
     /// Fail the read-only prepare probe without closing the WebSocket.
     fail_get_targets: bool,
     silent_get_targets: bool,
@@ -172,6 +187,11 @@ impl Default for FixtureState {
             main_url: "https://fixture.test/".into(),
             windowless_targets: Vec::new(),
             sibling_tabs: Vec::new(),
+            tab_strip: Vec::new(),
+            tab_strip_unmarked: false,
+            tab_strip_detach_fails: false,
+            heuristic_window: false,
+            strip_attached: Default::default(),
             omit_primary_target: false,
             fail_get_targets: false,
             silent_get_targets: false,
@@ -573,6 +593,41 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         None => reply,
                     };
                 }
+                // Chromium's filter: the first entry whose type matches (or that
+                // names none) decides, `exclude` dropping it; no match drops it.
+                // Without a filter, tab targets are excluded.
+                let filter = call.params["filter"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_else(|| vec![json!({"type": "tab", "exclude": true}), json!({})]);
+                let kept = |kind: &str| {
+                    filter
+                        .iter()
+                        .find(|entry| entry["type"].as_str().is_none_or(|t| t == kind))
+                        .is_some_and(|entry| entry["exclude"] != true)
+                };
+                let tabs = st
+                    .tab_strip
+                    .iter()
+                    .map(|(tab, selected, _)| {
+                        let mut tab = json!({
+                            "targetId": tab,
+                            "type": "tab",
+                            "title": "Fixture",
+                            "url": "https://fixture.test/",
+                            "attached": false,
+                            "embedderData": { "tabActive": selected },
+                        });
+                        if st.tab_strip_unmarked {
+                            tab["embedderData"] = json!({});
+                        }
+                        tab
+                    })
+                    .collect::<Vec<_>>();
+                if !kept("page") {
+                    let tabs = if kept("tab") { tabs } else { Vec::new() };
+                    return MockReply::ok(json!({ "targetInfos": tabs }));
+                }
                 let mut infos: Vec<Value> = Vec::new();
                 if !st.omit_primary_target {
                     infos.push(json!({
@@ -585,6 +640,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 infos.extend(st.sibling_tabs.iter().cloned());
                 infos.extend(st.windowless_targets.iter().cloned());
+                if kept("tab") {
+                    infos.extend(tabs);
+                }
                 MockReply::ok(json!({ "targetInfos": infos }))
             }
             "Target.getTargetInfo" => MockReply::ok(json!({
@@ -604,6 +662,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     .any(|t| t["targetId"].as_str() == Some(target_id));
                 if windowless {
                     MockReply::err(-32000, "Browser window not found")
+                } else if target_id.starts_with("OTHERWIN") {
+                    MockReply::ok(json!({ "windowId": 99 }))
                 } else if let Some((code, message)) = st.primary_window_error.clone() {
                     MockReply::err(code, &message)
                 } else {
@@ -613,6 +673,19 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "Browser.getWindowBounds" => MockReply::ok(json!({
                 "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
             })),
+            "Target.attachToTarget"
+                if st
+                    .tab_strip
+                    .iter()
+                    .any(|(tab, _, _)| call.params["targetId"].as_str() == Some(tab.as_str())) =>
+            {
+                let session = format!(
+                    "strip-sess-{}",
+                    call.params["targetId"].as_str().unwrap_or("")
+                );
+                st.strip_attached.insert(session.clone());
+                MockReply::ok(json!({ "sessionId": session }))
+            }
             "Target.attachToTarget" => {
                 st.tab_sessions += 1;
                 let reply =
@@ -1066,6 +1139,46 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(json!({}))
                 }
             }
+            "Target.setAutoAttach" if sess.starts_with("strip-sess-") => {
+                let tab = &sess["strip-sess-".len()..];
+                let page = st
+                    .tab_strip
+                    .iter()
+                    .find(|(t, _, _)| t == tab)
+                    .map(|(_, _, page)| page.clone());
+                if let Some(page) = &page {
+                    st.strip_attached.insert(format!("strip-page-sess-{page}"));
+                }
+                let events = page
+                    .map(|page| {
+                        vec![MockEvent {
+                            method: "Target.attachedToTarget".into(),
+                            session_id: Some(sess.clone()),
+                            params: json!({
+                                "sessionId": format!("strip-page-sess-{page}"),
+                                "targetInfo": { "targetId": page, "type": "page", "url": "https://fixture.test/", "attached": true },
+                                "waitingForDebugger": false,
+                            }),
+                        }]
+                    })
+                    .unwrap_or_default();
+                MockReply::ok(json!({})).with_events(events)
+            }
+            "Target.detachFromTarget"
+                if call.params["sessionId"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("strip-")) =>
+            {
+                // A detach that fails while the session lives on (not Chromium's "No session with given id",
+                // which means it is already gone).
+                if st.tab_strip_detach_fails {
+                    MockReply::err(-32603, "Internal error")
+                } else {
+                    let session = call.params["sessionId"].as_str().unwrap_or_default();
+                    st.strip_attached.remove(session);
+                    MockReply::ok(json!({}))
+                }
+            }
             other => MockReply::method_not_found(other),
         }
     })
@@ -1144,6 +1257,14 @@ struct FixtureWatch {
 impl BrowserForegroundWatch for FixtureWatch {
     fn finish(self: Box<Self>) -> bool {
         self.saw_activation.load(Ordering::SeqCst)
+    }
+}
+
+impl FixturePlatform {
+    fn heuristic_window(&self) -> bool {
+        self.endpoint_state
+            .as_ref()
+            .is_some_and(|state| state.lock().unwrap().heuristic_window)
     }
 }
 
@@ -1226,7 +1347,7 @@ impl BrowserPlatform for FixturePlatform {
             window_id,
             title: "Fixture - Chrome".into(),
             bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
-            geometry_exact: true,
+            geometry_exact: !self.heuristic_window(),
             ownership: NativeOwnershipProof {
                 method: NativeOwnershipMethod::WindowServerOwner,
                 owner_pid: pid,
@@ -1240,7 +1361,7 @@ impl BrowserPlatform for FixturePlatform {
         _pid: i64,
         _window_id: u64,
     ) -> Result<Option<bool>, BrowserRefusal> {
-        Ok(Some(true))
+        Ok(Some(!self.heuristic_window()))
     }
 
     async fn discover_owned_endpoint(
@@ -5084,6 +5205,279 @@ async fn bound_tabs_keep_the_browser_order_across_binds() {
         assert_eq!(listed, expected, "{s}");
         assert_eq!(s["tabs"][0]["active"], true, "{s}");
     }
+}
+
+/// A sibling tab with the bound tab's title: the window title alone cannot tell them apart.
+fn same_title_sibling() -> Value {
+    json!({
+        "targetId": "T2",
+        "type": "page",
+        "title": "Fixture",
+        "url": "https://fixture.test/two",
+        "attached": false,
+    })
+}
+
+fn active_by_target(s: &Value) -> Vec<(String, Value)> {
+    s["tabs"]
+        .as_array()
+        .expect("tabs")
+        .iter()
+        .map(|t| (t["url"].as_str().unwrap().to_owned(), t["active"].clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn same_title_tabs_name_the_one_the_tab_strip_selects() {
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![
+            ("TAB1".into(), false, "T1".into()),
+            ("TAB2".into(), true, "T2".into()),
+        ];
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(
+        active_by_target(&s),
+        vec![
+            ("https://fixture.test/".to_owned(), json!(false)),
+            ("https://fixture.test/two".to_owned(), json!(true)),
+        ],
+        "{s}"
+    );
+    // The tab strip is read: nothing runs in a page, no tab is selected, and
+    // both sessions are detached, the page's on its tab's session.
+    let st = f.state.lock().unwrap();
+    assert!(!st.calls.iter().any(|(session, method, _)| {
+        (method == "Runtime.evaluate" && session.as_deref().is_some_and(|s| s.starts_with("strip")))
+            || method == "Target.activateTarget"
+            || method == "Page.bringToFront"
+    }));
+    let detached = |on: Option<&str>, id: &str| {
+        st.calls.iter().any(|(session, method, params)| {
+            method == "Target.detachFromTarget"
+                && session.as_deref() == on
+                && params["sessionId"] == id
+        })
+    };
+    assert!(
+        detached(Some("strip-sess-TAB2"), "strip-page-sess-T2"),
+        "the page's session on the tab's"
+    );
+    assert!(detached(None, "strip-sess-TAB2"), "the tab's session");
+    assert!(
+        st.strip_attached.is_empty(),
+        "left attached: {:?}",
+        st.strip_attached
+    );
+}
+
+#[tokio::test]
+async fn same_title_tabs_on_a_tab_strip_without_tab_active_name_no_tab() {
+    // A Chromium whose tab targets do not report `embedderData.tabActive`:
+    // nothing is attached, and selection stays unknown, as without a tab strip,
+    // even when the strip lists a single tab target.
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![("TAB2".into(), true, "T2".into())];
+        st.tab_strip_unmarked = true;
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "no proof, no active tab: {s}"
+    );
+    let st = f.state.lock().unwrap();
+    assert!(
+        !st.calls.iter().any(|(_, method, params)| {
+            method == "Target.attachToTarget"
+                && params["targetId"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("TAB"))
+        }),
+        "no tab is attached"
+    );
+}
+
+#[tokio::test]
+async fn a_failing_detach_is_tried_twice_and_the_bind_still_answers() {
+    // Every detach fails while the sessions live on: each is tried once more,
+    // then left, so both stay attached (until the pooled socket closes); the
+    // bind still answers, naming the tab the tab strip selected.
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![
+            ("TAB1".into(), false, "T1".into()),
+            ("TAB2".into(), true, "T2".into()),
+        ];
+        st.tab_strip_detach_fails = true;
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(
+        active_by_target(&s),
+        vec![
+            ("https://fixture.test/".to_owned(), json!(false)),
+            ("https://fixture.test/two".to_owned(), json!(true)),
+        ],
+        "{s}"
+    );
+    let st = f.state.lock().unwrap();
+    let detaches = |on: Option<&str>, id: &str| {
+        st.calls
+            .iter()
+            .filter(|(session, method, params)| {
+                method == "Target.detachFromTarget"
+                    && session.as_deref() == on
+                    && params["sessionId"] == id
+            })
+            .count()
+    };
+    assert_eq!(
+        detaches(Some("strip-sess-TAB2"), "strip-page-sess-T2"),
+        2,
+        "the page's session"
+    );
+    assert_eq!(detaches(None, "strip-sess-TAB2"), 2, "the tab's session");
+    assert_eq!(
+        st.strip_attached
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["strip-page-sess-T2", "strip-sess-TAB2"],
+        "both sessions stay attached"
+    );
+}
+
+#[tokio::test]
+async fn a_window_bound_by_title_alone_never_asks_the_tab_strip() {
+    // A heuristic bind may name the wrong window: its selected tab is not
+    // attached, and selection stays unknown.
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![
+            ("TAB1".into(), false, "T1".into()),
+            ("TAB2".into(), true, "T2".into()),
+        ];
+        st.heuristic_window = true;
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["binding_quality"], "heuristic", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "{s}"
+    );
+    let st = f.state.lock().unwrap();
+    assert!(
+        !st.calls.iter().any(|(_, method, params)| {
+            (method == "Target.getTargets" && params.get("filter").is_some())
+                || (method == "Target.attachToTarget"
+                    && params["targetId"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with("TAB")))
+        }),
+        "the tab strip is not asked"
+    );
+}
+
+#[tokio::test]
+async fn a_window_chosen_by_title_among_same_bounds_windows_never_asks_the_tab_strip() {
+    // Another window has the same bounds, so the title broke the tie: the bind
+    // is exact, but its window is not proven without the title, so its selected
+    // tab is not attached, and selection stays unknown.
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.sibling_tabs.push(json!({
+            "targetId": "OTHERWIN-PAGE",
+            "type": "page",
+            "title": "Elsewhere",
+            "url": "https://elsewhere.test/",
+            "attached": false,
+        }));
+        st.tab_strip = vec![
+            ("TAB1".into(), false, "T1".into()),
+            ("TAB2".into(), true, "T2".into()),
+        ];
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["binding_quality"], "exact", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "{s}"
+    );
+    let st = f.state.lock().unwrap();
+    assert!(
+        !st.calls.iter().any(|(_, method, params)| {
+            (method == "Target.getTargets" && params.get("filter").is_some())
+                || (method == "Target.attachToTarget"
+                    && params["targetId"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with("TAB")))
+        }),
+        "the tab strip is not asked"
+    );
+}
+
+#[tokio::test]
+async fn a_selected_tab_of_another_window_names_no_tab() {
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![("OTHERWIN-TAB".into(), true, "T2".into())];
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "{s}"
+    );
+}
+
+#[tokio::test]
+async fn same_title_tabs_without_a_tab_strip_name_no_tab() {
+    let f = fixture_with(|st| st.sibling_tabs.push(same_title_sibling())).await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "no proof, no active tab: {s}"
+    );
+}
+
+#[tokio::test]
+async fn a_selected_tab_whose_page_is_not_in_the_window_names_no_tab() {
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![("TAB9".into(), true, "T_ELSEWHERE".into())];
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "{s}"
+    );
 }
 
 #[tokio::test]

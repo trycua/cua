@@ -90,10 +90,13 @@ fn title_matches(native_title: &str, candidate_title: &str) -> bool {
 }
 
 /// Prove the selected page in one already-correlated browser window without
-/// activating a target. Chromium exposes the native window title but no
-/// browser-level selected-tab bit. A unique title match is therefore proof;
-/// duplicate, empty, absent, or substring-colliding titles remain unknown.
-/// Embedded single-page endpoints are selected by cardinality.
+/// activating a target, from the native window title: a unique title match is
+/// proof; duplicate, empty, absent, or substring-colliding titles prove
+/// nothing here, and the engine then asks the browser's tab strip where it
+/// says which tab is selected (`tab` targets' `embedderData.tabActive`), or
+/// leaves the selection unknown. A window title that, for a moment, still
+/// uniquely holds another tab's title names that tab. Embedded single-page
+/// endpoints are selected by cardinality.
 pub fn selected_tab_target_id<'a>(
     native_title: &str,
     candidates: &'a [CdpWindowCandidate],
@@ -151,6 +154,35 @@ fn window_representatives(
     representatives
 }
 
+/// The CDP windows whose bounds match the native window's, when its geometry is exact.
+fn bounds_matches<'a>(
+    native: &NativeWindowInfo,
+    representatives: &'a [CdpWindowCandidate],
+    tolerance: f64,
+) -> Vec<&'a CdpWindowCandidate> {
+    if !native.geometry_exact {
+        return Vec::new();
+    }
+    representatives
+        .iter()
+        .filter(|c| {
+            c.bounds
+                .is_some_and(|bounds| bounds.approx_eq(&native.bounds, tolerance))
+        })
+        .collect()
+}
+
+/// Whether several CDP windows match the native window's bounds, so that an exact bind chose among them by title
+/// alone, and may have chosen another window whose tabs hold the title the native window showed a moment ago.
+pub fn title_broke_a_bounds_tie(
+    native: &NativeWindowInfo,
+    candidates: &[CdpWindowCandidate],
+    tolerance: f64,
+) -> bool {
+    let representatives = window_representatives(&native.title, candidates);
+    bounds_matches(native, &representatives, tolerance).len() > 1
+}
+
 /// Correlate `native` against `candidates` with unique-or-refuse
 /// semantics. `tolerance` is in device pixels (see [`Rect::approx_eq`]).
 pub fn correlate(
@@ -159,17 +191,7 @@ pub fn correlate(
     tolerance: f64,
 ) -> BindingOutcome {
     let candidates = window_representatives(&native.title, candidates);
-    let bounds_matches: Vec<&CdpWindowCandidate> = if native.geometry_exact {
-        candidates
-            .iter()
-            .filter(|c| {
-                c.bounds
-                    .is_some_and(|bounds| bounds.approx_eq(&native.bounds, tolerance))
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let bounds_matches = bounds_matches(native, &candidates, tolerance);
 
     match bounds_matches.len() {
         1 if bounds_matches[0].cdp_window_id.is_some() => BindingOutcome::Bound {

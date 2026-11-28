@@ -135,7 +135,7 @@ included).
 ## Features
 
 All on by default: `spaces-files`, `spaces-stream`, `spaces-presence`,
-`spaces-teleport`, `spaces-hotspot`, `spaces-agents`, `mcp`, `mcp-http`,
+`spaces-hotspot`, `spaces-volume`, `spaces-agents`, `mcp`, `mcp-http`,
 `mcp-client`. With a module compiled out, its MCP tools answer
 `host_capability_missing`.
 

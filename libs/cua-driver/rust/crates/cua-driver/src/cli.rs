@@ -5572,8 +5572,8 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
 ///   - running process identity (path, pid, version)
 ///   - codesign info (cdhash, team-id, authority) via `codesign -dvvv`
 ///   - AX + screen recording TCC status (check_permissions tool)
-///   - install layout (/Applications/CuaDriver.app, ~/.local/bin/cua-driver)
-///   - TCC DB rows for com.trycua.driver (sqlite3, best-effort)
+///   - install layout (the app bundle and CLI links of the running build)
+///   - TCC DB rows for its bundle id (sqlite3, best-effort)
 ///   - config + state paths with existence booleans
 pub fn run_diagnose_cmd() {
     #[cfg(target_os = "windows")]
@@ -5591,12 +5591,13 @@ pub fn run_diagnose_cmd() {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let identity = DiagnoseIdentity::current();
         let sections = [
             diagnose_runtime_section(),
             diagnose_signature_section(),
             diagnose_tcc_section(),
-            diagnose_install_layout_section(),
-            diagnose_tcc_db_section(),
+            diagnose_install_layout_section(&identity),
+            diagnose_tcc_db_section(&identity),
             diagnose_config_paths_section(),
         ];
         println!("{}", sections.join("\n\n"));
@@ -5729,12 +5730,80 @@ fn diagnose_tcc_section() -> String {
     )
 }
 
+/// The product `diagnose` reports on: the running build's own bundle, CLI
+/// links and TCC client, so a local build is not audited as the release one.
 #[cfg(not(target_os = "windows"))]
-fn diagnose_install_layout_section() -> String {
+struct DiagnoseIdentity {
+    app_name: &'static str,
+    cli_name: &'static str,
+    bundle_id: &'static str,
+}
+
+#[cfg(not(target_os = "windows"))]
+impl DiagnoseIdentity {
+    fn current() -> Self {
+        Self::new(crate::bundle::is_local_installation())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn new(local: bool) -> Self {
+        use crate::bundle::*;
+        if local {
+            Self {
+                app_name: LOCAL_APP_NAME,
+                cli_name: LOCAL_CLI_NAME,
+                bundle_id: LOCAL_BUNDLE_ID,
+            }
+        } else {
+            Self {
+                app_name: RELEASE_APP_NAME,
+                cli_name: RELEASE_CLI_NAME,
+                bundle_id: RELEASE_BUNDLE_ID,
+            }
+        }
+    }
+
+    // The app bundle and TCC client exist on macOS only; elsewhere these
+    // sections keep printing the release names.
+    #[cfg(not(target_os = "macos"))]
+    fn new(_local: bool) -> Self {
+        Self {
+            app_name: "CuaDriver",
+            cli_name: crate::bundle::RELEASE_CLI_NAME,
+            bundle_id: "com.trycua.driver",
+        }
+    }
+
+    fn app_path(&self) -> String {
+        format!("/Applications/{}.app", self.app_name)
+    }
+
+    fn cli_paths(&self, home: &str) -> [(&'static str, String); 2] {
+        [
+            ("symlink", format!("{home}/.local/bin/{}", self.cli_name)),
+            (
+                "legacy symlink",
+                format!("/usr/local/bin/{}", self.cli_name),
+            ),
+        ]
+    }
+
+    fn tcc_rows_sql(&self) -> String {
+        format!(
+            "SELECT service, client, client_type, auth_value, auth_reason, \
+             hex(csreq) AS csreq_hex FROM access WHERE client='{}';",
+            self.bundle_id
+        )
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn diagnose_install_layout_section(identity: &DiagnoseIdentity) -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let mut lines = vec!["## install layout".to_owned()];
 
-    let app_path = "/Applications/CuaDriver.app";
+    let app_path = identity.app_path();
+    let app_path = app_path.as_str();
     let app_exists = std::path::Path::new(app_path).exists();
     lines.push(format!("bundle:  {app_path}   exists={app_exists}"));
     if app_exists {
@@ -5762,11 +5831,7 @@ fn diagnose_install_layout_section() -> String {
         }
     }
 
-    let cli_paths = [
-        ("symlink", format!("{home}/.local/bin/cua-driver")),
-        ("legacy symlink", "/usr/local/bin/cua-driver".to_owned()),
-    ];
-    for (label, path) in &cli_paths {
+    for (label, path) in &identity.cli_paths(&home) {
         let exists = std::path::Path::new(path).exists();
         lines.push(format!("{label}: {path}   exists={exists}"));
         if exists {
@@ -5787,20 +5852,19 @@ fn diagnose_install_layout_section() -> String {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn diagnose_tcc_db_section() -> String {
+fn diagnose_tcc_db_section(identity: &DiagnoseIdentity) -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let db = format!("{home}/Library/Application Support/com.apple.TCC/TCC.db");
-    let sql = "SELECT service, client, client_type, auth_value, auth_reason, \
-               hex(csreq) AS csreq_hex FROM access WHERE client='com.trycua.driver';";
+    let sql = identity.tcc_rows_sql();
 
-    let mut lines = vec!["## tcc database rows for com.trycua.driver".to_owned()];
+    let mut lines = vec![format!("## tcc database rows for {}", identity.bundle_id)];
     lines.push(format!(
         "(reading {db} — best-effort; system TCC DB requires FDA)"
     ));
     lines.push(String::new());
 
     match std::process::Command::new("sqlite3")
-        .args(["-header", "-column", &db, sql])
+        .args(["-header", "-column", &db, &sql])
         .output()
     {
         Ok(out) => {
@@ -6144,6 +6208,42 @@ fn first_sentence(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn diagnose_reports_the_running_build_identity() {
+        let release = DiagnoseIdentity::new(false);
+        assert_eq!(release.app_path(), "/Applications/CuaDriver.app");
+        assert_eq!(
+            release.cli_paths("/Users/me"),
+            [
+                ("symlink", "/Users/me/.local/bin/cua-driver".to_owned()),
+                ("legacy symlink", "/usr/local/bin/cua-driver".to_owned()),
+            ]
+        );
+        assert!(release
+            .tcc_rows_sql()
+            .ends_with("WHERE client='com.trycua.driver';"));
+
+        let local = DiagnoseIdentity::new(true);
+        assert_eq!(local.app_path(), "/Applications/CuaDriverLocal.app");
+        assert_eq!(
+            local.cli_paths("/Users/me"),
+            [
+                (
+                    "symlink",
+                    "/Users/me/.local/bin/cua-driver-local".to_owned()
+                ),
+                (
+                    "legacy symlink",
+                    "/usr/local/bin/cua-driver-local".to_owned()
+                ),
+            ]
+        );
+        assert!(local
+            .tcc_rows_sql()
+            .ends_with("WHERE client='com.trycua.driver.local';"));
+    }
+
     #[test]
     fn launch_reasons_are_closed_labels() {
         assert_eq!(

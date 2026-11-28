@@ -263,7 +263,8 @@ struct NativeInputState {
     config: InteractiveInputConfig,
     source: CGEventSource,
     pressed_button: Option<PointerButton>,
-    click_group_id: i64,
+    /// Timestamp (field 58) of every event since the last press.
+    gesture_time: i64,
     scroll_residual_x: f64,
     scroll_residual_y: f64,
     bounds: crate::windows::WindowBounds,
@@ -280,7 +281,7 @@ impl NativeInputState {
             config,
             source,
             pressed_button: None,
-            click_group_id: 1,
+            gesture_time: super::mouse::gesture_timestamp(),
             scroll_residual_x: 0.0,
             scroll_residual_y: 0.0,
             bounds,
@@ -412,7 +413,7 @@ impl NativeInputState {
 
         if phase == PointerPhase::Down {
             self.pressed_button = Some(effective_button);
-            self.click_group_id = self.click_group_id.wrapping_add(1).max(1);
+            self.gesture_time = super::mouse::gesture_timestamp();
         }
         self.post_pointer(
             &event,
@@ -480,7 +481,7 @@ impl NativeInputState {
                 &event,
                 Some(window_local),
                 Some(self.config.window_id),
-                Some(self.click_group_id),
+                Some(self.gesture_time),
                 0,
                 0,
                 0,
@@ -533,7 +534,7 @@ impl NativeInputState {
                 event,
                 Some(window_local),
                 Some(self.config.window_id),
-                Some(self.click_group_id),
+                Some(self.gesture_time),
                 i64::from(click),
                 pointer_button_number(button),
                 if click { 3 } else { 0 },

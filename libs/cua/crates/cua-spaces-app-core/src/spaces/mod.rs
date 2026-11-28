@@ -262,6 +262,9 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         access: Some(access),
         hidden: row.hidden,
         parent: row.parent.clone(),
+        job_name: row.job_name.clone(),
+        job_gpu: row.job_gpu,
+        job_run: row.job_run.clone(),
     }
 }
 
@@ -644,6 +647,9 @@ mod tests {
         SpaceRow {
             hidden: false,
             parent: None,
+            job_name: None,
+            job_gpu: false,
+            job_run: None,
             id: "space://direct/10.0.0.5:3211".into(),
             name: "brave-otter".into(),
             display_name: None,
@@ -914,6 +920,9 @@ mod tests {
         let mk = |id: &str, t: i64| Space {
             hidden: false,
             parent: None,
+            job_name: None,
+            job_gpu: false,
+            job_run: None,
             id: id.into(),
             name: id.into(),
             os: SpaceOs::Linux,

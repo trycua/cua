@@ -76,6 +76,9 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     host: row.host,
     hostName: row.hostName,
     parent: row.parent,
+    ...(row.jobName ? { jobName: row.jobName } : {}),
+    ...(row.jobGpu ? { jobGpu: true } : {}),
+    ...(row.jobRun ? { jobRun: row.jobRun } : {}),
     power: row.power
       ? {
           control: row.power === "stop" ? "stop" : "suspend",

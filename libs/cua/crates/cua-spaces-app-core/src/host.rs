@@ -127,6 +127,9 @@ pub fn this_machine_space(status: Option<&HostSummaryInput>, now: i64, os: Space
     Space {
         hidden: false,
         parent: None,
+        job_name: None,
+        job_gpu: false,
+        job_run: None,
         id: THIS_MACHINE_ID.into(),
         name: os.this_machine().into(),
         os,

@@ -212,6 +212,9 @@ fn sample_space(name: &str, os: SpaceOs, os_name: &str, scene: ThumbnailScene) -
     Space {
         hidden: false,
         parent: None,
+        job_name: None,
+        job_gpu: false,
+        job_run: None,
         id: format!("local:{name}"),
         name: name.into(),
         os,

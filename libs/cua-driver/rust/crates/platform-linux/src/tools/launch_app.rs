@@ -15,15 +15,96 @@ use super::impl_::{chromium_family_program, exec_basename, window_record_json};
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Split a launcher command line into argv: whitespace separates arguments,
+/// single quotes are literal, double quotes honor the XDG `Exec=` escapes
+/// (`\"`, `` \` ``, `\$`, `\\`), and a bare backslash escapes the next
+/// character. Nothing is expanded and `#` is an ordinary character, since the
+/// result is executed directly rather than by a shell. `None` for an
+/// unterminated quote or a trailing backslash.
+fn split_command_line(cmd: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let mut arg = String::new();
+    let mut in_arg = false;
+    let mut chars = cmd.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => loop {
+                in_arg = true;
+                match chars.next()? {
+                    '\'' => break,
+                    c => arg.push(c),
+                }
+            },
+            '"' => loop {
+                in_arg = true;
+                match chars.next()? {
+                    '"' => break,
+                    '\\' => match chars.next()? {
+                        c @ ('"' | '`' | '$' | '\\') => arg.push(c),
+                        c => {
+                            arg.push('\\');
+                            arg.push(c);
+                        }
+                    },
+                    c => arg.push(c),
+                }
+            },
+            '\\' => {
+                in_arg = true;
+                arg.push(chars.next()?);
+            }
+            c if c.is_whitespace() => {
+                if in_arg {
+                    args.push(std::mem::take(&mut arg));
+                    in_arg = false;
+                }
+            }
+            c => {
+                in_arg = true;
+                arg.push(c);
+            }
+        }
+    }
+    if in_arg {
+        args.push(arg);
+    }
+    Some(args)
+}
+
 /// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
 /// `Exec=` value with field codes stripped) in the background and return the
 /// child pid.
+///
+/// Splitting on bare whitespace broke every quoted argument: `sh -c 'kill -9
+/// 42'` reached `sh` as `-c`, `'kill`, `-9`, `42'` (#2661).
+///
+/// The remote-debugging guard runs here on the split argv, so it covers a
+/// caller's command and a resolved desktop entry alike: quotes can join
+/// fragments into a switch no raw string spells out, such as
+/// `--remote-debugging-"port"=0`. A refusal is `PermissionDenied`.
 fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
-    let mut parts = cmd.split_whitespace();
-    let prog = parts.next().unwrap_or(cmd);
-    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+    let mut parts = split_command_line(cmd)
+        .filter(|parts| !parts.is_empty())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("launch command `{cmd}` is empty or has an unterminated quote or escape"),
+            )
+        })?
+        .into_iter();
+    let prog = parts.next().unwrap_or_default();
+    let mut rest: Vec<String> = parts.collect();
     rest.extend(additional_arguments.iter().cloned());
-    let mut launch = std::process::Command::new(prog);
+    if std::iter::once(&prog)
+        .chain(&rest)
+        .any(|arg| cua_driver_core::launch_guard::contains_remote_debugging_flag(arg))
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
+        ));
+    }
+    let mut launch = std::process::Command::new(&prog);
     launch
         .args(&rest)
         // The child must not inherit the driver's stdio: in private-worker mode
@@ -38,7 +119,7 @@ fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::
         // toolkits ignore these when they do not need them.
         .env("ACCESSIBILITY_ENABLED", "1")
         .env("NO_AT_BRIDGE", "0");
-    if chromium_family_program(prog)
+    if chromium_family_program(&prog)
         && !rest
             .iter()
             .any(|arg| arg == "--force-renderer-accessibility")
@@ -208,6 +289,68 @@ mod launch_app_tests {
     }
 
     #[test]
+    fn launch_command_keeps_quoted_arguments_whole() {
+        // `sh -c '<body>'` must reach sh as one `-c` body. Splitting on bare
+        // whitespace handed sh `'echo` as its script, a syntax error, so the
+        // body never ran (#2661).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join("ran");
+        let cmd = format!(
+            "/bin/sh -c 'echo quoted body > \"$0\"' {}",
+            marker.display()
+        );
+        spawn_launch_command(&cmd, &[]).expect("/bin/sh should spawn");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let body = std::fs::read_to_string(&marker).unwrap_or_default();
+            if body == "quoted body\n" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the quoted -c body never ran (marker holds {body:?})"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    fn command_line_splits_quotes_and_escapes_without_shell_syntax() {
+        let split = |cmd| split_command_line(cmd).expect("well-formed");
+        assert_eq!(split("sh -c 'kill -9 42'"), ["sh", "-c", "kill -9 42"]);
+        assert_eq!(
+            split(r#""/opt/My App/app" --name="a \"b\" \$c" x\ y"#),
+            ["/opt/My App/app", "--name=a \"b\" $c", "x y"]
+        );
+        // Executed directly, so `#` starts no comment and `''` is an argument.
+        assert_eq!(split("app #notes a#b ''"), ["app", "#notes", "a#b", ""]);
+        assert_eq!(split("  app\t--flag  "), ["app", "--flag"]);
+        assert_eq!(split_command_line("app 'open"), None);
+        assert_eq!(split_command_line("app \"open"), None);
+        assert_eq!(split_command_line("app \\"), None);
+    }
+
+    #[test]
+    fn launch_command_with_unbalanced_quotes_is_refused() {
+        let err = spawn_launch_command("/bin/sh -c 'exit", &[]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        let err = spawn_launch_command("   ", &[]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn spawn_refuses_a_quote_joined_remote_debugging_switch() {
+        // Both a caller's command and a resolved desktop entry spawn through
+        // here, and the raw-string check in `invoke` cannot see this switch.
+        let err = spawn_launch_command("/bin/sh --remote-debugging-'port'=0", &[]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            err.to_string(),
+            cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL
+        );
+    }
+
+    #[test]
     fn matches_exact_display_name_case_insensitively() {
         let apps = fixture();
         let hit = match_installed_app(&apps, "google chrome").expect("should match");
@@ -267,7 +410,7 @@ impl Tool for LaunchAppTool {
                 URLs to open). Resolution precedence: launch_path > name > bundle_id. Errors \
                 when the name resolves to nothing launchable.".into(),
             input_schema: json!({"type":"object","properties":{
-                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; split on whitespace with shell-style quotes and escapes (no expansion or comments) and run directly, not through a shell."},
                 "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
@@ -347,6 +490,14 @@ impl Tool for LaunchAppTool {
                                 Some(pid),
                                 cmd.to_owned(),
                             ));
+                        }
+                        // The guard's refusal carries a payload; an OS EACCES
+                        // from exec does not, and still falls through below.
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::PermissionDenied
+                                && e.get_ref().is_some() =>
+                        {
+                            return Err(e.into());
                         }
                         Err(_) => {
                             // Not an executable on PATH. Resolve the name against

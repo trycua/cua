@@ -208,7 +208,7 @@ Launch a Linux app in the background. Provide launch_path (preferred: round-trip
 | --- | --- | --- | --- |
 | <span id="launch_app--linux--additional_arguments"></span>`additional_arguments` | `string[]` |  | Extra command-line arguments passed to the launched process. |
 | <span id="launch_app--linux--bundle_id"></span>`bundle_id` | `string` |  | Ignored on Linux (macOS/Windows concept). |
-| <span id="launch_app--linux--launch_path"></span>`launch_path` | `string` |  | Round-trip the `launch_path` returned by `list_apps`: the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell. |
+| <span id="launch_app--linux--launch_path"></span>`launch_path` | `string` |  | Round-trip the `launch_path` returned by `list_apps`: the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; split on whitespace with shell-style quotes and escapes (no expansion or comments) and run directly, not through a shell. |
 | <span id="launch_app--linux--name"></span>`name` | `string` |  | App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring). |
 | <span id="launch_app--linux--urls"></span>`urls` | `string[]` |  | URLs to open via xdg-open. |
 

@@ -22,7 +22,7 @@ pub struct InstalledApp {
     /// E.g. `org.gnome.Calculator.desktop` → `org.gnome.Calculator`;
     /// `kde4/konqbrowser.desktop` → `kde4-konqbrowser`.
     pub bundle_id: String,
-    /// Path the launcher would run — the unexpanded first token of `Exec=`
+    /// Command line the launcher would run — the `Exec=` value
     /// (field codes like `%U`, `%f` stripped). Pass to `launch_app(launch_path=...)`.
     pub launch_path: String,
     /// RFC3339 timestamp from the `.desktop` file's filesystem mtime, or
@@ -248,9 +248,9 @@ fn bool_key(section: &str, key: &str) -> bool {
 }
 
 /// Strip XDG `Exec=` field codes (`%f`, `%F`, `%u`, `%U`, `%i`, `%c`, `%k`)
-/// and return only the program token. We deliberately don't try to honor
-/// quoted argv reconstruction — the caller passes the result to
-/// `launch_app(launch_path=...)`, which spawns it through `sh -c`.
+/// and return the rest of the command line, quotes intact. The caller passes
+/// the result to `launch_app(launch_path=...)`, which splits it with shell-style
+/// quotes and runs it directly.
 fn strip_exec_field_codes(exec: &str) -> String {
     let mut out = String::with_capacity(exec.len());
     let mut chars = exec.chars().peekable();

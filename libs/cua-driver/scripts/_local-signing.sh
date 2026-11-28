@@ -30,6 +30,21 @@ print_local_signing_bootstrap() {
     echo "  libs/cua-driver/scripts/README.md#stable-macos-local-signing" >&2
 }
 
+open_codesign_partition_list() {
+    local kc="$1"
+    if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD:-}" ]; then
+        security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -t private -s -l "$CUA_LOCAL_SIGN_CN" \
+            -k "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD" "$kc" >/dev/null 2>&1 \
+            && return 0
+        echo "warning: could not authorize the new signing key for codesign in $kc." >&2
+    fi
+    echo "note: a local signing certificate was created in $kc." >&2
+    echo "If codesign prompts for a keychain password or fails with errSecInternalComponent, run:" >&2
+    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -t private -s -l \"$CUA_LOCAL_SIGN_CN\" -k <keychain-password> \"$kc\"" >&2
+    echo "For automatic authorization on first creation, export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD before installing." >&2
+}
+
 # Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
 # available, or "-" when it cannot be created or found.
 ensure_local_signing_identity() {
@@ -70,6 +85,7 @@ ensure_local_signing_identity() {
             || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
                 -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
+        open_codesign_partition_list "$kc"
         identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
             | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
         rm -rf "$tmp"
@@ -119,7 +135,7 @@ designated_requirement() {
 
 classify_designated_requirement() {
     case "$1" in
-        *"certificate leaf"*) printf '%s' "certificate-backed" ;;
+        *"certificate leaf"*|*"certificate root"*) printf '%s' "certificate-backed" ;;
         *cdhash*) printf '%s' "ad-hoc" ;;
         *) printf '%s' "unknown" ;;
     esac

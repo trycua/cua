@@ -307,13 +307,12 @@ fn validate_history_app_signature(
             "installed Cua Driver signing identifier does not match the selected namespace"
         );
     }
+    if !require_release_entitlements && requirement.contains("certificate root") {
+        return Ok(());
+    }
     if !requirement.contains("certificate leaf") {
         anyhow::bail!("installed Cua Driver signature is not certificate-backed");
     }
-    // A stable self-signed local-development certificate has a certificate-leaf
-    // designated requirement but no Apple TeamIdentifier. That leaf pins local
-    // history to the same signing identity across rebuilds. Production still
-    // requires the exact Apple team and device-protected Keychain entitlements.
     if !require_release_entitlements {
         return Ok(());
     }
@@ -520,15 +519,17 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn local_history_accepts_certificate_identity_without_apple_team_identifier() {
-        validate_history_app_signature(
-            "Identifier=com.trycua.driver.local\nTeamIdentifier=not set",
-            "designated => identifier \"com.trycua.driver.local\" and certificate leaf = H\"d2badc24c61056ede3b61724c54c5a7d1649ce4d\"",
-            "",
-            "",
-            "com.trycua.driver.local",
-            false,
-        )
-        .unwrap();
+        for certificate in ["leaf", "root"] {
+            validate_history_app_signature(
+                "Identifier=com.trycua.driver.local\nTeamIdentifier=not set",
+                &format!("designated => identifier \"com.trycua.driver.local\" and certificate {certificate} = H\"d2badc24c61056ede3b61724c54c5a7d1649ce4d\""),
+                "",
+                "",
+                "com.trycua.driver.local",
+                false,
+            )
+            .unwrap();
+        }
     }
 
     #[test]
@@ -602,5 +603,37 @@ mod tests {
             true,
         )
         .is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn only_local_history_accepts_a_root_only_certificate_requirement() {
+        let requirement = |bundle: &str| {
+            format!("designated => anchor apple generic and identifier \"{bundle}\" and certificate root = H\"d2badc24c61056ede3b61724c54c5a7d1649ce4d\"")
+        };
+        let release_error = validate_history_app_signature(
+            &format!("Identifier=com.trycua.driver\nTeamIdentifier={RELEASE_TEAM_IDENTIFIER}"),
+            &requirement("com.trycua.driver"),
+            RELEASE_TEAM_IDENTIFIER,
+            &format!(
+                "<key>com.apple.application-identifier</key><string>{RELEASE_TEAM_IDENTIFIER}.com.trycua.driver</string><key>keychain-access-groups</key><array><string>{RELEASE_TEAM_IDENTIFIER}.com.trycua.driver</string></array>"
+            ),
+            "com.trycua.driver",
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(
+            release_error.to_string(),
+            "installed Cua Driver signature is not certificate-backed"
+        );
+        validate_history_app_signature(
+            "Identifier=com.trycua.driver.local\nTeamIdentifier=not set",
+            &requirement("com.trycua.driver.local"),
+            "",
+            "",
+            "com.trycua.driver.local",
+            false,
+        )
+        .unwrap();
     }
 }

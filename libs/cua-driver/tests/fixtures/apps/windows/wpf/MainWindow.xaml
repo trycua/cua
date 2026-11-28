@@ -49,6 +49,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
                             <TextBox x:Name="TxtInput"
@@ -74,6 +75,14 @@
                                        Margin="0,6,0,0" FontFamily="Consolas"
                                        Text="deferred_mirror="/>
                         </StackPanel>
+                        <!-- Models providers that accept ValuePattern.SetValue but
+                             fail to return their current Value. -->
+                        <local:UnreadableValueTextBox x:Name="TxtUnreadableInput"
+                                 Grid.Column="2" Margin="24,0,0,0"
+                                 AutomationProperties.AutomationId="txt-unreadable-input"
+                                 Width="120" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                 Text="prefill-"
+                                 TextChanged="OnUnreadableInputChanged"/>
                     </Grid>
                 </GroupBox>
 

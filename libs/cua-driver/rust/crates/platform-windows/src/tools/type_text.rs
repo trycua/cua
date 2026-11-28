@@ -428,7 +428,7 @@ impl Tool for TypeTextTool {
                     };
                     let elem: IUIAutomationElement =
                         unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-                    let result = (|| -> anyhow::Result<(String, String)> {
+                    let result = (|| -> anyhow::Result<Option<(String, String)>> {
                         let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) }?;
                         let vp: IUIAutomationValuePattern = pattern.cast()?;
                         // Shield the SetValue against host self-foreground. A
@@ -441,14 +441,15 @@ impl Tool for TypeTextTool {
                             // ValuePattern has no caret/selection insertion API. Preserve
                             // the current document and append as the deterministic
                             // background fallback; replacing the whole value violates
-                            // type_text's insertion contract for editors.
-                            let current = vp
-                                .CurrentValue()
-                                .map(|value| value.to_string())
-                                .unwrap_or_default();
+                            // type_text's insertion contract for editors, so a value
+                            // that cannot be read is never written.
+                            let Ok(current) = vp.CurrentValue() else {
+                                return Ok(None);
+                            };
+                            let current = current.to_string();
                             let inserted = format!("{current}{text_for_uia}");
                             vp.SetValue(&BSTR::from(inserted.as_str()))?;
-                            Ok((current, inserted))
+                            Ok(Some((current, inserted)))
                         })
                     })()
                     .ok();
@@ -458,7 +459,13 @@ impl Tool for TypeTextTool {
             })
             .await
             .unwrap_or(None);
-            if let Some((before, expected)) = set_result {
+            if let Some(appended) = set_result {
+                let Some((before, expected)) = appended else {
+                    return crate::input::delivery::background_unavailable_error(
+                        hwnd,
+                        EventKind::TextInput,
+                    );
+                };
                 // Read the value back by element handle — focus-independent
                 // (works regardless of which window is foreground), proving the
                 // a11y write actually took rather than trusting SetValue's

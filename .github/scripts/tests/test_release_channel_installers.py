@@ -171,6 +171,76 @@ def test_lume_api_filter_is_exact_draft_aware_and_channel_scoped():
     assert '"draft"[[:space:]]*:[[:space:]]*false' in body
 
 
+def run_lume_daemon_loader(
+    tmp_path: Path, refuse: bool, loaded: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Run the installer's LaunchAgent loader. `launchctl` is stubbed: it
+    records each call in `launchctl.log`, and `print` finds the service once a
+    `bootstrap` loaded it. With `refuse`, `bootstrap` fails as launchd's does
+    for a caller outside the GUI session (over SSH). `loaded` starts with an
+    older copy of the service loaded."""
+    if loaded:
+        (tmp_path / "loaded").touch()
+    script = tmp_path / "lume-daemon-loader.sh"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            set -e
+            RED=""
+            NORMAL=""
+            SERVICE_NAME="com.trycua.lume_daemon"
+            PLIST_PATH="{tmp_path}/com.trycua.lume_daemon.plist"
+            id() {{ echo 501; }}
+            sleep() {{ :; }}
+            launchctl() {{
+              echo "$*" >> "{tmp_path}/launchctl.log"
+              case "$1" in
+                bootstrap)
+                  if [ "{str(refuse).lower()}" = true ]; then
+                    echo "Bootstrap failed: 5: Input/output error" >&2
+                    return 5
+                  fi
+                  touch "{tmp_path}/loaded" ;;
+                bootout) rm -f "{tmp_path}/loaded" ;;
+                print) [ -f "{tmp_path}/loaded" ] || return 113 ;;
+              esac
+            }}
+            {shell_function(LUME_INSTALLER.read_text(), "load_lume_daemon")}
+            load_lume_daemon
+            echo "the installer goes on"
+            """
+        )
+    )
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True)
+
+
+def test_lume_daemon_is_bootstrapped_into_the_gui_session_and_checked(tmp_path: Path):
+    result = run_lume_daemon_loader(tmp_path, refuse=False, loaded=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the installer goes on" in result.stdout
+    target = "gui/501/com.trycua.lume_daemon"
+    assert (tmp_path / "launchctl.log").read_text().splitlines() == [
+        f"bootout {target}",
+        f"print {target}",
+        f"enable {target}",
+        f"bootstrap gui/501 {tmp_path}/com.trycua.lume_daemon.plist",
+        f"print {target}",
+    ]
+    main = shell_function(LUME_INSTALLER.read_text(), "main")
+    assert "\n    load_lume_daemon\n" in main
+    assert "launchctl load" not in main
+    assert "launchctl unload" not in main
+
+
+def test_lume_daemon_launchd_refuses_fails_the_install(tmp_path: Path):
+    result = run_lume_daemon_loader(tmp_path, refuse=True)
+    assert result.returncode == 1
+    assert "the installer goes on" not in result.stdout
+    assert "Error: launchd did not load the Lume daemon LaunchAgent into gui/501." in result.stdout
+    assert "launchctl: Bootstrap failed: 5: Input/output error" in result.stdout
+    assert f'launchctl bootstrap gui/501 "{tmp_path}/com.trycua.lume_daemon.plist"' in result.stdout
+
+
 def test_installers_make_channel_persistent_but_keep_exact_pins_one_shot():
     lume = LUME_INSTALLER.read_text()
     driver = (ROOT / "libs/cua-driver/scripts/_install-rust.sh").read_text()

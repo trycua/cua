@@ -913,8 +913,11 @@ unsafe fn create_surface(
     // list_windows).  Z-ordering above the target is managed dynamically via
     // orderWindow:relativeTo: (see dispatch_pin_above / render_loop repin).
     let _: () = msg_send![win, setLevel: 0i64];
-    // NSWindowCollectionBehaviorCanJoinAllSpaces(1<<0) | FullScreenAuxiliary(1<<8) | Stationary(1<<4)
-    let _: () = msg_send![win, setCollectionBehavior: (1u64 | (1<<8) | (1<<4))];
+    // CanJoinAllSpaces(1<<0) | Transient(1<<3) | IgnoresCycle(1<<6) | FullScreenAuxiliary(1<<8).
+    // Transient keeps the overlay out of Mission Control. As a Stationary
+    // display-sized window it sat in every Space's thumbnail, and those
+    // thumbnails showed only the wallpaper until the window went away (#7212).
+    let _: () = msg_send![win, setCollectionBehavior: (1u64 | (1<<3) | (1<<6) | (1<<8))];
     let _: () = msg_send![win, setReleasedWhenClosed: false];
     let _: () = msg_send![win, setHidesOnDeactivate: false];
 
@@ -928,7 +931,9 @@ unsafe fn create_surface(
 
     let number: isize = msg_send![win, windowNumber];
     let _: () = msg_send![tile_layer, release]; // owned by the root layer
-    let _: () = msg_send![win, orderFrontRegardless];
+
+    // Created ordered out: the render loop orders a surface in only while it
+    // has cursor pixels to show.
     Some(DisplaySurface {
         geometry: d.surface_geometry(),
         win_ptr: win as usize,
@@ -1046,6 +1051,9 @@ fn render_loop(
     let mut last_pinned: Option<u64> = None;
     let mut repin_frames: u32 = 0;
     let mut last_display_check = Instant::now();
+    // Whether the surfaces are ordered in. A display-sized window stays in
+    // the window list only while a cursor paints in it.
+    let mut shown = false;
 
     loop {
         // When no cursor animation/fade is active, block until the MCP side
@@ -1185,31 +1193,36 @@ fn render_loop(
 
         // Repin: immediately on target change, then defensive every ~1 s while
         // the render loop is active. When quiescent, z-order is left unchanged
-        // until the next command wakes the loop.
+        // until the next command wakes the loop. `last_pinned` is tracked even
+        // while ordered out: a frame without a command falls back to it, so a
+        // stale value would repin a newly shown cursor above the previous
+        // session's window.
         if frame_tick_needed || had_msg {
-            repin_frames += 1;
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
-            if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
-                for surface in &surfaces {
-                    MacZOrderEnforcer {
-                        win_ptr: surface.win_ptr,
+            if shown {
+                repin_frames += 1;
+                let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
+                if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
+                    for surface in &surfaces {
+                        MacZOrderEnforcer {
+                            win_ptr: surface.win_ptr,
+                        }
+                        .reassert(pinned_wid);
                     }
-                    .reassert(pinned_wid);
+                    repin_frames = 0;
+                } else if raise_unpinned {
+                    // A direct move_cursor has no target window to pin against.
+                    // Raise the normal-level, click-through overlay without
+                    // activating the driver so a later foreground application
+                    // cannot cover a standalone session cursor.
+                    for surface in &surfaces {
+                        dispatch_order_front(surface.win_ptr);
+                    }
+                    repin_frames = 0;
+                } else if repin_frames >= 60 {
+                    repin_frames = 0;
                 }
-                repin_frames = 0;
-            } else if raise_unpinned {
-                // A direct move_cursor has no target window to pin against.
-                // Raise the normal-level, click-through overlay without
-                // activating the driver so a later foreground application
-                // cannot cover a standalone session cursor.
-                for surface in &surfaces {
-                    dispatch_order_front(surface.win_ptr);
-                }
-                repin_frames = 0;
-            } else if repin_frames >= 60 {
-                repin_frames = 0;
             }
         }
 
@@ -1229,8 +1242,24 @@ fn render_loop(
                     .map(|surface| (surface.layer_ptr, paint_tile_for(map, surface.geometry)))
                     .collect::<Vec<_>>()
             };
+            let paints = tiles.iter().any(|(_, tile)| tile.is_some());
             for (layer, tile) in tiles {
                 dispatch_set_layer_contents(layer, tile);
+            }
+            // A refit may have replaced the surfaces, so it reapplies the order.
+            if refit || paints != shown {
+                for surface in &surfaces {
+                    match (paints, pinned_wid) {
+                        (true, Some(_)) => MacZOrderEnforcer {
+                            win_ptr: surface.win_ptr,
+                        }
+                        .reassert(pinned_wid),
+                        (true, None) => dispatch_order_front(surface.win_ptr),
+                        (false, _) => dispatch_order_out(surface.win_ptr),
+                    }
+                }
+                shown = paints;
+                repin_frames = 0;
             }
         }
 
@@ -1378,6 +1407,30 @@ fn dispatch_order_front(win_ptr: usize) {
             Box::into_raw(payload) as *mut c_void,
             order_front_cb,
         );
+    }
+}
+
+/// Take an overlay surface off screen without closing it; its window number
+/// and layer stay valid for the next order-in.
+fn dispatch_order_out(win_ptr: usize) {
+    #[link(name = "System", kind = "framework")]
+    extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_async_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void),
+        );
+    }
+
+    unsafe extern "C" fn order_out_cb(ctx: *mut c_void) {
+        let win = ctx as *mut objc2::runtime::AnyObject;
+        let _: () = objc2::msg_send![win, orderOut: std::ptr::null::<objc2::runtime::AnyObject>()];
+    }
+
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(main_queue, win_ptr as *mut c_void, order_out_cb);
     }
 }
 

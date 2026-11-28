@@ -24,6 +24,7 @@ from ..responses import (
     get_all_element_descriptions,
 )
 from ..types import AgentCapability, AgentResponse, Messages, Tools
+from ..usage import normalize_response_cost
 
 GROUNDED_COMPUTER_TOOL_SCHEMA = {
     "type": "function",
@@ -247,7 +248,7 @@ class ComposedGroundedConfig(AsyncAgentConfig):
         # Extract usage information
         usage = {
             **response.usage.model_dump(),  # type: ignore
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
+            "response_cost": normalize_response_cost(response._hidden_params.get("response_cost")),
         }
         if _on_usage:
             await _on_usage(usage)

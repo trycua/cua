@@ -37,6 +37,8 @@ except ImportError:
             "CLI dependencies not found. " 'Please install with: pip install "cua-agent[cli]"'
         )
 
+from .usage import add_response_cost
+
 # Load environment variables
 dotenv.load_dotenv()
 
@@ -110,7 +112,7 @@ def print_colored(
     print(output, end=end)
 
 
-def print_action(action_type: str, details: Dict[str, Any], total_cost: float):
+def print_action(action_type: str, details: Dict[str, Any], total_cost: Optional[float]):
     """Print computer action with nice formatting."""
     # Format action details
     args_str = ""
@@ -126,7 +128,9 @@ def print_action(action_type: str, details: Dict[str, Any], total_cost: float):
     elif action_type == "scroll" and "x" in details and "y" in details:
         args_str = f"({details['x']}, {details['y']})"
 
-    if total_cost > 0:
+    if total_cost is None:
+        print_colored(f"🛠️  {action_type}{args_str}", dim=True, right="Cost: unknown")
+    elif total_cost > 0:
         print_colored(f"🛠️  {action_type}{args_str}", dim=True, right=f"💸 ${total_cost:.2f}")
     else:
         print_colored(f"🛠️  {action_type}{args_str}", dim=True)
@@ -153,7 +157,7 @@ async def chat_loop(
     if initial_prompt:
         history.append({"role": "user", "content": initial_prompt})
 
-    total_cost = 0
+    total_cost: Optional[float] = 0.0
 
     while True:
         if len(history) == 0 or history[-1].get("role") != "user":
@@ -179,8 +183,10 @@ async def chat_loop(
                 # Add agent responses to history
                 history.extend(result.get("output", []))
 
-                if show_usage:
-                    total_cost += result.get("usage", {}).get("response_cost", 0)
+                if show_usage and "usage" in result:
+                    total_cost = add_response_cost(
+                        total_cost, (result.get("usage") or {}).get("response_cost")
+                    )
 
                 # Process and display the output
                 for item in result.get("output", []):
@@ -220,7 +226,9 @@ async def chat_loop(
                             print_colored(f"📤 {output}", dim=True)
 
             spinner.hide()
-            if show_usage and total_cost > 0:
+            if show_usage and total_cost is None:
+                print_colored("Total cost: unknown (model pricing unavailable)", dim=True)
+            elif show_usage and total_cost > 0:
                 print_colored(f"Total cost: ${total_cost:.2f}", dim=True)
 
 

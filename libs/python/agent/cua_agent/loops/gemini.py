@@ -872,7 +872,9 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         except Exception:
             pass
 
-        if _on_usage and usage:
+        # The SDK exposes token counts but no response price.
+        usage["response_cost"] = None
+        if _on_usage:
             await _on_usage(usage)
 
         # Parse output into internal items

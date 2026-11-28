@@ -23,6 +23,7 @@ from ..responses import (
     make_reasoning_item,
 )
 from ..types import AgentCapability
+from ..usage import normalize_response_cost
 
 # ComputerUse tool schema (OpenAI function tool format)
 QWEN3_COMPUTER_TOOL: Dict[str, Any] = {
@@ -407,7 +408,7 @@ class GenericVlmConfig(AsyncAgentConfig):
             **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(  # type: ignore
                 response.usage
             ).model_dump(),
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
+            "response_cost": normalize_response_cost(response._hidden_params.get("response_cost")),
         }
         if _on_usage:
             await _on_usage(usage)

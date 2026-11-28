@@ -32,6 +32,7 @@ from ..responses import (
     get_all_element_descriptions,
 )
 from ..types import AgentCapability
+from ..usage import normalize_response_cost
 
 _MOONDREAM_SINGLETON = None
 
@@ -426,7 +427,7 @@ class Moondream3PlusConfig(AsyncAgentConfig):
 
         usage = {
             **response.usage.model_dump(),  # type: ignore
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
+            "response_cost": normalize_response_cost(response._hidden_params.get("response_cost")),
         }
         if _on_usage:
             await _on_usage(usage)

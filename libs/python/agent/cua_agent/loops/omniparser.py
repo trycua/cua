@@ -19,6 +19,7 @@ from ..responses import (
     convert_responses_items_to_completion_messages,
 )
 from ..types import AgentCapability, AgentResponse, Messages, Tools
+from ..usage import normalize_response_cost
 
 SOM_TOOL_SCHEMA = {
     "type": "function",
@@ -414,7 +415,7 @@ class OmniparserConfig(AsyncAgentConfig):
         # Extract usage information
         usage = {
             **response.usage.model_dump(),  # type: ignore
-            "response_cost": response._hidden_params.get("response_cost", 0.0),  # type: ignore
+            "response_cost": normalize_response_cost(response._hidden_params.get("response_cost")),  # type: ignore
         }
         if _on_usage:
             await _on_usage(usage)

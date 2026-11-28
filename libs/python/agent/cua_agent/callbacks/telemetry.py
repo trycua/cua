@@ -15,6 +15,7 @@ from cua_core.telemetry import (
 )
 from cua_core.telemetry._config import sanitize_model_name
 
+from ..usage import add_response_cost, normalize_response_cost
 from .base import AsyncCallbackHandler
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,12 @@ class TelemetryCallback(AsyncCallbackHandler):
         # Only known numeric keys; provider-specific extras are never sent.
         known: Dict[str, Union[int, float]] = {}
         for key in USAGE_KEYS:
+            if key == "response_cost":
+                value = normalize_response_cost(usage.get(key))
+                self.total_usage[key] = add_response_cost(self.total_usage[key], value)
+                if value is not None:
+                    known[key] = value
+                continue
             value = _numeric(usage.get(key))
             if value is not None:
                 known[key] = value

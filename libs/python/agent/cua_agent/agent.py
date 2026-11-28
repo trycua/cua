@@ -288,7 +288,9 @@ class ComputerAgent:
             max_retries: Maximum number of retries for failed API calls
             screenshot_delay: Delay before screenshots in seconds
             use_prompt_caching: If set, use prompt caching to avoid reprocessing the same prompt. Intended for use with anthropic providers.
-            max_trajectory_budget: If set, adds BudgetManagerCallback to track usage costs and stop when budget is exceeded
+            max_trajectory_budget: If set, tracks response costs and stops when the budget is exceeded
+                or pricing is unknown. The direct Gemini SDK loop has no response price, so budgeted
+                Gemini runs stop after the first response.
             telemetry_enabled: If set, adds TelemetryCallback to track anonymized usage data. Enabled by default.
             trust_remote_code: If set, trust remote code when loading local models. Disabled by default.
             api_key: Optional API key override for the model provider
@@ -1039,6 +1041,8 @@ class ComputerAgent:
                             prompt_tokens=0,
                             completion_tokens=0,
                             total_tokens=0,
+                            # Tool results do not make a model request.
+                            response_cost=0.0,
                         ),
                     }
 

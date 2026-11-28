@@ -48,6 +48,7 @@ from ..responses import (
     make_wait_item,
 )
 from ..types import AgentCapability, AgentResponse, Messages, Tools
+from ..usage import normalize_response_cost
 
 # Constants from reference code
 IMAGE_FACTOR = 28
@@ -801,7 +802,7 @@ class UITARSConfig:
             **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(
                 response.usage
             ).model_dump(),
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
+            "response_cost": normalize_response_cost(response._hidden_params.get("response_cost")),
         }
         if _on_usage:
             await _on_usage(response_usage)

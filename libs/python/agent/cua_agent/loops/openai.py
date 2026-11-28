@@ -13,6 +13,7 @@ from PIL import Image
 
 from ..decorators import register_agent
 from ..types import AgentCapability, AgentResponse, Messages, Tools
+from ..usage import normalize_response_cost
 
 
 async def _map_computer_tool_to_openai(
@@ -266,9 +267,15 @@ class OpenAIComputerUseConfig:
 
         # Add response cost if available
         if hasattr(response, "_hidden_params"):
-            usage["response_cost"] = response._hidden_params.get("response_cost", 0.0)
+            usage["response_cost"] = normalize_response_cost(
+                response._hidden_params.get("response_cost")
+            )
         elif isinstance(response, dict):
-            usage["response_cost"] = response.get("_hidden_params", {}).get("response_cost", 0.0)
+            usage["response_cost"] = normalize_response_cost(
+                response.get("_hidden_params", {}).get("response_cost")
+            )
+        else:
+            usage["response_cost"] = None
 
         if _on_usage:
             await _on_usage(usage)

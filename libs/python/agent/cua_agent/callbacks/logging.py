@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Union
 
+from ..usage import add_response_cost, normalize_response_cost
 from .base import AsyncCallbackHandler
 
 
@@ -74,7 +75,9 @@ class LoggingCallback(AsyncCallbackHandler):
 
         def add_dicts(target: Dict[str, Any], source: Dict[str, Any]) -> None:
             for key, value in source.items():
-                if isinstance(value, dict):
+                if key == "response_cost":
+                    target[key] = add_response_cost(target.get(key, 0.0), value)
+                elif isinstance(value, dict):
                     if key not in target:
                         target[key] = {}
                     add_dicts(target[key], value)
@@ -83,6 +86,8 @@ class LoggingCallback(AsyncCallbackHandler):
                         target[key] = 0
                     target[key] += value
 
+        # Serialization omits None values, so a missing price is unknown too.
+        usage = {**usage, "response_cost": normalize_response_cost(usage.get("response_cost"))}
         add_dicts(self.total_usage, usage)
 
     async def on_run_start(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]) -> None:

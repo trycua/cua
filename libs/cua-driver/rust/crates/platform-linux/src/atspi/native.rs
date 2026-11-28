@@ -1046,13 +1046,15 @@ fn frame_geometry_distance(
 /// Server-side decorations offset a frame's reported origin from the native
 /// window's outer geometry, so an exact match is not required. The correlation
 /// must still be unambiguous: the best candidate has to be within this budget
-/// AND beat the runner-up by [`FRAME_MATCH_MARGIN_PX`].
+/// AND either match exactly where every close rival has the window's size, or
+/// beat the runner-up by [`FRAME_MATCH_MARGIN_PX`].
 const FRAME_MATCH_TOLERANCE_PX: u64 = 160;
 
-/// How decisively the best frame must beat the second-best. Two windows of
-/// genuinely similar geometry are not disambiguated by this heuristic, and a
-/// caller that needs proof of window identity must get a refusal instead of a
-/// coin flip.
+/// How decisively the best frame must beat the second-best, unless it alone
+/// matches the window exactly and every close rival has the window's size.
+/// Two windows of genuinely similar geometry are not disambiguated by this
+/// heuristic, and a caller that needs proof of window identity must get a
+/// refusal instead of a coin flip.
 const FRAME_MATCH_MARGIN_PX: u64 = 24;
 
 /// Pick the unique application top-level that corresponds to native window
@@ -1071,19 +1073,29 @@ fn correlate_frame_to_window(
     candidates: &[FrameExtents],
     window: &crate::x11::WindowInfo,
 ) -> Option<usize> {
-    let mut scored: Vec<(u64, usize)> = candidates
+    let mut scored: Vec<(u64, usize, (i32, i32))> = candidates
         .iter()
         .filter_map(|(ordinal, extents)| {
-            frame_geometry_distance(*extents, window).map(|distance| (distance, *ordinal))
+            frame_geometry_distance(*extents, window)
+                .map(|distance| (distance, *ordinal, (extents.2, extents.3)))
         })
         .collect();
-    scored.sort_by_key(|(distance, ordinal)| (*distance, *ordinal));
-    let (best_distance, best_ordinal) = *scored.first()?;
+    scored.sort_by_key(|(distance, ordinal, _)| (*distance, *ordinal));
+    let (best_distance, best_ordinal, _) = *scored.first()?;
     if best_distance > FRAME_MATCH_TOLERANCE_PX {
         return None;
     }
-    if let Some((runner_up, _)) = scored.get(1) {
-        if runner_up.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX {
+    if let Some(&(runner_up, _, _)) = scored.get(1) {
+        // An exact match is proof only when every rival within the margin is
+        // reported at the window's own size, so it differs by position alone.
+        let window_size = (i64::from(window.width), i64::from(window.height));
+        let exact = best_distance == 0
+            && runner_up > 0
+            && scored[1..]
+                .iter()
+                .filter(|(distance, _, _)| *distance < FRAME_MATCH_MARGIN_PX)
+                .all(|(_, _, (w, h))| (i64::from(*w), i64::from(*h)) == window_size);
+        if !exact && runner_up.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX {
             return None;
         }
     }
@@ -1440,16 +1452,16 @@ async fn resolve_window_frame(
     // list never carries: describe it from the server directly, and let it
     // correlate with the toolkit's popup toplevels (role `window` for GTK
     // menus, `menu` / `popup menu` elsewhere).
-    let (window, popup) = match crate::x11::list_windows(Some(pid))
+    let read_window = || match crate::x11::list_windows(Some(pid))
         .into_iter()
         .find(|candidate| candidate.xid == xid)
     {
-        Some(window) => (window, false),
-        None => (
-            crate::x11::window_info(xid).filter(|w| w.is_on_screen)?,
-            true,
-        ),
+        Some(window) => Some((window, false)),
+        None => crate::x11::window_info(xid)
+            .filter(|w| w.is_on_screen)
+            .map(|window| (window, true)),
     };
+    let (window, popup) = read_window()?;
     let mut candidates: Vec<(usize, (i32, i32, i32, i32))> = Vec::new();
     for (ordinal, oref) in seeds.iter().enumerate() {
         let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {
@@ -1479,7 +1491,17 @@ async fn resolve_window_frame(
             candidates.push((ordinal, extents));
         }
     }
-    let resolved = correlate_frame_to_window(&candidates, &window);
+    // The extents were read after the geometry. A window that moved in
+    // between can leave a same-size sibling sitting on its old bounds.
+    let unmoved = read_window().is_some_and(|(again, _)| {
+        (again.x, again.y, again.width, again.height)
+            == (window.x, window.y, window.width, window.height)
+    });
+    let resolved = if unmoved {
+        correlate_frame_to_window(&candidates, &window)
+    } else {
+        None
+    };
     if resolved.is_none() {
         dlog!(
             "could not correlate xid {xid} to one of pid {pid}'s {} top-level frame(s); \
@@ -8557,6 +8579,35 @@ mod frame_correlation_tests {
         let candidates = [(0usize, (438, 80, 1050, 953)), (1, (438, 80, 1050, 953))];
         assert_eq!(
             correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            None
+        );
+    }
+
+    #[test]
+    fn an_exact_match_resolves_among_cascaded_windows_of_one_size() {
+        let candidates = [(0usize, (10, 37, 1050, 753)), (1, (20, 47, 1050, 753))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(10, 37, 1050, 753)),
+            Some(0)
+        );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(20, 47, 1050, 753)),
+            Some(1)
+        );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(15, 42, 1050, 753)),
+            None
+        );
+    }
+
+    /// An exact match proves identity only among frames reported at the
+    /// window's own size. A sibling that sits on the target's bounds while the
+    /// target's frame includes a border is still a coin flip.
+    #[test]
+    fn an_exact_match_beside_a_bordered_frame_still_refuses() {
+        let candidates = [(0usize, (98, 98, 804, 604)), (1, (100, 100, 800, 600))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(100, 100, 800, 600)),
             None
         );
     }

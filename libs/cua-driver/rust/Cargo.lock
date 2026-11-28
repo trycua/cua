@@ -3516,6 +3516,7 @@ dependencies = [
  "crossbeam-channel",
  "cua-driver-contract",
  "cua-driver-core",
+ "cua-driver-testkit",
  "cursor-overlay",
  "dirs",
  "enumflags2",

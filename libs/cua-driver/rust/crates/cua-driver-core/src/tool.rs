@@ -2115,6 +2115,7 @@ impl ToolRegistry {
             crate::fast_path::wire::attach_delta(&mut result, delta);
         }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::server::annotate_error_class(&mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &nudge_args, &mut result);
         result
     }
@@ -6151,6 +6152,9 @@ resources:
             assert!(hint
                 .as_str()
                 .is_some_and(|hint| hint.contains("target {kind:\"window\"")));
+            // And the closed error class (see `server::annotate_error_class`).
+            assert_eq!(structured["error_class"], "background_unavailable");
+            structured.as_object_mut().unwrap().remove("error_class");
             assert_eq!(
                 structured,
                 serde_json::json!({
@@ -6332,6 +6336,25 @@ resources:
         );
     }
 
+    #[cfg(not(target_os = "macos"))]
+    #[tokio::test]
+    async fn prompt_true_is_accepted_where_the_platform_has_no_prompts() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = argument_registry("check_permissions", None, hits.clone());
+        for context in [standard_context(), unrestricted_context()] {
+            let result = registry
+                .invoke_with_context(
+                    "check_permissions",
+                    serde_json::json!({"prompt": true, "session": "permissions"}),
+                    context,
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true), "{result:?}");
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn os_permission_prompt_is_never_agent_controllable() {
         let hits = Arc::new(AtomicUsize::new(0));

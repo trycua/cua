@@ -861,7 +861,7 @@ pub fn enforcement_adapters_for_call(
         add("process_control");
     }
 
-    if tool == "check_permissions" && args.get("prompt").and_then(Value::as_bool).unwrap_or(false) {
+    if os_permission_prompt_requested(tool, args) {
         add("os_permission_prompt");
     }
 
@@ -1011,6 +1011,23 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
 /// Risk for the exact typed operation available at the canonical dispatch
 /// boundary. No page text, selectors, typed text, paths, or other content is
 /// retained by the returned value.
+/// Whether this platform can show an OS permission prompt at all. Only macOS
+/// has TCC prompts. Windows and Linux report state and ignore `prompt`, so a
+/// `prompt: true` there starts nothing and must not be refused (it was, for
+/// about 80% of Windows installers' first call).
+pub const PLATFORM_HAS_OS_PERMISSION_PROMPTS: bool = cfg!(target_os = "macos");
+
+/// Platform-parameterised so tests can cover every platform on any host.
+fn os_permission_prompt_requested_on(platform_has_prompts: bool, tool: &str, args: &Value) -> bool {
+    platform_has_prompts
+        && tool == "check_permissions"
+        && args.get("prompt").and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn os_permission_prompt_requested(tool: &str, args: &Value) -> bool {
+    os_permission_prompt_requested_on(PLATFORM_HAS_OS_PERMISSION_PROMPTS, tool, args)
+}
+
 pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
     match tool {
         "browser_prepare" => {
@@ -1096,15 +1113,18 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
         },
-        "check_permissions" => RiskAssessment {
-            class: if args.get("prompt").and_then(Value::as_bool).unwrap_or(false) {
-                RiskClass::R2
-            } else {
-                RiskClass::R0
-            },
-            enforcement: RiskEnforcement::MetadataOnly,
-            operation_sensitive: args.get("prompt").and_then(Value::as_bool).unwrap_or(false),
-        },
+        "check_permissions" => {
+            let prompting = os_permission_prompt_requested(tool, args);
+            RiskAssessment {
+                class: if prompting {
+                    RiskClass::R2
+                } else {
+                    RiskClass::R0
+                },
+                enforcement: RiskEnforcement::MetadataOnly,
+                operation_sensitive: prompting,
+            }
+        }
         "browser_set_input_files"
         | "browser_download"
         | "start_recording"
@@ -1722,6 +1742,38 @@ mod tests {
         assert_eq!(advertised_risk_for("verify_state").class, RiskClass::R2);
     }
 
+    #[test]
+    fn prompt_is_only_a_protected_operation_where_the_platform_prompts() {
+        let args = serde_json::json!({"prompt": true});
+        assert!(os_permission_prompt_requested_on(
+            true,
+            "check_permissions",
+            &args
+        ));
+        assert!(!os_permission_prompt_requested_on(
+            false,
+            "check_permissions",
+            &args
+        ));
+        assert!(!os_permission_prompt_requested_on(
+            true,
+            "check_permissions",
+            &serde_json::json!({"prompt": false})
+        ));
+        assert!(!os_permission_prompt_requested_on(true, "click", &args));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn prompt_true_is_read_only_on_platforms_without_prompts() {
+        let args = serde_json::json!({"prompt": true});
+        let assessment = classify_tool_call("check_permissions", &args);
+        assert_eq!(assessment.class, RiskClass::R0);
+        assert!(!assessment.operation_sensitive);
+        assert!(enforcement_adapters_for_call("check_permissions", &args).is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
     fn os_permission_prompt_is_argument_sensitive() {
         for args in [serde_json::json!({}), serde_json::json!({"prompt": false})] {

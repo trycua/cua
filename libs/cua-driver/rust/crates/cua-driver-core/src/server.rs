@@ -153,6 +153,24 @@ pub enum ToolErrorClass {
     BackgroundUnavailable,
     TransportError,
     InternalError,
+    /// macOS first-launch permission gate still waiting for grants.
+    PermissionsPending,
+    /// An agent asked for an OS permission or security prompt, which only a
+    /// trusted host may start.
+    PromptRefused,
+    /// The call needs authorization (consent, grant or a higher mode).
+    AuthorizationRequired,
+    /// The element, window state or page reference the call used is out of
+    /// date; read state again.
+    TargetStale,
+    /// The window or element the call named does not exist (any more).
+    WindowNotFound,
+    /// Session lifecycle problem: not started, ended, or owned elsewhere.
+    SessionError,
+    /// The platform or target cannot do what was asked.
+    Unsupported,
+    /// A structured refusal whose code is not in the closed list above.
+    Refused,
 }
 
 impl ToolErrorClass {
@@ -165,7 +183,63 @@ impl ToolErrorClass {
             Self::BackgroundUnavailable => "background_unavailable",
             Self::TransportError => "transport_error",
             Self::InternalError => "internal_error",
+            Self::PermissionsPending => "permissions_pending",
+            Self::PromptRefused => "prompt_refused",
+            Self::AuthorizationRequired => "authorization_required",
+            Self::TargetStale => "target_stale",
+            Self::WindowNotFound => "window_not_found",
+            Self::SessionError => "session_error",
+            Self::Unsupported => "unsupported",
+            Self::Refused => "refused",
         }
+    }
+
+    /// Map a structured wire code (`structuredContent.code` or
+    /// `structuredContent.refusal.code`) to its closed class. Wire codes are
+    /// never changed; this only groups them. A code outside the lists is
+    /// `None` so the caller picks the generic fallback for its shape.
+    pub fn from_wire_code(code: &str) -> Option<Self> {
+        Some(match code {
+            "background_unavailable" | "background_occluded" => Self::BackgroundUnavailable,
+            "permission_denied"
+            | "accessibility_permission_denied"
+            | "screen_recording_permission_denied"
+            | "tcc_permission_denied" => Self::PermissionDenied,
+            "permissions_pending" | "permission_required" => Self::PermissionsPending,
+            "os_permission_prompt_requires_trusted_host" | "security_prompt_protected" => {
+                Self::PromptRefused
+            }
+            "authorization_required"
+            | "browser_consent_required"
+            | "browser_consent_revoked"
+            | "foreign_process_termination_denied"
+            | "unbounded_operation_requires_unrestricted"
+            | "protected_resource_scope_invalid"
+            | "protected_resource_scope_stale" => Self::AuthorizationRequired,
+            "stale_element_token"
+            | "invalid_element_token"
+            | "stale_target"
+            | "stale_geometry"
+            | "stale_observation"
+            | "stale_revision"
+            | "target_changed"
+            | "desktop_changed"
+            | "browser_ref_stale"
+            | "browser_binding_stale" => Self::TargetStale,
+            "window_target_not_found"
+            | "window_id_not_found"
+            | "window_target_resolution_failed"
+            | "ambiguous_window_target" => Self::WindowNotFound,
+            "session_not_started"
+            | "session_ended"
+            | "session_owned_by_other_transport"
+            | "transport_lease_required"
+            | "client_not_bound" => Self::SessionError,
+            "unsupported" | "unsupported_operation" | "facility_unavailable" => Self::Unsupported,
+            "invalid_arguments" => Self::InvalidParams,
+            "unknown_tool" => Self::UnknownTool,
+            _ => return None,
+        })
     }
 }
 
@@ -759,21 +833,76 @@ fn serialized_size_without_retaining(value: &serde_json::Value) -> Option<usize>
 }
 
 fn structured_error_class(result: Option<&serde_json::Value>) -> ToolErrorClass {
-    let code = result
-        .and_then(|value| value.get("structuredContent"))
+    let structured = result.and_then(|value| value.get("structuredContent"));
+    // Most tools put the code at `structuredContent.code`; authorization and
+    // element-token refusals nest it at `structuredContent.refusal.code`.
+    let code = structured
         .and_then(|value| value.get("code"))
-        .and_then(serde_json::Value::as_str);
-    match code {
-        Some("background_unavailable" | "background_occluded") => {
-            ToolErrorClass::BackgroundUnavailable
-        }
-        Some(
-            "permission_denied"
-            | "accessibility_permission_denied"
-            | "screen_recording_permission_denied"
-            | "tcc_permission_denied",
-        ) => ToolErrorClass::PermissionDenied,
-        _ => ToolErrorClass::InternalError,
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            structured
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .or_else(|| {
+            // ActionResult refusals keep the code only in the text prefix.
+            result
+                .and_then(|value| value.get("content"))
+                .and_then(serde_json::Value::as_array)
+                .and_then(|items| {
+                    items.iter().find_map(|item| {
+                        item.get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|text| text.strip_prefix("refused ("))
+                            .and_then(|tail| tail.split_once("):"))
+                            .map(|(code, _)| code)
+                    })
+                })
+        });
+    if let Some(class) = code.and_then(ToolErrorClass::from_wire_code) {
+        return class;
+    }
+    let refused = structured
+        .and_then(|value| value.get("status"))
+        .and_then(serde_json::Value::as_str)
+        == Some("refused")
+        || structured
+            .and_then(|value| value.get("effect"))
+            .and_then(serde_json::Value::as_str)
+            == Some("refused");
+    if refused {
+        ToolErrorClass::Refused
+    } else {
+        ToolErrorClass::InternalError
+    }
+}
+
+/// Add `error_class` to a structured refusal or error payload so agents and
+/// operators can tell a pending permission from a stale element without
+/// parsing prose. Additive only: `code` and every existing field stay as they
+/// are, and the same value feeds the `error_class` telemetry property.
+pub fn annotate_error_class(result: &mut crate::protocol::ToolResult) {
+    let Some(serde_json::Value::Object(structured)) = result.structured_content.as_ref() else {
+        return;
+    };
+    let refused = result.is_error == Some(true)
+        || structured.get("status").and_then(serde_json::Value::as_str) == Some("refused")
+        || structured.get("effect").and_then(serde_json::Value::as_str) == Some("refused");
+    if !refused || structured.contains_key("error_class") {
+        return;
+    }
+    let Ok(wire) = serde_json::to_value(&*result) else {
+        return;
+    };
+    let class = structured_error_class(Some(&wire));
+    if matches!(class, ToolErrorClass::InternalError | ToolErrorClass::None) {
+        return;
+    }
+    if let Some(serde_json::Value::Object(structured)) = result.structured_content.as_mut() {
+        structured.insert(
+            "error_class".to_owned(),
+            serde_json::Value::String(class.as_str().to_owned()),
+        );
     }
 }
 
@@ -1687,6 +1816,80 @@ mod observation_tests {
         let debug = format!("{}:{}", timer.tool_name, timer.valid_params);
         assert!(!debug.contains("secret typed text"));
         assert!(!debug.contains("/secret/path"));
+    }
+
+    #[test]
+    fn refusals_get_specific_classes_not_internal_error() {
+        let class_of = |structured: serde_json::Value| {
+            structured_error_class(Some(&serde_json::json!({
+                "isError": true,
+                "content": [{"type": "text", "text": "x"}],
+                "structuredContent": structured,
+            })))
+        };
+        // Nested refusal code (authorization, element tokens, permission gate).
+        for (code, expected) in [
+            ("permissions_pending", ToolErrorClass::PermissionsPending),
+            (
+                "os_permission_prompt_requires_trusted_host",
+                ToolErrorClass::PromptRefused,
+            ),
+            (
+                "authorization_required",
+                ToolErrorClass::AuthorizationRequired,
+            ),
+            ("stale_element_token", ToolErrorClass::TargetStale),
+            ("window_target_not_found", ToolErrorClass::WindowNotFound),
+            ("session_ended", ToolErrorClass::SessionError),
+        ] {
+            assert_eq!(
+                class_of(serde_json::json!({"status": "refused", "refusal": {"code": code}})),
+                expected,
+                "{code}"
+            );
+        }
+        // Top-level code keeps working, including the old classes.
+        assert_eq!(
+            class_of(serde_json::json!({"code": "background_unavailable"})),
+            ToolErrorClass::BackgroundUnavailable
+        );
+        assert_eq!(
+            class_of(serde_json::json!({"code": "permission_denied"})),
+            ToolErrorClass::PermissionDenied
+        );
+        assert_eq!(
+            class_of(serde_json::json!({"code": "stale_geometry"})),
+            ToolErrorClass::TargetStale
+        );
+        // Unlisted code on a refusal is `refused`; a bare failure stays internal.
+        assert_eq!(
+            class_of(serde_json::json!({"status": "refused", "refusal": {"code": "brand_new"}})),
+            ToolErrorClass::Refused
+        );
+        assert_eq!(
+            class_of(serde_json::json!({"code": "tool_invocation_failed"})),
+            ToolErrorClass::InternalError
+        );
+    }
+
+    #[test]
+    fn error_class_is_added_to_results_without_changing_codes() {
+        let mut result = crate::protocol::ToolResult::error("pending").with_structured(
+            serde_json::json!({"status": "refused", "refusal": {"code": "permissions_pending", "message": "m"}}),
+        );
+        annotate_error_class(&mut result);
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["error_class"], "permissions_pending");
+        assert_eq!(structured["refusal"]["code"], "permissions_pending");
+
+        let mut unknown = crate::protocol::ToolResult::error("boom")
+            .with_structured(serde_json::json!({"code": "tool_invocation_failed"}));
+        annotate_error_class(&mut unknown);
+        assert!(unknown
+            .structured_content
+            .unwrap()
+            .get("error_class")
+            .is_none());
     }
 
     #[test]

@@ -1612,9 +1612,56 @@ pub enum LaunchDaemonErrorKind {
     Timeout,
 }
 
+/// Closed, content-free reason a daemon launch failed or timed out. It is
+/// the only extra detail MCP start-up telemetry carries; no paths, errors or
+/// other text ever cross into it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Some reasons are platform-specific.
+pub enum LaunchDaemonReason {
+    /// `/usr/bin/open` could not be started.
+    ExecFailed,
+    /// The app bundle is not at the expected path.
+    AppBundleMissing,
+    /// `open` ran but exited with an error (LaunchServices refused).
+    OpenExitedNonzero,
+    /// The daemon never created its socket in time.
+    SocketNeverAppeared,
+    /// The socket exists but nothing answered in time.
+    SocketNotAnswering,
+    /// The driver's own executable path could not be found.
+    ExecutableUnavailable,
+    /// Starting the daemon process failed.
+    SpawnFailed,
+}
+
+impl LaunchDaemonReason {
+    pub const fn telemetry_value(self) -> &'static str {
+        match self {
+            Self::ExecFailed => "exec_failed",
+            Self::AppBundleMissing => "app_bundle_missing",
+            Self::OpenExitedNonzero => "open_exited_nonzero",
+            Self::SocketNeverAppeared => "socket_never_appeared",
+            Self::SocketNotAnswering => "socket_not_answering",
+            Self::ExecutableUnavailable => "executable_unavailable",
+            Self::SpawnFailed => "spawn_failed",
+        }
+    }
+}
+
+/// Why a timed-out launch produced no daemon: no socket at all, or a socket
+/// nobody answers on.
+fn timeout_reason(socket_path: &str) -> LaunchDaemonReason {
+    if std::path::Path::new(socket_path).exists() {
+        LaunchDaemonReason::SocketNotAnswering
+    } else {
+        LaunchDaemonReason::SocketNeverAppeared
+    }
+}
+
 #[derive(Debug)]
 pub struct LaunchDaemonError {
     pub kind: LaunchDaemonErrorKind,
+    pub reason: LaunchDaemonReason,
     message: String,
 }
 
@@ -1702,12 +1749,18 @@ fn launch_daemon_with_state_and_wait(
 
     let status = status.map_err(|error| LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Failed,
+        reason: LaunchDaemonReason::ExecFailed,
         message: format!("failed to exec `/usr/bin/open`: {error}"),
     })?;
 
     if !status.success() {
         return Err(LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
+            reason: if std::path::Path::new(&app_path).exists() {
+                LaunchDaemonReason::OpenExitedNonzero
+            } else {
+                LaunchDaemonReason::AppBundleMissing
+            },
             message: format!(
                 "launching `{app_path}` exited {:?}{}. Check that {app_name} is installed \
              at that path, then run `{cli_name} permissions grant`.",
@@ -1728,6 +1781,7 @@ fn launch_daemon_with_state_and_wait(
 
     Err(LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Timeout,
+        reason: timeout_reason(socket_path),
         message: format!(
             "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
          is the first launch, grant Accessibility + Screen Recording to \
@@ -1746,6 +1800,7 @@ fn launch_daemon_with_state_and_wait(
 ) -> Result<(), LaunchDaemonError> {
     let executable = std::env::current_exe().map_err(|error| LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Failed,
+        reason: LaunchDaemonReason::ExecutableUnavailable,
         message: format!("current Cua Driver executable is unavailable: {error}"),
     })?;
     let managed = allow_managed_restart
@@ -1767,6 +1822,7 @@ fn launch_daemon_with_state_and_wait(
             command.process_group(0);
             command.spawn().map_err(|error| LaunchDaemonError {
                 kind: LaunchDaemonErrorKind::Failed,
+                reason: LaunchDaemonReason::SpawnFailed,
                 message: format!("failed to launch {} serve: {error}", executable.display()),
             })?;
         }
@@ -1779,6 +1835,7 @@ fn launch_daemon_with_state_and_wait(
     }
     Err(LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Timeout,
+        reason: timeout_reason(socket_path),
         message: format!("daemon did not appear on {socket_path} within {timeout_secs}s"),
     })
 }
@@ -1827,6 +1884,7 @@ fn spawn_detached_windows_daemon(
     }
     .map_err(|error| LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Failed,
+        reason: LaunchDaemonReason::SpawnFailed,
         message: format!("failed to launch {} serve: {error}", executable.display()),
     })?;
     let _ = unsafe { CloseHandle(process.hThread) };
@@ -2023,7 +2081,7 @@ pub fn run_mcp_via_daemon_proxy<F>(
     on_startup: F,
 ) -> anyhow::Result<()>
 where
-    F: FnOnce(McpDaemonStartup, bool),
+    F: FnOnce(McpDaemonStartup, bool, &'static str),
 {
     let mut on_startup = Some(on_startup);
     // The UIAccess helper is a daemon-internal privilege boundary. Public MCP
@@ -2034,7 +2092,7 @@ where
     let already_running = crate::serve::is_daemon_listening(&socket_path);
     if already_running && !grants.is_empty() {
         if let Some(on_startup) = on_startup.take() {
-            on_startup(McpDaemonStartup::AlreadyRunning, false);
+            on_startup(McpDaemonStartup::AlreadyRunning, false, "none");
         }
         anyhow::bail!(
             "--grant configures a newly launched runtime and cannot modify the daemon already listening on {socket_path}; restart it with the same --grant option"
@@ -2046,7 +2104,7 @@ where
         // standalone CuaDriver.app daemon.
         if cua_driver_core::embedded_mode() {
             if let Some(on_startup) = on_startup.take() {
-                on_startup(McpDaemonStartup::Unreachable, false);
+                on_startup(McpDaemonStartup::Unreachable, false, "none");
             }
             anyhow::bail!(
                 "no Cua Driver daemon listening on {socket_path}. Start one with \
@@ -2069,7 +2127,7 @@ where
         let experimental_history = {
             if !crate::history_runtime::preview_admitted_preference() {
                 if let Some(on_startup) = on_startup.take() {
-                    on_startup(McpDaemonStartup::UnsupportedRelaunch, false);
+                    on_startup(McpDaemonStartup::UnsupportedRelaunch, false, "none");
                 }
                 anyhow::bail!(
                     "no Cua Driver daemon listening on {socket_path}. Start one in \
@@ -2090,6 +2148,7 @@ where
                         McpDaemonStartup::LaunchFailed
                     },
                     false,
+                    error.reason.telemetry_value(),
                 );
             }
             return Err(error.into());
@@ -2098,7 +2157,7 @@ where
     }
 
     if let Some(on_startup) = on_startup.take() {
-        on_startup(daemon, true);
+        on_startup(daemon, true, "none");
     }
 
     run_mcp_runtime(crate::proxy::run_proxy(socket_path))
@@ -6085,6 +6144,23 @@ fn first_sentence(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn launch_reasons_are_closed_labels() {
+        assert_eq!(
+            timeout_reason("/nonexistent/cua-driver-test.sock").telemetry_value(),
+            "socket_never_appeared"
+        );
+        let present = std::env::temp_dir();
+        assert_eq!(
+            timeout_reason(present.to_str().unwrap()).telemetry_value(),
+            "socket_not_answering"
+        );
+        assert_eq!(
+            LaunchDaemonReason::AppBundleMissing.telemetry_value(),
+            "app_bundle_missing"
+        );
+    }
+
     #[test]
     fn wait_for_daemon_listening_zero_timeout_returns_false() {
         let directory = tempfile::tempdir().unwrap();

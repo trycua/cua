@@ -877,35 +877,6 @@ fn structured_error_class(result: Option<&serde_json::Value>) -> ToolErrorClass 
     }
 }
 
-/// Add `error_class` to a structured refusal or error payload so agents and
-/// operators can tell a pending permission from a stale element without
-/// parsing prose. Additive only: `code` and every existing field stay as they
-/// are, and the same value feeds the `error_class` telemetry property.
-pub fn annotate_error_class(result: &mut crate::protocol::ToolResult) {
-    let Some(serde_json::Value::Object(structured)) = result.structured_content.as_ref() else {
-        return;
-    };
-    let refused = result.is_error == Some(true)
-        || structured.get("status").and_then(serde_json::Value::as_str) == Some("refused")
-        || structured.get("effect").and_then(serde_json::Value::as_str) == Some("refused");
-    if !refused || structured.contains_key("error_class") {
-        return;
-    }
-    let Ok(wire) = serde_json::to_value(&*result) else {
-        return;
-    };
-    let class = structured_error_class(Some(&wire));
-    if matches!(class, ToolErrorClass::InternalError | ToolErrorClass::None) {
-        return;
-    }
-    if let Some(serde_json::Value::Object(structured)) = result.structured_content.as_mut() {
-        structured.insert(
-            "error_class".to_owned(),
-            serde_json::Value::String(class.as_str().to_owned()),
-        );
-    }
-}
-
 fn classify_output_type(result: Option<&serde_json::Value>) -> OutputType {
     let Some(content) = result
         .and_then(|value| value.get("content"))
@@ -1870,26 +1841,6 @@ mod observation_tests {
             class_of(serde_json::json!({"code": "tool_invocation_failed"})),
             ToolErrorClass::InternalError
         );
-    }
-
-    #[test]
-    fn error_class_is_added_to_results_without_changing_codes() {
-        let mut result = crate::protocol::ToolResult::error("pending").with_structured(
-            serde_json::json!({"status": "refused", "refusal": {"code": "permissions_pending", "message": "m"}}),
-        );
-        annotate_error_class(&mut result);
-        let structured = result.structured_content.unwrap();
-        assert_eq!(structured["error_class"], "permissions_pending");
-        assert_eq!(structured["refusal"]["code"], "permissions_pending");
-
-        let mut unknown = crate::protocol::ToolResult::error("boom")
-            .with_structured(serde_json::json!({"code": "tool_invocation_failed"}));
-        annotate_error_class(&mut unknown);
-        assert!(unknown
-            .structured_content
-            .unwrap()
-            .get("error_class")
-            .is_none());
     }
 
     #[test]

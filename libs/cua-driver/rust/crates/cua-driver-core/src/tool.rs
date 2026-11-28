@@ -2115,7 +2115,6 @@ impl ToolRegistry {
             crate::fast_path::wire::attach_delta(&mut result, delta);
         }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
-        crate::server::annotate_error_class(&mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &nudge_args, &mut result);
         result
     }
@@ -6152,9 +6151,6 @@ resources:
             assert!(hint
                 .as_str()
                 .is_some_and(|hint| hint.contains("target {kind:\"window\"")));
-            // And the closed error class (see `server::annotate_error_class`).
-            assert_eq!(structured["error_class"], "background_unavailable");
-            structured.as_object_mut().unwrap().remove("error_class");
             assert_eq!(
                 structured,
                 serde_json::json!({

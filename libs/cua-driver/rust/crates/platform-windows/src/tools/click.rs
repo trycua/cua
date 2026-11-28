@@ -74,9 +74,13 @@ fn finish_pixel_uia_attempt(
         PointInvokeOutcome::Timeout => "timeout",
         PointInvokeOutcome::Unavailable => "unavailable",
     };
-    Some(cua_driver_core::delivery::background_unavailable_result(
+    Some(uia_unavailable_result("UIA pixel click", status, pid))
+}
+
+fn uia_unavailable_result(action: &str, status: &str, pid: u32) -> ToolResult {
+    cua_driver_core::delivery::background_unavailable_result(
         format!(
-            "UIA pixel click {status} for pid {pid}. No fallback input was sent. \
+            "{action} {status} for pid {pid}. No fallback input was sent. \
          The click effect is unknown; inspect the target state before another action. \
          If the provider does not recover, retry this action with delivery_mode:\"foreground\"."
         ),
@@ -90,7 +94,7 @@ fn finish_pixel_uia_attempt(
             "verified": false,
             "effect": "unverifiable",
         }),
-    ))
+    )
 }
 
 enum BackgroundElementClick {
@@ -109,6 +113,166 @@ enum BackgroundElementClick {
         y: i32,
         failed_calls: Vec<ActionTransport>,
     },
+    /// The UIA provider missed its deadline, was busy or failed. The effect is
+    /// unknown, so no other transport may follow.
+    Unavailable { status: &'static str },
+}
+
+struct ElementActivation {
+    activated: Option<(&'static str, ActionTransport)>,
+    failed_calls: Vec<ActionTransport>,
+}
+
+/// Try the click-semantics patterns on a retained UIA element, most specific
+/// first:
+///   1. Invoke         - buttons / hyperlinks (canonical)
+///   2. Toggle         - checkboxes (no Invoke)
+///   3. SelectionItem  - radio buttons, listbox items
+///   4. ExpandCollapse - combo boxes, tree nodes
+///
+/// Each call is wrapped in the UWP foreground-steal bypass.
+///
+/// Why this order: PR #1699's WinUI3 control parity tests surfaced these
+/// pattern-dispatch gaps. Without these fallthroughs, cua-driver couldn't drive
+/// WinUI3 CheckBox / RadioButton / ComboBox because PostMessage doesn't reach
+/// their handlers (CoreInput dispatcher).
+///
+/// Stops before the next pattern once `cancelled` is set: the caller has
+/// already reported an unknown effect and will not observe another call.
+fn activate_retained_element(
+    element: &crate::uia::snapshot::RetainedElement,
+    hwnd: u64,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> ElementActivation {
+    use windows::core::Interface;
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationElement, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+        IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, UIA_ExpandCollapsePatternId,
+        UIA_InvokePatternId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
+    };
+    let elem = std::mem::ManuallyDrop::new(unsafe {
+        IUIAutomationElement::from_raw(element.as_ptr() as *mut _)
+    });
+    let steps: [ActivationStep<'_>; 4] = [
+        ("Invoke", ActionTransport::WindowsUiaInvoke, &|| {
+            try_element_pattern(
+                &elem,
+                UIA_InvokePatternId,
+                hwnd,
+                cancelled,
+                |p: &IUIAutomationInvokePattern| unsafe { p.Invoke() },
+            )
+        }),
+        ("Toggle", ActionTransport::WindowsUiaToggle, &|| {
+            try_element_pattern(
+                &elem,
+                UIA_TogglePatternId,
+                hwnd,
+                cancelled,
+                |p: &IUIAutomationTogglePattern| unsafe { p.Toggle() },
+            )
+        }),
+        (
+            "SelectionItem.Select",
+            ActionTransport::WindowsUiaSelection,
+            &|| {
+                try_element_pattern(
+                    &elem,
+                    UIA_SelectionItemPatternId,
+                    hwnd,
+                    cancelled,
+                    |p: &IUIAutomationSelectionItemPattern| unsafe { p.Select() },
+                )
+            },
+        ),
+        (
+            "ExpandCollapse.Expand",
+            ActionTransport::WindowsUiaExpandCollapse,
+            &|| {
+                try_element_pattern(
+                    &elem,
+                    UIA_ExpandCollapsePatternId,
+                    hwnd,
+                    cancelled,
+                    |p: &IUIAutomationExpandCollapsePattern| unsafe { p.Expand() },
+                )
+            },
+        ),
+    ];
+    run_activation_steps(&steps, cancelled)
+}
+
+type ActivationStep<'a> = (&'static str, ActionTransport, &'a dyn Fn() -> Option<bool>);
+
+/// Each step returns `None` when the element lacks its pattern, otherwise
+/// whether the call succeeded. The first success wins.
+fn run_activation_steps(
+    steps: &[ActivationStep<'_>],
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> ElementActivation {
+    use std::sync::atomic::Ordering;
+    let mut failed_calls = Vec::new();
+    for &(pattern, transport, step) in steps {
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        match step() {
+            Some(true) => {
+                return ElementActivation {
+                    activated: Some((pattern, transport)),
+                    failed_calls,
+                };
+            }
+            Some(false) => failed_calls.push(transport),
+            None => {}
+        }
+    }
+    ElementActivation {
+        activated: None,
+        failed_calls,
+    }
+}
+
+fn try_element_pattern<P: windows::core::Interface>(
+    elem: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+    pattern_id: windows::Win32::UI::Accessibility::UIA_PATTERN_ID,
+    hwnd: u64,
+    cancelled: &std::sync::atomic::AtomicBool,
+    call: impl FnOnce(&P) -> windows::core::Result<()>,
+) -> Option<bool> {
+    use windows::core::Interface;
+    let pattern = unsafe { elem.GetCurrentPattern(pattern_id) }.ok()?;
+    let pattern = pattern.cast::<P>().ok()?;
+    let result = call_pattern_unless_cancelled(
+        cancelled,
+        |run| crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, run),
+        || call(&pattern),
+    )?;
+    if let Err(e) = &result {
+        tracing::debug!(target: "click", "UIA pattern {pattern_id:?}: {e}");
+    }
+    Some(result.is_ok())
+}
+
+/// The pattern lookup can outlive the deadline, and so can the shield's
+/// `EnableWindow`, so check it before entering `shield` and again right before
+/// the provider call. `None` when it has fired.
+fn call_pattern_unless_cancelled<R>(
+    cancelled: &std::sync::atomic::AtomicBool,
+    shield: impl FnOnce(&mut dyn FnMut() -> Option<R>) -> Option<R>,
+    call: impl FnOnce() -> R,
+) -> Option<R> {
+    use std::sync::atomic::Ordering;
+    if cancelled.load(Ordering::Acquire) {
+        return None;
+    }
+    let mut call = Some(call);
+    shield(&mut || {
+        if cancelled.load(Ordering::Acquire) {
+            return None;
+        }
+        call.take().map(|call| call())
+    })
 }
 
 fn background_element_click_result(
@@ -852,142 +1016,98 @@ impl Tool for ClickTool {
             //   - count > 1 (double-click semantics aren't an Invoke
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
-            let result = tokio::task::spawn_blocking({ let admitted = admitted.clone(); move || -> anyhow::Result<BackgroundElementClick> {
-                let _admission = &admitted;
-                let mut failed_calls = Vec::new();
-                // Direct Chromium UIA Invoke can return S_OK without firing a
-                // DOM event while occluded. Try the honest coordinate actuator
-                // first: it lands while visible and reports occlusion without
-                // raising the window when hidden.
-                if delivery.is_background()
-                    && crate::input::is_chromium_target_window(hwnd)
-                {
-                    let (cx, cy) = resolve_onscreen_point_with_scroll(
-                        &admitted, hwnd, idx, cx, cy, "clicking",
-                    )
-                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
-                }
-                if use_uia_invoke {
-                    // Retain the element out of the cache (AddRef under the
-                    // cache lock) so it can't be freed by a concurrent
-                    // get_window_state on the same (pid, hwnd) while this click
-                    // is mid-flight (use-after-free → daemon crash). The guard
-                    // lives to the end of this `if let` block, past every UIA
-                    // pattern dispatch below; its Release fires when it drops.
-                    if let Some(element_guard) = admitted.as_ref() {
-                        let ptr = element_guard.as_ptr();
-                        use windows::Win32::UI::Accessibility::{
-                            IUIAutomationElement, IUIAutomationInvokePattern,
-                            IUIAutomationTogglePattern, IUIAutomationSelectionItemPattern,
-                            IUIAutomationExpandCollapsePattern,
-                            UIA_InvokePatternId, UIA_TogglePatternId,
-                            UIA_SelectionItemPatternId, UIA_ExpandCollapsePatternId,
-                        };
-                        use windows::core::Interface;
-                        let elem: IUIAutomationElement =
-                            unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-
-                        // Try patterns in order of click-semantics specificity:
-                        //   1. Invoke      - buttons / hyperlinks (canonical)
-                        //   2. Toggle      - checkboxes (no Invoke)
-                        //   3. SelectionItem - radio buttons, listbox items
-                        //   4. ExpandCollapse - combo boxes, tree nodes
-                        // Each call is wrapped in the UWP foreground-steal bypass.
-                        //
-                        // Why this order: PR #1699's WinUI3 control parity tests
-                        // surfaced these pattern-dispatch gaps. Without these
-                        // fallthroughs, cua-driver couldn't drive WinUI3
-                        // CheckBox / RadioButton / ComboBox because PostMessage
-                        // doesn't reach their handlers (CoreInput dispatcher).
-                        let invoke_result = unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) };
-                        if let Ok(pattern) = invoke_result {
-                            if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
-                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
-                                    hwnd as isize, || unsafe { inv.Invoke() });
-                                match outcome {
-                                    Ok(()) => {
-                                        std::mem::forget(elem);
-                                        return Ok(BackgroundElementClick::Semantic { message: format!(
-                                            "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
-                                        ), transport: ActionTransport::WindowsUiaInvoke, failed_calls });
-                                    }
-                                    Err(e) => tracing::debug!(target: "click",
-                                        "UIA Invoke on [{idx}]: {e}, trying Toggle"),
-                                }
-                                failed_calls.push(ActionTransport::WindowsUiaInvoke);
-                            }
-                        }
-                        let toggle_result = unsafe { elem.GetCurrentPattern(UIA_TogglePatternId) };
-                        if let Ok(pattern) = toggle_result {
-                            if let Ok(tg) = pattern.cast::<IUIAutomationTogglePattern>() {
-                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
-                                    hwnd as isize, || unsafe { tg.Toggle() });
-                                if outcome.is_ok() {
-                                    std::mem::forget(elem);
-                                    return Ok(BackgroundElementClick::Semantic { message: format!(
-                                        "✅ Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
-                                    ), transport: ActionTransport::WindowsUiaToggle, failed_calls });
-                                }
-                                failed_calls.push(ActionTransport::WindowsUiaToggle);
-                            }
-                        }
-                        let sel_result = unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) };
-                        if let Ok(pattern) = sel_result {
-                            if let Ok(si) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
-                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
-                                    hwnd as isize, || unsafe { si.Select() });
-                                if outcome.is_ok() {
-                                    std::mem::forget(elem);
-                                    return Ok(BackgroundElementClick::Semantic { message: format!(
-                                        "✅ Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
-                                    ), transport: ActionTransport::WindowsUiaSelection, failed_calls });
-                                }
-                                failed_calls.push(ActionTransport::WindowsUiaSelection);
-                            }
-                        }
-                        let exp_result = unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) };
-                        if let Ok(pattern) = exp_result {
-                            if let Ok(ec) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
-                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
-                                    hwnd as isize, || unsafe { ec.Expand() });
-                                if outcome.is_ok() {
-                                    std::mem::forget(elem);
-                                    return Ok(BackgroundElementClick::Semantic { message: format!(
-                                        "✅ Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
-                                    ), transport: ActionTransport::WindowsUiaExpandCollapse, failed_calls });
-                                }
-                                failed_calls.push(ActionTransport::WindowsUiaExpandCollapse);
-                            }
-                        }
-                        std::mem::forget(elem);
+            let result = tokio::task::spawn_blocking({
+                let admitted = admitted.clone();
+                move || -> anyhow::Result<BackgroundElementClick> {
+                    let _admission = &admitted;
+                    let mut failed_calls = Vec::new();
+                    // Direct Chromium UIA Invoke can return S_OK without firing a
+                    // DOM event while occluded. Try the honest coordinate actuator
+                    // first: it lands while visible and reports occlusion without
+                    // raising the window when hidden.
+                    if delivery.is_background() && crate::input::is_chromium_target_window(hwnd) {
+                        let (cx, cy) = resolve_onscreen_point_with_scroll(
+                            &admitted, hwnd, idx, cx, cy, "clicking",
+                        )
+                        .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                        return Ok(BackgroundElementClick::Inject {
+                            x: cx,
+                            y: cy,
+                            failed_calls,
+                        });
                     }
+                    if use_uia_invoke {
+                        // The worker owns its own reference to the element, so a
+                        // provider call that outlives the deadline cannot free it.
+                        // A late return may still activate the element, so a missed
+                        // deadline never falls through to another transport.
+                        if let Some(element) = admitted.clone() {
+                            let activation = crate::uia::windows_enum::run_element_activation(
+                                move |cancelled| {
+                                    activate_retained_element(&element, hwnd, &cancelled)
+                                },
+                            );
+                            match activation {
+                                Ok(ElementActivation {
+                                    activated: Some((pattern, transport)),
+                                    failed_calls,
+                                }) => {
+                                    return Ok(BackgroundElementClick::Semantic {
+                                        message: format!(
+                                    "✅ Performed UIA {pattern} on [{idx}] (screen ({cx},{cy}))."
+                                ),
+                                        transport,
+                                        failed_calls,
+                                    });
+                                }
+                                Ok(ElementActivation {
+                                    activated: None,
+                                    failed_calls: failed,
+                                }) => {
+                                    failed_calls = failed;
+                                }
+                                Err(error) => {
+                                    return Ok(BackgroundElementClick::Unavailable {
+                                        status: error.status(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if delivery.is_background()
+                        && crate::input::delivery::would_be_silently_dropped(
+                            hwnd,
+                            EventKind::MouseClick,
+                        )
+                    {
+                        let (cx, cy) = resolve_onscreen_point_with_scroll(
+                            &admitted, hwnd, idx, cx, cy, "clicking",
+                        )
+                        .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                        return Ok(BackgroundElementClick::Inject {
+                            x: cx,
+                            y: cy,
+                            failed_calls,
+                        });
+                    }
+                    if admitted
+                        .as_ref()
+                        .is_some_and(|element| element.read_while_minimized)
+                    {
+                        let (x, y) = resolve_onscreen_point_with_scroll(
+                            &admitted, hwnd, idx, cx, cy, "clicking",
+                        )
+                        .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                        return Ok(BackgroundElementClick::Post { x, y, failed_calls });
+                    }
+                    Ok(BackgroundElementClick::Post {
+                        x: cx,
+                        y: cy,
+                        failed_calls,
+                    })
                 }
-                if delivery.is_background()
-                    && crate::input::delivery::would_be_silently_dropped(
-                        hwnd,
-                        EventKind::MouseClick,
-                    )
-                {
-                    let (cx, cy) = resolve_onscreen_point_with_scroll(
-                        &admitted,
-                        hwnd,
-                        idx,
-                        cx,
-                        cy,
-                        "clicking",
-                    )
-                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
-                }
-                if admitted.as_ref().is_some_and(|element| element.read_while_minimized) {
-                    let (x, y) =
-                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, cx, cy, "clicking")
-                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Post { x, y, failed_calls });
-                }
-                Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
-            } }).await;
+            })
+            .await;
             let plan = match result {
                 Ok(Ok(plan)) => plan,
                 Ok(Err(e)) => return ToolResult::error(e.to_string()),
@@ -1000,6 +1120,9 @@ impl Tool for ClickTool {
                     failed_calls,
                 } => {
                     return background_element_click_result(message, transport, failed_calls);
+                }
+                BackgroundElementClick::Unavailable { status } => {
+                    return uia_unavailable_result("UIA element click", status, pid);
                 }
                 BackgroundElementClick::Inject { x, y, failed_calls } => (x, y, failed_calls, true),
                 BackgroundElementClick::Post { x, y, failed_calls } => (x, y, failed_calls, false),
@@ -1305,6 +1428,110 @@ impl Tool for ClickTool {
             // Match Swift's error wording for the missing-target case.
             ToolResult::error("Provide element_token or (x, y) to address the click target.")
         }
+    }
+}
+
+#[cfg(test)]
+mod element_activation_tests {
+    use super::{call_pattern_unless_cancelled, run_activation_steps, ActivationStep};
+    use cua_driver_core::action_record::ActionTransport;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[test]
+    fn activation_falls_through_failed_patterns_to_the_first_success() {
+        let calls = AtomicUsize::new(0);
+        let count = |result| {
+            calls.fetch_add(1, Ordering::AcqRel);
+            result
+        };
+        let steps: [ActivationStep<'_>; 4] = [
+            ("Invoke", ActionTransport::WindowsUiaInvoke, &|| {
+                count(Some(false))
+            }),
+            ("Toggle", ActionTransport::WindowsUiaToggle, &|| count(None)),
+            (
+                "SelectionItem.Select",
+                ActionTransport::WindowsUiaSelection,
+                &|| count(Some(true)),
+            ),
+            (
+                "ExpandCollapse.Expand",
+                ActionTransport::WindowsUiaExpandCollapse,
+                &|| count(Some(true)),
+            ),
+        ];
+        let outcome = run_activation_steps(&steps, &AtomicBool::new(false));
+        assert_eq!(
+            outcome.activated,
+            Some(("SelectionItem.Select", ActionTransport::WindowsUiaSelection))
+        );
+        assert_eq!(
+            outcome.failed_calls,
+            vec![ActionTransport::WindowsUiaInvoke]
+        );
+        assert_eq!(calls.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn activation_makes_no_provider_call_after_the_deadline() {
+        let cancelled = AtomicBool::new(false);
+        let calls = AtomicUsize::new(0);
+        let wedged_invoke = || {
+            calls.fetch_add(1, Ordering::AcqRel);
+            // The caller's deadline fires while this provider call is stuck.
+            cancelled.store(true, Ordering::Release);
+            Some(false)
+        };
+        let later = || {
+            calls.fetch_add(1, Ordering::AcqRel);
+            Some(true)
+        };
+        let steps: [ActivationStep<'_>; 2] = [
+            ("Invoke", ActionTransport::WindowsUiaInvoke, &wedged_invoke),
+            ("Toggle", ActionTransport::WindowsUiaToggle, &later),
+        ];
+        let outcome = run_activation_steps(&steps, &cancelled);
+        assert_eq!(outcome.activated, None);
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn pattern_call_rechecks_the_deadline_before_and_inside_the_shield() {
+        let shields = AtomicUsize::new(0);
+        let calls = AtomicUsize::new(0);
+        let call = || calls.fetch_add(1, Ordering::AcqRel);
+
+        // Deadline fired during the pattern lookup: the shield is never set up.
+        let fired = AtomicBool::new(true);
+        let outcome = call_pattern_unless_cancelled(
+            &fired,
+            |run| {
+                shields.fetch_add(1, Ordering::AcqRel);
+                run()
+            },
+            call,
+        );
+        assert_eq!(outcome, None);
+        assert_eq!(shields.load(Ordering::Acquire), 0);
+
+        // Deadline fired while the shield was being set up: no provider call.
+        let racing = AtomicBool::new(false);
+        let outcome = call_pattern_unless_cancelled(
+            &racing,
+            |run| {
+                shields.fetch_add(1, Ordering::AcqRel);
+                racing.store(true, Ordering::Release);
+                run()
+            },
+            call,
+        );
+        assert_eq!(outcome, None);
+        assert_eq!(shields.load(Ordering::Acquire), 1);
+        assert_eq!(calls.load(Ordering::Acquire), 0);
+
+        let outcome = call_pattern_unless_cancelled(&AtomicBool::new(false), |run| run(), call);
+        assert_eq!(outcome, Some(0));
+        assert_eq!(calls.load(Ordering::Acquire), 1);
     }
 }
 

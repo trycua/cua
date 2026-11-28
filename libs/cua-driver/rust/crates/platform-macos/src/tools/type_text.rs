@@ -448,20 +448,7 @@ impl Tool for TypeTextTool {
 
         match result {
             Ok(Ok(outcome)) if outcome.delivered_chars.is_some_and(|n| n < char_count) => {
-                let delivered_chars = outcome.delivered_chars.unwrap_or_default();
-                ToolResult::error(format!(
-                    "type_text incomplete: delivered {delivered_chars} of {char_count} character(s){}; retry only the remaining suffix",
-                    outcome.detail
-                ))
-                .with_structured(serde_json::json!({
-                    "code": "type_text_incomplete",
-                    "path": outcome.path,
-                    "effect": "partial",
-                    "requested_chars": char_count,
-                    "delivered_chars": delivered_chars,
-                    "retryable": true,
-                    "retry_from_character": delivered_chars,
-                }))
+                incomplete_result(&outcome, char_count)
             }
             Ok(Ok(outcome)) => {
                 let TypeTextOutcome {
@@ -742,6 +729,41 @@ fn synthesis_preflight(
         per_character_ms,
         max_chunk_chars,
     })
+}
+
+/// The reply for a send whose read-back shows fewer characters than were sent.
+fn incomplete_result(outcome: &TypeTextOutcome, char_count: usize) -> ToolResult {
+    let delivered_chars = outcome.delivered_chars.unwrap_or_default();
+    if delivered_chars == 0 {
+        return ToolResult::error(format!(
+            "type_text unconfirmed: sent {char_count} character(s){} but the field showed no change, so the effect is unknown; read the field before typing again",
+            outcome.detail
+        ))
+        .with_structured(serde_json::json!({
+            "code": "type_text_incomplete",
+            "path": outcome.path,
+            "effect": "indeterminate",
+            "requested_chars": char_count,
+            "retryable": false,
+            "escalation": {
+                "recommended": "verify_state",
+                "reason": "The keys were sent but the field showed no change, so it may lag or not echo them. Read the field before deciding whether to type again; do not retry blindly."
+            },
+        }));
+    }
+    ToolResult::error(format!(
+        "type_text incomplete: delivered {delivered_chars} of {char_count} character(s){}; retry only the remaining suffix",
+        outcome.detail
+    ))
+    .with_structured(serde_json::json!({
+        "code": "type_text_incomplete",
+        "path": outcome.path,
+        "effect": "partial",
+        "requested_chars": char_count,
+        "delivered_chars": delivered_chars,
+        "retryable": true,
+        "retry_from_character": delivered_chars,
+    }))
 }
 
 fn synthesis_refusal_result(
@@ -2453,6 +2475,40 @@ mod tests {
             TypedProgress::Complete,
             "a successful one-call AX insertion remains eligible regardless of size"
         );
+    }
+
+    #[test]
+    fn a_send_the_field_showed_no_change_for_is_not_retried_from_zero() {
+        let outcome = |delivered_chars| TypeTextOutcome {
+            detail: String::new(),
+            path: PATH_KEY_EVENTS,
+            verified: false,
+            delivered_chars: Some(delivered_chars),
+        };
+        let unchanged = incomplete_result(&outcome(0), 5);
+        let structured = unchanged
+            .structured_content
+            .clone()
+            .expect("structured result");
+        assert_eq!(structured["retryable"], false);
+        assert!(structured.get("retry_from_character").is_none());
+        assert_eq!(structured["effect"], "indeterminate");
+        assert_eq!(structured["escalation"]["recommended"], "verify_state");
+        let cua_driver_core::protocol::Content::Text { text, .. } = &unchanged.content[0] else {
+            panic!("a text reply");
+        };
+        assert!(!text.contains("retry only the remaining suffix"), "{text}");
+        assert!(
+            text.contains("read the field before typing again"),
+            "{text}"
+        );
+
+        let partial = incomplete_result(&outcome(2), 5)
+            .structured_content
+            .expect("structured result");
+        assert_eq!(partial["retryable"], true);
+        assert_eq!(partial["retry_from_character"], 2);
+        assert_eq!(partial["effect"], "partial");
     }
 
     #[test]

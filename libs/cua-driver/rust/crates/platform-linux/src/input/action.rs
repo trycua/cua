@@ -23,12 +23,18 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
+use cua_driver_core::post_action_wait::PostActionWait;
+use cua_driver_core::step_pacing::StepPacing;
 use cua_driver_core::tool::DesktopLease;
 
 /// One tool call: its deadline, whether its caller stopped waiting, and
 /// the desktop lease of the task that started it.
 pub struct Action {
     deadline: Instant,
+    /// The caller's `post_action_wait` and the step's batch pacing, read from
+    /// the task that started the call: a blocking worker cannot see them.
+    post_action_wait: PostActionWait,
+    pacing: StepPacing,
     phase: Mutex<ActionPhase>,
     /// Held across each admitted send, so [`Action::abandon`] can wait for
     /// one under way after shutting the fenced sockets under `phase`.
@@ -53,6 +59,8 @@ impl Action {
     pub fn new(budget: Duration) -> Arc<Self> {
         Arc::new(Self {
             deadline: Instant::now() + budget,
+            post_action_wait: cua_driver_core::post_action_wait::current(),
+            pacing: cua_driver_core::step_pacing::current(),
             phase: Mutex::new(ActionPhase::Active(Vec::new())),
             sending: Mutex::new(()),
             _lease: DesktopLease::current(),
@@ -61,6 +69,16 @@ impl Action {
 
     pub fn deadline(&self) -> Instant {
         self.deadline
+    }
+
+    /// The caller's `post_action_wait` for this call.
+    pub fn post_action_wait(&self) -> PostActionWait {
+        self.post_action_wait
+    }
+
+    /// Whether this call is a step of a batch that another step follows.
+    pub fn pacing(&self) -> StepPacing {
+        self.pacing
     }
 
     /// Run `send`, which hands input events to the compositor, unless the

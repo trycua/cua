@@ -44,9 +44,12 @@
 //!
 //! 1. A "is target already frontmost?" check so we don't arm a useless
 //!    self→self suppressor (matches Swift's `isTargetFrontmost` guard).
-//! 2. A 50ms post-action sleep that gives any in-flight focus-grab
+//! 2. A 50ms post-action settle that gives any in-flight focus-grab
 //!    reflex time to fire and be observed by the suppressor before the
-//!    lease is dropped. Matches Swift's `Task.sleep(nanoseconds: 50ms)`.
+//!    lease is dropped (Swift's `Task.sleep(nanoseconds: 50ms)`). Only
+//!    callers without a window-change snapshot pay it: a snapshot's
+//!    wildcard lease stays armed for the whole observation deadline,
+//!    detached after the result returns, and reverts the same activations.
 //! 3. A static `origin` label for tracing — call sites pass a short
 //!    string like `"click.AXPress"` so leaked leases / late-firing
 //!    observers can be traced back to the caller.
@@ -68,9 +71,11 @@ use crate::focus_steal;
 /// - `origin` — short static label for tracing, e.g. `"click.AXPress"`.
 /// - `f` — the action to run with suppression armed.
 ///
-/// Returns whatever `f` returns. Drops the lease ~50ms after `f`
-/// resolves so any in-flight reflex activation is observed before
-/// suppression ends.
+/// Returns whatever `f` returns. Every caller holds a
+/// [`WindowChangeDetector`](crate::window_change_detector) snapshot whose
+/// wildcard lease outlives this one, so the lease drops as soon as `f`
+/// resolves; only a host deadline shorter than [`REFLEX_SETTLE`] keeps the
+/// settle.
 ///
 /// If `target_pid` is already the frontmost app (no point fighting
 /// ourselves) or `prior_frontmost` is `None` (no app to restore to),
@@ -80,6 +85,22 @@ pub async fn with_focus_suppressed<F, Fut, R>(
     target_pid: Option<i32>,
     prior_frontmost: Option<i32>,
     origin: &'static str,
+    f: F,
+) -> R
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = R>,
+{
+    suppressed(target_pid, prior_frontmost, origin, false, f).await
+}
+
+/// [`with_focus_suppressed`]. `no_wildcard` says no snapshot's wildcard
+/// lease covers the time after `f`, so an armed lease always settles.
+async fn suppressed<F, Fut, R>(
+    target_pid: Option<i32>,
+    prior_frontmost: Option<i32>,
+    origin: &'static str,
+    no_wildcard: bool,
     f: F,
 ) -> R
 where
@@ -124,15 +145,28 @@ where
 
     let result = f().await;
 
-    // Post-action settle — give the reactive observer time to fire on
-    // any side-effect activation before we drop the lease. Matches
-    // Swift's 50ms sleep in `FocusGuard.withFocusSuppressed`.
-    if _lease.is_some() {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    // The snapshot's wildcard lease reverts a late reflex activation for the
+    // rest of its observation deadline. A host that shortened that deadline
+    // below the settle still gets the settle.
+    let wildcard_deadline = crate::window_change_detector::host_observation_bounds().timeout;
+    if settles(_lease.is_some(), no_wildcard, wildcard_deadline) {
+        tokio::time::sleep(REFLEX_SETTLE).await;
     }
 
     // _lease drops here (RAII end_suppression).
     result
+}
+
+/// How long the targeted lease stays armed after the action when nothing
+/// else covers a late reflex activation. Matches Swift's 50ms sleep in
+/// `FocusGuard.withFocusSuppressed`.
+const REFLEX_SETTLE: Duration = Duration::from_millis(50);
+
+/// Whether an armed lease waits [`REFLEX_SETTLE`] before it drops: when no
+/// wildcard lease runs after the action, or the host deadline is too short
+/// to cover the settle.
+fn settles(armed: bool, no_wildcard: bool, wildcard_deadline: Duration) -> bool {
+    armed && (no_wildcard || wildcard_deadline < REFLEX_SETTLE)
 }
 
 /// Convenience wrapper that captures the current frontmost via
@@ -154,5 +188,26 @@ where
     Fut: std::future::Future<Output = R>,
 {
     let prior = apps::frontmost_pid();
-    with_focus_suppressed(target_pid, prior, origin, f).await
+    // No snapshot here, so no wildcard lease covers the time after `f`.
+    suppressed(target_pid, prior, origin, true, f).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unarmed_call_never_settles() {
+        assert!(!settles(false, true, Duration::ZERO));
+        assert!(!settles(false, false, Duration::ZERO));
+    }
+
+    #[test]
+    fn an_armed_call_settles_only_without_wildcard_cover() {
+        let full = Duration::from_millis(1000);
+        assert!(!settles(true, false, full));
+        assert!(settles(true, false, Duration::from_millis(20)));
+        assert!(settles(true, true, full));
+        assert!(settles(true, true, Duration::from_millis(20)));
+    }
 }

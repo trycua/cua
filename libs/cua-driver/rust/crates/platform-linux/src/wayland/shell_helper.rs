@@ -528,7 +528,7 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
 /// A zero `window_id` is a PID-only query and needs the PID to own exactly
 /// one window: another window's origin would place every element wrongly.
 ///
-/// `screenshot_window_dispatch` crops the Shell stage to this same frame
+/// `WindowRoute::OutputCrop` crops the Shell stage to this same frame
 /// rectangle, and GTK's AT-SPI `CoordType::Window` coordinates are relative to
 /// that frame. Using Mutter's larger surface-buffer rectangle here shifts
 /// elements up and left by the client-side shadow extents whenever the window

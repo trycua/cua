@@ -180,7 +180,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
     // misleading "screen capture will fail" just because wlroots isn't
     // present.
     if is_wayland_session() {
-        // Tier order follows `screenshot_display_dispatch`: the KWin adapter,
+        // Tier order follows `routes::display_routes`: the KWin adapter,
         // when the operator switched it on, comes before the native tiers.
         let kwin = tokio::task::spawn_blocking(kwin_switch)
             .await
@@ -615,7 +615,7 @@ fn is_wayland_session() -> bool {
 
 #[cfg(target_os = "linux")]
 fn wayland_opt_in_enabled() -> bool {
-    crate::wayland::wayland_enabled()
+    crate::desktop::wayland_opted_in()
 }
 
 #[cfg(not(target_os = "linux"))]

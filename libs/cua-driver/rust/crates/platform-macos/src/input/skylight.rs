@@ -701,9 +701,9 @@ pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_messag
     true
 }
 
-/// Stamp `(x, y)` via `CGEventSetWindowLocation`. Background clicks use the
-/// window-local point on macOS 27+, or the screen point on earlier releases,
-/// for both SkyLight and public PID routes. Returns `true` when the SPI resolved.
+/// Stamp `(x, y)` via `CGEventSetWindowLocation`. Background clicks pass the
+/// window-local point on the public PID route, and on SkyLight from macOS 27
+/// (the screen point before). Returns `true` when the SPI resolved.
 pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {

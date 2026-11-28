@@ -642,7 +642,7 @@ pub fn parse_command() -> Command {
         println!("                                  Default output is human-friendly text.");
         println!("    --json                        Emit a machine-readable JSON payload (same shape as the");
         println!("                                  check_for_update MCP tool). Hermes branches on update_available.");
-        println!("    --no-cache                    Skip the 20h on-disk cache and force a fresh GitHub round-trip.");
+        println!("    --no-cache                    Skip the 1-hour on-disk cache and force a fresh GitHub round-trip.");
         println!("  cua-driver update               Same check as above, then suggest --apply if outdated.");
         println!("    --apply                       Download + install the latest release via the canonical installer.");
         println!("    --json                        Emit the structured check payload (does not change --apply behaviour).");

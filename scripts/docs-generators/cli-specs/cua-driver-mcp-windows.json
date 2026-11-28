@@ -1557,6 +1557,45 @@
    "read_only": false
   },
   {
+   "description": "Move the user's real OS pointer by a relative (dx, dy) delta, sent as native relative motion events rather than an absolute warp. Use it for an app that locks or captures the pointer, such as a first-person game's camera or a web page under Pointer Lock, where move_cursor and click coordinates have no effect. The focused app receives the motion; there is no window target. It presses and releases nothing, so a button or key already held stays held across repeated calls. A backend with no relative route refuses with code \"unsupported_operation\" and sends nothing. On Windows the motion is SendInput relative motion: an app reading raw input gets dx/dy as sent, while the visible cursor moves by them after the user's pointer speed and acceleration settings.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "duration_ms": {
+      "description": "Spread the motion over this many milliseconds as a stream of smaller deltas that sum exactly to dx/dy. Default 0: one event.",
+      "maximum": 10000,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "dx": {
+      "description": "Horizontal motion in device units (mouse counts). Positive moves right.",
+      "maximum": 32767,
+      "minimum": -32767,
+      "type": "integer"
+     },
+     "dy": {
+      "description": "Vertical motion in device units (mouse counts). Positive moves down.",
+      "maximum": 32767,
+      "minimum": -32767,
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "dx",
+     "dy"
+    ],
+    "type": "object"
+   },
+   "name": "mouse_move_relative",
+   "read_only": false
+  },
+  {
    "description": "Show or hide the agent cursor owned by a session.",
    "destructive": false,
    "idempotent": true,

@@ -39,6 +39,7 @@ mod get_cursor_position;
 mod get_desktop_state;
 pub(crate) mod get_screen_size;
 pub(crate) mod health_report;
+mod mouse_move_relative;
 mod move_cursor;
 mod page;
 mod pixel_route;
@@ -1506,6 +1507,7 @@ pub fn register_all(
     )));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));
+    registry.register(Box::new(mouse_move_relative::MouseMoveRelativeTool));
     registry.register(Box::new(cursor_tools::SetAgentCursorEnabledTool::new(
         state.clone(),
     )));

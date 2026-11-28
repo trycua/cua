@@ -316,6 +316,30 @@ impl ActionExecutionRecord {
         record
     }
 
+    /// A `mouse_move_relative` record. Relative motion goes to whatever app
+    /// has the pointer and gives it nothing to confirm, so the effect is
+    /// unverifiable, or partial with `delivered_count` events when a later
+    /// event failed.
+    pub fn relative_pointer_move(
+        transport: ActionTransport,
+        args: &serde_json::Value,
+        delivered_events: Option<u32>,
+    ) -> Self {
+        let effect = if delivered_events.is_some() {
+            ActionEffect::Partial
+        } else {
+            ActionEffect::Unverifiable
+        };
+        let mut record = Self::new(
+            effect,
+            transport,
+            requested_delivery(crate::relative_pointer::TOOL_NAME, args),
+        );
+        record.actual_delivery = Some(ActualDelivery::NotApplicable);
+        record.delivered_count = delivered_events;
+        record
+    }
+
     pub fn validate(&self) -> Result<(), ActionRecordValidationError> {
         match self.effect {
             ActionEffect::Confirmed if projected_evidence(&self.evidence).is_none() => {
@@ -496,9 +520,11 @@ impl ActionExecutionRecord {
             return None;
         }
         let effect = legacy_effect(structured);
-        // Every successful `move_cursor` producer attaches its own record;
-        // only its refusals still come through here.
-        if tool_name == "move_cursor" && effect != ActionEffect::Refused {
+        // Every successful `move_cursor` and `mouse_move_relative` producer
+        // attaches its own record; only refusals still come through here.
+        if matches!(tool_name, "move_cursor" | "mouse_move_relative")
+            && effect != ActionEffect::Refused
+        {
             return None;
         }
         let requested_delivery = requested_delivery(tool_name, args);
@@ -661,7 +687,7 @@ fn requested_delivery(tool_name: &str, args: &serde_json::Value) -> RequestedDel
         }
         _ if matches!(
             tool_name,
-            "browser_click" | "browser_pointer" | "browser_type"
+            "browser_click" | "browser_pointer" | "browser_type" | "mouse_move_relative"
         ) =>
         {
             RequestedDelivery::NotApplicable

@@ -1263,6 +1263,39 @@ pub fn foreground_window() -> Result<u64> {
 }
 
 /// Move the real OS pointer to a desktop coordinate.
+/// Send one relative pointer motion through the system input queue:
+/// `MOUSEEVENTF_MOVE` without `MOUSEEVENTF_ABSOLUTE`. Raw-input readers, such
+/// as a game that captured the pointer, receive (dx, dy) as sent; the visible
+/// cursor moves by it after the user's pointer speed and acceleration
+/// ("Enhance pointer precision") settings.
+pub fn send_relative_motion(dx: i32, dy: i32) -> Result<()> {
+    let input = [INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }];
+    let sent = unsafe { SendInput(&input, std::mem::size_of::<INPUT>() as i32) };
+    if sent != 1 {
+        let error = Error::from_win32();
+        if let Some(why) = crate::diagnostics::desktop_unavailable() {
+            bail!("{} (SendInput: {error})", why.message());
+        }
+        bail!(
+            "SendInput inserted no relative motion: {error}. Input to an elevated window is \
+             blocked unless the driver runs elevated too"
+        );
+    }
+    Ok(())
+}
+
 pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
     unsafe { SetCursorPos(x, y) }
         .map_err(|error| anyhow::anyhow!("SetCursorPos({x}, {y}) failed: {error}"))

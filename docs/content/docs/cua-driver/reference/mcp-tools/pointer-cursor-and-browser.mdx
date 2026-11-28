@@ -16,6 +16,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`drag`](#drag) | Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels: the same space get_window_state returns. | macOS, Linux, Windows |
 | [`scroll`](#scroll) | Scroll the target pid. | macOS, Linux, Windows |
 | [`move_cursor`](#move_cursor) | Move a cursor to (x, y). | macOS, Linux, Windows |
+| [`mouse_move_relative`](#mouse_move_relative) | Move the user's real OS pointer by a relative (dx, dy) delta, sent as native relative motion events rather than an absolute warp. | macOS, Linux, Windows |
 | [`mouse_button_down`](#mouse_button_down) | Press and hold a mouse button at (x,y) via background X11 delivery. | Linux |
 | [`mouse_button_up`](#mouse_button_up) | Release a previously-held mouse button via background X11 delivery. | Linux |
 | [`mouse_drag`](#mouse_drag) | Move a previously-held mouse button to a new point via background X11 delivery. | Linux |
@@ -305,6 +306,49 @@ Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.
 
 ```json
 {"x":100,"y":200}
+```
+
+### `mouse_move_relative`
+
+Effect: mutating. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Move the user's real OS pointer by a relative (dx, dy) delta, sent as native relative motion events rather than an absolute warp. Use it for an app that locks or captures the pointer, such as a first-person game's camera or a web page under Pointer Lock, where move_cursor and click coordinates have no effect. The focused app receives the motion; there is no window target. It presses and releases nothing, so a button or key already held stays held across repeated calls. A backend with no relative route refuses with code "unsupported_operation" and sends nothing. On macOS the motion is a HID mouse-moved event carrying the delta (a dragged event while a button is down). Each event is checked where it would land: over a window of an app that is not in front, the first event refuses and a later one stops the motion there, unless delivery_mode is "foreground".
+
+**macOS parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="mouse_move_relative--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Default "background": before each event, checks where it would land. Over a window of an app that is not in front, the first event refuses with nothing sent, and a later one stops the motion there (a partial result), since the motion would go to that app with the user's pointer. "foreground": send it anyway; only when nobody is using this screen or the user agreed. |
+
+</Tab>
+<Tab value="Linux">
+
+Move the user's real OS pointer by a relative (dx, dy) delta, sent as native relative motion events rather than an absolute warp. Use it for an app that locks or captures the pointer, such as a first-person game's camera or a web page under Pointer Lock, where move_cursor and click coordinates have no effect. The focused app receives the motion; there is no window target. It presses and releases nothing, so a button or key already held stays held across repeated calls. A backend with no relative route refuses with code "unsupported_operation" and sends nothing. On X11 the motion is XTest relative motion. On Wayland it is the wlroots virtual pointer's relative motion (sway, Hyprland, niri) or libei relative motion (GNOME, KDE).
+
+</Tab>
+<Tab value="Windows">
+
+Move the user's real OS pointer by a relative (dx, dy) delta, sent as native relative motion events rather than an absolute warp. Use it for an app that locks or captures the pointer, such as a first-person game's camera or a web page under Pointer Lock, where move_cursor and click coordinates have no effect. The focused app receives the motion; there is no window target. It presses and releases nothing, so a button or key already held stays held across repeated calls. A backend with no relative route refuses with code "unsupported_operation" and sends nothing. On Windows the motion is SendInput relative motion: an app reading raw input gets dx/dy as sent, while the visible cursor moves by them after the user's pointer speed and acceleration settings.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="mouse_move_relative--duration_ms"></span>`duration_ms` | `integer` |  | Spread the motion over this many milliseconds as a stream of smaller deltas that sum exactly to dx/dy. Default 0: one event. Range: 0 to 10000. |
+| <span id="mouse_move_relative--dx"></span>`dx` | `integer` | required | Horizontal motion in device units (mouse counts). Positive moves right. Range: -32767 to 32767. |
+| <span id="mouse_move_relative--dy"></span>`dy` | `integer` | required | Vertical motion in device units (mouse counts). Positive moves down. Range: -32767 to 32767. |
+| <span id="mouse_move_relative--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+
+**Example arguments**
+
+```json
+{"dx":1,"dy":1}
 ```
 
 ### `mouse_button_down`

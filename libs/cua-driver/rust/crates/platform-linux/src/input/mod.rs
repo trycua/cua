@@ -4330,6 +4330,37 @@ pub fn send_move_xtest_desktop(x: i32, y: i32) -> Result<()> {
     Ok(())
 }
 
+/// Send relative pointer motion through XTest, one request per step. With
+/// `detail` 1 the server moves the core pointer by the offset and reports it
+/// as raw motion, which a client that grabbed or locked the pointer reads.
+pub fn send_relative_motion_xtest(
+    steps: &[cua_driver_core::relative_pointer::RelativeStep],
+) -> Result<Result<(), cua_driver_core::relative_pointer::Incomplete>> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    const RELATIVE: u8 = 1;
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    Ok(cua_driver_core::relative_pointer::send_steps(
+        steps,
+        |dx, dy| {
+            admitted(|| {
+                conn.xtest_fake_input(
+                    MOTION_NOTIFY_EVENT,
+                    RELATIVE,
+                    0,
+                    root,
+                    dx as i16,
+                    dy as i16,
+                    0,
+                )
+            })?
+            // A round trip that reports an X error from this request.
+            .check()?;
+            Ok(())
+        },
+    ))
+}
+
 /// Scroll the window under a screen-absolute point via real XTest wheel-button
 /// events. X11 buttons 4/5 are vertical up/down and 6/7 horizontal left/right.
 pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize) -> Result<()> {

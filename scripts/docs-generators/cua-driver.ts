@@ -195,7 +195,7 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     slug: 'pointer',
     title: 'Pointer tools',
     summary: 'Drag, scroll, move the pointer, and press or release buttons',
-    tools: ['drag', 'scroll', 'move_cursor', 'mouse_button_down', 'mouse_button_up', 'mouse_drag', 'parallel_mouse_drag'],
+    tools: ['drag', 'scroll', 'move_cursor', 'mouse_move_relative', 'mouse_button_down', 'mouse_button_up', 'mouse_drag', 'parallel_mouse_drag'],
   },
   {
     slug: 'keyboard',

@@ -258,6 +258,7 @@ public tool names.
 |  54 | `mouse_drag`               | Low-level pointer           | Linux only                            | Move held pointer                                                     |
 |  55 | `mouse_button_up`          | Low-level pointer           | Linux only                            | Release button                                                        |
 |  56 | `parallel_mouse_drag`      | Multi-pointer               | Linux only                            | Concurrent drags                                                      |
+|  57 | `mouse_move_relative`      | Low-level pointer           | All                                   | Relative pointer motion                                               |
 
 ## Linux low-level pointer action keys
 

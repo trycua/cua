@@ -46,6 +46,7 @@
     "list_apps",
     "list_sessions",
     "list_windows",
+    "mouse_move_relative",
     "move_cursor",
     "page",
     "parse_visual_regions",

@@ -4,7 +4,8 @@
 //! Desktop-target pointer input drives the user's real pointer.
 //!
 //! `move_cursor`, `click`, `drag` and `scroll` with a desktop target post
-//! their events at a screen point through the real pointer. Over a window of
+//! their events at a screen point through the real pointer, and
+//! `mouse_move_relative` moves it from where it is. Over a window of
 //! the app the user is in (the frontmost one), that is ordinary foreground
 //! work. Over a window of another app it is background work done with the
 //! user's pointer: the pointer jumps out from under the user, and a click also
@@ -40,25 +41,23 @@ impl WindowUnderPoint {
     }
 }
 
-/// Topmost ordinary (layer 0, on-screen) window containing the desktop point
-/// `(x, y)` in screen points, skipping the driver's own windows (the cursor
-/// overlay). Blocking: enumerates windows.
-pub(crate) fn window_under_point(x: f64, y: f64) -> Option<WindowUnderPoint> {
+/// Topmost ordinary (layer 0, on-screen) window of `windows` containing the
+/// desktop point `(x, y)` in screen points, skipping the driver's own windows
+/// (the cursor overlay).
+fn window_under_point(
+    windows: &[crate::windows::WindowInfo],
+    x: f64,
+    y: f64,
+) -> Option<&crate::windows::WindowInfo> {
     let own = std::process::id() as i32;
-    let window = crate::windows::visible_windows()
-        .into_iter()
+    windows
+        .iter()
         .filter(|w| w.layer == 0 && w.is_on_screen && w.pid != own)
         .filter(|w| {
             let b = &w.bounds;
             x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height
         })
-        .max_by_key(|w| w.z_index)?;
-    Some(WindowUnderPoint {
-        pid: window.pid,
-        window_id: window.window_id,
-        app_name: window.app_name,
-        bundle_id: crate::apps::bundle_id_for_pid(window.pid).unwrap_or_default(),
-    })
+        .max_by_key(|w| w.z_index)
 }
 
 /// The refusal for a desktop-target pointer action at `point` over `under`,
@@ -76,15 +75,21 @@ pub(crate) fn refusal_for(
     }
     let (x, y) = point;
     let event_kind = match tool {
-        "move_cursor" => "pointer_move",
+        "move_cursor" | "mouse_move_relative" => "pointer_move",
         "drag" => "drag",
         "scroll" => "scroll",
         _ => "click",
     };
+    let relative = tool == "mouse_move_relative";
     let lead = format!(
-        "{tool} with a desktop target moves the user's real pointer, and ({x:.0}, {y:.0}) is over \
+        "{tool}{scope} moves the user's real pointer, and ({x:.0}, {y:.0}) is over \
          {app} (pid {pid}, window {wid}), which is not the app in front, so this would do \
          background work with the user's pointer. Nothing was sent.",
+        scope = if relative {
+            ""
+        } else {
+            " with a desktop target"
+        },
         app = under.app_name,
         pid = under.pid,
         wid = under.window_id,
@@ -124,26 +129,84 @@ pub(crate) fn refusal_for(
             })),
         );
     }
-    let message = format!(
-        "{lead} Use a window target instead: target {{kind:\"window\", pid:{pid}, \
+    let message = if relative {
+        format!(
+            "{lead} Relative motion goes to the app under the pointer: call bring_to_front with \
+             pid {pid} first if that app should get it. Retry with delivery_mode:\"foreground\" \
+             only when nobody is using this screen or the user agreed to hand over the pointer.",
+            pid = under.pid,
+        )
+    } else {
+        format!(
+            "{lead} Use a window target instead: target {{kind:\"window\", pid:{pid}, \
          window_id:{wid}}} with x,y in that window's screenshot pixels{move_note}. Retry with \
          delivery_mode:\"foreground\" only when nobody is using this screen or the user agreed \
          to hand over the pointer.",
-        pid = under.pid,
-        wid = under.window_id,
-        move_note = if tool == "move_cursor" {
-            " (it moves only the agent cursor and hovers through a background route where one \
+            pid = under.pid,
+            wid = under.window_id,
+            move_note = if tool == "move_cursor" {
+                " (it moves only the agent cursor and hovers through a background route where one \
              exists)"
-        } else {
-            ""
-        },
-    );
+            } else {
+                ""
+            },
+        )
+    };
     Some(background_unavailable_result(
         message,
         "background_unavailable",
         "the desktop point is over a background app; a desktop-target pointer action would move the user's pointer",
         json!({ "event_kind": event_kind, "window": window }),
     ))
+}
+
+/// The windows and the frontmost app, read once, against which the points of
+/// one pointer action are checked. A relative motion learns each point only
+/// as it posts it, so it checks every point right before its event.
+pub(crate) struct PointerGuard {
+    tool: &'static str,
+    delivery: DeliveryMode,
+    frontmost: Option<i32>,
+    windows: Vec<crate::windows::WindowInfo>,
+}
+
+impl PointerGuard {
+    /// `None` when the caller passed `delivery_mode:"foreground"`, which
+    /// accepts using the user's pointer anywhere. Blocking: enumerates windows.
+    pub(crate) fn read(tool: &'static str, args: &Value) -> Option<Self> {
+        let delivery = DeliveryMode::from_args(args);
+        if delivery.is_foreground() {
+            return None;
+        }
+        Some(Self {
+            tool,
+            delivery,
+            frontmost: crate::apps::frontmost_pid(),
+            windows: crate::windows::visible_windows(),
+        })
+    }
+
+    /// The refusal for an event at `point` (screen points), or `None` when it
+    /// may proceed.
+    pub(crate) fn refusal_at(&self, point: (f64, f64)) -> Option<ToolResult> {
+        // Over the frontmost app nothing refuses, so only another app's
+        // window needs its bundle id.
+        let under = window_under_point(&self.windows, point.0, point.1)
+            .filter(|window| Some(window.pid) != self.frontmost)
+            .map(|window| WindowUnderPoint {
+                pid: window.pid,
+                window_id: window.window_id,
+                app_name: window.app_name.clone(),
+                bundle_id: crate::apps::bundle_id_for_pid(window.pid).unwrap_or_default(),
+            });
+        refusal_for(
+            self.tool,
+            point,
+            under.as_ref(),
+            self.frontmost,
+            self.delivery,
+        )
+    }
 }
 
 /// Guard a desktop-target pointer action whose events land at `points`
@@ -154,16 +217,13 @@ pub(crate) async fn check(
     args: &Value,
     points: Vec<(f64, f64)>,
 ) -> Option<ToolResult> {
-    let delivery = DeliveryMode::from_args(args);
-    if delivery.is_foreground() {
+    if DeliveryMode::from_args(args).is_foreground() {
         return None;
     }
+    let args = args.clone();
     tokio::task::spawn_blocking(move || {
-        let frontmost = crate::apps::frontmost_pid();
-        points.into_iter().find_map(|point| {
-            let under = window_under_point(point.0, point.1);
-            refusal_for(tool, point, under.as_ref(), frontmost, delivery)
-        })
+        let guard = PointerGuard::read(tool, &args)?;
+        points.into_iter().find_map(|point| guard.refusal_at(point))
     })
     .await
     .ok()
@@ -251,6 +311,31 @@ mod tests {
             assert_eq!(structured["escalation"]["recommended"], "foreground");
             assert_eq!(structured["window"]["pid"], 4242);
         }
+    }
+
+    #[test]
+    fn relative_motion_over_a_background_app_names_bring_to_front_not_a_window_target() {
+        let refusal = refusal_for(
+            "mouse_move_relative",
+            (10.0, 10.0),
+            Some(&benchlab()),
+            Some(1),
+            DeliveryMode::BackgroundPreferred,
+        )
+        .expect("refuses");
+        let message = text(&refusal);
+        assert!(
+            message.starts_with("mouse_move_relative moves"),
+            "{message}"
+        );
+        assert!(
+            message.contains("bring_to_front with pid 4242"),
+            "{message}"
+        );
+        assert!(!message.contains("target {kind"), "{message}");
+        let structured = refusal.structured_content.unwrap();
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["event_kind"], "pointer_move");
     }
 
     #[test]

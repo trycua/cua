@@ -128,6 +128,13 @@ enum Cmd {
         y: f64,
         reply: Sender<anyhow::Result<()>>,
     },
+    MoveRelative {
+        dx: f64,
+        dy: f64,
+        /// The tool call this motion serves: nothing goes out once it is over.
+        action: Option<Arc<Action>>,
+        reply: Sender<anyhow::Result<()>>,
+    },
     Scroll {
         dx: f64,
         dy: f64,
@@ -325,6 +332,23 @@ pub fn move_absolute(x: f64, y: f64) -> anyhow::Result<()> {
     let (tx_r, rx_r) = bounded(1);
     tx()?
         .send(Cmd::MoveAbsolute { x, y, reply: tx_r })
+        .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
+    wait_for_reply(rx_r)
+}
+
+/// Move the pointer by (dx, dy) through the relative `ei_pointer`
+/// interface, which a client holding a pointer lock receives as motion
+/// deltas.
+pub fn move_relative(dx: f64, dy: f64) -> anyhow::Result<()> {
+    ensure_started()?;
+    let (tx_r, rx_r) = bounded(1);
+    tx()?
+        .send(Cmd::MoveRelative {
+            dx,
+            dy,
+            action: crate::input::action::current(),
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -747,6 +771,9 @@ struct EisState {
     /// absolute pointer before seat binding, then a second live device. Waiting
     /// briefly for this stream to settle avoids dispatching to the transient one.
     last_device_event: Option<std::time::Instant>,
+    /// Last seat event. No event says the seat list is complete, so it is
+    /// taken as complete once seats have been quiet for [`QUIET_PERIOD`].
+    last_seat_event: Option<std::time::Instant>,
     /// The compositor's xkb keymap (delivered by the `ei_keyboard` device), so
     /// key typing follows the user's real layout. `None` until the `Keymap` event
     /// arrives, and typing keys is refused until it does.
@@ -764,6 +791,26 @@ struct EisState {
 #[derive(Default)]
 struct SeatData {
     capabilities: HashMap<String, u64>,
+    /// The seat has announced all its capabilities.
+    done: bool,
+}
+
+/// How long the device or seat stream must be quiet before the worker takes
+/// it as settled.
+const QUIET_PERIOD: Duration = Duration::from_millis(200);
+
+/// Every seat has announced its capabilities and none offers a relative
+/// pointer, so no relative pointer device will come. Only meaningful once
+/// the seat list has settled.
+fn no_relative_pointer_offered<'a>(seats: impl IntoIterator<Item = &'a SeatData>) -> bool {
+    let mut any = false;
+    for seat in seats {
+        if !seat.done || seat.capabilities.contains_key("ei_pointer") {
+            return false;
+        }
+        any = true;
+    }
+    any
 }
 
 #[derive(Default)]
@@ -860,12 +907,18 @@ impl EisState {
                 }
             }
             Event::Seat(seat, ev) => {
+                self.last_seat_event = Some(std::time::Instant::now());
+                if let reis::ei::seat::Event::Destroyed { .. } = ev {
+                    self.seats.remove(&seat);
+                    return;
+                }
                 let data = self.seats.entry(seat.clone()).or_default();
                 match ev {
                     reis::ei::seat::Event::Capability { mask, interface } => {
                         data.capabilities.insert(interface, mask);
                     }
                     reis::ei::seat::Event::Done => {
+                        data.done = true;
                         // Bind every input capability the seat advertises
                         // (pointer / pointer_absolute / button / scroll /
                         // keyboard / text). The server then announces
@@ -1020,6 +1073,14 @@ impl EisState {
     /// run before their device exists fail with "no EIS device negotiated yet",
     /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
     fn cmd_ready(&self, cmd: &Cmd) -> bool {
+        if let Cmd::MoveRelative { .. } = cmd {
+            // Ready with a settled relative pointer device, or, so it refuses
+            // at once instead of timing out, once the settled seats rule one
+            // out.
+            return (self.device_is_settled()
+                && self.device_with_interface("ei_pointer").is_some())
+                || (self.seats_are_settled() && no_relative_pointer_offered(self.seats.values()));
+        }
         if !self.device_is_settled() {
             return false;
         }
@@ -1028,6 +1089,7 @@ impl EisState {
             Cmd::Click { .. } | Cmd::MoveAbsolute { .. } | Cmd::Drag { .. } => {
                 self.device_with_interface("ei_pointer_absolute").is_some()
             }
+            Cmd::MoveRelative { .. } => unreachable!("decided above"),
             Cmd::Scroll { .. } => self.device_with_interface("ei_scroll").is_some(),
             Cmd::PressKey { .. } | Cmd::KeySequence { .. } => {
                 self.device_with_interface("ei_keyboard").is_some()
@@ -1176,6 +1238,29 @@ impl EisState {
                 ptr_abs.motion_absolute(*x as f32, *y as f32);
                 device.frame(serial, event_time_us());
             }
+            Cmd::MoveRelative { dx, dy, action, .. } => {
+                let device = self.device_with_interface("ei_pointer").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}: the EIS session offers no relative pointer",
+                        super::NO_RELATIVE_POINTER_MARKER
+                    )
+                })?;
+                let serial = self.last_serial;
+                let pointer =
+                    require_device_interface::<reis::ei::Pointer>(&self.devices, &device)?;
+                // Write the motion out inside the admission, so a call that is
+                // over sends nothing later. Only a socket the compositor has
+                // stopped reading can still hold it back.
+                let send = || {
+                    pointer.motion_relative(*dx as f32, *dy as f32);
+                    device.frame(serial, event_time_us());
+                    self.context.as_ref().map_or(Ok(()), flush_to_eis)
+                };
+                match action {
+                    Some(action) => action.admit(send)??,
+                    None => send()?,
+                }
+            }
             Cmd::Scroll { dx, dy, .. } => {
                 let device = self.device_with_interface("ei_scroll").ok_or_else(|| {
                     anyhow::anyhow!("no EIS scroll device negotiated yet — wait for handshake")
@@ -1275,9 +1360,13 @@ impl EisState {
     }
 
     fn device_is_settled(&self) -> bool {
-        const DEVICE_QUIET_PERIOD: Duration = Duration::from_millis(200);
         self.last_device_event
-            .is_some_and(|last| last.elapsed() >= DEVICE_QUIET_PERIOD)
+            .is_some_and(|last| last.elapsed() >= QUIET_PERIOD)
+    }
+
+    fn seats_are_settled(&self) -> bool {
+        self.last_seat_event
+            .is_some_and(|last| last.elapsed() >= QUIET_PERIOD)
     }
 
     fn send_tap(&self, code: u32) -> anyhow::Result<()> {
@@ -1549,6 +1638,7 @@ impl Cmd {
             Cmd::WaitReady { reply, .. }
             | Cmd::Click { reply, .. }
             | Cmd::MoveAbsolute { reply, .. }
+            | Cmd::MoveRelative { reply, .. }
             | Cmd::Scroll { reply, .. }
             | Cmd::TypeText { reply, .. }
             | Cmd::PressKey { reply, .. }
@@ -1862,6 +1952,7 @@ pub(super) mod local_eis {
     #[derive(Clone, Debug, PartialEq)]
     pub(in crate::wayland) enum Emitted {
         Motion(String, f32, f32),
+        RelativeMotion(String, f32, f32),
         Button(u32, bool),
         Scroll(f32, f32),
         Key(u32, bool),
@@ -1918,7 +2009,8 @@ pub(super) mod local_eis {
                         let converter = EisRequestConverter::new(&self.ctx, resp, 1);
                         let _ = converter.handle().add_seat(
                             Some("seat"),
-                            DeviceCapability::PointerAbsolute
+                            DeviceCapability::Pointer
+                                | DeviceCapability::PointerAbsolute
                                 | DeviceCapability::Button
                                 | DeviceCapability::Scroll
                                 | DeviceCapability::Keyboard
@@ -1948,7 +2040,8 @@ pub(super) mod local_eis {
                         let device = bind.seat.add_device(
                             Some(name),
                             reis::eis::device::DeviceType::Virtual,
-                            BitFlags::from(DeviceCapability::PointerAbsolute)
+                            BitFlags::from(DeviceCapability::Pointer)
+                                | DeviceCapability::PointerAbsolute
                                 | DeviceCapability::Button
                                 | DeviceCapability::Scroll,
                             |device| {
@@ -1981,6 +2074,11 @@ pub(super) mod local_eis {
                     m.device.name().unwrap_or_default().to_owned(),
                     m.dx_absolute,
                     m.dy_absolute,
+                )),
+                EisRequest::PointerMotion(m) => log.push(Emitted::RelativeMotion(
+                    m.device.name().unwrap_or_default().to_owned(),
+                    m.dx,
+                    m.dy,
                 )),
                 EisRequest::Button(b) => log.push(Emitted::Button(
                     b.button,
@@ -2277,6 +2375,50 @@ mod tests {
         let (result, events) = record(|| move_absolute(0.0, 0.0));
         result.unwrap();
         assert_eq!(events, vec![motion("wide", 0.0, 0.0)]);
+    }
+
+    #[test]
+    fn relative_move_sends_the_delta_through_the_relative_pointer() {
+        // Relative motion has no position, so any pointer device carries it.
+        let (result, events) = record(|| move_relative(240.0, -30.0));
+        result.unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Emitted::RelativeMotion(_, dx, dy)] if (*dx, *dy) == (240.0, -30.0)
+            ),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn only_seats_that_finished_without_a_relative_pointer_rule_it_out() {
+        let seat = |done: bool, interfaces: &[&str]| SeatData {
+            capabilities: interfaces.iter().map(|i| (i.to_string(), 1)).collect(),
+            done,
+        };
+        let absolute = seat(true, &["ei_pointer_absolute", "ei_keyboard"]);
+        let keyboard = seat(true, &["ei_keyboard"]);
+        let relative = seat(true, &["ei_pointer"]);
+        let announcing = seat(false, &["ei_keyboard"]);
+
+        assert!(no_relative_pointer_offered([&absolute]));
+        assert!(no_relative_pointer_offered([&absolute, &keyboard]));
+        assert!(!no_relative_pointer_offered([&absolute, &relative]));
+        assert!(!no_relative_pointer_offered([&announcing]));
+        assert!(!no_relative_pointer_offered([]), "no seat yet");
+    }
+
+    #[test]
+    fn relative_move_sends_nothing_once_its_call_is_over() {
+        let (result, events) = record(|| {
+            let over = crate::input::action::Action::new(std::time::Duration::ZERO);
+            let _bound = crate::input::action::bind(over);
+            move_relative(5.0, 5.0)
+        });
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("ran out of time"), "{error}");
+        assert_eq!(events, vec![]);
     }
 
     #[test]

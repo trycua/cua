@@ -710,3 +710,75 @@ fn window_scope_rejects_windowless_click() {
         Observation::delivered(vec![OracleKind::Protocol], Evidence::default())
     });
 }
+
+/// `mouse_move_relative` on X11 is XTest relative motion: the core pointer
+/// moves by exactly the delta from wherever it is. The step stays below the
+/// X server's default acceleration threshold (4), so no acceleration applies.
+/// Wayland gives clients no pointer position to read back, so the oracle runs
+/// in the X11 lane only.
+#[test]
+#[ignore]
+fn relative_motion_moves_the_pointer_by_the_delta() {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        eprintln!(
+            "[LIMITATION] relative-motion: Wayland has no client-readable pointer position; \
+             the X11 lane checks the delta"
+        );
+        return;
+    }
+    let cell_id = "linux-desktop-relative-motion-foreground";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "desktop",
+        "x11",
+        "mouse_move_relative",
+        Targeting::NotApplicable,
+        Delivery::Foreground,
+        Scope::Desktop,
+        DriverRoute::LinuxXTest,
+        vec![OracleKind::Cursor],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        start_scope(&mut driver, cell_id, "desktop");
+        driver.start_behavior_recording();
+        let position = |driver: &mut McpDriver| {
+            let r = driver.call(
+                "get_cursor_position",
+                serde_json::json!({ "session": cell_id }),
+            );
+            assert!(!r.is_error(), "get_cursor_position failed: {}", r.text());
+            (
+                r.structured()["x"].as_i64().expect("x"),
+                r.structured()["y"].as_i64().expect("y"),
+            )
+        };
+        let r = driver.call(
+            "move_cursor",
+            serde_json::json!({ "session": cell_id, "scope": "desktop", "x": 400, "y": 300 }),
+        );
+        assert!(!r.is_error(), "desktop move_cursor failed: {}", r.text());
+        let start = position(&mut driver);
+
+        let r = driver.call(
+            "mouse_move_relative",
+            serde_json::json!({ "session": cell_id, "dx": 3, "dy": -2 }),
+        );
+        assert!(!r.is_error(), "mouse_move_relative failed: {}", r.text());
+        assert_eq!(position(&mut driver), (start.0 + 3, start.1 - 2));
+
+        // A spread move arrives as several events that sum to the delta.
+        let r = driver.call(
+            "mouse_move_relative",
+            serde_json::json!({ "session": cell_id, "dx": -3, "dy": 2, "duration_ms": 24 }),
+        );
+        assert!(
+            !r.is_error(),
+            "spread mouse_move_relative failed: {}",
+            r.text()
+        );
+        assert_eq!(position(&mut driver), start);
+        Observation::delivered(vec![OracleKind::Cursor], Evidence::default())
+    });
+}

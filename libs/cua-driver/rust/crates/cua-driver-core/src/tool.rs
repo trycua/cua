@@ -935,7 +935,8 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 /// - `input.pointer.click`, `input.pointer.click.left`,
 ///   `input.pointer.click.right`, `input.pointer.click.double`,
 ///   `input.pointer.drag`, `input.pointer.scroll`,
-///   `input.pointer.move`, `input.pointer.button` (raw down/up)
+///   `input.pointer.move`, `input.pointer.move.relative` (relative motion
+///   deltas for pointer-locked apps), `input.pointer.button` (raw down/up)
 /// - `input.scroll.coordinates` (the live scroll schema accepts numeric x/y;
 ///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
@@ -998,6 +999,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         ],
         "mouse_drag" => &["input.pointer.drag"],
         "parallel_mouse_drag" => &["input.pointer.drag"],
+        "mouse_move_relative" => &["input.pointer.move", "input.pointer.move.relative"],
         "mouse_button_down" => &["input.pointer.button"],
         "mouse_button_up" => &["input.pointer.button"],
         // ── input.keyboard ───────────────────────────────────────────
@@ -8329,6 +8331,7 @@ mod capability_tests {
         "drag",
         "scroll",
         "move_cursor",
+        "mouse_move_relative",
         "mouse_button_down",
         "mouse_button_up",
         "mouse_drag",
@@ -8414,6 +8417,7 @@ mod capability_tests {
         "input.pointer.scroll",
         "input.scroll.coordinates",
         "input.pointer.move",
+        "input.pointer.move.relative",
         "input.pointer.button",
         // keyboard
         "input.keyboard.type",

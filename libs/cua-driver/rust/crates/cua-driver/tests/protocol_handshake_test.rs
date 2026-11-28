@@ -52,6 +52,7 @@ fn all_expected_tools_registered() {
         "get_screen_size",
         "get_cursor_position",
         "move_cursor",
+        "mouse_move_relative",
         "set_agent_cursor_enabled",
         "set_agent_cursor_motion",
         "get_agent_cursor_state",

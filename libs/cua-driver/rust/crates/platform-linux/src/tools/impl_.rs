@@ -44,6 +44,7 @@ use super::{
     mouse_button_down::MouseButtonDownTool,
     mouse_button_up::MouseButtonUpTool,
     mouse_drag::MouseDragTool,
+    mouse_move_relative::MouseMoveRelativeTool,
     move_cursor::MoveCursorTool,
     parallel_mouse_drag::ParallelMouseDragTool,
     press_key::PressKeyTool,
@@ -5422,6 +5423,7 @@ pub fn build_registry_with_provider(
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
     }));
+    r.register(Box::new(MouseMoveRelativeTool));
     r.register(Box::new(SetAgentCursorEnabledV2Tool {
         state: state.clone(),
     }));

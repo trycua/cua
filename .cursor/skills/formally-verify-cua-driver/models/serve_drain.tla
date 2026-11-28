@@ -17,11 +17,16 @@
 \* Check with TLC (tla2tools.jar):
 \*   java -cp tla2tools.jar tlc2.TLC -config serve_drain.cfg serve_drain.tla
 \*     unix: every invariant holds
-\*   ... -config serve_drain_windows.cfg  SD1 and SD2 fail
+\*   ... -config serve_drain_windows.cfg      SD1 and SD2 fail
+\*   ... -config serve_drain_unix_worker.cfg  SD1 fails: the in-flight call is a
+\*     blocking input worker the abort cannot stop
 EXTENDS Naturals
-CONSTANTS Platform
-VARIABLES pc, conn, proxy, lock, successor, overlap, leakedProxy
-vars == <<pc, conn, proxy, lock, successor, overlap, leakedProxy>>
+CONSTANTS Platform, BlockingWorker
+\* BlockingWorker: the in-flight call is a spawn_blocking input worker (macOS
+\* set_value, type_text, click ...). Aborting its connection task drops the
+\* future, not the thread, so the worker keeps posting after the abort.
+VARIABLES pc, conn, proxy, lock, successor, overlap, leakedProxy, worker
+vars == <<pc, conn, proxy, lock, successor, overlap, leakedProxy, worker>>
 \* pc: the old daemon, "serving" | "draining" | "released" | "sdkdown" | "gone"
 \* conn: its connection, "calling" (a tool call in flight) | "idle" | "closed"
 \* proxy: its entry in ACTIVE_PROXY_SESSIONS: "active" | "released"
@@ -31,10 +36,11 @@ vars == <<pc, conn, proxy, lock, successor, overlap, leakedProxy>>
 Init == /\ pc = "serving" /\ conn = "calling" /\ proxy = "active"
         /\ lock = "old" /\ successor = "none"
         /\ overlap = FALSE /\ leakedProxy = FALSE
+        /\ worker = BlockingWorker
 
 \* `shutdown` or the host's lifetime pipe closes: the accept loop breaks.
 Stop == /\ pc = "serving" /\ pc' = "draining"
-        /\ UNCHANGED <<conn, proxy, lock, successor, overlap, leakedProxy>>
+        /\ UNCHANGED <<conn, proxy, lock, successor, overlap, leakedProxy, worker>>
 \* Unix: connection_tasks.shutdown() aborts and joins each task (:1486), then
 \* release_active_proxy_sessions (:1487). Windows has neither.
 Drain == /\ pc = "draining" /\ pc' = "released"
@@ -42,28 +48,31 @@ Drain == /\ pc = "draining" /\ pc' = "released"
             THEN conn' = "closed" /\ proxy' = "released"
             ELSE UNCHANGED <<conn, proxy>>
          /\ lock' = IF Platform = "windows" THEN "free" ELSE lock
-         /\ UNCHANGED <<successor, overlap, leakedProxy>>
+         /\ UNCHANGED <<successor, overlap, leakedProxy, worker>>
 \* sdk.shutdown: Closed, then the lifecycle write guard waits for admitted
 \* calls (cua-driver-sdk/src/runtime.rs:284-287).
 SdkDown == /\ pc = "released" /\ conn # "calling" /\ pc' = "sdkdown"
            /\ leakedProxy' = (proxy = "active")
-           /\ UNCHANGED <<conn, proxy, lock, successor, overlap>>
+           /\ UNCHANGED <<conn, proxy, lock, successor, overlap, worker>>
 \* The function returns; on Unix the lock file closes now (:1046 `_socket_lock`).
 Exit == /\ pc = "sdkdown" /\ pc' = "gone" /\ conn' = "closed"
         /\ lock' = IF lock = "old" THEN "free" ELSE lock
-        /\ UNCHANGED <<proxy, successor, overlap, leakedProxy>>
+        /\ UNCHANGED <<proxy, successor, overlap, leakedProxy, worker>>
 
 \* The client's call finishes; the detached Windows task keeps its pipe.
-CallFinishes == /\ conn = "calling" /\ conn' = "idle"
+CallFinishes == /\ conn = "calling" /\ conn' = "idle" /\ worker' = FALSE
                 /\ UNCHANGED <<pc, proxy, lock, successor, overlap, leakedProxy>>
+\* An aborted call's blocking worker returns on its own.
+WorkerEnds == /\ worker /\ conn # "calling" /\ worker' = FALSE
+              /\ UNCHANGED <<pc, conn, proxy, lock, successor, overlap, leakedProxy>>
 \* A new daemon takes the free name and starts serving input.
 SuccessorStarts == /\ successor = "none" /\ lock = "free"
                    /\ lock' = "new" /\ successor' = "serving"
-                   /\ overlap' = (overlap \/ conn = "calling")
-                   /\ UNCHANGED <<pc, conn, proxy, leakedProxy>>
-Done == pc = "gone" /\ successor = "serving" /\ UNCHANGED vars
+                   /\ overlap' = (overlap \/ conn = "calling" \/ worker)
+                   /\ UNCHANGED <<pc, conn, proxy, leakedProxy, worker>>
+Done == pc = "gone" /\ successor = "serving" /\ ~worker /\ UNCHANGED vars
 
-Next == Stop \/ Drain \/ SdkDown \/ Exit \/ CallFinishes \/ SuccessorStarts \/ Done
+Next == Stop \/ Drain \/ SdkDown \/ Exit \/ CallFinishes \/ WorkerEnds \/ SuccessorStarts \/ Done
 Spec == Init /\ [][Next]_vars
 
 \* SD1. A successor daemon never serves while the old one still runs a call.

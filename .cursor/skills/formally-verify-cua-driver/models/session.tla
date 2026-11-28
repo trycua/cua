@@ -12,12 +12,12 @@
 \*                removes it (mark_session_ended, since #6773)
 \*   EndRecheck   every end re-checks in_flight under the records lock that
 \*                removes the record, and defers behind a call it finds
-\*                (main today: FALSE)
+\*                (since #7037)
 \*
 \* Check with TLC (tla2tools.jar):
 \*   java -cp tla2tools.jar tlc2.TLC -config session.cfg session.tla
-\*     main today: SE5 fails, an explicit end races a call admitted after it
-\*   ... -config session_fixed.cfg     both re-checks: every invariant holds
+\*     main: both re-checks, every invariant holds
+\*   ... -config session_pre7037.cfg   SE5 fails, an explicit end races a call admitted after it
 \*   ... -config session_pre6773.cfg   SE2 fails, the sweep ends a used session
 EXTENDS Naturals
 CONSTANTS Implicit, IdleRecheck, EndRecheck

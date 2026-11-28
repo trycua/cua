@@ -14,13 +14,14 @@
 \*   Admission   the worker reads the cancel flag before priming and before
 \*               the AX press (PressAdmission, #6953)
 \*   WorkerLease the worker keeps the desktop lane and the pid lease until it
-\*               returns, as bring_to_front's worker does (#6980)
-\*               (main today: FALSE)
+\*               returns, as bring_to_front's worker does (since #7039)
 \*
 \* Check with TLC (tla2tools.jar):
 \*   java -cp tla2tools.jar tlc2.TLC -config invoke_menu_cancel.cfg invoke_menu_cancel.tla
-\*     main today: MC2 fails, the next action runs while the cancelled worker still presses
-\*   ... -config invoke_menu_cancel_fixed.cfg     every invariant holds
+\*     main: every invariant holds
+\*   ... -config invoke_menu_cancel_pre7039.cfg   MC2 fails, the next action runs while the cancelled worker still presses
+\*   ... -config lane_worker_nolease.cfg          MC2 fails: the switches of every other macOS and
+\*                                                Windows input worker (no cancel flag, no lease)
 \*   ... -config invoke_menu_cancel_pre6953.cfg   MC1 fails, a cancelled call presses
 EXTENDS Naturals
 CONSTANTS Admission, WorkerLease

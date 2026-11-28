@@ -1,0 +1,104 @@
+\* SPDX-License-Identifier: MIT
+\* Copyright (c) 2026 Cua AI, Inc.
+---- MODULE consent_grant ----
+\* One protected resource grant (standard mode, a GrantInStandard adapter such
+\* as computer_history or browser_prepare.existing_profile) for one session
+\* label on one transport, across two lifecycle episodes of that label.
+\* cua-driver-core/src/consent.rs ProtectedResourceGrants::authorize (:376-478),
+\* revoke_session (:508-520); the session-end hook that calls it
+\* (tool.rs:1356-1385); the call path runs consent before session admission
+\* (tool.rs:2230-2420, then begin_session_dispatch :2428).
+\*
+\* One switch, InsertCheck: what the insert checks before storing the grant.
+\*   "none"    nothing (main)
+\*   "prompt"  no revoke_session for its session ran since its prompt opened.
+\*             Able-to-fail: a call queued on the admission mutex behind
+\*             another prompt can see its session end before its own prompt.
+\*   "counter" no revoke_session for its session ran since the authorization
+\*             started. Able-to-fail: a session that ended between dispatch's
+\*             ended check and the start of authorize still gets a grant.
+\*   "call"    no revoke_session for its session ran since the authorization
+\*             started (the fix: GrantTable.revocations, read at
+\*             Authorizing::start before the first lookup), and the session
+\*             had not already ended then (is_session_ended right after the
+\*             snapshot; such a call may still be recreated at lifecycle
+\*             admission, so its approval covers that call only)
+EXTENDS Naturals
+CONSTANTS InsertCheck
+VARIABLES ep, live, cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded
+vars == <<ep, live, cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
+\* ep: the label's current episode (1 or 2). live: it is live.
+\* cleanup: the ended episode's cleanup: "none" (finished, or no end) |
+\*     "pending" (registered, consent hook not run) | "revoked" (the consent
+\*     hook ran; other hooks may still run).
+\* grant: 0 (none) or the episode the grant in the map was approved in.
+\* pc: the call: "idle" | "queued" (waiting for the admission mutex) |
+\*     "prompting" (provider showing the consent prompt) | "done"
+\* askEp: the episode the prompt was asked in.
+
+Init == /\ ep = 1 /\ live = TRUE /\ cleanup = "none" /\ grant = 0 /\ pc = "idle" /\ askEp = 0
+        /\ revokedSince = FALSE /\ usedStale = FALSE /\ askedEnded = FALSE
+
+\* authorize starts and the first lookup misses; it waits for the admission
+\* mutex, which another session's prompt may hold. The session may already
+\* have ended: dispatch's ended check (tool.rs:2077) runs before consent, and
+\* an end can land between the two.
+Ask == /\ pc = "idle" /\ grant = 0
+       /\ pc' = "queued" /\ askEp' = ep /\ askedEnded' = ~live
+       /\ revokedSince' = IF InsertCheck \in {"counter", "call"} THEN FALSE ELSE revokedSince
+       /\ UNCHANGED <<ep, live, cleanup, grant, usedStale>>
+\* The admission mutex is taken (:442), the second lookup misses and the
+\* provider prompt starts (:464, broker.approve awaits the user).
+Admit == /\ pc = "queued" /\ grant = 0 /\ pc' = "prompting"
+         /\ revokedSince' = IF InsertCheck = "prompt" THEN FALSE ELSE revokedSince
+         /\ UNCHANGED <<ep, live, cleanup, grant, askEp, usedStale, askedEnded>>
+\* lookup hits: the call is let through on the grant in the map without a prompt.
+UseGrant == /\ pc = "idle" /\ live /\ grant # 0
+            /\ usedStale' = (usedStale \/ grant # ep)
+            /\ pc' = "done"
+            /\ UNCHANGED <<ep, live, cleanup, grant, askEp, revokedSince, askedEnded>>
+\* The user accepts; the grant is inserted under the grants mutex (:477).
+Accept == /\ pc = "prompting" /\ pc' = "done"
+          /\ grant' = IF \/ InsertCheck # "none" /\ revokedSince
+                         \/ InsertCheck = "call" /\ askedEnded
+                      THEN grant ELSE askEp
+          /\ UNCHANGED <<ep, live, cleanup, askEp, revokedSince, usedStale, askedEnded>>
+\* The session ends (end_session, its transport closes, or the idle sweep):
+\* mark_session_ended (session.rs:1477-1566) publishes the tombstone and, under
+\* the same ended_sessions lock, registers the episode's cleanup.
+SessionEnds == /\ live /\ live' = FALSE /\ cleanup' = "pending"
+               /\ UNCHANGED <<ep, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
+\* finish_session_end then runs the cleanup hooks (retry_session_cleanup
+\* :1598); the consent hook calls revoke_session (tool.rs:1374), which takes
+\* only the grants mutex, not the admission mutex a prompt holds.
+Revoke == /\ cleanup = "pending" /\ cleanup' = "revoked" /\ grant' = 0
+          /\ revokedSince' = TRUE
+          /\ UNCHANGED <<ep, live, pc, askEp, usedStale, askedEnded>>
+\* The last hook finishes and retry_session_cleanup removes the episode's
+\* cleanup progress (:1669-1675); only then may the label revive.
+CleanupDone == /\ cleanup = "revoked" /\ cleanup' = "none"
+               /\ UNCHANGED <<ep, live, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
+\* start_session on the same label from the same transport, or the next call
+\* of an idle-reclaimed session: a new episode with the same grant key
+\* (resource_grant_key :561-581 has no episode in it). Revival is refused
+\* while the ended episode's cleanup is pending (cleanup_pending, read under
+\* the ended_sessions lock: session.rs:502, :686).
+Revive == /\ ~live /\ cleanup = "none" /\ ep = 1 /\ live' = TRUE /\ ep' = 2
+          /\ UNCHANGED <<cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
+NextCall == /\ pc = "done" /\ pc' = "idle"
+            /\ UNCHANGED <<ep, live, cleanup, grant, askEp, revokedSince, usedStale, askedEnded>>
+
+Next == Ask \/ Admit \/ UseGrant \/ Accept \/ SessionEnds \/ Revoke \/ CleanupDone \/ Revive \/ NextCall
+Spec == Init /\ [][Next]_vars
+
+\* CG1. No grant outlives the cleanup of the episode it was approved in. It
+\* applies once cleanup has finished: until then the ended episode's own grant
+\* may still be in the map, and revival is refused.
+CG1 == grant # 0 => (grant = ep /\ (live \/ cleanup # "none"))
+\* CG2. No grant lookup lets a call through on a grant from an earlier episode.
+\* It covers the lookup, not where the call runs: consent returns before
+\* lifecycle admission (tool.rs:2232-2248, :2428), so a call let through in one
+\* episode can still be admitted into the next. That approval covers that call
+\* only, and this model does not check it.
+CG2 == ~usedStale
+====

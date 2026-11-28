@@ -74,6 +74,11 @@ fn document_is_setup_page(
     }
 }
 
+/// Whether the approved window is showing the setup page. The rendered
+/// document URI decides in every UI language. Only when the browser reports
+/// no URI does the page's own text join the proof: the heading is localized
+/// page content, so it may narrow that fallback but never stands in for the
+/// URI.
 fn setup_page_proven(
     nodes: &[AtspiNode],
     descriptor: &BrowserSetupDescriptor,
@@ -84,6 +89,17 @@ fn setup_page_proven(
             !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
         })
     });
+    // The checkbox is picked by position, so a second document could supply it.
+    let documents = nodes
+        .iter()
+        .filter(|node| role_is(node, &["document web", "document frame"]))
+        .count();
+    if documents > 1 {
+        return false;
+    }
+    if let Some(exact_document) = document_is_setup_page(nodes, descriptor) {
+        return exact_document && !has_contradictory_address_bar;
+    }
     let exact_url = native_fields(nodes).any(|node| omnibox_holds_setup_url(node, descriptor));
     let exact_heading = nodes.iter().any(|node| {
         role_is(node, &["heading", "section", "static"])
@@ -96,13 +112,14 @@ fn setup_page_proven(
                 .iter()
                 .any(|title| field_equals(node, title))
     });
-    let exact_identity = match document_is_setup_page(nodes, descriptor) {
-        Some(exact_document) => exact_document && !has_contradictory_address_bar,
-        None => exact_url || (trusted_navigation && !has_contradictory_address_bar && exact_page),
-    };
+    let exact_identity =
+        exact_url || (trusted_navigation && !has_contradictory_address_bar && exact_page);
     exact_identity && exact_heading
 }
 
+/// The setup page's one actionable checkbox inside the rendered document.
+/// Its label is localized page text, so it is found by role and position, as
+/// the Windows adapter does; a second candidate is refused.
 fn exact_setup_checkbox<'a>(
     nodes: &'a [AtspiNode],
     descriptor: &BrowserSetupDescriptor,
@@ -114,8 +131,8 @@ fn exact_setup_checkbox<'a>(
     let matches = nodes
         .iter()
         .filter(|node| {
-            role_is(node, &["check box", "checkbox"])
-                && field_equals(node, descriptor.checkbox_label)
+            node.in_web_content
+                && role_is(node, &["check box", "checkbox"])
                 && !node.actions.is_empty()
                 && node.enabled != Some(false)
                 && node.element_index.is_some()
@@ -126,7 +143,7 @@ fn exact_setup_checkbox<'a>(
         [node] => Ok(Some(*node)),
         _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple exact remote-debugging checkboxes were exposed",
+            "multiple web remote-debugging checkboxes were exposed on the setup page",
         )),
     }
 }
@@ -763,9 +780,20 @@ mod tests {
         }
     }
 
+    /// A node the walker saw below the rendered document.
+    fn web(mut node: AtspiNode) -> AtspiNode {
+        node.in_web_content = true;
+        node
+    }
+
     #[test]
     fn checkbox_requires_exact_url_heading_and_unique_action() {
-        let mut checkbox = node("check box", descriptor().checkbox_label, None, &["toggle"]);
+        let mut checkbox = web(node(
+            "check box",
+            descriptor().checkbox_label,
+            None,
+            &["toggle"],
+        ));
         checkbox.checked = Some(false);
         let nodes = vec![
             node(
@@ -775,7 +803,7 @@ mod tests {
                 &["activate"],
             ),
             node("document web", descriptor().page_titles[0], None, &[]),
-            node("heading", descriptor().page_heading, None, &[]),
+            web(node("heading", descriptor().page_heading, None, &[])),
             checkbox,
         ];
         assert_eq!(
@@ -877,7 +905,12 @@ mod tests {
     fn localized_setup_page(document_uri: &str, omnibox_value: Option<&str>) -> Vec<AtspiNode> {
         let mut document = node("document web", descriptor().page_titles[0], None, &[]);
         document.document_uri = Some(document_uri.to_owned());
-        let mut checkbox = node("check box", descriptor().checkbox_label, None, &["check"]);
+        let mut checkbox = web(node(
+            "check box",
+            descriptor().checkbox_label,
+            None,
+            &["check"],
+        ));
         checkbox.checked = Some(false);
         vec![
             node(
@@ -887,7 +920,7 @@ mod tests {
                 &["activate"],
             ),
             document,
-            node("heading", descriptor().page_heading, None, &[]),
+            web(node("heading", descriptor().page_heading, None, &[])),
             checkbox,
         ]
     }
@@ -921,6 +954,87 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "two rendered documents do not name one setup page"
+        );
+        let mut unreported = translated_setup_page(descriptor().setup_url);
+        unreported.push(node("document web", "other", None, &[]));
+        assert!(
+            exact_setup_checkbox(&unreported, descriptor(), true)
+                .unwrap()
+                .is_none(),
+            "a second document without a URI could hold the picked checkbox"
+        );
+    }
+
+    /// The same page with its own content translated: the heading and the
+    /// checkbox label are page text, so a localized build may translate them.
+    fn translated_setup_page(document_uri: &str) -> Vec<AtspiNode> {
+        let mut nodes = localized_setup_page(document_uri, None);
+        for node in &mut nodes {
+            match node.role.as_str() {
+                "heading" => node.name = Some("Remote-Debugging".to_owned()),
+                "check box" => {
+                    node.name =
+                        Some("Remote-Debugging für diese Browserinstanz zulassen".to_owned())
+                }
+                _ => {}
+            }
+        }
+        nodes
+    }
+
+    #[test]
+    fn document_uri_proves_a_translated_setup_page_and_its_checkbox() {
+        let nodes = translated_setup_page(descriptor().setup_url);
+        assert_eq!(
+            exact_setup_checkbox(&nodes, descriptor(), false)
+                .unwrap()
+                .map(|node| node.role.as_str()),
+            Some("check box"),
+            "page text is display data; the URI and the one web checkbox decide"
+        );
+        assert!(setup_page_proven(&nodes, descriptor(), false));
+    }
+
+    #[test]
+    fn setup_checkbox_is_the_one_web_content_toggle() {
+        let mut native = translated_setup_page(descriptor().setup_url);
+        for node in &mut native {
+            node.in_web_content = false;
+        }
+        assert!(
+            exact_setup_checkbox(&native, descriptor(), false)
+                .unwrap()
+                .is_none(),
+            "a browser-chrome checkbox is never the page's setup toggle"
+        );
+
+        let mut two = translated_setup_page(descriptor().setup_url);
+        let second = two
+            .iter()
+            .find(|node| node.role == "check box")
+            .unwrap()
+            .clone();
+        two.push(second);
+        assert_eq!(
+            exact_setup_checkbox(&two, descriptor(), false)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn page_text_still_gates_a_setup_page_without_a_document_uri() {
+        let mut nodes = translated_setup_page(descriptor().setup_url);
+        for node in &mut nodes {
+            node.document_uri = None;
+        }
+        nodes[0].value = Some(descriptor().setup_url.to_owned());
+        assert!(
+            exact_setup_checkbox(&nodes, descriptor(), false)
+                .unwrap()
+                .is_none(),
+            "without the rendered URI an address bar value is not enough to act on"
         );
     }
 

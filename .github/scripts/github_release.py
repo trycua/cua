@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -239,6 +240,19 @@ def release_assets(api: GitHubApi, repository: str, release_id: int) -> list[dic
     return assets
 
 
+def asset_matches_file(asset: Mapping[str, Any], path: Path) -> bool:
+    if asset.get("state") != "uploaded" or int(asset.get("size", -1)) != path.stat().st_size:
+        return False
+    digest = asset.get("digest")
+    if not digest:
+        return True
+    hasher = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return digest == f"sha256:{hasher.hexdigest()}"
+
+
 def upload_assets(
     api: GitHubApi,
     repository: str,
@@ -257,14 +271,9 @@ def upload_assets(
         raise ReleaseError(f"asset directory {asset_dir} is empty")
     for path in files:
         matches = by_name.get(path.name, [])
-        complete = [
-            asset
-            for asset in matches
-            if asset.get("state") == "uploaded"
-            and int(asset.get("size", -1)) == path.stat().st_size
-        ]
+        complete = [asset for asset in matches if asset_matches_file(asset, path)]
         if len(complete) == 1 and len(matches) == 1:
-            print(f"asset already uploaded with matching size: {path.name}")
+            print(f"asset already uploaded and matches the local file: {path.name}")
             continue
         for asset in matches:
             api.delete(f"repos/{repository}/releases/assets/{asset['id']}")
@@ -294,7 +303,7 @@ def verify_published_assets(
                 f"published release asset {path.name} has {len(matches)} matching uploads"
             )
         asset = matches[0]
-        if asset.get("state") != "uploaded" or int(asset.get("size", -1)) != path.stat().st_size:
+        if not asset_matches_file(asset, path):
             raise ReleaseError(f"published release asset {path.name} does not match the local file")
 
 

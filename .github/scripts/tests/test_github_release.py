@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import hashlib
 import json
 from pathlib import Path
 from urllib.error import HTTPError
@@ -153,6 +154,68 @@ def test_published_release_is_verified_without_mutation(tmp_path: Path):
     assert api.uploaded == []
     assert api.deleted == []
     assert api.patches == []
+
+
+def test_draft_replaces_same_size_asset_with_different_digest(tmp_path: Path):
+    artifact = tmp_path / "lume.tar.gz"
+    artifact.write_bytes(b"new")
+    api = FakeApi("abc123")
+    api.assets = [
+        {
+            "id": 22,
+            "name": artifact.name,
+            "state": "uploaded",
+            "size": 3,
+            "digest": "sha256:" + hashlib.sha256(b"old").hexdigest(),
+        }
+    ]
+
+    github_release.upload_assets(api, "trycua/cua", api.release, tmp_path)
+
+    assert api.deleted == ["repos/trycua/cua/releases/assets/22"]
+    assert [name for _url, name in api.uploaded] == [artifact.name]
+
+
+def test_published_release_rejects_same_size_asset_with_different_digest(tmp_path: Path):
+    artifact = tmp_path / "lume.tar.gz"
+    artifact.write_bytes(b"new")
+    api = FakeApi("abc123")
+    api.assets = [
+        {
+            "id": 22,
+            "name": artifact.name,
+            "state": "uploaded",
+            "size": 3,
+            "digest": "sha256:" + hashlib.sha256(b"old").hexdigest(),
+        }
+    ]
+
+    with pytest.raises(ReleaseError, match="does not match"):
+        github_release.verify_published_assets(api, "trycua/cua", api.release, tmp_path)
+
+    assert api.deleted == []
+    assert api.uploaded == []
+
+
+def test_draft_reuses_asset_with_matching_digest(tmp_path: Path):
+    artifact = tmp_path / "lume.tar.gz"
+    artifact.write_bytes(b"new")
+    api = FakeApi("abc123")
+    api.assets = [
+        {
+            "id": 22,
+            "name": artifact.name,
+            "state": "uploaded",
+            "size": 3,
+            "digest": "sha256:" + hashlib.sha256(b"new").hexdigest(),
+        }
+    ]
+
+    github_release.upload_assets(api, "trycua/cua", api.release, tmp_path)
+    github_release.verify_published_assets(api, "trycua/cua", api.release, tmp_path)
+
+    assert api.deleted == []
+    assert api.uploaded == []
 
 
 def test_github_api_retries_transient_server_error(monkeypatch: pytest.MonkeyPatch):

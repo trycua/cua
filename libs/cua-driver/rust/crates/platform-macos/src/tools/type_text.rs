@@ -486,8 +486,11 @@ impl Tool for TypeTextTool {
                 let verification = surface_verification(path, verified, target_is_web_content);
                 let verified = verification.verified;
                 let untrusted_web_readback = verification.untrusted_web_readback;
-                let electron_web_content = untrusted_web_readback
-                    && crate::browser::electron_js::ElectronJs::is_electron(pid);
+                let web_rung = advises_web_rung(untrusted_web_readback, is_terminal_target);
+                let electron_web_content =
+                    web_rung && crate::browser::electron_js::ElectronJs::is_electron(pid);
+                let (unconfirmed_note, foreground_next) =
+                    unconfirmed_advice(path, is_terminal_target);
 
                 // `verified:false` means the driver could not confirm the text
                 // landed (Electron AX echo, unreadable AXValue on Catalyst, or a
@@ -496,7 +499,7 @@ impl Tool for TypeTextTool {
                 // right next rung.
                 let (mark, note) = if verified {
                     ("✅ Inserted", String::new())
-                } else if untrusted_web_readback {
+                } else if web_rung {
                     let next_step = if electron_web_content && used_pixel_focus {
                         "The pixel-focus rung already ran, so do not repeat it; verify the \
                          result via the screenshot."
@@ -512,18 +515,8 @@ impl Tool for TypeTextTool {
                              renderer/DOM observed the input. {next_step}"
                         ),
                     )
-                } else if path == PATH_KEY_EVENTS_FG {
-                    (
-                        "📨 Sent (unverified)",
-                        " — driver could not confirm; verify via screenshot.".to_string(),
-                    )
                 } else {
-                    (
-                        "📨 Sent (unverified)",
-                        " — driver could not confirm the text landed; verify via screenshot, \
-                      and re-call with delivery_mode:\"foreground\" if it didn't."
-                            .to_string(),
-                    )
+                    ("📨 Sent (unverified)", unconfirmed_note.to_owned())
                 };
                 let note = if chromium_native_field && path == PATH_AX {
                     format!("{note}{CHROMIUM_NATIVE_FIELD_NOTE}")
@@ -549,7 +542,7 @@ impl Tool for TypeTextTool {
                     if let Some(delivered_chars) = delivered_chars {
                         s["delivered_chars"] = serde_json::json!(delivered_chars);
                     }
-                    if untrusted_web_readback {
+                    if web_rung {
                         // Web-content AXValue read-back. A real browser TAB → the
                         // `page` tool (drives the DOM via CDP) is the reliable rung;
                         // an embedded web view (Electron, no CDP) → the element px
@@ -586,7 +579,7 @@ impl Tool for TypeTextTool {
                                 "reason": reason,
                             });
                         }
-                    } else if !verified && path != PATH_KEY_EVENTS_FG {
+                    } else if !verified && foreground_next {
                         s["escalation"] = serde_json::json!({
                             "recommended": "foreground",
                             "reason": "background insert could not be confirmed — \
@@ -825,6 +818,29 @@ fn surface_verification(
     SurfaceVerification {
         verified: verified && !untrusted_web_readback,
         untrusted_web_readback,
+    }
+}
+
+/// A terminal never gets a web rung's retype advice, even when its read-back is web content.
+fn advises_web_rung(untrusted_web_readback: bool, is_terminal_target: bool) -> bool {
+    untrusted_web_readback && !is_terminal_target
+}
+
+fn unconfirmed_advice(path: &str, is_terminal_target: bool) -> (&'static str, bool) {
+    if is_terminal_target {
+        (
+            " — a terminal may not echo what it reads (a password prompt), so neither the \
+             screen nor a screenshot can confirm it; do not type the text again.",
+            false,
+        )
+    } else if path == PATH_KEY_EVENTS_FG {
+        (" — driver could not confirm; verify via screenshot.", false)
+    } else {
+        (
+            " — driver could not confirm the text landed; verify via screenshot, and re-call \
+             with delivery_mode:\"foreground\" if it didn't.",
+            true,
+        )
     }
 }
 
@@ -2950,6 +2966,35 @@ mod tests {
         assert!(web_readback_is_untrusted(
             WebAreaClassification::WindowFocusUnavailable
         ));
+    }
+
+    #[test]
+    fn a_terminal_with_web_read_back_never_gets_web_retype_advice() {
+        assert!(!advises_web_rung(true, true));
+        assert!(advises_web_rung(true, false));
+        assert!(!advises_web_rung(false, false));
+        assert!(
+            !unconfirmed_advice(PATH_AX, true).1,
+            "the terminal note it falls through to must not escalate either"
+        );
+    }
+
+    #[test]
+    fn an_unconfirmed_terminal_insert_is_never_sent_to_the_foreground() {
+        for path in [PATH_KEY_EVENTS, PATH_KEY_EVENTS_FG, PATH_AX] {
+            let (note, foreground_next) = unconfirmed_advice(path, true);
+            assert!(!foreground_next, "path={path}");
+            assert!(note.contains("password prompt"), "path={path}");
+            assert!(note.contains("do not type the text again"), "path={path}");
+            assert!(!note.contains("delivery_mode"), "path={path}");
+        }
+        let (note, foreground_next) = unconfirmed_advice(PATH_KEY_EVENTS, false);
+        assert!(foreground_next);
+        assert!(note.contains("re-call with delivery_mode:\"foreground\""));
+        assert_eq!(
+            unconfirmed_advice(PATH_KEY_EVENTS_FG, false),
+            (" — driver could not confirm; verify via screenshot.", false)
+        );
     }
 
     #[test]

@@ -57,6 +57,9 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         current = status ?? FixtureHost.unconfigured
     }
 
+    /// The helper going down or coming back, as launchd reports it.
+    public func setServiceRunning(_ running: Bool) { current.serviceRunning = running }
+
     /// The account a fixture relay host is registered to.
     public var owner = "user-1"
     public var ownerEmail = "ada@example.com"
@@ -283,8 +286,9 @@ public final class HostModel {
     public var onHelperMove: ((HelperMove?) -> Void)?
     /// "Not now" this launch.
     private var helperMoveDeclined = false
-    /// Restarts of a helper that should run but did not, this launch.
-    private var helperRepairs = 0
+    /// Restarts of a helper that should run but did not, with backoff.
+    var helperRepair = HelperService.RepairBackoff()
+    var repairClock: () -> Date = Date.init
     /// This app's version (a move that failed is not offered again by
     /// itself with the same version).
     public var appVersion = Bundle.main.infoDictionary?["CuaVersion"] as? String
@@ -334,11 +338,14 @@ public final class HostModel {
         guard let host, let status, status.configured, status.helperAvailable else { return }
         // The helper should run but does not (launchd lost it after the app
         // was replaced): starting it again registers it from this copy.
-        if status.serviceKind == "app-helper", !status.serviceRunning, status.sharing,
-           !status.pausedSignedOut, helperRepairs < 3 {
-            helperRepairs += 1
-            if let s = try? await host.startSharing() { apply(s) }
-            return
+        if status.serviceKind == "app-helper" {
+            if status.serviceRunning || !status.sharing || status.pausedSignedOut {
+                helperRepair.healthy()
+            } else if helperRepair.due(now: repairClock()) {
+                helperRepair.attempted(now: repairClock())
+                if let s = try? await host.startSharing() { apply(s) }
+                return
+            }
         }
         if status.serviceKind == "app-helper", status.legacyService {
             if let m = try? await host.migrateService(force: false, appVersion: appVersion),

@@ -945,6 +945,10 @@ pub struct HostPaths {
     pub machine_id: PathBuf,
     /// `<home>/spacesd` (driver data dir).
     pub driver_data: PathBuf,
+    /// `<home>/logs`: logs that outlive the host's setup. `host remove`
+    /// deletes `dir`, and with it the evidence of why the service failed
+    /// (CUA-3746), so the service's log lives here instead.
+    pub logs: PathBuf,
 }
 
 impl HostPaths {
@@ -954,6 +958,7 @@ impl HostPaths {
             dir: home.join("host"),
             machine_id: home.join("spacesd").join("id"),
             driver_data: home.join("spacesd"),
+            logs: home.join("logs"),
         }
     }
     /// `config.json`.
@@ -984,8 +989,13 @@ impl HostPaths {
     pub fn driver_bin(&self) -> PathBuf {
         self.dir.join("bin").join(driver::binary_name())
     }
-    /// `driver.log`.
+    /// The service's output, `<home>/logs/host.log`: outside the host
+    /// folder, so removing the host keeps it.
     pub fn log(&self) -> PathBuf {
+        self.logs.join("host.log")
+    }
+    /// The log before `driver.log` moved (builds before CUA-3746).
+    pub fn legacy_log(&self) -> PathBuf {
         self.dir.join("driver.log")
     }
     /// The driver's access log (`<driver data>/access.log`).
@@ -1559,6 +1569,11 @@ impl Host {
         if let Some(home) = &config.cua_home {
             env.push(("CUA_HOME".into(), home.clone()));
         }
+        // The service's log folder must exist before the service starts
+        // (systemd and the Windows wrapper do not create it), and a long
+        // run must not grow it without end.
+        let _ = std::fs::create_dir_all(&p.logs);
+        rotate_log(&p.log(), LOG_ROTATE_BYTES);
         ServiceSpec {
             program: config.driver_bin.clone(),
             args,
@@ -3682,6 +3697,20 @@ async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Pat
 }
 
 /// The last 3 lines of the driver's log, joined with ` | ` ("" when none).
+/// A service log past this size is moved aside when the service is set up
+/// (the macOS launcher does the same at every start).
+const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Moves `log` to `log.1` (replacing an older `log.1`) once it is larger
+/// than `max` bytes. Best effort.
+pub(crate) fn rotate_log(log: &Path, max: u64) {
+    if std::fs::metadata(log).is_ok_and(|m| m.len() > max) {
+        let mut old = log.as_os_str().to_owned();
+        old.push(".1");
+        let _ = std::fs::rename(log, old);
+    }
+}
+
 fn log_tail(log: &Path) -> String {
     std::fs::read_to_string(log)
         .map(|t| {
@@ -3723,6 +3752,34 @@ async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_service_log_lives_outside_the_host_folder() {
+        let home = std::path::Path::new("/h/.cua");
+        let p = super::HostPaths::new(home);
+        assert_eq!(p.log(), home.join("logs").join("host.log"));
+        // `host remove` deletes `dir`; the log must not be below it.
+        assert!(!p.log().starts_with(&p.dir));
+    }
+
+    #[test]
+    fn a_big_log_is_moved_aside_and_a_small_one_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("host.log");
+        std::fs::write(&log, "x".repeat(100)).unwrap();
+        super::rotate_log(&log, 1000);
+        assert!(log.exists());
+        super::rotate_log(&log, 50);
+        assert!(!log.exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("host.log.1"))
+                .unwrap()
+                .len(),
+            100
+        );
+        // Missing log: nothing to do.
+        super::rotate_log(&log, 0);
+    }
+
     #[test]
     fn missing_libraries_are_read_from_ldd() {
         let out = "\tlinux-vdso.so.1 (0x00007ffd)\n\tlibXi.so.6 => not found\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x1)\n\tlibXtst.so.6 => not found\n";

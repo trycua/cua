@@ -108,4 +108,5 @@ python3.12 -m py_compile \
   claude_agent.py codex_agent.py fixture_server.py native_driver.py native_tools.py
 python3.12 -m unittest tests.test_fixture_server
 npm run typecheck
+npm test
 ```

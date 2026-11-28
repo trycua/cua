@@ -1383,6 +1383,30 @@ fn cgevent_type_verified(
         // AppKit can install another first responder during the settle.
         confirm_key_focus()?;
     }
+    // AppKit edits an addressed NSTextField through a field editor, and some
+    // apps re-create the edited row, so the pointer resolved before typing can
+    // keep its pre-edit value while the text lands. The window's focused
+    // field is read alongside the pointer, from a baseline taken only when it
+    // is the addressed element or inside it.
+    let focus_in_window = || match (element_ptr_and_idx, window_id) {
+        (Some((ptr, _)), Some(wid)) => focused_field_in_window(pid, wid, ptr),
+        _ => None,
+    };
+    let focus_before = focus_in_window().filter(|field| field.in_addressed);
+    let progress = || {
+        let addressed = typed_progress(
+            before,
+            read_axvalue_bound(pid, element_ptr_and_idx, window_id).as_deref(),
+            text,
+        );
+        if addressed == TypedProgress::Complete || focus_before.is_none() {
+            return addressed;
+        }
+        best_progress(
+            addressed,
+            focus_evidence(focus_before.as_ref(), focus_in_window().as_ref(), text),
+        )
+    };
     let sent = send(text, delay_ms)?;
     if let Some(wid) = exact_keys_window.filter(|_| sent < text.chars().count()) {
         return Err(crate::input::skylight::sibling_focus_refusal(
@@ -1399,13 +1423,9 @@ fn cgevent_type_verified(
     // visible instead of treating any growth as success. If the deadline
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-    let outcome = await_typed_delivery(
-        before,
-        text,
-        deadline,
-        || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
-        || target_in_web_area(pid, element_ptr_and_idx, window_id),
-    );
+    let outcome = await_typed_delivery(text, deadline, progress, || {
+        target_in_web_area(pid, element_ptr_and_idx, window_id)
+    });
     // A batched send that a native field only partly took (an app that reads
     // just the first character of a multi-character event) is finished one
     // paced key at a time from where it stopped. Web content and terminals never
@@ -1431,13 +1451,7 @@ fn cgevent_type_verified(
                 ));
             }
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-            return Ok(await_typed_delivery(
-                before,
-                text,
-                deadline,
-                || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
-                || false,
-            ));
+            return Ok(await_typed_delivery(text, deadline, progress, || false));
         }
     }
     Ok(reported(outcome, is_terminal_target))
@@ -1473,19 +1487,95 @@ fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: u
         .is_some_and(|added| added.chars().eq(text.chars().take(done)))
 }
 
+/// The window's focused field, as read for delivery evidence.
+#[derive(Debug)]
+struct FocusedField {
+    /// It is the addressed element or one of its descendants.
+    in_addressed: bool,
+    value: Option<String>,
+    /// The caret or selection, as a UTF-16 `(location, length)`.
+    selection: Option<(usize, usize)>,
+}
+
+fn focused_field_in_window(pid: i32, window_id: u32, addressed: usize) -> Option<FocusedField> {
+    unsafe {
+        let element = crate::ax::exact_target::focused_element_in_window(pid, window_id)?;
+        let field = FocusedField {
+            in_addressed: crate::fast_path_guard::is_self_or_ancestor(
+                element,
+                addressed as AXUIElementRef,
+            ),
+            value: copy_string_attr(element, "AXValue"),
+            selection: selected_range(element),
+        };
+        CFRelease(element as _);
+        Some(field)
+    }
+}
+
+/// What the window's focused field says about a delivery whose baseline was
+/// taken inside the addressed element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusEvidence {
+    /// Still inside the addressed element, and holding exactly the baseline
+    /// with the payload typed at the baseline's caret or over its selection.
+    Confirms,
+    /// Focus is no longer inside the addressed element: the app replaced it
+    /// or moved focus, so the addressed pointer no longer shows what landed.
+    Left,
+    /// Nothing either way.
+    Silent,
+}
+
+fn focus_evidence(
+    before: Option<&FocusedField>,
+    after: Option<&FocusedField>,
+    text: &str,
+) -> FocusEvidence {
+    let Some(before) = before.filter(|field| field.in_addressed) else {
+        return FocusEvidence::Silent;
+    };
+    let Some(after) = after.filter(|field| field.in_addressed) else {
+        return FocusEvidence::Left;
+    };
+    let (Some(old), Some(new)) = (before.value.as_deref(), after.value.as_deref()) else {
+        return FocusEvidence::Silent;
+    };
+    let typed_at_caret = before
+        .selection
+        .and_then(|(location, length)| replace_utf16_range(old, location, length, text));
+    if old != new && typed_at_caret.as_deref() == Some(new) {
+        FocusEvidence::Confirms
+    } else {
+        FocusEvidence::Silent
+    }
+}
+
+/// The addressed element's progress, adjusted by the focused field: it
+/// confirms delivery, or, once focus left the addressed element, turns a
+/// shortfall read off the stale pointer into an unverified result instead of
+/// one the caller would retry.
+fn best_progress(addressed: TypedProgress, focus: FocusEvidence) -> TypedProgress {
+    match (addressed, focus) {
+        (_, FocusEvidence::Confirms) => TypedProgress::Complete,
+        (TypedProgress::Partial(_) | TypedProgress::Unchanged, FocusEvidence::Left) => {
+            TypedProgress::Unverifiable
+        }
+        _ => addressed,
+    }
+}
+
 fn await_typed_delivery(
-    before: Option<&str>,
     text: &str,
     deadline: std::time::Instant,
-    mut read_value: impl FnMut() -> Option<String>,
+    mut progress: impl FnMut() -> TypedProgress,
     is_web: impl FnOnce() -> bool,
 ) -> (bool, Option<usize>) {
     let mut best_partial = None;
     let started = std::time::Instant::now();
     let mut deadline = deadline;
     loop {
-        let after = read_value();
-        match typed_progress(before, after.as_deref(), text) {
+        match progress() {
             TypedProgress::Complete => return (true, Some(text.chars().count())),
             TypedProgress::Partial(delivered) => {
                 best_partial =
@@ -2604,6 +2694,14 @@ mod tests {
         }
     }
 
+    fn read_back<'a>(
+        before: Option<&'a str>,
+        text: &'a str,
+        mut read: impl FnMut() -> Option<String> + 'a,
+    ) -> impl FnMut() -> TypedProgress + 'a {
+        move || typed_progress(before, read().as_deref(), text)
+    }
+
     #[test]
     fn typed_progress_classifies_readback() {
         use TypedProgress::*;
@@ -2644,13 +2742,12 @@ mod tests {
         ]);
         let mut reads = 0;
         let delivery = await_typed_delivery(
-            Some(""),
             text,
             std::time::Instant::now() + std::time::Duration::from_secs(1),
-            || {
+            read_back(Some(""), text, || {
                 reads += 1;
                 values.pop_front().flatten()
-            },
+            }),
             || false,
         );
         assert_eq!(delivery, (true, Some(text.chars().count())));
@@ -2660,10 +2757,9 @@ mod tests {
     #[test]
     fn drained_prefix_reports_the_delivered_character_count() {
         let delivery = await_typed_delivery(
-            Some(""),
             "BEGIN-payload-END",
             std::time::Instant::now(),
-            || Some("BEGIN".to_owned()),
+            read_back(Some(""), "BEGIN-payload-END", || Some("BEGIN".to_owned())),
             || false,
         );
         assert_eq!(delivery, (false, Some(5)));
@@ -2673,14 +2769,173 @@ mod tests {
     fn zero_progress_stops_polling_after_the_give_up_window() {
         let started = std::time::Instant::now();
         let outcome = await_typed_delivery(
-            Some("abc"),
             "xyz",
             started + DELIVERY_DRAIN_TIMEOUT,
-            || Some("abc".to_string()),
+            read_back(Some("abc"), "xyz", || Some("abc".to_string())),
             || false,
         );
         assert_eq!(outcome, (false, Some(0)));
         assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
+    }
+
+    fn field(in_addressed: bool, value: &str, caret: Option<(usize, usize)>) -> FocusedField {
+        FocusedField {
+            in_addressed,
+            value: Some(value.to_owned()),
+            selection: caret,
+        }
+    }
+
+    #[test]
+    fn a_stale_addressed_read_is_corrected_by_the_focused_field() {
+        use TypedProgress::*;
+        let text = "555-1234";
+        // Contacts: the addressed field reads its pre-edit value while its
+        // field editor holds the text.
+        let before = field(true, "", Some((0, 0)));
+        let editor = field(true, text, None);
+        let delivery = await_typed_delivery(
+            text,
+            std::time::Instant::now(),
+            || {
+                best_progress(
+                    typed_progress(Some(""), Some(""), text),
+                    focus_evidence(Some(&before), Some(&editor), text),
+                )
+            },
+            || false,
+        );
+        assert_eq!(delivery, (true, Some(text.chars().count())));
+        // The app re-created the row: focus left the addressed element, so the
+        // stale pointer's shortfall is not reported as one to retry.
+        let replaced = field(false, text, None);
+        let delivery = await_typed_delivery(
+            text,
+            std::time::Instant::now(),
+            || {
+                best_progress(
+                    typed_progress(Some(""), Some(""), text),
+                    focus_evidence(Some(&before), Some(&replaced), text),
+                )
+            },
+            || false,
+        );
+        assert_eq!(delivery, (false, None));
+        assert_eq!(
+            retype_from(delivery, text.chars().count(), false, || false),
+            None
+        );
+        for addressed in [Partial(3), Unchanged, Unverifiable, Complete] {
+            assert_eq!(best_progress(addressed, FocusEvidence::Silent), addressed);
+            assert_eq!(best_progress(addressed, FocusEvidence::Confirms), Complete);
+        }
+        for (addressed, expected) in [
+            (Partial(3), Unverifiable),
+            (Unchanged, Unverifiable),
+            (Unverifiable, Unverifiable),
+            (Complete, Complete),
+        ] {
+            assert_eq!(best_progress(addressed, FocusEvidence::Left), expected);
+        }
+    }
+
+    #[test]
+    fn the_focused_field_confirms_only_the_payload_typed_at_its_caret() {
+        use FocusEvidence::*;
+        let text = "555-1234";
+        let evidence = |before: FocusedField, after: FocusedField, text: &str| {
+            focus_evidence(Some(&before), Some(&after), text)
+        };
+        // Typed at the caret, or over the selection.
+        assert_eq!(
+            evidence(
+                field(true, "ab", Some((1, 0))),
+                field(true, "a555-1234b", None),
+                text
+            ),
+            Confirms
+        );
+        assert_eq!(
+            evidence(
+                field(true, "old", Some((0, 3))),
+                field(true, text, None),
+                text
+            ),
+            Confirms
+        );
+        // A field outside the addressed element confirms nothing, even one
+        // that holds the text: a re-created or refreshed row may be another.
+        assert_eq!(
+            evidence(
+                field(true, "", Some((0, 0))),
+                field(false, text, None),
+                text
+            ),
+            Left
+        );
+        assert_eq!(
+            focus_evidence(Some(&field(true, "", Some((0, 0)))), None, text),
+            Left
+        );
+        // No baseline inside the addressed element: no evidence.
+        assert_eq!(
+            evidence(
+                field(false, "", Some((0, 0))),
+                field(true, text, None),
+                text
+            ),
+            Silent
+        );
+        assert_eq!(
+            focus_evidence(None, Some(&field(true, text, None)), text),
+            Silent
+        );
+        // A field that already held the text proves nothing.
+        assert_eq!(
+            evidence(
+                field(true, text, Some((8, 0))),
+                field(true, text, None),
+                text
+            ),
+            Silent
+        );
+        // One added character does not complete a payload already present.
+        assert_eq!(
+            evidence(
+                field(true, text, Some((8, 0))),
+                field(true, "555-12345", None),
+                text
+            ),
+            Silent
+        );
+        // With the caret at the end, "aaa" -> "aaaa" is one "a", not "aaaa".
+        assert_eq!(
+            evidence(
+                field(true, "aaa", Some((3, 0))),
+                field(true, "aaaa", None),
+                "aaaa"
+            ),
+            Silent
+        );
+        // Without a known caret any edit is ambiguous.
+        assert_eq!(
+            evidence(field(true, "", None), field(true, text, None), text),
+            Silent
+        );
+        // Landed somewhere other than the caret.
+        assert_eq!(
+            evidence(
+                field(true, "ab", Some((0, 0))),
+                field(true, "a555-1234b", None),
+                text
+            ),
+            Silent
+        );
+        let unreadable = FocusedField {
+            value: None,
+            ..field(true, "", Some((0, 0)))
+        };
+        assert_eq!(evidence(unreadable, field(true, text, None), text), Silent);
     }
 
     #[test]
@@ -2710,10 +2965,9 @@ mod tests {
     fn a_first_character_per_event_read_back_is_not_retyped() {
         let text = "abcdefghijklmnopq";
         let outcome = await_typed_delivery(
-            Some(""),
             text,
             std::time::Instant::now(),
-            || Some("aq".to_owned()),
+            read_back(Some(""), text, || Some("aq".to_owned())),
             || false,
         );
         assert_eq!(outcome, (false, Some(2)));
@@ -2754,10 +3008,9 @@ mod tests {
             ("$ ", "$ \nfile-a  file-b", "a long command line"),
         ] {
             let outcome = await_typed_delivery(
-                Some(before),
                 text,
                 std::time::Instant::now(),
-                || Some(after.to_owned()),
+                read_back(Some(before), text, || Some(after.to_owned())),
                 || false,
             );
             assert_eq!(
@@ -2778,10 +3031,9 @@ mod tests {
         for web in [true, false] {
             assert_eq!(
                 await_typed_delivery(
-                    Some(""),
                     "hello",
                     std::time::Instant::now(),
-                    || Some(String::new()),
+                    read_back(Some(""), "hello", || Some(String::new())),
                     || web,
                 ),
                 (false, if web { None } else { Some(0) }),
@@ -2794,10 +3046,9 @@ mod tests {
         for complete in [true, false] {
             let mut reads = 0;
             let result = await_typed_delivery(
-                Some(""),
                 "hello",
                 std::time::Instant::now() + std::time::Duration::from_millis(30),
-                || {
+                read_back(Some(""), "hello", || {
                     reads += 1;
                     Some(
                         if reads == 1 {
@@ -2809,7 +3060,7 @@ mod tests {
                         }
                         .to_owned(),
                     )
-                },
+                }),
                 || panic!("positive progress must not probe ancestry"),
             );
             assert!(reads >= 2);
@@ -2828,10 +3079,9 @@ mod tests {
     fn delivery_unreadable_does_not_probe_ancestry() {
         assert_eq!(
             await_typed_delivery(
-                Some(""),
                 "hello",
                 std::time::Instant::now(),
-                || None,
+                read_back(Some(""), "hello", || None),
                 || panic!("unreadable values must not probe ancestry"),
             ),
             (false, None),

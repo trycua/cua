@@ -23,7 +23,9 @@ The lifecycle uses only public cua-sandbox API (``Image``, ``Sandbox.ephemeral``
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -35,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 #: Sandbox boot deadline in seconds (a first start can pull an image).
 TIME_TO_START_S = 900
+#: Sandbox release deadline in seconds: past it the batch proceeds and the
+#: sandbox may leak.
+TIME_TO_RELEASE_S = 300
 
 
 @dataclass
@@ -166,8 +171,16 @@ async def open_sandbox(
     target: Target,
     *,
     on_progress: Optional[ProgressFn] = None,
+    release_timeout_s: Optional[float] = None,
 ) -> AsyncIterator[Any]:
     """Yield a connected sandbox for ``spec``; release it on exit."""
+    if release_timeout_s is None:
+        release_limit = float(TIME_TO_RELEASE_S)
+    else:
+        release_limit = float(release_timeout_s)
+        if not math.isfinite(release_limit) or release_limit < 0:
+            raise ValueError("release_timeout_s must be a finite number, 0 or more")
+
     image_cls, sandbox_cls = _sdk()
 
     if target.on == "cloud":
@@ -177,10 +190,43 @@ async def open_sandbox(
         raise CloudEnded()
     image = build_image(spec, image_cls)
     kwargs = ephemeral_kwargs(spec, target)
-    async with sandbox_cls.ephemeral(image, **kwargs) as sb:
+    if release_limit <= 0:
+        async with sandbox_cls.ephemeral(image, **kwargs) as sb:
+            yield sb
+        if on_progress is not None:
+            on_progress(Progress(stage="release", message="sandbox released"))
+        return
+
+    ephemeral = sandbox_cls.ephemeral(image, **kwargs)
+    sb = await ephemeral.__aenter__()
+    try:
         yield sb
-    if on_progress is not None:
-        on_progress(Progress(stage="release", message="sandbox released"))
+    except BaseException as exc:
+        _, suppressed = await _release(ephemeral, release_limit, type(exc), exc, exc.__traceback__)
+        if not suppressed:
+            raise
+    else:
+        released, _ = await _release(ephemeral, release_limit, None, None, None)
+        if released and on_progress is not None:
+            on_progress(Progress(stage="release", message="sandbox released"))
+
+
+async def _release(ephemeral: Any, timeout_s: float, *exc_info: Any) -> tuple[bool, bool]:
+    """Exit ``ephemeral`` under ``timeout_s``. A wedged release logs a
+    warning and returns ``(False, False)`` so the batch proceeds (the
+    sandbox may leak); any other failure propagates."""
+    try:
+        async with asyncio.timeout(timeout_s) as deadline:
+            suppressed = bool(await ephemeral.__aexit__(*exc_info))
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        logger.warning(
+            "sandbox release did not finish within %ss; the sandbox may leak",
+            timeout_s,
+        )
+        return False, False
+    return True, suppressed
 
 
 # ── Errors worth explaining ────────────────────────────────────────────────

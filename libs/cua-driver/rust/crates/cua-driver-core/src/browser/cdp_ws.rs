@@ -24,7 +24,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -274,9 +274,54 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
     demux.close();
 }
 
+/// Holds the writer for one send. Unless the frame was fully sent, dropping
+/// it shuts the socket down: it drops the write half and stops the reader,
+/// which drops the read half, so the browser sees the connection end even
+/// while the pool still holds this connection.
+struct SendInFlight<'a> {
+    writer: tokio::sync::MutexGuard<'a, Option<SplitSink<WsStream, Message>>>,
+    conn: &'a CdpConnection,
+    sent: bool,
+}
+
+impl Drop for SendInFlight<'_> {
+    fn drop(&mut self) {
+        if !self.sent {
+            *self.writer = None;
+            self.conn.reader.abort();
+            self.conn.demux.close();
+        }
+    }
+}
+
+/// Releases a reconnect's old generation unless the handoff completed. A
+/// dropped future cannot await, so the release runs as its own task.
+struct RetireUnlessHandedOff<'a> {
+    pool: Option<CdpPool>,
+    ws_url: &'a str,
+    generation: u64,
+}
+
+impl Drop for RetireUnlessHandedOff<'_> {
+    fn drop(&mut self) {
+        let Some(pool) = self.pool.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let ws_url = self.ws_url.to_owned();
+        let generation = self.generation;
+        runtime.spawn(async move {
+            pool.release_existing(&ws_url, generation, SharedSocketRelease::Close)
+                .await;
+        });
+    }
+}
+
 /// A single browser-endpoint connection.
 pub struct CdpConnection {
-    writer: Mutex<SplitSink<WsStream, Message>>,
+    writer: Mutex<Option<SplitSink<WsStream, Message>>>,
     demux: Arc<Demux>,
     next_id: AtomicU64,
     existing_profile_policy: AtomicBool,
@@ -312,7 +357,7 @@ impl CdpConnection {
         });
         let reader = tokio::spawn(read_loop(read, demux.clone()));
         Ok(Self {
-            writer: Mutex::new(write),
+            writer: Mutex::new(Some(write)),
             demux,
             next_id: AtomicU64::new(1),
             existing_profile_policy: AtomicBool::new(false),
@@ -464,16 +509,43 @@ impl CdpConnection {
         if let Some(sid) = session_id {
             msg["sessionId"] = Value::String(sid.to_owned());
         }
-        let sent = {
-            let mut writer = self.writer.lock().await;
-            writer.send(Message::Text(msg.to_string())).await
-        };
-        if let Err(e) = sent {
+        // The deadline covers the writer too. A browser that stops reading
+        // stalls a send while it holds the writer, which would otherwise keep
+        // every later call on this socket waiting with no deadline at all.
+        let deadline = tokio::time::Instant::now() + timeout;
+        let Ok(writer) = tokio::time::timeout_at(deadline, self.writer.lock()).await else {
             self.demux.pending.lock().unwrap().remove(&id);
-            anyhow::bail!("CDP send failed during {method}: {e}");
+            anyhow::bail!("CDP {method} timed out after {timeout:?} waiting to send");
+        };
+        if self.is_closed() || writer.is_none() {
+            self.demux.pending.lock().unwrap().remove(&id);
+            anyhow::bail!("CDP socket closed before {method}");
         }
+        // Until the frame is fully written, a cancelled or failed send leaves
+        // a partial frame on the wire. The guard shuts the socket down before
+        // the writer is released, so no later call frames another command on it.
+        let mut in_flight = SendInFlight {
+            writer,
+            conn: self,
+            sent: false,
+        };
+        let sink = in_flight.writer.as_mut().expect("checked above");
+        match tokio::time::timeout_at(deadline, sink.send(Message::Text(msg.to_string()))).await {
+            Ok(Ok(())) => in_flight.sent = true,
+            Ok(Err(e)) => {
+                drop(in_flight);
+                self.demux.pending.lock().unwrap().remove(&id);
+                anyhow::bail!("CDP send failed during {method}: {e}");
+            }
+            Err(_) => {
+                drop(in_flight);
+                self.demux.pending.lock().unwrap().remove(&id);
+                anyhow::bail!("CDP {method} timed out after {timeout:?} while sending");
+            }
+        }
+        drop(in_flight);
 
-        match tokio::time::timeout(timeout, rx).await {
+        match tokio::time::timeout_at(deadline, rx).await {
             Err(_) => {
                 self.demux.pending.lock().unwrap().remove(&id);
                 anyhow::bail!("CDP {method} timed out after {timeout:?}")
@@ -608,11 +680,24 @@ struct PoolInner {
     /// Serializes every browser-level dial for grant-owned sockets so two
     /// sessions can never open two sockets (and two consent prompts) at once.
     dial_gate: Mutex<()>,
+    /// One lock per endpoint, held by each dial to it (taken before the dial
+    /// gate) and by each dismissal of a prompt in its browser, so closing an
+    /// abandoned prompt never touches one a running dial raised.
+    prompt_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
     markers: StdMutex<Markers>,
     ttl: SharedSocketTtl,
 }
 
 impl PoolInner {
+    fn prompt_lock(&self, ws_url: &str) -> Arc<Mutex<()>> {
+        self.prompt_locks
+            .lock()
+            .unwrap()
+            .entry(ws_url.to_owned())
+            .or_default()
+            .clone()
+    }
+
     async fn close_parked(&self) -> usize {
         let mut conns = self.conns.lock().await;
         let parked: Vec<String> = conns
@@ -706,6 +791,7 @@ impl Drop for PoolInner {
 /// entries are shared by every grant for that browser instance: each grant
 /// generation is a refcounted holder, and the socket outlives individual
 /// sessions only within the bounded parking window.
+#[derive(Clone)]
 pub struct CdpPool {
     inner: Arc<PoolInner>,
 }
@@ -726,6 +812,7 @@ impl CdpPool {
         let inner = Arc::new(PoolInner {
             conns: Mutex::new(HashMap::new()),
             dial_gate: Mutex::new(()),
+            prompt_locks: StdMutex::new(HashMap::new()),
             markers: StdMutex::new(Markers::default()),
             ttl: SharedSocketTtl { idle, absolute },
         });
@@ -773,6 +860,7 @@ impl CdpPool {
     ) -> anyhow::Result<Arc<CdpConnection>> {
         loopback_port(ws_url)
             .ok_or_else(|| anyhow::anyhow!("existing-profile endpoint has no loopback port"))?;
+        let _prompt = self.inner.prompt_lock(ws_url).lock_owned().await;
         let _dial = self.inner.dial_gate.lock().await;
         {
             let now = Instant::now();
@@ -863,12 +951,23 @@ impl CdpPool {
     /// session already re-established a live shared socket, join it without
     /// dialing; otherwise open exactly one replacement socket (which the
     /// browser treats as a new connection and may ask the person to approve).
+    /// `dials` counts that dial when it starts; a join never dials. Unless
+    /// the handoff completes, including when this future is dropped while it
+    /// waits, `old_generation` stops holding the socket, since its grant has
+    /// already moved to `new_generation`.
     pub async fn reconnect_existing(
         &self,
         ws_url: &str,
         old_generation: u64,
         new_generation: u64,
+        dials: &watch::Sender<u64>,
     ) -> anyhow::Result<Arc<CdpConnection>> {
+        let mut retire = RetireUnlessHandedOff {
+            pool: Some(self.clone()),
+            ws_url,
+            generation: old_generation,
+        };
+        let _prompt = self.inner.prompt_lock(ws_url).lock_owned().await;
         let _dial = self.inner.dial_gate.lock().await;
         {
             let now = Instant::now();
@@ -881,12 +980,14 @@ impl CdpPool {
                 shared.holders.remove(&old_generation);
                 shared.holders.insert(new_generation);
                 shared.last_used_at = now;
+                retire.pool = None;
                 return Ok(entry.conn.clone());
             }
         }
 
         // See claim_existing: never hold the entry mutex across a dial that
         // can wait for browser-owned consent UI.
+        dials.send_modify(|n| *n += 1);
         let conn = Arc::new(CdpConnection::connect(ws_url).await?);
         conn.restrict_to_existing_profile();
         let mut conns = self.inner.conns.lock().await;
@@ -900,7 +1001,20 @@ impl CdpPool {
                 shared: Some(SharedSocket::new(new_generation, Instant::now())),
             },
         );
+        retire.pool = None;
         Ok(conn)
+    }
+
+    /// Run `work` while no dial to `ws_url` is in progress, so browser UI
+    /// it touches cannot belong to a dial still waiting for consent. Dials to
+    /// other endpoints, and so other browsers, are not held up.
+    pub async fn while_no_dial_runs<F: std::future::Future>(
+        &self,
+        ws_url: &str,
+        work: F,
+    ) -> F::Output {
+        let _prompt = self.inner.prompt_lock(ws_url).lock_owned().await;
+        work.await
     }
 
     /// Drop a (likely dead) unrestricted connection so the next call
@@ -1053,6 +1167,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["echoed"]["x"], 7);
+    }
+
+    /// A browser that completes the handshake and then stops reading, the
+    /// way a renderer or browser process blocked on the main thread does.
+    /// Once told to resume, it reads until the connection ends.
+    async fn unread_browser() -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (resume, resumed) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let _ = resumed.await;
+            // Raw bytes: a websocket read would refuse the oversized frame
+            // and end on its own, whether or not the driver closed.
+            let mut buf = vec![0u8; 1 << 20];
+            while let Ok(1..) = tokio::io::AsyncReadExt::read(ws.get_mut(), &mut buf).await {}
+        });
+        (
+            format!("ws://127.0.0.1:{port}/devtools/browser/unread"),
+            resume,
+            task,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_stalled_send_cannot_hold_other_calls_past_their_timeout() {
+        let (url, resume_reading, browser) = unread_browser().await;
+        let conn = Arc::new(CdpConnection::connect(&url).await.unwrap());
+        // Larger than the loopback socket buffers, so the send never finishes
+        // while the peer does not read.
+        let stalled = tokio::spawn({
+            let conn = conn.clone();
+            async move {
+                conn.call_with_timeout(
+                    None,
+                    "Runtime.evaluate",
+                    json!({ "expression": "x".repeat(64 << 20) }),
+                    Duration::from_secs(1),
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let started = std::time::Instant::now();
+        let queued = tokio::time::timeout(
+            Duration::from_secs(10),
+            conn.call_with_timeout(
+                None,
+                "Browser.getVersion",
+                json!({}),
+                Duration::from_secs(1),
+            ),
+        )
+        .await
+        .expect("a call queued behind a stalled send must honor its own timeout");
+        assert!(queued.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        let stalled = tokio::time::timeout(Duration::from_secs(10), stalled)
+            .await
+            .expect("the stalled send must honor its timeout")
+            .unwrap();
+        assert!(stalled.is_err());
+        assert!(
+            conn.is_closed(),
+            "a socket with a partly written frame cannot carry another command"
+        );
+
+        // The connection is still held, as the pool holds it until it is
+        // replaced, but the browser must already see the socket end.
+        resume_reading.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), browser)
+            .await
+            .expect("the browser must see the interrupted socket close")
+            .unwrap();
+        drop(conn);
     }
 
     #[tokio::test]
@@ -1228,15 +1420,80 @@ mod tests {
         pool.claim_existing(&url, 2).await.unwrap();
         dead.demux.close();
 
-        let reopened = pool.reconnect_existing(&url, 1, 3).await.unwrap();
-        let joined = pool.reconnect_existing(&url, 2, 4).await.unwrap();
+        let (reopen_dials, join_dials) = (watch::channel(0).0, watch::channel(0).0);
+        let reopened = pool
+            .reconnect_existing(&url, 1, 3, &reopen_dials)
+            .await
+            .unwrap();
+        let joined = pool
+            .reconnect_existing(&url, 2, 4, &join_dials)
+            .await
+            .unwrap();
         assert!(Arc::ptr_eq(&reopened, &joined));
+        assert_eq!(*reopen_dials.borrow(), 1);
+        assert_eq!(
+            *join_dials.borrow(),
+            0,
+            "joining a reopened socket raises no prompt of its own"
+        );
         assert_eq!(
             dials.load(Ordering::SeqCst),
             2,
             "one reconnect dial for both sessions"
         );
         assert_eq!(pool.shared_socket_holders(&url).await, Some(2));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_waiting_for_the_dial_gate_has_not_dialed() {
+        let (url, dials, server) = counting_browser().await;
+        let pool = CdpPool::new();
+        let dead = pool.claim_existing(&url, 1).await.unwrap();
+        dead.demux.close();
+
+        // Another caller's dial holds the gate and may be showing its prompt.
+        let gate = pool.inner.dial_gate.lock().await;
+        let reconnect_dials = watch::channel(0).0;
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &reconnect_dials));
+        tokio::select! {
+            _ = &mut reconnect => panic!("reconnect must wait for the dial gate"),
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+        assert_eq!(*reconnect_dials.borrow(), 0);
+        drop(gate);
+        reconnect.await.unwrap();
+        assert_eq!(*reconnect_dials.borrow(), 1);
+        assert_eq!(dials.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_dropped_before_its_handoff_retires_the_old_generation() {
+        let (url, _dials, server) = counting_browser().await;
+        let pool = CdpPool::new();
+        let dead = pool.claim_existing(&url, 1).await.unwrap();
+        dead.demux.close();
+
+        // The grant already moved to generation 2 when its reconnect gave up
+        // waiting, so generation 1 must not keep the socket or the port.
+        let gate = pool.inner.dial_gate.lock().await;
+        let reconnect_dials = watch::channel(0).0;
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &reconnect_dials));
+        tokio::select! {
+            _ = &mut reconnect => panic!("reconnect must wait for the dial gate"),
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+        drop(reconnect);
+        drop(gate);
+        for _ in 0..100 {
+            if pool.shared_socket_holders(&url).await.is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(pool.shared_socket_holders(&url).await, None);
+        assert!(!endpoint_port_is_grant_owned(&url));
         server.abort();
     }
 
@@ -1338,7 +1595,8 @@ mod tests {
         let claimed = pool.claim_existing(&url, 1).await.unwrap();
         claimed.demux.close();
 
-        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2));
+        let dials = watch::channel(0).0;
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &dials));
         tokio::select! {
             _ = &mut reconnect => panic!("reconnect unexpectedly completed"),
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}

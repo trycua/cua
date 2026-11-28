@@ -80,6 +80,19 @@ const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
 /// first attach and retried by `browser_dialog`.
 pub(crate) const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(2);
+/// Bound for one platform proof that an approved existing-profile endpoint
+/// still belongs to the browser. On macOS it reads the profile's
+/// DevToolsActivePort file and runs `lsof`, either of which can stall.
+const ENDPOINT_REPROOF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Bound for one existing-profile reconnect, from waiting on another caller's
+/// reconnect through the last redial attempt.
+pub(crate) const EXISTING_PROFILE_RECONNECT_BOUND: std::time::Duration =
+    std::time::Duration::from_secs(32);
+/// How long ending a grant waits for its socket release and for remote
+/// debugging to be turned back off.
+const SETUP_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Bound for closing the browser prompt a timed-out reconnect may have left.
+const ABANDONED_CONSENT_DISMISS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
@@ -92,7 +105,7 @@ pub struct BrowserEngine {
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
-    pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
+    pub(crate) setup_cleanups: Arc<Mutex<SetupCleanups>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
@@ -258,6 +271,95 @@ fn embedded_app_without_endpoint(
                 "profile": { "mode": "isolated_new" },
             },
         },
+    }))
+}
+
+/// Remote-debugging cleanups owed for ended existing-profile grants, keyed by
+/// public session.
+#[derive(Default)]
+pub(crate) struct SetupCleanups {
+    /// Failed cleanups, retried when their session ends.
+    pub(crate) failed: HashMap<String, Vec<ExistingProfileSetupRequest>>,
+    /// Cleanups still running, per session.
+    pub(crate) running: HashMap<String, usize>,
+    /// Sessions that ended while one of their cleanups was running. Such a
+    /// cleanup missed the session-end retry, so it retries at once on failure.
+    ended_while_running: HashSet<String>,
+}
+
+impl SetupCleanups {
+    /// The ids a session end can name for this grant's session.
+    fn keys(grant: &ExistingProfileGrant) -> Vec<String> {
+        let mut keys = vec![grant.public_session.clone()];
+        if grant.transport_session != grant.public_session {
+            keys.push(grant.transport_session.clone());
+        }
+        keys
+    }
+
+    /// Count an ended grant's cleanup as running. Callers do this under the
+    /// same lock as removing the grant from the registry, so a session end
+    /// always sees either the grant or its running cleanup.
+    fn start(&mut self, grant: &ExistingProfileGrant) {
+        if grant.cleanup_remote_debugging {
+            for key in Self::keys(grant) {
+                *self.running.entry(key).or_default() += 1;
+            }
+        }
+    }
+
+    fn session_ended(&self, keys: &[String]) -> bool {
+        keys.iter()
+            .any(|key| self.ended_while_running.contains(key))
+    }
+
+    fn finish(
+        &mut self,
+        keys: &[String],
+        session: &str,
+        failed: Option<ExistingProfileSetupRequest>,
+    ) {
+        if let Some(request) = failed {
+            self.failed
+                .entry(session.to_owned())
+                .or_default()
+                .push(request);
+        }
+        for key in keys {
+            if let Some(running) = self.running.get_mut(key) {
+                *running -= 1;
+                if *running == 0 {
+                    self.running.remove(key);
+                    self.ended_while_running.remove(key);
+                }
+            }
+        }
+    }
+}
+
+/// Turn remote debugging back off on a blocking thread: the platform drives
+/// browser UI to do it, which can stall. Returns whether it succeeded.
+async fn restore_remote_debugging(
+    platform: &Arc<dyn BrowserPlatform>,
+    request: &ExistingProfileSetupRequest,
+) -> bool {
+    let platform = platform.clone();
+    let request = request.clone();
+    matches!(
+        tokio::task::spawn_blocking(move || platform.cleanup_existing_profile_setup(request)).await,
+        Ok(Ok(_))
+    )
+}
+
+fn reconnect_exhausted(last_error: Option<&str>) -> BrowserRefusal {
+    refuse(
+        BrowserRefusalCode::BrowserReconnectExhausted,
+        "the bounded existing-profile reconnect attempts did not establish a proven browser socket",
+    )
+    .with_detail(json!({
+        "attempt_limit": super::grant::MAX_RECONNECT_ATTEMPTS,
+        "last_error": last_error,
+        "retryable": false,
     }))
 }
 
@@ -715,7 +817,7 @@ impl BrowserEngine {
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
-            pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
+            setup_cleanups: Default::default(),
             session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
@@ -726,8 +828,11 @@ impl BrowserEngine {
                     engine.store.remove_session(session_id);
                     engine.cleanup_prepared_session(session_id);
                     let pending = {
-                        let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
-                        let mut requests = pending.remove(session_id).unwrap_or_default();
+                        let mut cleanups = engine.setup_cleanups.lock().unwrap();
+                        let mut requests = cleanups.failed.remove(session_id).unwrap_or_default();
+                        if cleanups.running.contains_key(session_id) {
+                            cleanups.ended_while_running.insert(session_id.to_owned());
+                        }
                         for grant in engine.existing_profile_grants.remove_session(session_id) {
                             if grant.cleanup_remote_debugging {
                                 requests.push(ExistingProfileSetupRequest {
@@ -777,11 +882,17 @@ impl BrowserEngine {
                             failed.push(request);
                         }
                     }
-                    let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
-                    if failed.is_empty() {
-                        pending.remove(session_id);
-                    } else {
-                        pending.insert(session_id.to_owned(), failed);
+                    // Merge rather than replace: a cleanup still running when
+                    // the session ended may have queued its failure meanwhile.
+                    if !failed.is_empty() {
+                        engine
+                            .setup_cleanups
+                            .lock()
+                            .unwrap()
+                            .failed
+                            .entry(session_id.to_owned())
+                            .or_default()
+                            .extend(failed);
                     }
                 }
                 if cleanup_errors.is_empty() {
@@ -802,42 +913,25 @@ impl BrowserEngine {
         transport_session: Option<&str>,
         pid: i64,
     ) -> Result<Option<ExistingProfileGrant>, BrowserRefusal> {
-        match self
-            .existing_profile_grants
-            .lookup(session, transport_session, pid)
-        {
+        let lookup = {
+            let mut cleanups = self.setup_cleanups.lock().unwrap();
+            let lookup = self
+                .existing_profile_grants
+                .lookup(session, transport_session, pid);
+            if let GrantLookup::Expired(grant) = &lookup {
+                cleanups.start(grant);
+            }
+            lookup
+        };
+        match lookup {
             GrantLookup::Missing => Ok(None),
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
-                if grant.cleanup_remote_debugging {
-                    let request = ExistingProfileSetupRequest {
-                        pid: grant.pid,
-                        window_id: grant.window_id,
-                        browser: grant.browser_product,
-                    };
-                    if self
-                        .platform
-                        .cleanup_existing_profile_setup(request.clone())
-                        .is_err()
-                    {
-                        self.pending_existing_profile_cleanups
-                            .lock()
-                            .unwrap()
-                            .entry(session.to_owned())
-                            .or_default()
-                            .push(request);
-                    }
-                }
-                self.pool
-                    .release_existing(
-                        &grant.endpoint_ws_url,
-                        grant.generation,
-                        SharedSocketRelease::Close,
-                    )
-                    .await;
-                if let Some(protected) = grant.protected_consent.as_ref() {
-                    self.approval_broker.revoke(protected).await;
-                }
+                let _ = tokio::time::timeout(
+                    SETUP_CLEANUP_TIMEOUT,
+                    self.release_ended_grant(session, grant),
+                )
+                .await;
                 Err(refuse(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "the existing-profile grant expired; approve this attachment again",
@@ -846,46 +940,104 @@ impl BrowserEngine {
         }
     }
 
+    /// Release what a grant held once it has left the registry: turn remote
+    /// debugging back off if the driver turned it on, close the socket, and
+    /// revoke the consent. This runs as its own task, so a caller cancelled
+    /// partway (a reconnect that ran out of time) cannot strand the socket
+    /// or the consent. Turning remote debugging off drives browser UI and
+    /// can stall, so it runs on a blocking thread. The returned task ends
+    /// when the release and the cleanup both have; callers wait for it at
+    /// most `SETUP_CLEANUP_TIMEOUT`. A failure, however late, is queued for
+    /// the session-end retry, or retried at once if the session already ended.
+    /// The caller has already counted the cleanup as running
+    /// (`SetupCleanups::start`) while removing the grant.
+    fn release_ended_grant(
+        &self,
+        session: &str,
+        grant: ExistingProfileGrant,
+    ) -> tokio::task::JoinHandle<()> {
+        let cleanup = grant.cleanup_remote_debugging.then(|| {
+            let request = ExistingProfileSetupRequest {
+                pid: grant.pid,
+                window_id: grant.window_id,
+                browser: grant.browser_product,
+            };
+            let platform = self.platform.clone();
+            let cleanups = self.setup_cleanups.clone();
+            let keys = SetupCleanups::keys(&grant);
+            let session = session.to_owned();
+            tokio::spawn(async move {
+                let cleaned = restore_remote_debugging(&platform, &request).await;
+                let missed_session_end_retry = {
+                    let mut state = cleanups.lock().unwrap();
+                    let missed = !cleaned && state.session_ended(&keys);
+                    if !missed {
+                        state.finish(&keys, &session, (!cleaned).then_some(request.clone()));
+                    }
+                    missed
+                };
+                if missed_session_end_retry {
+                    let cleaned = restore_remote_debugging(&platform, &request).await;
+                    cleanups
+                        .lock()
+                        .unwrap()
+                        .finish(&keys, &session, (!cleaned).then_some(request));
+                }
+            })
+        });
+        let pool = self.pool.clone();
+        let approval_broker = self.approval_broker.clone();
+        let release = tokio::spawn(async move {
+            pool.release_existing(
+                &grant.endpoint_ws_url,
+                grant.generation,
+                SharedSocketRelease::Close,
+            )
+            .await;
+            if let Some(protected) = grant.protected_consent.as_ref() {
+                approval_broker.revoke(protected).await;
+            }
+        });
+        // Releasing the socket takes the pool lock, which a slow dial can
+        // hold, so it shares the bound. Both tasks finish on their own.
+        tokio::spawn(async move {
+            let _ = release.await;
+            if let Some(cleanup) = cleanup {
+                let _ = cleanup.await;
+            }
+        })
+    }
+
     pub(crate) async fn revoke_existing_profile_grant(
         &self,
         session: &str,
         transport_session: Option<&str>,
         pid: i64,
     ) {
-        if let Some(grant) = self
-            .existing_profile_grants
-            .revoke(session, transport_session, pid)
-        {
-            if grant.cleanup_remote_debugging {
-                let request = ExistingProfileSetupRequest {
-                    pid: grant.pid,
-                    window_id: grant.window_id,
-                    browser: grant.browser_product,
-                };
-                if self
-                    .platform
-                    .cleanup_existing_profile_setup(request.clone())
-                    .is_err()
-                {
-                    self.pending_existing_profile_cleanups
-                        .lock()
-                        .unwrap()
-                        .entry(session.to_owned())
-                        .or_default()
-                        .push(request);
-                }
-            }
-            self.pool
-                .release_existing(
-                    &grant.endpoint_ws_url,
-                    grant.generation,
-                    SharedSocketRelease::Close,
-                )
-                .await;
-            if let Some(protected) = grant.protected_consent.as_ref() {
-                self.approval_broker.revoke(protected).await;
-            }
+        if let Some(release) = self.end_existing_profile_grant(session, transport_session, pid) {
+            let _ = tokio::time::timeout(SETUP_CLEANUP_TIMEOUT, release).await;
         }
+    }
+
+    /// Remove the grant from the registry now and start releasing what it
+    /// held, without waiting for the release.
+    fn end_existing_profile_grant(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        pid: i64,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let grant = {
+            let mut cleanups = self.setup_cleanups.lock().unwrap();
+            let grant = self
+                .existing_profile_grants
+                .revoke(session, transport_session, pid);
+            if let Some(grant) = &grant {
+                cleanups.start(grant);
+            }
+            grant
+        };
+        grant.map(|grant| self.release_ended_grant(session, grant))
     }
 
     pub(crate) async fn connect(&self, ws_url: &str) -> Result<Arc<CdpConnection>, BrowserRefusal> {
@@ -929,31 +1081,94 @@ impl BrowserEngine {
         // One leader owns endpoint reproof and bounded redial. Followers
         // re-check the generation after acquiring this gate and reuse its
         // socket rather than opening another browser-level connection.
-        let _leader = self
-            .reconnect_gates
-            .lock(ReconnectKey::new(
+        let deadline = tokio::time::Instant::now() + EXISTING_PROFILE_RECONNECT_BOUND;
+        let Ok(_leader) = tokio::time::timeout_at(
+            deadline,
+            self.reconnect_gates.lock(ReconnectKey::new(
                 &grant.fingerprint,
                 &grant.endpoint_ws_url,
-            ))
-            .await;
-        let mut grant = self
-            .existing_profile_grant(session, transport_session, pid)
-            .await?
-            .ok_or_else(|| {
-                refuse(
-                    BrowserRefusalCode::BrowserConsentRequired,
-                    "the existing-profile grant ended while reconnecting",
-                )
-            })?;
-        if let Ok(conn) = self
-            .pool
-            .get_existing(&grant.endpoint_ws_url, grant.generation)
-            .await
-        {
-            return Ok((conn, grant));
+            )),
+        )
+        .await
+        else {
+            return Err(reconnect_exhausted(Some("reconnect_in_progress")));
+        };
+        let window_id = grant.window_id;
+        let endpoint_ws_url = grant.endpoint_ws_url.clone();
+        let dials = tokio::sync::watch::channel(0).0;
+        let reconnect = async {
+            let grant = self
+                .existing_profile_grant(session, transport_session, pid)
+                .await?
+                .ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        "the existing-profile grant ended while reconnecting",
+                    )
+                })?;
+            if let Ok(conn) = self
+                .pool
+                .get_existing(&grant.endpoint_ws_url, grant.generation)
+                .await
+            {
+                return Ok((conn, grant));
+            }
+            self.redial_existing_profile(session, transport_session, pid, grant, deadline, &dials)
+                .await
+        };
+        match tokio::time::timeout_at(deadline, reconnect).await {
+            Ok(result) => result,
+            Err(_) => {
+                // The refusal goes out at the deadline; releasing the grant
+                // and closing the prompt finish on their own.
+                self.end_existing_profile_grant(session, transport_session, pid);
+                // A dial cut short here may have raised a browser prompt that
+                // approving would no longer attach to anything. Before any
+                // dial, a prompt in the window is someone else's to answer.
+                if *dials.borrow() > 0 {
+                    self.dismiss_abandoned_consent(&endpoint_ws_url, pid, window_id);
+                }
+                Err(reconnect_exhausted(Some("timed_out")))
+            }
         }
+    }
 
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(32);
+    /// Close the prompt of a dial this reconnect abandoned. The platform
+    /// finds a prompt by its window, not by its dial, so this runs only while
+    /// no other dial to the same browser endpoint is in progress: once the
+    /// abandoned dial ended, another caller may have started one whose
+    /// prompt is now on screen. The dismissal runs as its own task that keeps
+    /// that endpoint's dials waiting until the platform's native work has
+    /// exited, and it does not start once the bound has passed. The caller
+    /// does not wait for it. Dials to other browsers are unaffected.
+    fn dismiss_abandoned_consent(&self, ws_url: &str, pid: i64, window_id: u64) {
+        let deadline = tokio::time::Instant::now() + ABANDONED_CONSENT_DISMISS_TIMEOUT;
+        let pool = self.pool.clone();
+        let platform = self.platform.clone();
+        let ws_url = ws_url.to_owned();
+        tokio::spawn(async move {
+            pool.while_no_dial_runs(&ws_url, async {
+                if tokio::time::Instant::now() < deadline {
+                    let _ = platform
+                        .dismiss_abandoned_existing_profile_consent(pid, window_id)
+                        .await;
+                }
+            })
+            .await
+        });
+    }
+
+    /// The reconnect leader's attempt loop. The caller bounds the whole loop
+    /// by `deadline`, including every platform proof it awaits.
+    async fn redial_existing_profile(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        pid: i64,
+        mut grant: ExistingProfileGrant,
+        deadline: tokio::time::Instant,
+        dials: &tokio::sync::watch::Sender<u64>,
+    ) -> Result<(Arc<CdpConnection>, ExistingProfileGrant), BrowserRefusal> {
         let mut last_error = None;
         while tokio::time::Instant::now() < deadline && grant.reconnect_attempts_remaining > 0 {
             if grant.pid != pid || grant.browser != "chromium" {
@@ -985,7 +1200,6 @@ impl BrowserEngine {
                 ));
             }
             let endpoint = self
-                .platform
                 .reprove_existing_profile_endpoint(pid, &grant.endpoint_ws_url)
                 .await?
                 .ok_or_else(|| {
@@ -1022,10 +1236,19 @@ impl BrowserEngine {
                 &endpoint.ws_url,
                 old_generation,
                 new_generation,
+                dials,
             ));
+            // Until this attempt's own dial starts, a prompt on screen is
+            // another caller's, so consent handling waits for that dial.
+            let mut dial_started = dials.subscribe();
+            let dials_before = *dial_started.borrow();
+            let consent_due = async {
+                let _ = dial_started.wait_for(|n| *n > dials_before).await;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            };
             let reconnected = tokio::select! {
                 result = &mut reconnect => result,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                _ = consent_due => {
                     match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
                         action: Default::default(),
                         pid,
@@ -1042,10 +1265,14 @@ impl BrowserEngine {
                             drop(reconnect);
                             // The browser keeps the prompt of the connection
                             // just abandoned; approving it would attach nothing.
-                            let _ = self
-                                .platform
-                                .dismiss_abandoned_existing_profile_consent(pid, grant.window_id)
-                                .await;
+                            // Without a dial of ours, the prompt is not ours.
+                            if *dials.borrow() > 0 {
+                                self.dismiss_abandoned_consent(
+                                    &endpoint.ws_url,
+                                    pid,
+                                    grant.window_id,
+                                );
+                            }
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;
@@ -1074,15 +1301,29 @@ impl BrowserEngine {
         }
         self.revoke_existing_profile_grant(session, transport_session, pid)
             .await;
-        Err(refuse(
-            BrowserRefusalCode::BrowserReconnectExhausted,
-            "the bounded existing-profile reconnect attempts did not establish a proven browser socket",
+        Err(reconnect_exhausted(last_error.map(|_| "connection_failed")))
+    }
+
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        tokio::time::timeout(
+            ENDPOINT_REPROOF_TIMEOUT,
+            self.platform
+                .reprove_existing_profile_endpoint(pid, expected_ws_url),
         )
-        .with_detail(json!({
-            "attempt_limit": super::grant::MAX_RECONNECT_ATTEMPTS,
-            "last_error": last_error.map(|_| "connection_failed"),
-            "retryable": false,
-        })))
+        .await
+        .unwrap_or_else(|_| {
+            Err(refuse(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "proving the approved browser DevTools endpoint did not finish within {}s",
+                    ENDPOINT_REPROOF_TIMEOUT.as_secs()
+                ),
+            ))
+        })
     }
 
     async fn connection_for_record(
@@ -1144,7 +1385,6 @@ impl BrowserEngine {
         expected_ws_url: &str,
     ) -> Result<OwnedEndpoint, BrowserRefusal> {
         let endpoint = self
-            .platform
             .reprove_existing_profile_endpoint(pid, expected_ws_url)
             .await?
             .ok_or_else(|| {

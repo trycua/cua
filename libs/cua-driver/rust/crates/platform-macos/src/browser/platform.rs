@@ -791,6 +791,9 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
         ])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
+        // Endpoint proofs are bounded by the caller; a stalled lsof must not
+        // outlive the proof that gave up on it.
+        .kill_on_drop(true)
         .output()
         .await
         .map_err(|error| {

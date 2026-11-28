@@ -18,7 +18,7 @@ import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
 import { ChildSpaceRow, SubagentRow } from "./child-rows";
-import { FailureComputerContext, FailureNote, type FailureComputer } from "./failure-note";
+import { FailureComputerContext, FailureNote, FailureSummary, type FailureComputer } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
 import { waitingFor } from "./rights";
@@ -394,7 +394,15 @@ function Message({
           {status ? <span className="shrink-0">{status}</span> : null}
         </div>
         {quote ? <ReplyQuote quote={quote} roster={roster} /> : null}
-        {entry.text && !hideText ? <ThreadText text={entry.text} handles={roster.handles} /> : null}
+        {entry.text && !hideText ? (
+          entry.failure ? (
+            <FailureSummary failure={entry.failure} harness={who.harness ?? ""}>
+              <ThreadText text={entry.text} handles={roster.handles} />
+            </FailureSummary>
+          ) : (
+            <ThreadText text={entry.text} handles={roster.handles} />
+          )
+        ) : null}
         {entry.failure ? <FailureNote failure={entry.failure} harness={who.harness ?? ""} taskText={task?.text ?? null} onRetry={task?.onRetry} /> : null}
         {entry.view ? <ViewLine view={entry.view} /> : null}
         {footnote ? (

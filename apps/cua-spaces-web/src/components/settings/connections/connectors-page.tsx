@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
@@ -41,6 +41,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   const c = useConnectors();
   const { view } = c;
   const navigate = useNavigate();
+  const { hash } = useLocation();
   const { data } = useBridge();
   const keys = useAgentKeys();
   // Opening this page asks the providers whether the saved sign-ins and keys still work.
@@ -58,6 +59,12 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
     const timer = setTimeout(() => setLit(null), 2000);
     return () => clearTimeout(timer);
   }, [Boolean(view), focusApp]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The error's link can arrive before Connections finishes loading, so the router's first hash scroll may miss the section.
+  const sharingReady = Boolean(view) && c.apps.rows !== null && typeof keys.report?.copySignIn === "boolean";
+  useEffect(() => {
+    if (hash === "sign-ins-in-spaces" && sharingReady) document.getElementById("sign-ins-in-spaces")?.scrollIntoView?.({ block: "start" });
+  }, [hash, sharingReady]);
 
   if (!view || c.apps.rows === null) return <div className="mb-8 h-48" aria-busy="true" />;
   const open = (agent: string) => void navigate({ to: "/settings/connections/$app", params: { app: agent } });
@@ -133,6 +140,26 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         </SettingsGroup>
       ) : null}
 
+      {keys.report && typeof keys.report.copySignIn === "boolean" ? (
+        <div id="sign-ins-in-spaces" className="scroll-mt-6">
+          <SettingsGroup title={t("settings.connections.page.space_sign_ins")} data-connectors-sign-in-sharing="">
+            <SettingsRow
+              label={t("settings.connections.page.copy_sign_in")}
+              description={t("settings.connections.page.copy_sign_in_help", { name: hereName })}
+              htmlFor="connectors-copy-sign-in"
+              control={
+                <Switch
+                  id="connectors-copy-sign-in"
+                  data-connectors-copy-sign-in=""
+                  checked={keys.report.copySignIn}
+                  onCheckedChange={(on) => void keys.setCopySignIn(on).catch(toastError(t("settings.connections.page.copy_sign_in_failed")))}
+                />
+              }
+            />
+          </SettingsGroup>
+        </div>
+      ) : null}
+
       <SettingsGroup title={t("settings.connections.page.other_computer")} data-connectors-other-machine-group="">
         <GroupedRow>
           <div className="min-w-0 flex-1">
@@ -144,21 +171,6 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           </Button>
         </GroupedRow>
         {otherOpen ? <OtherMachineBlock /> : null}
-        {keys.report && typeof keys.report.copySignIn === "boolean" ? (
-          <SettingsRow
-            label={t("settings.connections.page.copy_sign_in")}
-            description={t("settings.connections.page.copy_sign_in_help", { name: hereName })}
-            htmlFor="connectors-copy-sign-in"
-            control={
-              <Switch
-                id="connectors-copy-sign-in"
-                data-connectors-copy-sign-in=""
-                checked={keys.report.copySignIn}
-                onCheckedChange={(on) => void keys.setCopySignIn(on).catch(toastError(t("settings.connections.page.copy_sign_in_failed")))}
-              />
-            }
-          />
-        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title={view.providersTitle} footer={view.providersFooter} data-connectors-providers="">

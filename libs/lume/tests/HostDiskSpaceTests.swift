@@ -210,3 +210,61 @@ func runStartsWhenHostVolumeHasRoom() async throws {
     service.simulateGuestStop()
     try await run.value
 }
+
+@Test("A disk-stack layer needs the reserve on its volume, even before it exists")
+func growingLayerNeedsReserve() throws {
+    let dir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    // The run creates the layer, so there is no file yet.
+    let layer = Path(dir.appendingPathComponent("session.asif"))
+
+    let tight = FixedSpaceProbe(volumes: [dir.path: 115 * mib])
+    let shortfall = HostDiskSpace.shortfall(writableDisks: [], growingLayers: [layer], probe: tight)
+    #expect(shortfall?.requiredBytes == HostDiskSpace.reserveBytes)
+    #expect(shortfall?.availableBytes == 115 * mib)
+
+    let roomy = FixedSpaceProbe(volumes: [dir.path: HostDiskSpace.reserveBytes])
+    #expect(
+        HostDiskSpace.shortfall(writableDisks: [], growingLayers: [layer], probe: roomy) == nil)
+}
+
+@MainActor
+@Test("run with an NBD root does not count the VM disk it leaves unattached")
+func runWithNBDRootSkipsTheVMDisk() async throws {
+    let storage = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: storage) }
+
+    let factory = RecordingVMFactory()
+    let controller = LumeController(
+        home: Home(fileManager: .default),
+        vmFactory: factory,
+        hostVolumeSpaceProbe: FixedSpaceProbe(volumes: ["/": 115 * mib]))
+
+    let name = "nbd-root-\(UUID().uuidString.prefix(8).lowercased())"
+    let vmDir = try controller.home.getVMDirectoryFromPath(name, storagePath: storage.path)
+    try FileManager.default.createDirectory(at: vmDir.dir.url, withIntermediateDirectories: true)
+    try makeSparseDisk(at: vmDir.diskPath.url, logicalBytes: 50 * gib)
+    try Data(repeating: 0, count: 1024).write(to: vmDir.nvramPath.url)
+    var config = try VMConfig(
+        os: "linux", cpuCount: 1, memorySize: 1024, diskSize: 50 * gib, display: "1024x768")
+    config.setMacAddress("00:11:22:33:44:59")
+    try vmDir.saveConfig(config)
+    defer { SharedVM.shared.removeVM(name: name) }
+
+    let nbd = try NBDDisks(
+        root: "nbd+unix:///root?socket=\(storage.path)/root.sock", extra: [], timeout: 120)
+    let run = Task { @MainActor in
+        try await controller.runVM(
+            name: name, noDisplay: true, storage: storage.path, nbdDisks: nbd,
+            vncPolicy: .disabled)
+    }
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(5))
+    while factory.services.first?.state != .running, clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let service = try #require(factory.services.first)
+    #expect(service.state == .running)
+    service.simulateGuestStop()
+    try await run.value
+}

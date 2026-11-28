@@ -179,6 +179,8 @@ enum VMError: Error, LocalizedError {
     case alreadyRunning(String)
     case installNotStarted(String)
     case stopTimeout(String)
+    case forcedStop(String)
+    case nbdDiskFailed(String)
     case resizeTooSmall(current: UInt64, requested: UInt64)
     case vncNotConfigured
     case vncPortBindingFailed(requested: Int, actual: Int)
@@ -207,6 +209,10 @@ enum VMError: Error, LocalizedError {
             return "Virtual machine install not started: \(name)"
         case .stopTimeout(let name):
             return "Timeout while stopping virtual machine: \(name)"
+        case .forcedStop(let name):
+            return "The guest did not shut down in time, so virtual machine \(name) was forced off"
+        case .nbdDiskFailed(let name):
+            return "An NBD disk of virtual machine \(name) failed for good: the guest lost it"
         case .resizeTooSmall(let current, let requested):
             return "Cannot resize disk to \(requested) bytes, current size is \(current) bytes"
         case .vncNotConfigured:

@@ -16,6 +16,8 @@ struct VMVirtualizationServiceContext {
     let recoveryMode: Bool
     let usbMassStoragePaths: [Path]?
     let additionalDiskPaths: [Path]?
+    let stackedDiskSpecs: [StackedDiskSpec]?
+    let nbdDisks: NBDDisks?
     let networkMode: NetworkMode
     /// Adds a virtio socket device (for host port forwards over vsock and
     /// the guest time service).
@@ -25,6 +27,9 @@ struct VMVirtualizationServiceContext {
     /// Vsock port on which the host serves its wall-clock time to the guest
     /// ([`GuestTimeService`]). Setting it also adds the socket device.
     var guestTimePort: UInt32? = nil
+    /// A single automount shared folder appears at the guest's shared-folder
+    /// root instead of in a subfolder named after it (`--flat-shared-dir`).
+    var flatSharedDirectory: Bool = false
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -35,6 +40,9 @@ protocol VMVirtualizationService {
     var displayVirtualMachine: VZVirtualMachine? { get }
     func start() async throws
     func stop() async throws
+    /// Asks the guest to shut down, as a power button press does. It returns at
+    /// once; the VM stops when the guest has shut down.
+    func requestStop() throws
     func pause() async throws
     func resume() async throws
     func updateSharedDirectories(_ sharedDirectories: [SharedDirectory]) async throws
@@ -148,6 +156,13 @@ class BaseVirtualizationService: VMVirtualizationService {
                     }
                 }
             }
+        }
+    }
+
+    func requestStop() throws {
+        let handle = virtualMachineHandle
+        try handle.queue.sync {
+            try handle.machine.requestStop()
         }
     }
 
@@ -385,9 +400,13 @@ class BaseVirtualizationService: VMVirtualizationService {
         return network
     }
 
+    /// `flatAutomount` shares a single automount directory as a
+    /// `VZSingleDirectoryShare`, so its contents sit at the guest's
+    /// shared-folder root; it takes no live-update placeholder.
     static func createDirectorySharingDevices(
         sharedDirectories: [SharedDirectory]?,
-        withLiveUpdatePlaceholder: Bool = false
+        withLiveUpdatePlaceholder: Bool = false,
+        flatAutomount: Bool = false
     )
         -> [VZDirectorySharingDeviceConfiguration]
     {
@@ -398,9 +417,12 @@ class BaseVirtualizationService: VMVirtualizationService {
         // dictionary iteration.
         return grouped.sorted { $0.key < $1.key }.map { tag, directories in
             let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
+            let isFlatAutomount = flatAutomount && tag == automountTag && directories.count == 1
             device.share = createDirectoryShare(
                 directories,
                 withLiveUpdatePlaceholder: withLiveUpdatePlaceholder && tag == automountTag
+                    && !isFlatAutomount,
+                preferSingle: isFlatAutomount
             )
             return device
         }
@@ -408,8 +430,18 @@ class BaseVirtualizationService: VMVirtualizationService {
 
     nonisolated static func createDirectoryShare(
         _ sharedDirectories: [SharedDirectory],
-        withLiveUpdatePlaceholder: Bool = false
+        withLiveUpdatePlaceholder: Bool = false,
+        preferSingle: Bool = false
     ) -> VZDirectoryShare {
+        if preferSingle, let only = sharedDirectories.first, sharedDirectories.count == 1 {
+            return VZSingleDirectoryShare(
+                directory: VZSharedDirectory(
+                    url: URL(fileURLWithPath: only.hostPath),
+                    readOnly: only.readOnly
+                )
+            )
+        }
+
         var directories: [String: VZSharedDirectory] = [:]
         if withLiveUpdatePlaceholder {
             // Live updates work reliably when VZMultipleDirectoryShare starts populated.
@@ -489,7 +521,10 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         // Common configurations
         vzConfig.keyboards = [VZUSBKeyboardConfiguration()]
         vzConfig.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
-        var storageDevices = [try createStorageDeviceConfiguration(diskPath: config.diskPath)]
+        var storageDevices = [
+            try config.nbdDisks?.rootDevice()
+                ?? createStorageDeviceConfiguration(diskPath: config.diskPath)
+        ]
         if let mount = config.mount {
             storageDevices.append(
                 try createStorageDeviceConfiguration(diskPath: mount, readOnly: true))
@@ -508,6 +543,12 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
                     try createStorageDeviceConfiguration(diskPath: diskPath, readOnly: false))
             }
         }
+        if let stacks = config.stackedDiskSpecs {
+            for stack in stacks {
+                storageDevices.append(try stack.storageDeviceConfiguration())
+            }
+        }
+        storageDevices += try config.nbdDisks?.extraDevices() ?? []
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(
@@ -565,7 +606,8 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         // the native toolbar can replace its share while the VM is running.
         var directorySharingDevices = createDirectorySharingDevices(
             sharedDirectories: config.sharedDirectories,
-            withLiveUpdatePlaceholder: true
+            withLiveUpdatePlaceholder: true,
+            flatAutomount: config.flatSharedDirectory
         )
         let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
         if !directorySharingDevices.contains(where: {
@@ -695,8 +737,11 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         // due to a known issue in Apple's Virtualization framework.
         // See: https://github.com/utmapp/UTM/pull/5919, https://github.com/lima-vm/lima/pull/2026
         let diskCachingMode = VZDiskImageCachingMode.cached
-        var storageDevices = [try createStorageDeviceConfiguration(
-            diskPath: config.diskPath, cachingMode: diskCachingMode)]
+        var storageDevices = [
+            try config.nbdDisks?.rootDevice()
+                ?? createStorageDeviceConfiguration(
+                    diskPath: config.diskPath, cachingMode: diskCachingMode)
+        ]
         if let mount = config.mount {
             storageDevices.append(
                 try createStorageDeviceConfiguration(
@@ -718,6 +763,13 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
                         diskPath: diskPath, readOnly: false, cachingMode: diskCachingMode))
             }
         }
+        if let stacks = config.stackedDiskSpecs {
+            for stack in stacks {
+                storageDevices.append(
+                    try stack.storageDeviceConfiguration(cachingMode: diskCachingMode))
+            }
+        }
+        storageDevices += try config.nbdDisks?.extraDevices() ?? []
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(
@@ -736,7 +788,8 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
 
         // Directory sharing
         var directorySharingDevices = createDirectorySharingDevices(
-            sharedDirectories: config.sharedDirectories)
+            sharedDirectories: config.sharedDirectories,
+            flatAutomount: config.flatSharedDirectory)
 
         // Add Rosetta support if available
         if #available(macOS 13.0, *) {

@@ -636,6 +636,11 @@
      "default_value": false,
      "help": "Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with --clipboard",
      "name": "no-clipboard-device"
+    },
+    {
+     "default_value": false,
+     "help": "Show the only --shared-dir's contents directly in the guest's shared folder instead of in a subfolder named after it. Needs exactly one --shared-dir; the VM then cannot take more shared folders while it runs",
+     "name": "flat-shared-dir"
     }
    ],
    "name": "run",
@@ -680,6 +685,43 @@
      "help": "Disk image to attach as a read-write virtio-blk device. Repeatable",
      "is_optional": true,
      "name": "disk",
+     "type": "[String]"
+    },
+    {
+     "help": "Disk to attach as a read-only base plus DiskImageKit layers: <base>[+<layer>[@cache|@overlay]]... Layers default to @overlay. Only the topmost layer takes writes, so one base can back many VMs, and a missing layer is created. Requires macOS 27. Repeatable",
+     "is_optional": true,
+     "name": "disk-stack",
+     "type": "[String]"
+    },
+    {
+     "help": "Read-write virtio-blk disk served over NBD (an nbd:// or nbd+unix:// URL), attached after every other disk. Repeatable",
+     "is_optional": true,
+     "name": "nbd-disk",
+     "type": "[String]"
+    },
+    {
+     "help": "Boot from a root disk served over NBD (an nbd:// or nbd+unix:// URL) instead of the VM's disk image",
+     "is_optional": true,
+     "name": "nbd-root",
+     "type": "String"
+    },
+    {
+     "default_value": "120",
+     "help": "Seconds an NBD disk waits on a request before reconnecting",
+     "is_optional": true,
+     "name": "nbd-timeout",
+     "type": "Double"
+    },
+    {
+     "help": "On SIGINT or SIGTERM, ask the guest to shut down and force the VM off after this many seconds. The command then exits 0 only if the guest shut down by itself. lume stop forces the VM off after its own --timeout, so give it a longer one",
+     "is_optional": true,
+     "name": "stop-timeout",
+     "type": "Int"
+    },
+    {
+     "help": "Forward a host TCP port to a guest AF_VSOCK port: [<IPv4 address>:]<hostPort>:<guestPort>. Listens on 127.0.0.1 unless an address is given. Repeatable",
+     "is_optional": true,
+     "name": "vsock-forward",
      "type": "[String]"
     },
     {

@@ -44,6 +44,8 @@ struct VMDirContext {
 class VM {
     // MARK: - Properties
 
+    private var vsockPortForwarders: [VsockPortForwarder] = []
+
     var vmDirContext: VMDirContext
     var telemetryTransport: TelemetryTransport?
 
@@ -55,6 +57,9 @@ class VM {
     private var displayContext: VMDisplayContext?
     private var nativeAttachRegistered = false
     private var activeSharedDirectories: [SharedDirectory] = []
+    /// The run shares its one folder flat (`--flat-shared-dir`), so no folder
+    /// can be added while it runs.
+    private var activeFlatSharedDirectory = false
     private var scopedSharedDirectoryURLs: [URL] = []
     private var clipboardTransferInProgress = false
     private var sessionCleanedUp = true
@@ -226,6 +231,11 @@ class VM {
         displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil,
+        vsockForwards: [VsockPortForwarder.Rule]? = nil,
+        nbdDisks: NBDDisks? = nil,
+        stopTimeout: TimeInterval? = nil,
+        flatSharedDirectory: Bool = false,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = [],
         hostDevices: HostDeviceOptions = .all,
@@ -307,6 +317,7 @@ class VM {
         activeVNCPolicy = vncPolicy
         activeNoVNCSession = nil
         activeSharedDirectories = sharedDirectories
+        activeFlatSharedDirectory = flatSharedDirectory
 
         Logger.info(
             "Running VM with configuration",
@@ -353,6 +364,8 @@ class VM {
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
                 additionalDiskPaths: additionalDiskPaths,
+                stackedDiskSpecs: stackedDiskSpecs,
+                nbdDisks: nbdDisks,
                 networkMode: networkMode
             )
             activeNetworkMode = config.networkMode
@@ -363,6 +376,7 @@ class VM {
             activeSocketDevice = Self.usesSocketDevice(
                 forwards: forwards,
                 guestTimePort: guestTimePort,
+                vsockPortForwards: !(vsockForwards ?? []).isEmpty,
                 hasSavedState: !recoveryMode && vmDirContext.dir.hasSavedState(),
                 savedStateHasVsock: vmDirContext.dir.savedStateHasVsock())
             config.socketDevice = activeSocketDevice
@@ -370,6 +384,7 @@ class VM {
             // taken with a different set fails to restore into it, and the
             // VM then boots fresh with this set (`restoreOrBoot`).
             config.hostDevices = hostDevices
+            config.flatSharedDirectory = flatSharedDirectory
             if let guestTimePort {
                 if activeSocketDevice {
                     config.guestTimePort = guestTimePort
@@ -378,6 +393,11 @@ class VM {
                         "The saved state has no virtio socket device; resuming without the guest time service",
                         metadata: ["name": vmDirContext.name])
                 }
+            }
+            if !activeSocketDevice, !(vsockForwards ?? []).isEmpty {
+                Logger.info(
+                    "The saved state has no virtio socket device; resuming without --vsock-forward",
+                    metadata: ["name": vmDirContext.name])
             }
             vmDirContext.dir.clearVsockSession()
             Logger.info(
@@ -394,6 +414,12 @@ class VM {
             guard var service = virtualizationService else {
                 Logger.error("Virtualization service is nil", metadata: ["name": vmDirContext.name])
                 throw VMError.internalError("Virtualization service not initialized")
+            }
+            // The guest can't get a failed NBD disk back, so the run ends now rather
+            // than when someone stops the VM.
+            nbdDisks?.monitor.onFailure = { [name = vmDirContext.name] in
+                Logger.error("Forcing the VM off: an NBD disk failed", metadata: ["name": name])
+                forceStop(service, name: name)
             }
 
             // A VM with a saved state (`suspend`, or a clone of a suspended
@@ -473,6 +499,19 @@ class VM {
             if activeSocketDevice && !forwards.isEmpty {
                 startVsockForwards(forwards, service: service)
             }
+            if activeSocketDevice, let rules = vsockForwards, !rules.isEmpty,
+                let connect = service.vsockConnector()
+            {
+                for rule in rules {
+                    let fwd = VsockPortForwarder(connect: connect, rule: rule)
+                    do {
+                        try fwd.start()
+                        vsockPortForwarders.append(fwd)
+                    } catch {
+                        Logger.error("vsock forward failed", metadata: ["error": error.localizedDescription])
+                    }
+                }
+            }
             if let telemetryTransport {
                 TelemetryClient.shared.recordVMStarted(
                     transport: telemetryTransport,
@@ -546,8 +585,12 @@ class VM {
 
                 // The AppKit run loop swallows SIGINT, so install explicit
                 // handlers that turn an external `stop` (SIGTERM) or an
-                // interactive Ctrl-C (SIGINT) into a clean shutdown.
-                installShutdownSignalHandlers()
+                // interactive Ctrl-C (SIGINT) into a clean shutdown. A run
+                // with --stop-timeout handles both itself (`GracefulStop`
+                // asks the guest to shut down); these would power it off.
+                if stopTimeout == nil {
+                    installShutdownSignalHandlers()
+                }
             }
 
             // Write VNC config into VM via SSH (background task).
@@ -562,9 +605,18 @@ class VM {
                 }
             }
 
+            let gracefulStop = stopTimeout.map {
+                GracefulStop(service: service, timeout: $0, name: vmDirContext.name)
+            }
             try await service.waitForStop()
             Logger.info("VM lifecycle ended", metadata: ["name": vmDirContext.name])
             await cleanupSession()
+            if nbdDisks?.monitor.failed == true {
+                throw VMError.nbdDiskFailed(vmDirContext.name)
+            }
+            if let gracefulStop, gracefulStop.forced {
+                throw VMError.forcedStop(vmDirContext.name)
+            }
         } catch {
             Logger.error(
                 "Failed in VM.run",
@@ -581,6 +633,8 @@ class VM {
                 try? await service.stop()
             }
             await cleanupSession()
+            // A VM forced off after its disk failed can stop with an error of its own.
+            if nbdDisks?.monitor.failed == true { throw VMError.nbdDiskFailed(vmDirContext.name) }
             throw error
         }
     }
@@ -698,6 +752,12 @@ class VM {
     }
 
     private func addSharedFolder(_ url: URL, readOnly: Bool) async throws {
+        // A flat share has no subfolders to add one beside, and replacing it
+        // with the usual share would move the guest's files mid-run.
+        guard !activeFlatSharedDirectory else {
+            throw VMError.internalError(
+                "This VM shares its folder with --flat-shared-dir, so it cannot take more folders while it runs")
+        }
         var isDirectory: ObjCBool = false
         guard url.isFileURL,
               FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
@@ -937,9 +997,12 @@ class VM {
         }
         scopedSharedDirectoryURLs.removeAll()
         activeSharedDirectories.removeAll()
+        activeFlatSharedDirectory = false
         vncService.stop()
         vsockForwarder?.stop()
         vsockForwarder = nil
+        for forwarder in vsockPortForwarders { forwarder.stop() }
+        vsockPortForwarders.removeAll()
         vmDirContext.dir.clearVsockSession()
         if !activeVNCPolicy.isEnabled {
             // No VNC service owns this run's marker, so drop it here. Doing it
@@ -1490,14 +1553,14 @@ class VM {
 
     /// Whether the VM gets a virtio socket device. A resume follows the saved
     /// state, which restores only into the devices it was saved with, whatever
-    /// this run asks for; a cold boot gets one for `forwards` or a guest time
-    /// service.
+    /// this run asks for; a cold boot gets one for `forwards`, a guest time
+    /// service, or `--vsock-forward` rules (`vsockPortForwards`).
     nonisolated static func usesSocketDevice(
-        forwards: [UInt16], guestTimePort: UInt32? = nil,
+        forwards: [UInt16], guestTimePort: UInt32? = nil, vsockPortForwards: Bool = false,
         hasSavedState: Bool, savedStateHasVsock: Bool
     ) -> Bool {
         if hasSavedState { return savedStateHasVsock }
-        return !forwards.isEmpty || guestTimePort != nil
+        return !forwards.isEmpty || guestTimePort != nil || vsockPortForwards
     }
 
     /// Publishes `forwards` on host loopback ports through the guest agent
@@ -1548,6 +1611,8 @@ class VM {
         recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil,
         additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil,
+        nbdDisks: NBDDisks? = nil,
         networkMode: NetworkMode? = nil
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
@@ -1570,6 +1635,8 @@ class VM {
             recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
             additionalDiskPaths: additionalDiskPaths,
+            stackedDiskSpecs: stackedDiskSpecs,
+            nbdDisks: nbdDisks,
             networkMode: effectiveNetworkMode
         )
     }

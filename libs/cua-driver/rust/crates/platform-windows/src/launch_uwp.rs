@@ -45,7 +45,7 @@ use windows::core::{Interface, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IBindCtx, CLSCTX_LOCAL_SERVER,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IBindCtx, CLSCTX_LOCAL_SERVER,
     COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Shell::{
@@ -108,11 +108,9 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
     }
 
     // Apartment model: AAM is a local-server COM object that historically
-    // requires STA on the calling thread. `CoInitializeEx` is idempotent
-    // per-thread; its HRESULT is intentionally discarded — if the thread
-    // was previously initialized with a different model, the subsequent
-    // CoCreateInstance call will surface a clear error.
-    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    // requires STA on the calling thread. If the thread is already in the
+    // MTA, the subsequent CoCreateInstance call will surface a clear error.
+    let _sta = StaScope::enter();
 
     let manager: IApplicationActivationManager =
         unsafe { CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_LOCAL_SERVER)? };
@@ -442,7 +440,7 @@ fn load_or_get_cache() -> Option<Vec<AppsFolderEntry>> {
 /// desktop apps can expose an explicit application model ID here too; those
 /// entries remain launchable through their `shell:AppsFolder` parsing path.
 fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
-    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    let _sta = StaScope::enter();
 
     // `shell:AppsFolder` is the well-known parsing path for the virtual
     // folder that backs the Start Menu's "all apps" list. It enumerates
@@ -503,6 +501,30 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
     }
 
     Ok(entries)
+}
+
+/// Joins an STA for one call and leaves it on drop, so a shared blocking
+/// worker never stays an STA for later tool calls such as WGC capture (#2298).
+/// Bind it before any COM interface so the interfaces drop first.
+struct StaScope {
+    entered: bool,
+}
+
+impl StaScope {
+    fn enter() -> Self {
+        let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        Self {
+            entered: hr.is_ok(),
+        }
+    }
+}
+
+impl Drop for StaScope {
+    fn drop(&mut self) {
+        if self.entered {
+            unsafe { CoUninitialize() };
+        }
+    }
 }
 
 /// Drain a COM-allocated wide string (`PWSTR` returned by `GetString` /

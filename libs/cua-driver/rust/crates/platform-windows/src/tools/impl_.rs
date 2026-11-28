@@ -1260,6 +1260,7 @@ pub fn build_registry_with_provider(
     compat: bool,
     provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 ) -> ToolRegistry {
+    crate::keep_mta_alive();
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new(Some(r.capture_service()));
     {

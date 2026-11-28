@@ -191,6 +191,20 @@ pub(crate) async fn serve(
     hub: Arc<PresenceHub>,
     connection: quinn::Connection,
 ) -> Result<(), String> {
+    serve_ticking(hub, connection, DATAGRAM_TICK).await
+}
+
+/// Serve one presence connection with `period` between datagram ticks.
+///
+/// The first tick fires at once, so the slot table goes out immediately
+/// whatever the period is. A caller that passes a period longer than the
+/// connection lives therefore gets the initial state and nothing else, which
+/// is how the tests prove the leading edge without measuring time.
+async fn serve_ticking(
+    hub: Arc<PresenceHub>,
+    connection: quinn::Connection,
+    period: Duration,
+) -> Result<(), String> {
     let (mut send, receive) = tokio::time::timeout(Duration::from_secs(10), connection.accept_bi())
         .await
         .map_err(|_| "no stream")?
@@ -208,7 +222,15 @@ pub(crate) async fn serve(
         connection.close(TICKET_INVALID.into(), b"ticket");
         return Err("invalid presence ticket".into());
     };
-    let result = run(&hub, &connection, &mut send, &mut lines, &participant).await;
+    let result = run(
+        &hub,
+        &connection,
+        &mut send,
+        &mut lines,
+        &participant,
+        period,
+    )
+    .await;
     hub.detach_datagram(&participant);
     result
 }
@@ -219,9 +241,12 @@ async fn run(
     send: &mut quinn::SendStream,
     lines: &mut Lines<quinn::RecvStream>,
     participant: &str,
+    period: Duration,
 ) -> Result<(), String> {
     let mut sent = Sent::default();
-    let mut tick = tokio::time::interval(DATAGRAM_TICK);
+    // `interval_at` fires its first tick at once, like `interval` does, so the
+    // slot table and the first keyframe still go out before any wait.
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now(), period);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut you = 0u8;
     let mut last_send: Option<Instant> = None;
@@ -232,11 +257,19 @@ async fn run(
         // sends whatever arrived inside the interval, and keyframes.
         let changed = hub.cursor_changed();
         // Three quarters of a tick, so a steady 30 Hz sender's jitter does
-        // not push every other move to the next tick.
-        let due = last_send.is_none_or(|at| at.elapsed() >= DATAGRAM_TICK * 3 / 4);
+        // not push every other move to the next tick. A change inside that
+        // window waits the deadline out instead of leaving the wake
+        // disabled: a disabled branch registers no waiter, so the
+        // notification was dropped and the move then sat until the next tick,
+        // or forever when no tick was due.
+        let throttle = last_send
+            .map(|at| (at + DATAGRAM_TICK * 3 / 4).saturating_duration_since(Instant::now()))
+            .filter(|wait| !wait.is_zero());
+        let due = throttle.is_none();
         tokio::select! {
             _ = tick.tick() => {}
             _ = changed, if due => {}
+            _ = tokio::time::sleep(throttle.unwrap_or_default()), if throttle.is_some() => {}
             datagram = connection.read_datagram() => {
                 let bytes = datagram.map_err(|error| error.to_string())?;
                 let Ok(datagram) = CursorDatagram::decode(&bytes) else {
@@ -300,8 +333,20 @@ mod tests {
         }
     }
 
+    /// A period longer than any timeout in these tests: no tick can fire while
+    /// a move is in flight.
+    const NO_TICKS: Duration = Duration::from_secs(3_600);
+
     /// A loopback listener that serves only the presence ALPN.
     async fn listener(hub: Arc<PresenceHub>) -> (std::net::SocketAddr, String) {
+        listener_ticking(hub, DATAGRAM_TICK).await
+    }
+
+    /// The same listener with `period` between datagram ticks.
+    async fn listener_ticking(
+        hub: Arc<PresenceHub>,
+        period: Duration,
+    ) -> (std::net::SocketAddr, String) {
         let identity = QuicIdentity::generate().unwrap();
         let config = identity
             .server_config_with_alpns(&[
@@ -316,7 +361,7 @@ mod tests {
                 let hub = hub.clone();
                 tokio::spawn(async move {
                     if let Ok(connection) = incoming.await {
-                        let _ = serve(hub, connection).await;
+                        let _ = serve_ticking(hub, connection, period).await;
                     }
                 });
             }
@@ -348,7 +393,7 @@ mod tests {
             ..Principal::default()
         });
         hub.update_cursor(&alice.participant_id, at(0.25, 0.75));
-        let (addr, pin) = listener(hub.clone()).await;
+        let (addr, pin) = listener_ticking(hub.clone(), NO_TICKS).await;
         let connection = connect(addr, &pin).await;
         let (mut send, receive) = connection.open_bi().await.unwrap();
         let ticket = hub.mint_datagram_ticket(&bob.participant_id);
@@ -417,8 +462,9 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(seen, "the uplink record was applied");
-        // Leading edge: after a quiet period, a lone move goes out at once
-        // rather than at the next 33 ms tick (loopback: well under a tick).
+        // Leading edge, proven without a clock: this connection has no tick to
+        // run, so a datagram can only arrive if the move sent it at once. A
+        // sender that waited for its next tick would deliver nothing here.
         tokio::time::sleep(Duration::from_millis(120)).await;
         while tokio::time::timeout(Duration::from_millis(5), connection.read_datagram())
             .await
@@ -429,11 +475,12 @@ mod tests {
             let x = 0.1 + f64::from(i) * 0.1;
             let moved = Instant::now();
             hub.update_cursor(&alice.participant_id, at(x, 0.5));
+            let mut arrived = false;
             for _ in 0..20 {
                 let bytes =
                     tokio::time::timeout(Duration::from_secs(2), connection.read_datagram())
                         .await
-                        .unwrap()
+                        .expect("a move has to send without a tick: the leading edge is gone")
                         .unwrap();
                 let d = CursorDatagram::decode(&bytes).unwrap();
                 if d.records
@@ -441,17 +488,17 @@ mod tests {
                     .any(|r| r.slot == alice_slot && (r.position().0 - x).abs() < 1e-3)
                 {
                     lags.push(moved.elapsed());
+                    arrived = true;
                     break;
                 }
             }
+            assert!(arrived, "move {i} never left without a tick");
             tokio::time::sleep(Duration::from_millis(80)).await;
         }
-        assert_eq!(lags.len(), 5);
-        let worst = lags.iter().max().unwrap();
-        assert!(
-            *worst < Duration::from_millis(25),
-            "leading-edge sends: {lags:?}"
-        );
+        // Loopback latency is recorded, not asserted: a shared runner can stall
+        // this task for hundreds of milliseconds while the server sends in
+        // under a millisecond.
+        println!("leading-edge sends: {lags:?}");
         connection.close(0u32.into(), b"");
     }
 

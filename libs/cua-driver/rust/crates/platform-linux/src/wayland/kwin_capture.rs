@@ -1271,6 +1271,48 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_decoding_preserves_distinct_pixels_across_padded_rows() {
+        // Nonuniform rows catch pixel/row duplication and padding interpreted as pixels.
+        // Low alpha also exercises rounded, rather than exactly divisible, unpremultiplication.
+        let pixels: [[u8; 4]; 4] = [
+            [64, 32, 16, 128],
+            [1, 2, 3, 7],
+            [9, 80, 170, 255],
+            [0, 0, 0, 0],
+        ];
+        let expected: [[u8; 4]; 4] = [
+            [128, 64, 32, 128],
+            [36, 73, 109, 7],
+            [9, 80, 170, 255],
+            [0, 0, 0, 0],
+        ];
+        for format in [6, 18] {
+            let mut data = Vec::new();
+            for row in pixels.chunks_exact(2) {
+                for pixel in row {
+                    let encoded = if format == 6 {
+                        ((u32::from(pixel[3]) << 24)
+                            | (u32::from(pixel[0]) << 16)
+                            | (u32::from(pixel[1]) << 8)
+                            | u32::from(pixel[2]))
+                        .to_ne_bytes()
+                    } else {
+                        *pixel
+                    };
+                    data.extend_from_slice(&encoded);
+                }
+                data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+            }
+            let png = decode(2, 2, 12, format, &data).unwrap();
+            let image = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!(image.dimensions(), (2, 2));
+            for (actual, expected) in image.pixels().zip(expected) {
+                assert_eq!(actual.0, expected, "Qt format {format}");
+            }
+        }
+    }
+
+    #[test]
     fn screenshot_decoding_handles_padding_alpha_and_invalid_layouts() {
         for format in [4, 5, 6, 16, 17, 18] {
             let alpha = if matches!(format, 4 | 16) { 255 } else { 85 };

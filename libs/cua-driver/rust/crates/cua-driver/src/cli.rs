@@ -5833,7 +5833,7 @@ fn diagnose_config_paths_section() -> String {
     let paths: &[(&str, String)] = &[
         (
             "user data dir",
-            format!("{home}/{}", crate::bundle::user_home_subdirectory()),
+            format!("{home}/.{}", crate::bundle::state_namespace()),
         ),
         (
             "config cache",
@@ -5841,10 +5841,7 @@ fn diagnose_config_paths_section() -> String {
         ),
         (
             "telemetry id",
-            format!(
-                "{home}/{}/.telemetry_id",
-                crate::bundle::user_home_subdirectory()
-            ),
+            format!("{home}/.{}/.telemetry_id", crate::bundle::state_namespace()),
         ),
         (
             "updater plist",

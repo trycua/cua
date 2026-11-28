@@ -26,7 +26,9 @@
 //!   script), plus a hint to run `cua-driver diagnose` for a full
 //!   TCC / cdhash / install layout dump.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 
 /// Probe outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,11 +219,10 @@ fn probe_install_layout() -> Probe {
 /// release dirs so the user can sanity-check
 /// `CUA_DRIVER_RS_KEEP_VERSIONS` is doing the right thing. Renamed from
 /// `.cua-driver-rs/` in v0.2.16 to match the install-path rename (PR #1644).
-fn probe_home_dir(home: Option<&Path>) -> Probe {
-    let Some(home) = home else {
+fn probe_home_dir(cua_home: Option<&Path>) -> Probe {
+    let Some(cua_home) = cua_home else {
         return Probe::warn("home dir", "neither HOME nor USERPROFILE set");
     };
-    let cua_home = home.join(crate::bundle::user_home_subdirectory());
     if !cua_home.exists() {
         return Probe::warn(
             "home dir",
@@ -271,13 +272,6 @@ fn probe_telemetry(status: &crate::telemetry::TelemetryStatus) -> Probe {
             format!("disabled via {} (installation ID retained)", status.source),
         )
     }
-}
-
-/// `$HOME` on Unix, `%USERPROFILE%` on Windows.
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
 }
 
 // ── Platform-specific probe entry-points ──────────────────────────────────
@@ -637,7 +631,7 @@ fn append_platform_probes(report: &mut Report) {
 pub fn run(fix: bool) -> Report {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut report = assemble(
-        home_dir().as_deref(),
+        crate::bundle::app_paths().home.as_deref(),
         &crate::telemetry::status(),
         append_platform_probes,
     );
@@ -684,7 +678,8 @@ fn append_install_hygiene_probes(report: &mut Report, fix: bool) {
     let executable = active
         .join("Contents/MacOS")
         .join(crate::bundle::cli_name());
-    let rows = home_dir()
+    let rows = crate::bundle::app_paths()
+        .user_home
         .ok_or_else(|| "HOME is not set".to_owned())
         .and_then(|home| copies::read_tcc_rows(&home, &copies::run_program));
     report.push(copies::permission_row_probe(&executable, rows, |bundle| {
@@ -694,14 +689,14 @@ fn append_install_hygiene_probes(report: &mut Report, fix: bool) {
 
 /// The cross-platform probes over explicit host inputs, then `platform`'s.
 fn assemble(
-    home: Option<&Path>,
+    cua_home: Option<&Path>,
     telemetry: &crate::telemetry::TelemetryStatus,
     platform: impl FnOnce(&mut Report),
 ) -> Report {
     let mut report = Report::default();
     report.push(probe_version());
     report.push(probe_install_layout());
-    report.push(probe_home_dir(home));
+    report.push(probe_home_dir(cua_home));
     report.push(probe_telemetry(telemetry));
     platform(&mut report);
     report

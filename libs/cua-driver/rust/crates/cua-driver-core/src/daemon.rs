@@ -149,30 +149,6 @@ pub fn request_daemon_metadata(socket_path: &str) -> anyhow::Result<DaemonMetada
     .map_err(Into::into)
 }
 
-/// Return the platform socket or pipe path for an installed-product namespace.
-/// The executable chooses its release/local namespace; imported SDKs use the
-/// release namespace unless the caller supplies an explicit path.
-pub fn socket_path_for_namespace(namespace: &str) -> String {
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/Library/Caches/{namespace}/{namespace}.sock")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.cache/{namespace}/{namespace}.sock")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        format!(r"\\.\pipe\{namespace}")
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        format!("/tmp/{namespace}.sock")
-    }
-}
-
 /// Probe whether a daemon is listening on `socket_path`.
 ///
 /// On Windows this uses `WaitNamedPipeW` without consuming a pipe instance.
@@ -239,29 +215,6 @@ pub enum DaemonPresence {
 /// its socket but not yet started accepting reads as `Starting`.
 const PRESENCE_REPLY_DEADLINE: Duration = Duration::from_secs(2);
 
-/// The lock a standalone daemon holds on `socket_path` from launch until it
-/// exits. The kernel drops it when the daemon dies.
-pub fn daemon_lock_path(socket_path: &str) -> std::path::PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        // `%LOCALAPPDATA%` stays the same across a user's sessions where
-        // `%TEMP%` may not. The file name is a fixed-length digest of the
-        // uppercased name, because Windows compares pipe names
-        // case-insensitively and a name can outgrow a path component.
-        use sha2::Digest as _;
-        let base = std::env::var_os("LOCALAPPDATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        let digest = sha2::Sha256::digest(socket_path.to_uppercase().as_bytes());
-        base.join("cua-driver-pipe-locks")
-            .join(format!("{digest:x}.lock"))
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::path::PathBuf::from(format!("{socket_path}.lock"))
-    }
-}
-
 /// Read the daemon's presence on `socket_path` from its answer, its lock and
 /// its socket file together. The lock is tried and released at once, never
 /// held, so a launch waiting on it is delayed by an instant at most.
@@ -276,7 +229,7 @@ pub fn probe_presence(socket_path: &str) -> DaemonPresence {
             },
         };
     }
-    let lock_path = daemon_lock_path(socket_path);
+    let lock_path = crate::paths::AppPaths::pipe_lock_for(socket_path);
     if lock_is_held(&lock_path) {
         return DaemonPresence::Starting {
             lock_held: lock_path,
@@ -393,8 +346,8 @@ pub fn send_request(socket_path: &str, _request: &DaemonRequest) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use super::{
-        current_daemon_metadata, socket_path_for_namespace, DaemonClientKind, DaemonRequest,
-        DaemonResponse, ToolObservationOrigin, DAEMON_OVERHEAD_ALLOWANCE, REPLY_DEADLINE,
+        current_daemon_metadata, DaemonClientKind, DaemonRequest, DaemonResponse,
+        ToolObservationOrigin, DAEMON_OVERHEAD_ALLOWANCE, REPLY_DEADLINE,
     };
     use std::time::Duration;
 
@@ -414,7 +367,7 @@ mod tests {
 
     #[test]
     fn socket_path_keeps_the_selected_namespace() {
-        let path = socket_path_for_namespace("cua-driver-test");
+        let path = crate::paths::AppPaths::for_namespace("cua-driver-test").socket;
         assert!(path.contains("cua-driver-test"));
     }
 

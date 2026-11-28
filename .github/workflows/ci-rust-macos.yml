@@ -91,14 +91,14 @@ jobs:
       - name: Run cua-driver-testkit unit tests on macOS
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-testkit --lib
-      - name: Run macOS protocol schema, status pid-file and startup authorization contracts
+      - name: Run macOS protocol schema, status pid-file, app path and startup authorization contracts
         working-directory: libs/cua-driver/rust
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
           CUA_TEST_DRIVER_STDERR: "1"
         run: |
           cargo build --locked -p cua-driver
-          cargo test --locked -p cua-driver --test protocol_schema_test --test status_pid_file_cli_test --test permission_policy_startup_test
+          cargo test --locked -p cua-driver --test protocol_schema_test --test status_pid_file_cli_test --test app_paths_parity_test --test permission_policy_startup_test
       # The whole binary suite, so a new test module there is never left out.
       - name: Run cua-driver binary unit tests on macOS
         working-directory: libs/cua-driver/rust

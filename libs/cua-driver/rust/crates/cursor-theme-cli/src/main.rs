@@ -96,17 +96,33 @@ fn usage() -> &'static str {
   cua-driver cursor-theme uninstall <theme-id>"
 }
 
+#[derive(Debug)]
+struct UsageError(String);
+
+impl std::fmt::Display for UsageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for UsageError {}
+
+fn usage_error(message: impl Into<String>) -> anyhow::Error {
+    UsageError(message.into()).into()
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("cua-driver cursor-theme: {error:#}");
-        std::process::exit(1);
+        std::process::exit(if error.is::<UsageError>() { 64 } else { 1 });
     }
 }
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
+    validate_args(&args)?;
     let Some(command) = args.first().map(String::as_str) else {
-        bail!(usage());
+        return Err(usage_error(usage()));
     };
     match command {
         "validate" => {
@@ -175,7 +191,7 @@ fn run() -> Result<()> {
             }
         }
         "uninstall" => {
-            let id = args.get(1).ok_or_else(|| anyhow!("missing theme id"))?;
+            let id = args.get(1).ok_or_else(|| usage_error("missing theme id"))?;
             if uninstall_theme(id)? {
                 println!("uninstalled {id}");
             } else {
@@ -183,7 +199,59 @@ fn run() -> Result<()> {
             }
         }
         "--help" | "-h" | "help" => println!("{}", usage()),
-        other => bail!("unknown cursor-theme command `{other}`\n\n{}", usage()),
+        other => {
+            return Err(usage_error(format!(
+                "unknown cursor-theme command `{other}`\n\n{}",
+                usage()
+            )))
+        }
+    }
+    Ok(())
+}
+
+fn validate_args(args: &[String]) -> Result<()> {
+    let command = args
+        .first()
+        .map(String::as_str)
+        .ok_or_else(|| usage_error(usage()))?;
+    let (flags, output, positional): (&[&str], bool, usize) = match command {
+        "validate" => (&["--development"], false, 1),
+        "build" => (&["--development"], true, 1),
+        "inspect" => (&["--json"], false, 1),
+        "preview" => (&[], true, 1),
+        "install" | "uninstall" => (&[], false, 1),
+        "list" => (&["--json"], false, 0),
+        "--help" | "-h" | "help" => (&[], false, 0),
+        other => {
+            return Err(usage_error(format!(
+                "unknown cursor-theme command `{other}`\n\n{}",
+                usage()
+            )))
+        }
+    };
+    let mut seen = BTreeSet::new();
+    let mut paths = 0;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if flags.contains(&arg) || (output && arg == "--output") {
+            if !seen.insert(arg) {
+                return Err(usage_error(format!("duplicate option {arg}")));
+            }
+            if arg == "--output" {
+                args.get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| usage_error("missing value for --output"))?;
+                index += 1;
+            }
+        } else if arg.starts_with('-') || paths == positional {
+            return Err(usage_error(format!(
+                "unknown cursor-theme {command} argument `{arg}`"
+            )));
+        } else {
+            paths += 1;
+        }
+        index += 1;
     }
     Ok(())
 }
@@ -192,18 +260,18 @@ fn required_path(args: &[String], index: usize, label: &str) -> Result<PathBuf> 
     args.get(index)
         .filter(|value| !value.starts_with('-'))
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("missing {label}"))
+        .ok_or_else(|| usage_error(format!("missing {label}")))
 }
 
 fn flag_path(args: &[String], flag: &str) -> Result<PathBuf> {
     let index = args
         .iter()
         .position(|value| value == flag)
-        .ok_or_else(|| anyhow!("missing required {flag}"))?;
+        .ok_or_else(|| usage_error(format!("missing required {flag}")))?;
     args.get(index + 1)
         .filter(|value| !value.starts_with('-'))
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("missing value for {flag}"))
+        .ok_or_else(|| usage_error(format!("missing value for {flag}")))
 }
 
 fn read_source_archive(path: &Path) -> Result<SourceArchive> {

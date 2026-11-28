@@ -103,6 +103,11 @@ impl From<VisualParseError> for CliError {
 
 pub fn run(args: &[String]) {
     if let Err(error) = run_inner(args) {
+        let exit_code = if error.code == "invalid_arguments" {
+            64
+        } else {
+            1
+        };
         let envelope = ErrorEnvelope { ok: false, error };
         println!(
             "{}",
@@ -110,7 +115,7 @@ pub fn run(args: &[String]) {
                 r#"{"ok":false,"error":{"code":"internal_error","message":"serialize perception error","retryable":false}}"#.to_owned()
             })
         );
-        std::process::exit(1);
+        std::process::exit(exit_code);
     }
 }
 
@@ -238,10 +243,13 @@ fn run_inner(args: &[String]) -> Result<(), CliError> {
 
 fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf), CliError> {
     if args.first().map(String::as_str) != Some("parse") {
-        return Err(CliError::new(
-            "invalid_arguments",
-            "usage: cua-driver perception parse --image <png> --capture <capture.json> --json",
-        ));
+        let usage =
+            "usage: cua-driver perception parse --image <png> --capture <capture.json> --json";
+        let message = match args.first() {
+            Some(command) => format!("unknown perception command {command:?}; {usage}"),
+            None => usage.to_owned(),
+        };
+        return Err(CliError::new("invalid_arguments", message));
     }
     let mut image = None;
     let mut capture = None;

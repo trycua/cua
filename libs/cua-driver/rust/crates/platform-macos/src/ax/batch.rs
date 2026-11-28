@@ -272,21 +272,30 @@ impl NodeAttributes {
         is_failed_read(error)
     }
 
-    /// [`copy_children`]: every child element, retained; release each.
-    pub(crate) unsafe fn children(&self) -> Vec<AXUIElementRef> {
+    /// Every child element, retained; release each. `None` when the
+    /// application failed to answer the read, so the element's children are
+    /// unknown rather than absent.
+    pub(crate) unsafe fn children(&self) -> Option<Vec<AXUIElementRef>> {
         match *self {
-            NodeAttributes::Single(element) => copy_children(element),
-            NodeAttributes::Unanswered => Vec::new(),
+            NodeAttributes::Single(element) => match copy_children_checked(element) {
+                Ok(children) => Some(children),
+                Err(error) if is_failed_read(error) => None,
+                Err(_) => Some(Vec::new()),
+            },
+            NodeAttributes::Unanswered => None,
             NodeAttributes::Batch(_) => {
+                if self.read_failed(NodeAttr::Children) {
+                    return None;
+                }
                 let Some(value) = self.raw(NodeAttr::Children) else {
-                    return Vec::new();
+                    return Some(Vec::new());
                 };
                 if CFGetTypeID(value) != CFArray::<CFTypeRef>::type_id() {
-                    return Vec::new();
+                    return Some(Vec::new());
                 }
                 let array = value as CFArrayRef;
                 let ax_type_id = AXUIElementGetTypeID();
-                (0..CFArrayGetCount(array))
+                let children = (0..CFArrayGetCount(array))
                     .filter_map(|index| {
                         let item = CFArrayGetValueAtIndex(array, index) as CFTypeRef;
                         (!item.is_null() && CFGetTypeID(item) == ax_type_id).then(|| {
@@ -294,7 +303,8 @@ impl NodeAttributes {
                             item as AXUIElementRef
                         })
                     })
-                    .collect()
+                    .collect();
+                Some(children)
             }
         }
     }

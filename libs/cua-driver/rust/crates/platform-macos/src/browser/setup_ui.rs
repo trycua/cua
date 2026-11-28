@@ -2077,6 +2077,7 @@ mod tests {
             nodes,
             truncated: false,
             depth_truncated: false,
+            children_unread: false,
             walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
             ax_enumeration: None,
@@ -2411,6 +2412,7 @@ mod tests {
             nodes: Vec::new(),
             truncated: true,
             depth_truncated: false,
+            children_unread: false,
             walk: cua_driver_core::walk_budget::WalkOutcome::timed_out(
                 1000,
                 std::time::Duration::from_millis(1000),

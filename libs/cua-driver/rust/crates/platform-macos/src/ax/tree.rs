@@ -231,6 +231,9 @@ pub struct TreeWalkResult {
     pub truncated: bool,
     /// True when nodes past `max_depth` were omitted, independently of budget `truncated`.
     pub depth_truncated: bool,
+    /// True when some node's children were not walked although the walk went
+    /// on: its `AXChildren` read failed, or its closed menu was collapsed.
+    pub children_unread: bool,
     /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
     pub walk: WalkOutcome,
     /// Whether the requested `window_id` actually resolved to an AX surface,
@@ -247,6 +250,20 @@ pub struct TreeWalkResult {
     /// application's top level (issue #4039). Diagnostic only: the walk
     /// stays empty.
     pub ax_enumeration: Option<AXEnumerationSummary>,
+}
+
+impl TreeWalkResult {
+    /// Whether `nodes` holds every element the walked surface publishes: the
+    /// requested window resolved and the walk gave nothing up to its budget,
+    /// its depth cap, a failed child read or a collapsed menu.
+    pub fn complete(&self) -> bool {
+        self.window_scope
+            .as_ref()
+            .is_none_or(WindowScope::is_matched)
+            && !self.truncated
+            && !self.depth_truncated
+            && !self.children_unread
+    }
 }
 
 /// Counts read at the application AX element by a window-scoped walk.
@@ -363,6 +380,7 @@ fn walk_tree_with_web_content(
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
     let mut depth_truncated = false;
+    let mut children_unread = false;
     let mut window_scope: Option<WindowScope> = None;
     let mut ax_enumeration: Option<AXEnumerationSummary> = None;
 
@@ -374,6 +392,7 @@ fn walk_tree_with_web_content(
                 nodes,
                 truncated: false,
                 depth_truncated: false,
+                children_unread: false,
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
@@ -469,6 +488,7 @@ fn walk_tree_with_web_content(
                 &mut index_counter,
                 &mut budget,
                 &mut depth_truncated,
+                &mut children_unread,
                 max_depth,
                 include_web_content,
             );
@@ -499,6 +519,7 @@ fn walk_tree_with_web_content(
         nodes,
         truncated: walk.truncated(),
         depth_truncated,
+        children_unread,
         walk,
         window_scope,
         ax_enumeration,
@@ -704,6 +725,7 @@ unsafe fn walk_element(
     counter: &mut usize,
     budget: &mut WalkBudget,
     depth_truncated: &mut bool,
+    children_unread: &mut bool,
     max_depth: usize,
     include_web_content: bool,
 ) {
@@ -760,7 +782,10 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
-        let children = attrs.children();
+        let children = attrs.children().unwrap_or_else(|| {
+            *children_unread = true;
+            Vec::new()
+        });
         drop(attrs);
         let shares = SiblingShares::reserve(budget, in_web_content, children.len());
         for (position, child) in children.into_iter().enumerate() {
@@ -776,6 +801,7 @@ unsafe fn walk_element(
                 counter,
                 budget,
                 depth_truncated,
+                children_unread,
                 max_depth,
                 include_web_content,
             );
@@ -835,7 +861,10 @@ unsafe fn walk_element(
         } else {
             (depth + 1, walk_depth + 1)
         };
-        let children = attrs.children();
+        let children = attrs.children().unwrap_or_else(|| {
+            *children_unread = true;
+            Vec::new()
+        });
         drop(attrs);
         let shares = SiblingShares::reserve(budget, in_web_content, children.len());
         for (position, child) in children.into_iter().enumerate() {
@@ -851,6 +880,7 @@ unsafe fn walk_element(
                 counter,
                 budget,
                 depth_truncated,
+                children_unread,
                 max_depth,
                 include_web_content,
             );
@@ -990,10 +1020,14 @@ unsafe fn walk_element(
     lines.push((depth, line));
     nodes.push(node);
     if collapse_here {
+        *children_unread = true;
         return;
     }
 
-    let children = attrs.children();
+    let children = attrs.children().unwrap_or_else(|| {
+        *children_unread = true;
+        Vec::new()
+    });
     drop(attrs);
     let shares = SiblingShares::reserve(budget, in_web_content, children.len());
     for (position, child) in children.into_iter().enumerate() {
@@ -1009,6 +1043,7 @@ unsafe fn walk_element(
             counter,
             budget,
             depth_truncated,
+            children_unread,
             max_depth,
             include_web_content,
         );
@@ -1650,6 +1685,40 @@ mod tests {
             "AXTextField",
         ] {
             assert!(!role_exposes_link_url(role), "{role}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod completeness_tests {
+    use super::{TreeWalkResult, WalkBudget, WindowScope};
+
+    #[test]
+    fn only_a_resolved_walk_that_gave_nothing_up_is_complete() {
+        fn result(scope: Option<WindowScope>) -> TreeWalkResult {
+            TreeWalkResult {
+                tree_markdown: String::new(),
+                nodes: Vec::new(),
+                truncated: false,
+                depth_truncated: false,
+                children_unread: false,
+                walk: WalkBudget::nodes_only(1).outcome(),
+                window_scope: scope,
+                ax_enumeration: None,
+            }
+        }
+        assert!(result(Some(WindowScope::Matched)).complete());
+        assert!(result(None).complete());
+        assert!(!result(Some(WindowScope::NotFound)).complete());
+        let partial: [fn(&mut TreeWalkResult); 3] = [
+            |r| r.truncated = true,
+            |r| r.depth_truncated = true,
+            |r| r.children_unread = true,
+        ];
+        for cut in partial {
+            let mut walk = result(Some(WindowScope::Matched));
+            cut(&mut walk);
+            assert!(!walk.complete());
         }
     }
 }

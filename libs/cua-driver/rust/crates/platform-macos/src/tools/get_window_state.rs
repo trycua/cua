@@ -714,11 +714,9 @@ impl Tool for GetWindowStateTool {
             _ => elements_json,
         };
         let filtered_element_count = elements_json.len();
-        // The structured array intentionally contains only actionable nodes,
-        // and AX child reads can fail independently of the element/depth caps.
-        // Until the walker exposes a proof over the projected search domain,
-        // absence must remain unknown rather than being claimed complete.
-        let elements_complete = false;
+        // Describes the unprojected walk, as on Windows: a `query` projection
+        // narrows the rows returned, not what the walk saw.
+        let elements_complete = scope_matched && tree_result.as_ref().is_some_and(|r| r.complete());
 
         let mut structured = serde_json::json!({
             "window_id": window_id,

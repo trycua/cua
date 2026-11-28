@@ -220,7 +220,7 @@ unsafe fn read_window(pid: i32, window: AXUIElementRef) -> Option<u64> {
         if is_window {
             attrs.string(NodeAttr::Title).hash(&mut hasher);
         }
-        let children = attrs.children();
+        let children = attrs.children().unwrap_or_default();
         NodeFacts {
             subrole: attrs.string(NodeAttr::Subrole),
             value: attrs

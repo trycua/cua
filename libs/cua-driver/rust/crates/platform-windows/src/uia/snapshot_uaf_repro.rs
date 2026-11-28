@@ -464,7 +464,80 @@ fn unpublished_payload_releases_its_walker_retain() {
     assert_eq!(hits.load(Ordering::SeqCst), 0);
 }
 
+#[test]
+fn walk_references_survive_clone_and_transfer_once_into_snapshot() {
+    use crate::uia::UiaNode;
+    use cua_driver_core::snapshot_store::SnapshotPayload;
+    use windows::Win32::UI::Accessibility::IAccessible;
+
+    for kind in [SnapshotKind::Uia, SnapshotKind::Msaa] {
+        let uaf_hits = Box::leak(Box::new(AtomicUsize::new(0)));
+        let ptr = make_fake(uaf_hits);
+        let retained = unsafe {
+            match kind {
+                SnapshotKind::Uia => RetainedElement::from_uia(
+                    IUIAutomationElement::from_raw(ptr as *mut _),
+                    (10, 20),
+                    None,
+                ),
+                SnapshotKind::Msaa => RetainedElement::from_msaa(
+                    IAccessible::from_raw(ptr as *mut _),
+                    (10, 20),
+                    None,
+                    Some(43),
+                ),
+            }
+        };
+        let node = UiaNode {
+            element_index: Some(0),
+            control_type: "Button".into(),
+            name: None,
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions: vec!["invoke".into()],
+            enabled: Some(true),
+            selected: None,
+            is_password: None,
+            element_ptr: ptr,
+            retained_element: Some(retained),
+            center_x: 10,
+            center_y: 20,
+            rect: None,
+            msaa_role: (kind == SnapshotKind::Msaa).then_some(43),
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        };
+        let refs = || unsafe { (*(ptr as *const FakeObj)).refcount.load(Ordering::SeqCst) };
+        let mut cloned = vec![node.clone()];
+        assert_eq!(refs(), 2);
+        drop(node);
+        assert_eq!(refs(), 1, "abandoned walk must release its own reference");
+        let snapshot = UiaSnapshot::adopt_nodes(&mut cloned);
+        assert_eq!(refs(), 1, "adoption must transfer without AddRef");
+        assert_eq!(cloned[0].element_ptr, 0);
+        drop(cloned);
+        assert_eq!(refs(), 1, "walk drop must not release an adopted reference");
+        let guard = snapshot.retain(0).unwrap();
+        assert_eq!(guard.kind, kind);
+        assert_eq!(guard.center, (10, 20));
+        drop(snapshot);
+        assert_eq!(refs(), 1, "action guard must survive snapshot replacement");
+        drop(guard);
+        assert_eq!(refs(), 0);
+        assert_eq!(uaf_hits.load(Ordering::SeqCst), 0);
+    }
+}
+
 fn walker_node(element_index: Option<usize>, element_ptr: usize) -> crate::uia::UiaNode {
+    let retained = unsafe {
+        RetainedElement::from_uia(
+            IUIAutomationElement::from_raw(element_ptr as *mut _),
+            (0, 0),
+            None,
+        )
+    };
     crate::uia::UiaNode {
         element_index,
         control_type: "Text".to_owned(),
@@ -477,6 +550,7 @@ fn walker_node(element_index: Option<usize>, element_ptr: usize) -> crate::uia::
         selected: None,
         is_password: None,
         element_ptr,
+        retained_element: Some(retained),
         center_x: 0,
         center_y: 0,
         rect: None,
@@ -491,9 +565,9 @@ fn refcount(ptr: usize) -> isize {
     unsafe { (*(ptr as *const FakeObj)).refcount.load(Ordering::SeqCst) }
 }
 
-/// #6867: content-only rows carry a walker reference too. The snapshot
-/// hand-off must release those, and keep exactly one reference per indexed
-/// element until the snapshot drops.
+/// #6867: a content-only row that holds a walker reference releases it when
+/// the walk drops, and the snapshot keeps exactly one reference per indexed
+/// element until it drops.
 #[test]
 fn snapshot_handoff_releases_content_only_walker_references() {
     let hits = Box::leak(Box::new(AtomicUsize::new(0)));
@@ -501,9 +575,9 @@ fn snapshot_handoff_releases_content_only_walker_references() {
     let content = make_fake(hits);
     let mut nodes = vec![walker_node(Some(0), indexed), walker_node(None, content)];
 
-    let snapshot = UiaSnapshot::from_nodes(&mut nodes, SnapshotKind::Uia);
+    let snapshot = UiaSnapshot::adopt_nodes(&mut nodes);
+    drop(nodes);
 
-    assert!(nodes.iter().all(|node| node.element_ptr == 0));
     assert_eq!(refcount(content), 0);
     assert_eq!(refcount(indexed), 1);
     assert_eq!(snapshot.elements.len(), 1);

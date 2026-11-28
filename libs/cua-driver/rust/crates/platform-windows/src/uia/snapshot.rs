@@ -37,6 +37,41 @@ impl RetainedElement {
 }
 
 impl RetainedElement {
+    pub(crate) fn from_uia(
+        element: IUIAutomationElement,
+        center: (i32, i32),
+        rect: Option<(i32, i32, i32, i32)>,
+    ) -> Self {
+        let ptr = element.as_raw() as usize;
+        std::mem::forget(element);
+        Self {
+            ptr,
+            kind: SnapshotKind::Uia,
+            center,
+            rect,
+            msaa_role: None,
+            read_while_minimized: false,
+        }
+    }
+
+    pub(crate) fn from_msaa(
+        element: IAccessible,
+        center: (i32, i32),
+        rect: Option<(i32, i32, i32, i32)>,
+        role: Option<i32>,
+    ) -> Self {
+        let ptr = element.as_raw() as usize;
+        std::mem::forget(element);
+        Self {
+            ptr,
+            kind: SnapshotKind::Msaa,
+            center,
+            rect,
+            msaa_role: role,
+            read_while_minimized: false,
+        }
+    }
+
     pub fn as_ptr(&self) -> usize {
         self.ptr
     }
@@ -55,8 +90,9 @@ impl RetainedElement {
         result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
     }
 
-    /// The element's live `IsEnabled`. `None` for an MSAA element or when UIA
-    /// cannot read it.
+    /// The element's live effective `IsEnabled`, which a disabled ancestor in
+    /// the same window forces false (`super::live_effective_enabled`). `None`
+    /// for an MSAA element or when UIA cannot read the element's own state.
     pub fn element_is_enabled(&self) -> Option<bool> {
         if !self.is_uia() || self.ptr == 0 {
             return None;
@@ -64,9 +100,7 @@ impl RetainedElement {
         let element = std::mem::ManuallyDrop::new(unsafe {
             IUIAutomationElement::from_raw(self.ptr as *mut _)
         });
-        unsafe { element.CurrentIsEnabled() }
-            .ok()
-            .map(|value| value.as_bool())
+        unsafe { super::live_effective_enabled(&element) }
     }
 
     pub fn element_has_keyboard_focus(&self) -> Option<bool> {
@@ -137,28 +171,23 @@ pub struct UiaSnapshot {
 }
 
 impl UiaSnapshot {
-    /// Take every walker reference out of `nodes`. Indexed nodes become the
-    /// snapshot's elements; the rest (content-only rows) are released here.
-    /// Each `element_ptr` is zeroed, so the nodes no longer own anything.
-    pub fn from_nodes(nodes: &mut [UiaNode], kind: SnapshotKind) -> Self {
-        let mut elements = Vec::new();
-        for node in nodes.iter_mut() {
-            let ptr = std::mem::take(&mut node.element_ptr);
-            let element = RetainedElement {
-                ptr,
-                kind,
-                center: (node.center_x, node.center_y),
-                rect: node.rect,
-                msaa_role: node.msaa_role,
-                read_while_minimized: false,
-            };
-            if node.element_index.is_some() {
-                elements.push(element);
-            } else {
-                drop(element);
-            }
+    /// Transfer the walk's actionable references into a snapshot. The node
+    /// guards release every reference that is not adopted, including on error.
+    pub fn adopt_nodes(nodes: &mut [UiaNode]) -> Self {
+        Self {
+            elements: nodes
+                .iter_mut()
+                .filter(|node| node.element_index.is_some())
+                .map(|node| {
+                    let retained = node
+                        .retained_element
+                        .take()
+                        .expect("actionable walk node must own its COM reference");
+                    node.element_ptr = 0;
+                    retained
+                })
+                .collect(),
         }
-        Self { elements }
     }
 
     pub fn with_read_while_minimized(mut self, minimized: bool) -> Self {

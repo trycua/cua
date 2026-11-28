@@ -39,6 +39,8 @@ use x11rb::protocol::xproto::*;
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
+use super::Delivered;
+
 pub(crate) const XBUTTON_LEFT: u8 = 1;
 pub(crate) const XBUTTON_MIDDLE: u8 = 2;
 pub(crate) const XBUTTON_RIGHT: u8 = 3;
@@ -593,31 +595,45 @@ pub(crate) fn fake_key(
     Ok(())
 }
 
-pub(crate) fn press_modifiers(
+fn press(
+    held: &mut Delivered<'_>,
     conn: &RustConnection,
+    root: Window,
+    kind: u8,
+    detail: u8,
+) -> Result<(), TargetedInputError> {
+    held.press(kind, detail, || {
+        conn.xtest_fake_input(kind, detail, 0, root, 0, 0, 0)
+    })
+    .map_err(failed)?;
+    Ok(())
+}
+
+/// Press `modifiers`, all resolved before the first goes out. Dropping the
+/// result releases whatever is still held.
+pub(crate) fn press_modifiers<'c>(
+    conn: &'c RustConnection,
     root: Window,
     keymap: &KeyboardMap,
     modifiers: &[String],
-) -> Result<Vec<u8>, TargetedInputError> {
-    let mut held = Vec::new();
-    for name in modifiers {
-        if let Some((code, _)) = modifier_keysym(name).and_then(|sym| keymap.lookup(sym)) {
-            fake_key(conn, true, code, root)?;
-            held.push(code);
-        }
+) -> Result<Delivered<'c>, TargetedInputError> {
+    let codes = modifiers
+        .iter()
+        .map(|name| {
+            let sym = modifier_keysym(name).ok_or_else(|| {
+                TargetedInputError::Unsupported(format!("unsupported modifier {name}"))
+            })?;
+            keymap
+                .lookup(sym)
+                .map(|(code, _)| code)
+                .ok_or_else(|| failed(format!("no keycode maps to {name}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut held = Delivered::new(conn);
+    for code in codes {
+        press(&mut held, conn, root, KEY_PRESS_EVENT, code)?;
     }
     Ok(held)
-}
-
-pub(crate) fn release_keys(
-    conn: &RustConnection,
-    root: Window,
-    held: &[u8],
-) -> Result<(), TargetedInputError> {
-    for code in held.iter().rev() {
-        fake_key(conn, false, *code, root)?;
-    }
-    Ok(())
 }
 
 pub(crate) fn key_code(keymap: &KeyboardMap, key: &str) -> Result<(u8, bool), TargetedInputError> {
@@ -641,15 +657,11 @@ pub(crate) fn tap(
     } else {
         None
     };
-    if let Some(shift) = shift_code {
-        fake_key(conn, true, shift, root)?;
+    let mut held = Delivered::new(conn);
+    for code in shift_code.into_iter().chain([code]) {
+        press(&mut held, conn, root, KEY_PRESS_EVENT, code)?;
     }
-    fake_key(conn, true, code, root)?;
-    fake_key(conn, false, code, root)?;
-    if let Some(shift) = shift_code {
-        fake_key(conn, false, shift, root)?;
-    }
-    Ok(())
+    held.release_held().map_err(failed)
 }
 
 /// Commit composed text through XTest into the focused window. Characters
@@ -862,7 +874,7 @@ fn pointer_foreground(
             count,
             modifiers,
         } => {
-            let held = press_modifiers(conn, root, &keymap, modifiers)?;
+            let mut held = press_modifiers(conn, root, &keymap, modifiers)?;
             let button = x_button(*button);
             for index in 0..(*count).max(1) {
                 fake_button(conn, true, button, root)?;
@@ -874,7 +886,7 @@ fn pointer_foreground(
                     std::thread::sleep(Duration::from_millis(super::DOUBLE_CLICK_DELAY_MS));
                 }
             }
-            release_keys(conn, root, &held)?;
+            held.release_held().map_err(failed)?;
         }
         PointerOp::Move => {}
         PointerOp::Down { button } => fake_button(conn, true, x_button(*button), root)?,
@@ -884,16 +896,14 @@ fn pointer_foreground(
             button,
             modifiers,
         } => {
-            let held = press_modifiers(conn, root, &keymap, modifiers)?;
-            let button = x_button(*button);
-            fake_button(conn, true, button, root)?;
+            let mut held = press_modifiers(conn, root, &keymap, modifiers)?;
+            press(&mut held, conn, root, BUTTON_PRESS_EVENT, x_button(*button))?;
             for (px, py) in path {
                 fake_motion(conn, root, *px, *py)?;
                 sync(conn)?;
                 std::thread::sleep(Duration::from_millis(4));
             }
-            fake_button(conn, false, button, root)?;
-            release_keys(conn, root, &held)?;
+            held.release_held().map_err(failed)?;
         }
         PointerOp::Scroll { dx, dy } => {
             for (amount, negative, positive) in [
@@ -1021,21 +1031,21 @@ fn keyboard_foreground(
             modifiers,
             repeat,
         } => {
-            let held = press_modifiers(conn, root, &keymap, modifiers)?;
             let (code, shift) = key_code(&keymap, &x_key_name(key))?;
+            let mut held = press_modifiers(conn, root, &keymap, modifiers)?;
             for _ in 0..(*repeat).max(1) {
                 tap(conn, root, &keymap, code, shift)?;
             }
-            release_keys(conn, root, &held)?;
+            held.release_held().map_err(failed)?;
         }
         KeyOp::Hotkey(keys) => {
             let (last, modifiers) = keys
                 .split_last()
                 .ok_or_else(|| TargetedInputError::Unsupported("empty hotkey".into()))?;
-            let held = press_modifiers(conn, root, &keymap, modifiers)?;
             let (code, shift) = key_code(&keymap, &x_key_name(last))?;
+            let mut held = press_modifiers(conn, root, &keymap, modifiers)?;
             tap(conn, root, &keymap, code, shift)?;
-            release_keys(conn, root, &held)?;
+            held.release_held().map_err(failed)?;
         }
         KeyOp::Down(key) => {
             let (code, _) = key_code(&keymap, &x_key_name(key))?;

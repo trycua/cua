@@ -375,10 +375,11 @@ impl InteractiveInputSession {
                 return Ok(());
             }
             if self.is_foreground() {
-                let held = x::press_modifiers(&state.conn, state.root, &state.keymap, modifiers)?;
                 let (code, shift) = x::key_code(&state.keymap, key)?;
+                let mut held =
+                    x::press_modifiers(&state.conn, state.root, &state.keymap, modifiers)?;
                 x::tap(&state.conn, state.root, &state.keymap, code, shift)?;
-                return x::release_keys(&state.conn, state.root, &held);
+                return held.release_held().map_err(x::failed);
             }
             let modifiers: Vec<&str> = modifiers.iter().map(String::as_str).collect();
             return super::send_key(u64::from(self.window()?), key, &modifiers).map_err(x::failed);

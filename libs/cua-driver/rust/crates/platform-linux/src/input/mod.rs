@@ -3576,18 +3576,28 @@ fn admitted<T, E: Into<anyhow::Error>>(send: impl FnOnce() -> Result<T, E>) -> R
 /// and keeps the call's desktop lease until its X11 requests return.
 const ABANDONED_RELEASE_WAIT: Duration = Duration::from_secs(2);
 
-/// XTest presses this call queued, and whether each is still held. A route
-/// releases what is held on its own connection, even after a failure.
-/// Abandoning the call shuts that connection, so the releases it still owes
-/// cannot go out there: dropping this then sends them on a fresh connection
-/// from a thread that holds the call's [`action::Action`], and with it the
-/// desktop, until those releases are done. The drop waits for them at most
-/// [`ABANDONED_RELEASE_WAIT`]; past it the thread still holds the desktop.
-/// The server ignores a release for a key or button that is already up.
-#[derive(Default)]
-struct Delivered(Vec<(u8, u8, bool)>);
+/// XTest presses this call queued on `conn`, and whether each is still held.
+/// Dropping this releases on `conn` whatever is still held, so no exit from a
+/// route leaves a key or button down. Abandoning the call shuts that
+/// connection, so the releases it still owes cannot go out there: dropping
+/// this then sends them on a fresh connection from a thread that holds the
+/// call's [`action::Action`], and with it the desktop, until those releases
+/// are done. The drop waits for them at most [`ABANDONED_RELEASE_WAIT`]; past
+/// it the thread still holds the desktop. The server ignores a release for a
+/// key or button that is already up.
+pub(crate) struct Delivered<'c> {
+    conn: &'c RustConnection,
+    presses: Vec<(u8, u8, bool)>,
+}
 
-impl Delivered {
+impl<'c> Delivered<'c> {
+    fn new(conn: &'c RustConnection) -> Self {
+        Self {
+            conn,
+            presses: Vec::new(),
+        }
+    }
+
     fn press<C>(
         &mut self,
         kind: u8,
@@ -3595,14 +3605,14 @@ impl Delivered {
         send: impl FnOnce() -> Result<C, x11rb::errors::ConnectionError>,
     ) -> Result<C> {
         let sent = admitted(send)?;
-        self.0.push((kind + 1, detail, true));
+        self.presses.push((kind + 1, detail, true));
         Ok(sent)
     }
 
     /// The release of the latest held `detail` pressed by `kind + 1` went out.
     fn released(&mut self, release: u8, detail: u8) {
         if let Some(press) = self
-            .0
+            .presses
             .iter_mut()
             .rev()
             .find(|press| **press == (release, detail, true))
@@ -3612,12 +3622,15 @@ impl Delivered {
     }
 
     /// Release on `conn` whatever is still held, latest first.
-    fn release_held(&mut self, conn: &RustConnection) -> Result<()> {
+    fn release_held(&mut self) -> Result<()> {
         use x11rb::protocol::xtest::ConnectionExt as _;
         let mut result = Ok(());
-        for (release, detail, held) in self.0.iter_mut().rev().filter(|press| press.2) {
+        for (release, detail, held) in self.presses.iter_mut().rev().filter(|press| press.2) {
             *held = false;
-            if let Err(error) = conn.xtest_fake_input(*release, *detail, 0, x11rb::NONE, 0, 0, 0) {
+            if let Err(error) =
+                self.conn
+                    .xtest_fake_input(*release, *detail, 0, x11rb::NONE, 0, 0, 0)
+            {
                 result = result.and(Err(error.into()));
             }
         }
@@ -3626,20 +3639,31 @@ impl Delivered {
 
     /// The server took every release: nothing is owed after abandon.
     fn confirmed(&mut self) {
-        self.0.clear();
+        self.presses.clear();
     }
 }
 
-impl Drop for Delivered {
+impl Drop for Delivered<'_> {
     fn drop(&mut self) {
-        let Some(action) = action::current().filter(|action| action.is_abandoned()) else {
+        let abandoned = || action::current().filter(|action| action.is_abandoned());
+        if self.presses.iter().any(|press| press.2) && abandoned().is_none() {
+            let released = self.release_held().and_then(|()| {
+                self.conn.get_input_focus()?.reply()?;
+                Ok(())
+            });
+            match released {
+                Ok(()) => self.confirmed(),
+                Err(error) => tracing::warn!("releasing held input failed: {error:#}"),
+            }
+        }
+        let Some(action) = abandoned() else {
             return;
         };
-        if self.0.is_empty() {
+        if self.presses.is_empty() {
             return;
         }
         let presses = self
-            .0
+            .presses
             .drain(..)
             .map(|(release, detail, _)| (release, detail));
         if let Err(error) = release_abandoned(action, presses.collect()) {
@@ -4090,7 +4114,7 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
         |keycode, needs_shift| {
             client.borrow_mut().record_recipient(keycode);
             let pacing = client.borrow().pacing_for(keycode, pacing);
-            let mut delivered = Delivered::default();
+            let mut delivered = Delivered::new(&conn);
             for kc in needs_shift.then_some(shift_kc).into_iter().chain([keycode]) {
                 delivered.press(KEY_PRESS_EVENT, kc, || {
                     conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)
@@ -4191,7 +4215,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     };
 
     // Press modifiers (+ auto-Shift), tap the key, release in reverse order.
-    let mut delivered = Delivered::default();
+    let mut delivered = Delivered::new(&conn);
     for kc in mod_keycodes
         .iter()
         .copied()
@@ -4272,7 +4296,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
         }
         modifier_keycodes.push(keycode);
     }
-    let mut delivered = Delivered::default();
+    let mut delivered = Delivered::new(&conn);
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
             delivered.press(KEY_PRESS_EVENT, keycode, || {
@@ -4302,7 +4326,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
     })();
 
     // Attempt all releases after a partial failure. Do not strand buttons or modifiers.
-    let release_result = delivered.release_held(&conn);
+    let release_result = delivered.release_held();
     // Complete queued modifier releases before the short-lived connection closes,
     // while preserving the primary gesture or cleanup error when one exists.
     let completion_result = (|| -> Result<()> {
@@ -4344,7 +4368,7 @@ pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize)
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
     admitted(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0))?;
-    let mut delivered = Delivered::default();
+    let mut delivered = Delivered::new(&conn);
     for _ in 0..amount.max(1) {
         delivered.press(BUTTON_PRESS_EVENT, button, || {
             conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)
@@ -4384,7 +4408,7 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     }
     let steps = steps.max(1);
     let delay = duration_ms / steps as u64;
-    let mut delivered = Delivered::default();
+    let mut delivered = Delivered::new(&conn);
 
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
@@ -4450,7 +4474,7 @@ pub fn send_drag_xtest_desktop_with_modifiers(
 
     // Always attempt to release the button and every modifier queued above,
     // including when a later motion request fails.
-    let mut cleanup_result = delivered.release_held(&conn);
+    let mut cleanup_result = delivered.release_held();
     if let Err(error) = conn.flush() {
         cleanup_result = cleanup_result.and(Err(error.into()));
     }

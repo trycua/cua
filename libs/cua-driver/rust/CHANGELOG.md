@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.66.0...cua-driver-rs-v0.67.0) (2026-11-28)
+
+
+### Features
+
+* **cua-driver:** route Linux capture through LinuxRoutes ([#8470](https://github.com/trycua/cua/issues/8470)) ([a662b36](https://github.com/trycua/cua/commit/a662b36fc611cbe3629d559e0ae7fad2ec9efe93))
+
 ## [0.66.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.65.0...cua-driver-rs-v0.66.0) (2026-11-28)
 
 

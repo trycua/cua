@@ -14,6 +14,7 @@ macos-appkit-press-key-commit-ax-foreground	harness_appkit_element_foreground_pr
 macos-appkit-press-key-chord-ax-foreground	harness_appkit_foreground_press_key_chord_carries_its_modifiers
 macos-appkit-modified-click-selection-ax-foreground	harness_appkit_modified_click_preserves_selection
 macos-appkit-type-text-ax-background	harness_appkit_type_text_background
+macos-appkit-click-text-focus-ax-background	harness_appkit_click_on_a_text_role_focuses_it
 macos-appkit-scroll-ax-foreground	harness_appkit_scroll_foreground
 macos-appkit-scroll-ax-background	harness_appkit_scroll_background
 macos-appkit-left-click-ax-background	harness_appkit_counter

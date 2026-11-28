@@ -174,6 +174,37 @@ fn nearest_selectable_container_center(element_ptr: usize) -> Option<(f64, f64)>
     None
 }
 
+/// Roles whose click means "put the caret here" rather than "activate". AppKit
+/// advertises no `AXPress` on any of them.
+fn is_text_entry_role(role: &str) -> bool {
+    matches!(
+        role,
+        "AXTextField"
+            | "AXTextArea"
+            | "AXSecureTextField"
+            | "AXSearchField"
+            | "AXComboBox"
+            | "AXDateField"
+            | "AXTimeField"
+    )
+}
+
+/// The screen centre of a text-entry element without `AXPress`, for the
+/// pointer click that backs up its `AXFocused` write.
+fn text_entry_center(element_ptr: usize) -> Option<(f64, f64)> {
+    let element = element_ptr as AXUIElementRef;
+    let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+    if !is_text_entry_role(&role)
+        || unsafe { copy_action_names(element) }
+            .iter()
+            .any(|action| action == "AXPress")
+    {
+        return None;
+    }
+    unsafe { element_screen_rect(element) }
+        .map(|rect| (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0))
+}
+
 fn selection_readback_confirms(
     before: bool,
     after: bool,
@@ -1106,24 +1137,26 @@ impl ClickTool {
             }
 
             // Finder icon/list items can expose a readable AXSelected state
-            // while refusing both AXSelected writes and AXPress. Resolve a
-            // verified coordinate frame only for those collection-like
-            // elements so perform_ax_click can cross that one failed semantic
-            // rung internally and confirm the result by AX read-back.
-            let selection_center = if effective_action == "press" {
+            // while refusing both AXSelected writes and AXPress, and a text
+            // control can refuse an AXFocused write. Resolve a verified
+            // coordinate frame only for those elements (the selectable
+            // container, else the text control itself) so perform_ax_click
+            // can cross that one failed semantic rung internally and confirm
+            // the result by AX read-back.
+            let pixel_center = if effective_action == "press" {
                 let selection_guard = element_guard.clone();
                 tokio::task::spawn_blocking(move || {
-                    crate::input::ax_actions::nearest_container_selection_state(
-                        selection_guard.as_ptr(),
-                    )
-                    .and_then(|_| nearest_selectable_container_center(selection_guard.as_ptr()))
+                    let ptr = selection_guard.as_ptr();
+                    crate::input::ax_actions::nearest_container_selection_state(ptr)
+                        .and_then(|_| nearest_selectable_container_center(ptr))
+                        .or_else(|| text_entry_center(ptr))
                 })
                 .await
                 .unwrap_or(None)
             } else {
                 None
             };
-            let mut selection_pixel = if let Some(screen_center) = selection_center {
+            let mut pixel_fallback = if let Some(screen_center) = pixel_center {
                 super::px_frame::resolve_or_refuse(wid)
                     .await
                     .ok()
@@ -1133,12 +1166,12 @@ impl ClickTool {
             } else {
                 None
             };
-            // The selection fallback delivers a routed window-local pixel
+            // The pixel fallback delivers a routed window-local pixel
             // click — a stricter (WindowPointer) rung than the semantic gate
             // above. In background, drop the fallback rather than silently
             // escalate when the pointer rung would refuse (e.g. a
             // minimized/hidden target); the semantic path still runs.
-            if selection_pixel.is_some()
+            if pixel_fallback.is_some()
                 && !delivery_mode.is_foreground()
                 && _mutation_lease
                     .as_ref()
@@ -1151,7 +1184,7 @@ impl ClickTool {
                     .await
                     .is_err()
             {
-                selection_pixel = None;
+                pixel_fallback = None;
             }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -1198,7 +1231,7 @@ impl ClickTool {
                                     (pid, wid),
                                     &action_clone,
                                     &ck,
-                                    selection_pixel,
+                                    pixel_fallback,
                                     &selection_modifiers,
                                     AxDelivery {
                                         foreground,
@@ -1236,7 +1269,7 @@ impl ClickTool {
                                 (pid, wid),
                                 &action_clone,
                                 &ck,
-                                selection_pixel,
+                                pixel_fallback,
                                 &selection_modifiers,
                                 AxDelivery {
                                     foreground: false,
@@ -2169,12 +2202,93 @@ unsafe fn ancestor_roles(element: AXUIElementRef) -> Vec<String> {
     roles
 }
 
+/// Focus a text-entry element for a click, proving it by read-back
+/// ([`element_has_keyboard_focus`], the check `type_text` and `press_key` make
+/// before they type). When the `AXFocused` write does not stick, a pointer
+/// click at the control's centre follows and is checked the same way.
+///
+/// [`element_has_keyboard_focus`]: crate::input::ax_actions::element_has_keyboard_focus
+fn focus_text_entry(
+    (element_ptr, idx): (usize, usize),
+    (pid, window_id): (i32, u32),
+    (role, title): (&str, &str),
+    pixel: Option<SelectionPixelTarget>,
+    foreground: bool,
+) -> anyhow::Result<AxClickOutcome> {
+    let has_focus = |ptr| crate::input::ax_actions::element_has_keyboard_focus(pid, ptr);
+    let focused_by_ax = crate::input::ax_actions::with_confirmed_key_focus(
+        Some(element_ptr),
+        crate::input::ax_actions::focus_element,
+        has_focus,
+        || Ok(()),
+    )
+    .is_ok();
+    if focused_by_ax {
+        return Ok(AxClickOutcome::verified(
+            format!(
+                "✅ Focused [{idx}] {role} \"{title}\": a text control has no AXPress, so the \
+                 click set keyboard focus, confirmed by AX read-back."
+            ),
+            false,
+        ));
+    }
+    let Some(target) = pixel else {
+        anyhow::bail!(
+            "{role} has no AXPress and did not take keyboard focus from an AXFocused write; \
+             no pointer route to its centre was available, so nothing else was delivered. \
+             Take a fresh snapshot and click it by pixel"
+        );
+    };
+    crate::input::mouse::click_at_xy_with_window_local(
+        pid,
+        target.screen_x,
+        target.screen_y,
+        target.window_x,
+        target.window_y,
+        window_id,
+        1,
+        &[],
+        crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
+    )?;
+    let focused_by_pointer = crate::input::ax_actions::with_confirmed_key_focus(
+        Some(element_ptr),
+        |_| Ok(()),
+        has_focus,
+        || Ok(()),
+    )
+    .is_ok();
+    let (x, y) = (target.screen_x, target.screen_y);
+    if focused_by_pointer {
+        return Ok(AxClickOutcome::verified(
+            format!(
+                "✅ Focused [{idx}] {role} \"{title}\" with a pointer click at its centre \
+                 ({x:.0}, {y:.0}): the AXFocused write did not stick; focus confirmed by AX \
+                 read-back."
+            ),
+            true,
+        ));
+    }
+    Ok(AxClickOutcome {
+        summary: format!(
+            "📨 Clicked [{idx}] {role} \"{title}\" at its centre ({x:.0}, {y:.0}), but neither \
+             that click nor an AXFocused write gave it keyboard focus; the application still \
+             reports another element focused."
+        ),
+        needs_webkit_delay: false,
+        unadvertised: false,
+        selection_verified: false,
+        selection_via_pixel: true,
+        page: None,
+        pressed_at: std::time::Instant::now(),
+    })
+}
+
 fn perform_ax_click(
     element: (usize, usize),
     window: (i32, u32),
     action_str: &str,
     cursor_key: &str,
-    selection_pixel: Option<SelectionPixelTarget>,
+    pixel_fallback: Option<SelectionPixelTarget>,
     modifiers: &[String],
     delivery: AxDelivery,
 ) -> anyhow::Result<AxClickOutcome> {
@@ -2230,7 +2344,7 @@ fn perform_ax_click(
         }
 
         if let (Some(target), Some(selection)) = (
-            selection_pixel,
+            pixel_fallback,
             crate::input::ax_actions::capture_nearest_container_selection(element_ptr),
         ) {
             let selected_role = selection.role().to_owned();
@@ -2318,6 +2432,21 @@ fn perform_ax_click(
                  transition while preserving the prior selection; \
                  before_selected={before}, last_readback={last_observation:?}; \
                  take a fresh snapshot before retrying"
+            );
+        }
+
+        // Nothing selectable around this element. A text-entry role has no
+        // AXPress: its click means "put the caret here", so focus it instead
+        // of pressing an action it does not have. The selection fallbacks
+        // above keep precedence, so clicking a Finder filename label still
+        // selects its row rather than entering rename mode.
+        if modifiers.is_empty() && is_text_entry_role(&role) {
+            return focus_text_entry(
+                (element_ptr, idx),
+                (pid, window_id),
+                (role.as_str(), title.as_str()),
+                pixel_fallback,
+                foreground,
             );
         }
     }
@@ -2572,6 +2701,40 @@ mod web_focus_settle_tests {
             assert!(!needs_web_focus_settle(action, role, || {
                 panic!("ancestors are not read for {action} on {role}")
             }));
+        }
+    }
+}
+
+#[cfg(test)]
+mod text_entry_click_tests {
+    use super::is_text_entry_role;
+
+    #[test]
+    fn a_click_on_a_text_entry_role_means_focus() {
+        for role in [
+            "AXTextField",
+            "AXTextArea",
+            "AXSecureTextField",
+            "AXSearchField",
+            "AXComboBox",
+            "AXDateField",
+            "AXTimeField",
+        ] {
+            assert!(is_text_entry_role(role), "{role}");
+        }
+    }
+
+    #[test]
+    fn a_click_on_any_other_role_keeps_its_press() {
+        for role in [
+            "AXButton",
+            "AXStaticText",
+            "AXCheckBox",
+            "AXRow",
+            "AXCell",
+            "",
+        ] {
+            assert!(!is_text_entry_role(role), "{role}");
         }
     }
 }

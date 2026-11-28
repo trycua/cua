@@ -13,8 +13,9 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use crate::assertion::{now_secs, remove_stale_temps, write_private_with};
+use crate::assertion::{now_secs, remove_stale_temps};
 use crate::oidc::Identity;
+use crate::persist::{Durable, MapUndo, StateFile};
 use crate::storage::{store, Storage};
 
 /// Prefix of machine tokens (tells them apart from static relay tokens and
@@ -212,11 +213,18 @@ pub struct MachinePatch {
 /// The directory.
 #[derive(Debug, Default)]
 pub struct Directory {
-    path: Option<PathBuf>,
+    /// The directory file, written off the request path.
+    pub(crate) file: StateFile,
     records: Mutex<BTreeMap<String, MachineRecord>>,
     max_per_account: usize,
     /// Where write failures are counted and reported.
     storage: std::sync::Arc<Storage>,
+}
+
+/// A change applied in memory whose write is queued.
+struct Committed {
+    durable: Durable,
+    undo: MapUndo<String, MachineRecord>,
 }
 
 pub(crate) fn hash_token(token: &str) -> String {
@@ -272,7 +280,7 @@ impl Directory {
     /// An in-memory directory.
     pub fn in_memory(max_per_account: usize) -> Self {
         Self {
-            path: None,
+            file: StateFile::in_memory(),
             records: Mutex::default(),
             max_per_account,
             storage: Default::default(),
@@ -302,7 +310,7 @@ impl Directory {
             Err(e) => return Err(e),
         };
         Ok(Self {
-            path: Some(path),
+            file: StateFile::new(Some(path), store::DIRECTORY, storage.clone()),
             records: Mutex::new(records),
             max_per_account,
             storage,
@@ -315,56 +323,65 @@ impl Directory {
         self.storage.store_ok(store::DIRECTORY)
     }
 
-    /// Writes the directory file: compact JSON streamed to a temp file
-    /// that replaces it.
-    fn persist(&self, records: &BTreeMap<String, MachineRecord>) -> Result<(), DirectoryError> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        let written = (|| {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            write_private_with(path, |out| {
-                serde_json::to_writer(&mut *out, &records.values().collect::<Vec<_>>())
-                    .map_err(std::io::Error::other)
-            })
-        })();
-        self.storage.record(store::DIRECTORY, &written);
-        written.map_err(|e| DirectoryError::Storage(e.to_string()))
+    /// Queues the directory file's new content: compact JSON, streamed by
+    /// the writer thread to a temp file that replaces it. Never blocks on
+    /// the disk (call it under the records lock).
+    fn persist(&self, records: &BTreeMap<String, MachineRecord>) -> Durable {
+        if !self.file.is_persisted() {
+            return Durable::ready();
+        }
+        let snapshot: Vec<MachineRecord> = records.values().cloned().collect();
+        self.file.replace(move |out| {
+            serde_json::to_writer(&mut *out, &snapshot).map_err(std::io::Error::other)
+        })
     }
 
-    /// Makes `id` hold `record` (`None`: removed) once the directory with
-    /// it is persisted: on a failed write `records` is left as it was and
-    /// the caller gets the error. Nothing is written when nothing changed.
+    /// Makes `id` hold `record` (`None`: removed) in memory and queues the
+    /// write; nothing when nothing changed. [`Self::settle`] (after the
+    /// lock is released) waits for the write and undoes the change if it
+    /// failed.
     fn commit(
         &self,
         records: &mut BTreeMap<String, MachineRecord>,
         id: &str,
         record: Option<MachineRecord>,
-    ) -> Result<(), DirectoryError> {
+    ) -> Option<Committed> {
         if records.get(id) == record.as_ref() {
-            return Ok(());
+            return None;
         }
-        let old = match record {
-            Some(r) => records.insert(id.to_owned(), r),
+        let before = match &record {
+            Some(r) => records.insert(id.to_owned(), r.clone()),
             None => records.remove(id),
         };
-        if let Err(e) = self.persist(records) {
-            match old {
-                Some(o) => records.insert(id.to_owned(), o),
-                None => records.remove(id),
-            };
-            return Err(e);
+        Some(Committed {
+            durable: self.persist(records),
+            undo: MapUndo::one(id.to_owned(), before, record),
+        })
+    }
+
+    /// Waits (without holding the lock or blocking a worker) until the
+    /// change is on disk. On a failed write the change is undone, unless
+    /// another change replaced it since, and the caller gets the error.
+    async fn settle(&self, committed: Option<Committed>) -> Result<(), DirectoryError> {
+        let Some(c) = committed else { return Ok(()) };
+        match c.durable.await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let mut records = self.records.lock().expect("directory");
+                // Re-queued only if a later write may carry the change.
+                if c.undo.undo(&mut records) && self.file.last_ok() {
+                    self.persist(&records).detach();
+                }
+                Err(DirectoryError::Storage(e.to_string()))
+            }
         }
-        Ok(())
     }
 
     /// Registers `id` for `who` (or rotates its token when `who` already
     /// owns it). `confirmed` sets [`MachineRecord::confirmed`] for a brand
     /// new record only; re-registering an existing one leaves it as it is.
     /// Returns the record and the new machine token.
-    pub fn register(
+    pub async fn register(
         &self,
         who: &Identity,
         id: &str,
@@ -377,108 +394,127 @@ impl Directory {
         }
         let allow = allow.map(clean_allow).transpose()?;
         let token = new_token();
-        let mut records = self.records.lock().expect("directory");
-        let record = match records.get(id) {
-            Some(existing) if existing.owner.id != who.account => {
-                return Err(DirectoryError::Conflict(
-                    "computer id registered to another account".into(),
-                ))
-            }
-            Some(existing) => {
-                let mut r = existing.clone();
-                if let Some(name) = name.map(clean_name).filter(|n| !n.is_empty()) {
-                    r.name = name;
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let record = match records.get(id) {
+                Some(existing) if existing.owner.id != who.account => {
+                    return Err(DirectoryError::Conflict(
+                        "computer id registered to another account".into(),
+                    ))
                 }
-                if let Some(allow) = allow {
-                    r.allow = allow;
+                Some(existing) => {
+                    let mut r = existing.clone();
+                    if let Some(name) = name.map(clean_name).filter(|n| !n.is_empty()) {
+                        r.name = name;
+                    }
+                    if let Some(allow) = allow {
+                        r.allow = allow;
+                    }
+                    r.owner.email = who.email.clone().or(r.owner.email);
+                    r.owner.name = who.name.clone().or(r.owner.name);
+                    r.token_sha256 = hash_token(&token);
+                    r
                 }
-                r.owner.email = who.email.clone().or(r.owner.email);
-                r.owner.name = who.name.clone().or(r.owner.name);
-                r.token_sha256 = hash_token(&token);
-                r
-            }
-            None => {
-                let owned = records
-                    .values()
-                    .filter(|r| r.owner.id == who.account)
-                    .count();
-                if owned >= self.max_per_account {
-                    return Err(DirectoryError::Forbidden(format!(
-                        "an account may register at most {} computers",
-                        self.max_per_account
-                    )));
+                None => {
+                    let owned = records
+                        .values()
+                        .filter(|r| r.owner.id == who.account)
+                        .count();
+                    if owned >= self.max_per_account {
+                        return Err(DirectoryError::Forbidden(format!(
+                            "an account may register at most {} computers",
+                            self.max_per_account
+                        )));
+                    }
+                    MachineRecord {
+                        id: id.to_owned(),
+                        name: name
+                            .map(clean_name)
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| id.chars().take(12).collect()),
+                        owner: Owner {
+                            id: who.account.clone(),
+                            email: who.email.clone(),
+                            name: who.name.clone(),
+                        },
+                        allow: allow.unwrap_or_default(),
+                        viewers: Vec::new(),
+                        sharing: true,
+                        stopped_by: None,
+                        token_sha256: hash_token(&token),
+                        created_at: now_secs(),
+                        host: None,
+                        confirmed,
+                        meta: BTreeMap::new(),
+                        hidden_for: Vec::new(),
+                    }
                 }
-                MachineRecord {
-                    id: id.to_owned(),
-                    name: name
-                        .map(clean_name)
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| id.chars().take(12).collect()),
-                    owner: Owner {
-                        id: who.account.clone(),
-                        email: who.email.clone(),
-                        name: who.name.clone(),
-                    },
-                    allow: allow.unwrap_or_default(),
-                    viewers: Vec::new(),
-                    sharing: true,
-                    stopped_by: None,
-                    token_sha256: hash_token(&token),
-                    created_at: now_secs(),
-                    host: None,
-                    confirmed,
-                    meta: BTreeMap::new(),
-                    hidden_for: Vec::new(),
-                }
-            }
+            };
+            (
+                self.commit(&mut records, id, Some(record.clone())),
+                (record, token),
+            )
         };
-        self.commit(&mut records, id, Some(record.clone()))?;
-        Ok((record, token))
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Marks `id` confirmed (an enrolled device vouched for a machine that
     /// registered without proof; S5).
-    pub fn confirm(&self, id: &str) -> Result<MachineRecord, DirectoryError> {
-        let mut records = self.records.lock().expect("directory");
-        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
-        let record = &mut changed;
-        record.confirmed = true;
-        let updated = record.clone();
-        self.commit(&mut records, id, Some(changed))?;
-        Ok(updated)
+    pub async fn confirm(&self, id: &str) -> Result<MachineRecord, DirectoryError> {
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+            let record = &mut changed;
+            record.confirmed = true;
+            let updated = record.clone();
+            (self.commit(&mut records, id, Some(changed)), updated)
+        };
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Replaces a machine's [`MachineRecord::meta`] (checked with
     /// [`clean_meta`]).
-    pub fn set_meta(
+    pub async fn set_meta(
         &self,
         id: &str,
         meta: BTreeMap<String, String>,
     ) -> Result<MachineRecord, DirectoryError> {
         let meta = clean_meta(meta)?;
-        let mut records = self.records.lock().expect("directory");
-        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
-        let record = &mut changed;
-        record.meta = meta;
-        let record = record.clone();
-        self.commit(&mut records, id, Some(changed))?;
-        Ok(record)
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+            let record = &mut changed;
+            record.meta = meta;
+            let record = record.clone();
+            (self.commit(&mut records, id, Some(changed)), record)
+        };
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Records the host a machine (a Space that host provides) belongs to.
-    pub fn set_host(&self, id: &str, host: Option<&str>) -> Result<MachineRecord, DirectoryError> {
+    pub async fn set_host(
+        &self,
+        id: &str,
+        host: Option<&str>,
+    ) -> Result<MachineRecord, DirectoryError> {
         if let Some(h) = host {
             if !crate::valid_machine_id(h) {
                 return Err(DirectoryError::Invalid("invalid host computer id".into()));
             }
         }
-        let mut records = self.records.lock().expect("directory");
-        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
-        let record = &mut changed;
-        record.host = host.map(str::to_owned);
-        let record = record.clone();
-        self.commit(&mut records, id, Some(changed))?;
-        Ok(record)
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+            let record = &mut changed;
+            record.host = host.map(str::to_owned);
+            let record = record.clone();
+            (self.commit(&mut records, id, Some(changed)), record)
+        };
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Holds the directory lock, as a slow write to disk would (tests).
@@ -552,112 +588,131 @@ impl Directory {
     }
 
     /// Applies `patch` to machine `id`.
-    pub fn update(&self, id: &str, patch: &MachinePatch) -> Result<MachineRecord, DirectoryError> {
+    pub async fn update(
+        &self,
+        id: &str,
+        patch: &MachinePatch,
+    ) -> Result<MachineRecord, DirectoryError> {
         let allow = patch.allow.as_deref().map(clean_allow).transpose()?;
         let viewers = patch.viewers.as_deref().map(clean_allow).transpose()?;
-        let mut records = self.records.lock().expect("directory");
-        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
-        let record = &mut changed;
-        if let Some(meta) = &patch.meta {
-            let mut merged = record.meta.clone();
-            for (k, v) in meta {
-                if v.is_empty() {
-                    merged.remove(k);
-                } else {
-                    merged.insert(k.clone(), v.clone());
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+            let record = &mut changed;
+            if let Some(meta) = &patch.meta {
+                let mut merged = record.meta.clone();
+                for (k, v) in meta {
+                    if v.is_empty() {
+                        merged.remove(k);
+                    } else {
+                        merged.insert(k.clone(), v.clone());
+                    }
                 }
+                record.meta = clean_meta(merged)?;
             }
-            record.meta = clean_meta(merged)?;
-        }
-        if let Some(name) = &patch.name {
-            let name = clean_name(name);
-            if name.is_empty() {
-                return Err(DirectoryError::Invalid("empty name".into()));
+            if let Some(name) = &patch.name {
+                let name = clean_name(name);
+                if name.is_empty() {
+                    return Err(DirectoryError::Invalid("empty name".into()));
+                }
+                record.name = name;
             }
-            record.name = name;
-        }
-        if let Some(allow) = allow {
-            record.allow = allow;
-        }
-        if let Some(viewers) = viewers {
-            record.viewers = viewers;
-        }
-        if record.allow.len() + record.viewers.len() > 64 {
-            return Err(DirectoryError::Invalid(
-                "at most 64 shared accounts per computer".into(),
-            ));
-        }
-        if let Some(sharing) = patch.sharing {
-            record.sharing = sharing;
-            record.stopped_by = (!sharing).then(|| "owner".to_owned());
-        }
-        let updated = record.clone();
-        self.commit(&mut records, id, Some(changed))?;
-        Ok(updated)
+            if let Some(allow) = allow {
+                record.allow = allow;
+            }
+            if let Some(viewers) = viewers {
+                record.viewers = viewers;
+            }
+            if record.allow.len() + record.viewers.len() > 64 {
+                return Err(DirectoryError::Invalid(
+                    "at most 64 shared accounts per computer".into(),
+                ));
+            }
+            if let Some(sharing) = patch.sharing {
+                record.sharing = sharing;
+                record.stopped_by = (!sharing).then(|| "owner".to_owned());
+            }
+            let updated = record.clone();
+            (self.commit(&mut records, id, Some(changed)), updated)
+        };
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Removes `people` (emails or account ids, any case) from the
     /// allowlist and the viewers of machine `id`. Returns the record when
     /// something was removed, `None` when nobody was listed (so a repeat
     /// changes nothing).
-    pub fn remove_shares(
+    pub async fn remove_shares(
         &self,
         id: &str,
         people: &[String],
     ) -> Result<Option<MachineRecord>, DirectoryError> {
-        let mut records = self.records.lock().expect("directory");
-        let Some(mut changed) = records.get(id).cloned() else {
-            return Ok(None);
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let Some(mut changed) = records.get(id).cloned() else {
+                return Ok(None);
+            };
+            let gone = |a: &String| people.iter().any(|p| p.eq_ignore_ascii_case(a));
+            let before = changed.allow.len() + changed.viewers.len();
+            changed.allow.retain(|a| !gone(a));
+            changed.viewers.retain(|a| !gone(a));
+            if changed.allow.len() + changed.viewers.len() == before {
+                return Ok(None);
+            }
+            let updated = changed.clone();
+            (self.commit(&mut records, id, Some(changed)), Some(updated))
         };
-        let gone = |a: &String| people.iter().any(|p| p.eq_ignore_ascii_case(a));
-        let before = changed.allow.len() + changed.viewers.len();
-        changed.allow.retain(|a| !gone(a));
-        changed.viewers.retain(|a| !gone(a));
-        if changed.allow.len() + changed.viewers.len() == before {
-            return Ok(None);
-        }
-        let updated = changed.clone();
-        self.commit(&mut records, id, Some(changed))?;
-        Ok(Some(updated))
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Hides team machine `id` from `account`'s listing (it left it). A
     /// repeat changes nothing.
-    pub fn hide_for(&self, id: &str, account: &str) -> Result<MachineRecord, DirectoryError> {
-        let mut records = self.records.lock().expect("directory");
-        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
-        if !changed.hidden_from(account) {
-            changed.hidden_for.push(account.to_owned());
-        }
-        let updated = changed.clone();
-        self.commit(&mut records, id, Some(changed))?;
-        Ok(updated)
+    pub async fn hide_for(&self, id: &str, account: &str) -> Result<MachineRecord, DirectoryError> {
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+            if !changed.hidden_from(account) {
+                changed.hidden_for.push(account.to_owned());
+            }
+            let updated = changed.clone();
+            (self.commit(&mut records, id, Some(changed)), updated)
+        };
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Turns sharing on or off; `by` (`machine` or `owner`) is remembered
     /// while it is off.
-    pub fn set_sharing(
+    pub async fn set_sharing(
         &self,
         id: &str,
         sharing: bool,
         by: &str,
     ) -> Result<MachineRecord, DirectoryError> {
-        let mut records = self.records.lock().expect("directory");
-        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
-        let record = &mut changed;
-        record.sharing = sharing;
-        record.stopped_by = (!sharing).then(|| by.to_owned());
-        let updated = record.clone();
-        self.commit(&mut records, id, Some(changed))?;
-        Ok(updated)
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+            let record = &mut changed;
+            record.sharing = sharing;
+            record.stopped_by = (!sharing).then(|| by.to_owned());
+            let updated = record.clone();
+            (self.commit(&mut records, id, Some(changed)), updated)
+        };
+        self.settle(committed).await?;
+        Ok(out)
     }
 
     /// Removes machine `id` (revoking its token).
-    pub fn remove(&self, id: &str) -> Result<MachineRecord, DirectoryError> {
-        let mut records = self.records.lock().expect("directory");
-        let removed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
-        self.commit(&mut records, id, None)?;
-        Ok(removed)
+    pub async fn remove(&self, id: &str) -> Result<MachineRecord, DirectoryError> {
+        let (committed, out) = {
+            let mut records = self.records.lock().expect("directory");
+            let removed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+            (self.commit(&mut records, id, None), removed)
+        };
+        self.settle(committed).await?;
+        Ok(out)
     }
 }
 
@@ -708,13 +763,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn meta_is_checked_and_persists() {
+    #[tokio::test]
+    async fn meta_is_checked_and_persists() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dir.json");
         let d = Directory::open(path.clone(), 32).unwrap();
         let who = who("acct", None);
         d.register(&who, "cloud-00000000000000aa", Some("n"), None, true)
+            .await
             .unwrap();
         let meta = BTreeMap::from([
             ("cua.cloud.provider".to_string(), "aws".to_string()),
@@ -723,7 +779,10 @@ mod tests {
                 "AWS \u{b7} us-west-2".to_string(),
             ),
         ]);
-        let r = d.set_meta("cloud-00000000000000aa", meta.clone()).unwrap();
+        let r = d
+            .set_meta("cloud-00000000000000aa", meta.clone())
+            .await
+            .unwrap();
         assert_eq!(r.meta, meta);
         let again = Directory::open(path, 32).unwrap();
         assert_eq!(again.get("cloud-00000000000000aa").unwrap().meta, meta);
@@ -739,18 +798,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_patch_merges_meta_removes_empty_values_and_checks_the_result() {
+    #[tokio::test]
+    async fn a_patch_merges_meta_removes_empty_values_and_checks_the_result() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dir.json");
         let d = Directory::open(path.clone(), 32).unwrap();
         let who = who("acct", None);
         d.register(&who, "machine-0001", Some("n"), None, true)
+            .await
             .unwrap();
         d.set_meta(
             "machine-0001",
             BTreeMap::from([("cua.host.os".to_string(), "macos".to_string())]),
         )
+        .await
         .unwrap();
         let patch = |meta: &[(&str, &str)]| MachinePatch {
             meta: Some(
@@ -763,6 +824,7 @@ mod tests {
         // New keys join what is there.
         let r = d
             .update("machine-0001", &patch(&[("cua.res", "{\"v\":1}")]))
+            .await
             .unwrap();
         assert_eq!(r.meta.len(), 2);
         assert_eq!(r.meta["cua.host.os"], "macos");
@@ -770,33 +832,39 @@ mod tests {
         // A later value replaces the earlier one; the other key stays.
         let r = d
             .update("machine-0001", &patch(&[("cua.res", "{\"v\":2}")]))
+            .await
             .unwrap();
         assert_eq!(r.meta["cua.res"], "{\"v\":2}");
         assert_eq!(r.meta["cua.host.os"], "macos");
         // An empty value removes the key.
         let r = d
             .update("machine-0001", &patch(&[("cua.res", "")]))
+            .await
             .unwrap();
         assert!(!r.meta.contains_key("cua.res"));
         assert_eq!(r.meta["cua.host.os"], "macos");
         // Bad meta changes nothing.
         assert!(matches!(
-            d.update("machine-0001", &patch(&[("Bad Key", "x")])),
+            d.update("machine-0001", &patch(&[("Bad Key", "x")])).await,
             Err(DirectoryError::Invalid(_))
         ));
         assert!(matches!(
-            d.update("machine-0001", &patch(&[("cua.res", &"x".repeat(257))])),
+            d.update("machine-0001", &patch(&[("cua.res", &"x".repeat(257))]))
+                .await,
             Err(DirectoryError::Invalid(_))
         ));
         let again = Directory::open(path, 32).unwrap();
         assert_eq!(again.get("machine-0001").unwrap().meta, r.meta);
         // A patch without meta leaves it alone.
-        let r = d.update("machine-0001", &MachinePatch::default()).unwrap();
+        let r = d
+            .update("machine-0001", &MachinePatch::default())
+            .await
+            .unwrap();
         assert_eq!(r.meta, again.get("machine-0001").unwrap().meta);
     }
 
-    #[test]
-    fn register_share_and_persist() {
+    #[tokio::test]
+    async fn register_share_and_persist() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state/machines.json");
         let d = Directory::open(path.clone(), 2).unwrap();
@@ -804,16 +872,20 @@ mod tests {
         let bob = who("bob", Some("Bob@Example.com"));
         let (rec, token) = d
             .register(&ada, "machine-0001", Some("Ada's Mac"), None, true)
+            .await
             .unwrap();
         assert!(token.starts_with(MACHINE_TOKEN_PREFIX));
         assert_eq!(d.machine_for_token(&token).unwrap().id, rec.id);
         assert!(d.machine_for_token("cmt_nope").is_none());
         // Someone else cannot take the id; re-registering rotates the token.
         assert!(matches!(
-            d.register(&bob, "machine-0001", None, None, true),
+            d.register(&bob, "machine-0001", None, None, true).await,
             Err(DirectoryError::Conflict(_))
         ));
-        let (_, rotated) = d.register(&ada, "machine-0001", None, None, true).unwrap();
+        let (_, rotated) = d
+            .register(&ada, "machine-0001", None, None, true)
+            .await
+            .unwrap();
         assert!(d.machine_for_token(&token).is_none());
         assert!(d.machine_for_token(&rotated).is_some());
         // Sharing by email (case-insensitive).
@@ -825,6 +897,7 @@ mod tests {
                 ..Default::default()
             },
         )
+        .await
         .unwrap();
         let visible = d.visible_to(&bob);
         assert_eq!(visible.len(), 1);
@@ -839,6 +912,7 @@ mod tests {
                     ..Default::default()
                 },
             )
+            .await
             .unwrap();
         assert_eq!(rec.role_of(&bob), Some(Role::Viewer));
         assert_eq!(Role::Viewer.as_str(), "viewer");
@@ -850,6 +924,7 @@ mod tests {
                     ..Default::default()
                 },
             )
+            .await
             .unwrap();
         assert_eq!(rec.role_of(&bob), Some(Role::Shared));
         assert!(d
@@ -860,11 +935,14 @@ mod tests {
                     ..Default::default()
                 },
             )
+            .await
             .is_err());
         // Per-account limit.
-        d.register(&ada, "machine-0002", None, None, true).unwrap();
+        d.register(&ada, "machine-0002", None, None, true)
+            .await
+            .unwrap();
         assert!(matches!(
-            d.register(&ada, "machine-0003", None, None, true),
+            d.register(&ada, "machine-0003", None, None, true).await,
             Err(DirectoryError::Forbidden(_))
         ));
         // Persisted and reloaded.
@@ -874,16 +952,16 @@ mod tests {
             ["bob@example.com"]
         );
         assert!(reopened.machine_for_token(&rotated).is_some());
-        reopened.remove("machine-0001").unwrap();
+        reopened.remove("machine-0001").await.unwrap();
         assert!(reopened.machine_for_token(&rotated).is_none());
         assert!(matches!(
-            d.update("nope-0000", &MachinePatch::default()),
+            d.update("nope-0000", &MachinePatch::default()).await,
             Err(DirectoryError::NotFound)
         ));
     }
 
-    #[test]
-    fn allowlist_is_validated() {
+    #[tokio::test]
+    async fn allowlist_is_validated() {
         let d = Directory::in_memory(4);
         let ada = who("ada", None);
         assert!(d
@@ -894,25 +972,32 @@ mod tests {
                 Some(&["bad entry".into()]),
                 true
             )
+            .await
             .is_err());
-        assert!(d.register(&ada, "BAD", None, None, true).is_err());
+        assert!(d.register(&ada, "BAD", None, None, true).await.is_err());
     }
 
-    #[test]
-    fn confirmation_defaults_true_for_legacy_records_and_persists() {
+    #[tokio::test]
+    async fn confirmation_defaults_true_for_legacy_records_and_persists() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("machines.json");
         let d = Directory::open(path.clone(), 4).unwrap();
         let ada = who("ada", None);
-        let (unproven, _) = d.register(&ada, "machine-0001", None, None, false).unwrap();
+        let (unproven, _) = d
+            .register(&ada, "machine-0001", None, None, false)
+            .await
+            .unwrap();
         assert!(!unproven.confirmed);
         // Re-registering (a token rotation) leaves confirmation as it is.
-        let (still_unproven, _) = d.register(&ada, "machine-0001", None, None, true).unwrap();
+        let (still_unproven, _) = d
+            .register(&ada, "machine-0001", None, None, true)
+            .await
+            .unwrap();
         assert!(!still_unproven.confirmed);
-        let confirmed = d.confirm("machine-0001").unwrap();
+        let confirmed = d.confirm("machine-0001").await.unwrap();
         assert!(confirmed.confirmed);
         assert!(matches!(
-            d.confirm("nope-0000"),
+            d.confirm("nope-0000").await,
             Err(DirectoryError::NotFound)
         ));
 
@@ -930,8 +1015,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_failed_write_leaves_the_directory_as_it_was() {
+    #[tokio::test]
+    async fn a_failed_write_leaves_the_directory_as_it_was() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("state");
@@ -940,18 +1025,23 @@ mod tests {
         let d = Directory::open_with(state.join("relay.json"), 4, storage.clone()).unwrap();
         let ada = who("ada", None);
         d.register(&ada, "machine-0001", Some("one"), None, true)
+            .await
             .unwrap();
         let raw = std::fs::read_to_string(state.join("relay.json")).unwrap();
         assert!(!raw.contains('\n'), "compact JSON: {raw}");
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
-        let added = d.register(&ada, "machine-0002", Some("two"), None, true);
-        let renamed = d.update(
-            "machine-0001",
-            &MachinePatch {
-                name: Some("renamed".into()),
-                ..Default::default()
-            },
-        );
+        let added = d
+            .register(&ada, "machine-0002", Some("two"), None, true)
+            .await;
+        let renamed = d
+            .update(
+                "machine-0001",
+                &MachinePatch {
+                    name: Some("renamed".into()),
+                    ..Default::default()
+                },
+            )
+            .await;
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         if storage.failures(store::DIRECTORY) > 0 {
             assert!(matches!(added, Err(DirectoryError::Storage(_))));
@@ -972,6 +1062,7 @@ mod tests {
                 ..Default::default()
             },
         )
+        .await
         .unwrap();
         assert!(d.writes_ok());
         let writes = |s: &Storage| {
@@ -982,7 +1073,7 @@ mod tests {
                 .to_owned()
         };
         let before = writes(&storage);
-        d.set_host("machine-0001", None).unwrap();
+        d.set_host("machine-0001", None).await.unwrap();
         assert_eq!(writes(&storage), before);
     }
 }

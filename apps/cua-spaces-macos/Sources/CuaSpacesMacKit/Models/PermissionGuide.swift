@@ -6,13 +6,14 @@ import ApplicationServices
 import CoreGraphics
 import PermissionFlow
 
-/// The app's own guide to a privacy pane of System Settings, so nobody
-/// meets macOS's bare "allow?" prompt first. PermissionFlow (MIT,
-/// github.com/jaywcjlove/PermissionFlow, vendored in Vendor/PermissionFlow)
-/// opens the pane and docks a panel under System Settings. The panel always
-/// shows, and says what the pane needs: drag the app into the list when it
-/// has no row, turn its switch on when it has one, then that it is on. It
-/// reads the pane every second, and picks up again after "Quit & Reopen".
+/// The app's own guide to a privacy pane of System Settings. PermissionFlow
+/// (MIT, github.com/jaywcjlove/PermissionFlow, vendored in
+/// Vendor/PermissionFlow) opens the pane and docks a panel under System
+/// Settings. The panel always shows, and says what the pane needs: add the
+/// app with + when it has no row, turn its switch on when it has one, then
+/// that it is on. When the app has no row, the guide asks macOS once, so
+/// macOS's own prompt adds the row. It reads the pane every second, and
+/// picks up again after "Quit & Reopen".
 /// The app's name and icon are this bundle's, so Cua Spaces Local shows as
 /// itself.
 ///
@@ -60,6 +61,16 @@ public enum PermissionGuide {
     nonisolated(unsafe) static var openPane: (URL) -> Void = { NSWorkspace.shared.open($0) }
     nonisolated(unsafe) static var showsGuide = true
     nonisolated(unsafe) static var grantedHook: ((PermissionFlowPane) -> Void)?
+    nonisolated(unsafe) static var requestAccess: (PermissionFlowPane) -> Void = { pane in
+        switch pane {
+        case .screenRecording: PermissionRequester.requestScreenRecording()
+        case .accessibility: PermissionRequester.requestAccessibility()
+        default: break
+        }
+    }
+
+    /// The panes this run has asked macOS for, so its prompt shows once.
+    nonisolated(unsafe) static var requested: Set<PermissionFlowPane> = []
 
     // MARK: - Where a permission stands (CUA-2283, CUA-3551)
 
@@ -71,7 +82,7 @@ public enum PermissionGuide {
         case on
         /// The app has a row in the list, with its switch off.
         case off
-        /// No row for this copy of the app: drag it in. A row left by an
+        /// No row for this copy of the app: add it with +. A row left by an
         /// older build signed differently does not count (macOS ignores it).
         case absent
         /// This macOS doesn't say (the private check below is missing): off
@@ -88,7 +99,7 @@ public enum PermissionGuide {
         switch tcc {
         // A row that says yes while the public call says no: its switch
         // shows on but belongs to another build; turning it on again or
-        // dragging this copy in is the fix, as for a row that is off.
+        // adding this copy with + is the fix, as for a row that is off.
         case 0, 1: return .off
         case 2: return .absent
         default: return .unknown
@@ -118,26 +129,46 @@ public enum PermissionGuide {
     }()
 
     /// What the panel under System Settings says for `pane` in `state`:
-    /// drag the app in, turn its switch on, or done. The app's tile stays
-    /// while the switch is off too, for a row that belongs to an older build.
+    /// add the app with + (choosing the copy at `appPath`), turn its switch
+    /// on, or done. Where the list still takes a drop (`acceptsDrops`), the
+    /// app's tile shows too, also while the switch is off, for a row that
+    /// belongs to an older build.
     nonisolated static func guidance(for pane: PermissionFlowPane, state: PaneState, appName: String,
-                                     paneName: String) -> PermissionFlowGuidance {
+                                     paneName: String, appPath: String, acceptsDrops: Bool) -> PermissionFlowGuidance {
+        let orDrag = acceptsDrops ? " Or drag this in." : ""
         switch state {
         case .absent:
-            return .init(title: "Drag **\(appName)** into the list above to allow **\(paneName)**.",
-                         detail: "Then make sure its switch is on.", showsApp: true)
+            return .init(title: "Click **+** under the list above and choose **\(appName)** to allow **\(paneName)**.",
+                         detail: "It's at \(appPath).\(orDrag) Then make sure its switch is on.", showsApp: acceptsDrops)
         case .off:
             return .init(title: "Turn on the switch next to **\(appName)** in the list above.",
-                         detail: "Already on, or not in the list? Drag this in.",
-                         symbol: "switch.2", showsApp: true)
+                         detail: "Already on, or not in the list? Click + and choose \(appPath).\(orDrag)",
+                         symbol: "switch.2", showsApp: acceptsDrops)
         case .unknown:
             return .init(title: "Turn on **\(appName)** in the list above to allow **\(paneName)**.",
-                         detail: "Not in the list? Drag this in.", symbol: "switch.2", showsApp: true)
+                         detail: "Not in the list? Click + and choose \(appPath).\(orDrag)",
+                         symbol: "switch.2", showsApp: acceptsDrops)
         case .on:
             return .init(title: "**\(paneName)** is on for **\(appName)**.",
                          detail: needsReopen(after: pane) ? "If macOS asks, choose Quit & Reopen. \(appName) comes back where you were." : nil,
                          symbol: "checkmark.circle.fill", showsApp: false)
         }
+    }
+
+    /// Whether System Settings' privacy lists take an app dragged in. From
+    /// macOS 27 they refuse a drop and only + adds an app, so the app's
+    /// tile shows only before 27.
+    nonisolated static func listsAcceptDrops(
+        operatingSystemVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+    ) -> Bool {
+        operatingSystemVersion.majorVersion < 27
+    }
+
+    /// The panel's words for `pane` in `state`, for this copy of the app on
+    /// this Mac.
+    static func guidance(for pane: PermissionFlowPane, state: PaneState) -> PermissionFlowGuidance {
+        guidance(for: pane, state: state, appName: appName(), paneName: paneName(pane),
+                 appPath: Bundle.main.bundleURL.path, acceptsDrops: listsAcceptDrops())
     }
 
     /// The pane's name as System Settings shows it ("Screen & System Audio
@@ -202,8 +233,8 @@ public enum PermissionGuide {
 
     /// Guides `url`'s pane: false when the guide doesn't know it (open it
     /// plainly then). The panel docks under System Settings whatever the
-    /// pane shows, and its words follow the pane: drag the app in, turn its
-    /// switch on, done.
+    /// pane shows, and its words follow the pane: add the app with +, turn
+    /// its switch on, done.
     @discardableResult
     public static func guide(_ url: String) -> Bool {
         guard let pane = pane(for: url) else { return false }
@@ -217,7 +248,7 @@ public enum PermissionGuide {
         let flow = controller ?? PermissionFlowController(configuration: .init(requiredAppURLs: [app]))
         controller = flow
         // Words for the state last read, until the first read of this guide.
-        flow.setGuidance(guidance(for: pane, state: lastStates[pane] ?? .unknown, appName: appName(), paneName: paneName(pane)))
+        flow.setGuidance(guidance(for: pane, state: lastStates[pane] ?? .unknown))
         // Where the click came from, for the panel's flight to System Settings.
         let from = NSApp.keyWindow.map { w -> CGRect in
             let mouse = NSEvent.mouseLocation
@@ -343,7 +374,13 @@ public enum PermissionGuide {
                 guard !Task.isCancelled else { return }
                 lastStates = now
                 let state = now[pane] ?? .unknown
-                controller?.setGuidance(guidance(for: pane, state: state, appName: appName(), paneName: paneName(pane)))
+                // No row: macOS's own prompt adds one (switched off), so the
+                // person only has to turn it on. Once a run, as macOS asks.
+                if state == .absent, !requested.contains(pane) {
+                    requested.insert(pane)
+                    requestAccess(pane)
+                }
+                controller?.setGuidance(guidance(for: pane, state: state))
                 // Dock again under System Settings as it is now: after a switch
                 // out of a full-screen Cua Spaces, the screen's free area is
                 // only right once System Settings' Space is in front.

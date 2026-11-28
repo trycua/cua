@@ -265,13 +265,14 @@ async fn create(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.create(&actor, &body.name) {
+    match relay.teams.create(&actor, &body.name).await {
         Ok(t) => {
             // The owner's creating device is the team's first approved one.
             if let Some(d) = device.as_deref() {
                 let _ = relay
                     .teams
-                    .request_approval(&t.id, &actor, &device_name(&relay, Some(d)));
+                    .request_approval(&t.id, &actor, &device_name(&relay, Some(d)))
+                    .await;
             }
             let t = relay
                 .teams
@@ -317,7 +318,7 @@ async fn rename(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.rename(&id, &actor, &body.name) {
+    match relay.teams.rename(&id, &actor, &body.name).await {
         Ok(t) => Json(team_view(&relay, &t, &who.account, device.as_deref())).into_response(),
         Err(e) => team_error(e),
     }
@@ -336,7 +337,7 @@ async fn remove(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.delete(&id, &actor) {
+    match relay.teams.delete(&id, &actor).await {
         Ok(_) => {
             relay.reauthorize(None);
             tracing::info!(team = %id, "team deleted");
@@ -378,6 +379,7 @@ async fn join(
     match relay
         .teams
         .join(&actor, body.team.as_deref(), code, Some(&name))
+        .await
     {
         Ok((t, _)) => Json(team_view(&relay, &t, &who.account, device.as_deref())).into_response(),
         Err(e) => team_error(e),
@@ -393,7 +395,7 @@ async fn leave(State(relay): State<Relay>, Path(id): Path<String>, headers: Head
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.leave(&id, &actor) {
+    match relay.teams.leave(&id, &actor).await {
         Ok(_) => {
             relay.reauthorize(None);
             StatusCode::NO_CONTENT.into_response()
@@ -426,13 +428,17 @@ async fn invite(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.invite(
-        &id,
-        &actor,
-        body.email.as_deref().filter(|e| !e.trim().is_empty()),
-        body.role.unwrap_or(TeamRole::Member),
-        body.uses,
-    ) {
+    match relay
+        .teams
+        .invite(
+            &id,
+            &actor,
+            body.email.as_deref().filter(|e| !e.trim().is_empty()),
+            body.role.unwrap_or(TeamRole::Member),
+            body.uses,
+        )
+        .await
+    {
         Ok(n) => {
             let link = format!("{}/join/team/{}", relay.public_url(&headers), n.code);
             (
@@ -462,7 +468,7 @@ async fn revoke_invite(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.revoke_invite(&id, &actor, &invite) {
+    match relay.teams.revoke_invite(&id, &actor, &invite).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => team_error(e),
     }
@@ -487,7 +493,7 @@ async fn set_role(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.set_role(&id, &actor, &member, body.role) {
+    match relay.teams.set_role(&id, &actor, &member, body.role).await {
         Ok(m) => Json(m).into_response(),
         Err(e) => team_error(e),
     }
@@ -506,7 +512,7 @@ async fn remove_member(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.remove_member(&id, &actor, &member) {
+    match relay.teams.remove_member(&id, &actor, &member).await {
         Ok(_) => {
             // Their open streams and tickets to team machines (and to the
             // machines they brought, for everyone else) end now; other
@@ -534,6 +540,7 @@ async fn request_device(
     match relay
         .teams
         .request_approval(&id, &actor, &device_name(&relay, device.as_deref()))
+        .await
     {
         Ok(d) => Json(d).into_response(),
         Err(e) => team_error(e),
@@ -555,7 +562,11 @@ async fn decide(
         who: &who,
         device: device.as_deref(),
     };
-    match relay.teams.decide_device(&id, &actor, &device_id, approve) {
+    match relay
+        .teams
+        .decide_device(&id, &actor, &device_id, approve)
+        .await
+    {
         Ok(d) => {
             if !approve {
                 // The denied device's account loses its streams and tickets
@@ -623,6 +634,7 @@ async fn add_machine(
     match relay
         .teams
         .add_machine(&id, &actor, &record, host.as_ref(), os)
+        .await
     {
         Ok(t) => Json(team_view(&relay, &t, &who.account, device.as_deref())).into_response(),
         Err(e) => team_error(e),
@@ -646,6 +658,7 @@ async fn remove_machine(
     match relay
         .teams
         .remove_machine(&id, &actor, &machine, owner.as_deref())
+        .await
     {
         Ok(t) => {
             // The machine (and Spaces on it, when it is a host) leaves the

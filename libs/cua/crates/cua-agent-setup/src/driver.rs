@@ -75,7 +75,7 @@ pub fn locate(env: &HostEnv) -> Option<PathBuf> {
     }
     if env.os == Os::MacOs {
         for d in &env.app_dirs {
-            candidates.push(d.join("CuaDriver.app/Contents/MacOS").join(exe));
+            candidates.push(crate::join_rel(d, "CuaDriver.app/Contents/MacOS").join(exe));
         }
     }
     candidates.into_iter().find(|p| is_executable(p))

@@ -143,6 +143,10 @@
      "description": "Save the screenshot from a tool response"
     },
     {
+     "command": "cua-driver call --text get_guide '{\"topic\":\"overview\"}'",
+     "description": "Print a tool's text output (guides, summaries) instead of its structured JSON"
+    },
+    {
      "command": "cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"since\":\"s0000002a\"}'",
      "description": "Read only what changed since an earlier snapshot_id"
     },
@@ -151,7 +155,14 @@
      "description": "Return the structured elements instead of the markdown tree"
     }
    ],
-   "flags": [],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Print the result's text content instead of its structured JSON, for tools whose output is text (for example get_guide).",
+     "name": "text",
+     "short_name": null
+    }
+   ],
    "name": "call",
    "options": [
     {
@@ -745,6 +756,129 @@
      "name": "grant",
      "options": [],
      "subcommands": []
+    },
+    {
+     "abstract": "Approve the permission prompts through the Mac's Screen Sharing (VNC) server, for a Mac nobody is sitting at.",
+     "arguments": [],
+     "discussion": "Screen Sharing input does not depend on Cua Driver's own permissions, so this works before they are granted, from this Mac or another computer. Run `permissions grant` on the Mac to raise the prompts, approve each one from screenshots, then check with `permissions status`; once both are on, Cua Driver works natively. Credentials come only from the environment: CUA_VNC_USER and CUA_VNC_PASSWORD for a macOS account (Apple Remote Desktop authentication), or CUA_VNC_PASSWORD alone for a VNC password. Clicks and typing are logged to $CUA_VNC_LOG, default ~/.cache/cua-driver/vnc-approvals.log. Only with the owner's authorization; see the macOS permissions reference.",
+     "examples": [
+      {
+       "command": "cua-driver permissions vnc shot screen.png",
+       "description": "Save the screen of $CUA_VNC_SERVER"
+      }
+     ],
+     "flags": [],
+     "name": "vnc",
+     "options": [],
+     "subcommands": [
+      {
+       "abstract": "Save a PNG of the whole screen, readable only by you.",
+       "arguments": [
+        {
+         "help": "PNG path to write.",
+         "is_optional": false,
+         "name": "out",
+         "type": "Path"
+        }
+       ],
+       "discussion": "",
+       "examples": [
+        {
+         "command": "cua-driver permissions vnc shot screen.png --server mac.local",
+         "description": "Save the remote Mac's screen"
+        }
+       ],
+       "flags": [],
+       "name": "shot",
+       "options": [
+        {
+         "default_value": null,
+         "help": "The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.",
+         "is_optional": true,
+         "name": "server",
+         "short_name": null,
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      },
+      {
+       "abstract": "Click at a pixel of the screenshot and log what the click approves.",
+       "arguments": [
+        {
+         "help": "Pixel column in the screenshot.",
+         "is_optional": false,
+         "name": "x",
+         "type": "Number"
+        },
+        {
+         "help": "Pixel row in the screenshot.",
+         "is_optional": false,
+         "name": "y",
+         "type": "Number"
+        }
+       ],
+       "discussion": "",
+       "examples": [
+        {
+         "command": "cua-driver permissions vnc click 640 412 --label \"CuaDriver: Accessibility\"",
+         "description": "Turn on a switch and log it"
+        }
+       ],
+       "flags": [],
+       "name": "click",
+       "options": [
+        {
+         "default_value": null,
+         "help": "The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.",
+         "is_optional": true,
+         "name": "server",
+         "short_name": null,
+         "type": "String"
+        },
+        {
+         "default_value": null,
+         "help": "What the click approves, such as 'CuaDriver: Accessibility'. Required.",
+         "is_optional": false,
+         "name": "label",
+         "short_name": null,
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      },
+      {
+       "abstract": "Type the value of an environment variable, then press Return. The value is never printed or logged.",
+       "arguments": [
+        {
+         "help": "Environment variable that holds the text.",
+         "is_optional": false,
+         "name": "name",
+         "type": "String"
+        }
+       ],
+       "discussion": "",
+       "examples": [
+        {
+         "command": "cua-driver permissions vnc type-env VM_PASSWORD",
+         "description": "Type a password the owner gave you"
+        }
+       ],
+       "flags": [],
+       "name": "type-env",
+       "options": [
+        {
+         "default_value": null,
+         "help": "The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.",
+         "is_optional": true,
+         "name": "server",
+         "short_name": null,
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      }
+     ]
     }
    ]
   },
@@ -1041,7 +1175,7 @@
        "type": "String"
       }
      ],
-     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
+     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once. get_window_state.max_elements and get_window_state.max_depth save the node budget and depth cap for get_window_state reads that omit them and pass no query or full_output; each is bounded by the platform walk cap (max_elements 2000 on macOS, 5000 on Windows and Linux; max_depth 25 on macOS and Windows, uncapped on Linux), and 0 or default clears it. A value passed on the call always wins.",
      "examples": [
       {
        "command": "cua-driver config set max_image_dimension 1568",
@@ -1062,6 +1196,10 @@
       {
        "command": "cua-driver config set cursor.motion.effects.trail true",
        "description": "Turn the cursor trail on by default"
+      },
+      {
+       "command": "cua-driver config set get_window_state.max_elements 2000",
+       "description": "Walk up to 2000 nodes when a read omits max_elements"
       }
      ],
      "flags": [],

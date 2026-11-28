@@ -31,6 +31,8 @@ pub mod capture_consent;
 #[cfg(target_os = "macos")]
 pub mod cursor;
 #[cfg(target_os = "macos")]
+pub mod damage_watch;
+#[cfg(target_os = "macos")]
 pub mod display_awake;
 #[cfg(target_os = "macos")]
 pub mod document_edit;
@@ -65,6 +67,8 @@ pub mod running_image;
 pub mod security_prompt;
 #[cfg(target_os = "macos")]
 pub mod session;
+#[cfg(target_os = "macos")]
+pub mod session_resources;
 #[cfg(all(test, target_os = "macos"))]
 mod step_latency_bench;
 #[cfg(target_os = "macos")]
@@ -73,6 +77,8 @@ pub mod terminal;
 pub mod tools;
 #[cfg(target_os = "macos")]
 pub mod video_sckit;
+#[cfg(target_os = "macos")]
+pub mod virtual_display;
 #[cfg(target_os = "macos")]
 pub mod window_change_detector;
 #[cfg(target_os = "macos")]

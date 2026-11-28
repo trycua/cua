@@ -187,6 +187,7 @@ distinct resolved action IDs.
 | `set_agent_cursor_enabled` | `agent_cursor.show`, `agent_cursor.hide`              |
 | `set_agent_cursor_motion`  | `agent_cursor.configure_motion`                       |
 | `set_agent_cursor_theme`   | `agent_cursor.set_theme`                              |
+| `set_agent_cursor_badge`   | `agent_cursor.set_badge`                              |
 | `get_agent_cursor_state`   | `agent_cursor.inspect`                                |
 | `check_permissions`        | `permissions.inspect`, `permissions.request`          |
 | `health_report`            | `system.health.inspect`                               |

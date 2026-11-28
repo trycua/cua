@@ -81,6 +81,9 @@ impl Tool for GetConfigTool {
                 "enabled": cursor_enabled,
             },
             "cursor": cursor_overlay::cursor_options::saved_config_json(),
+            "get_window_state": cua_driver_core::walk_defaults::config_json(
+                super::get_window_state::WALK_LIMITS,
+            ),
             "fast_path": cua_driver_core::fast_path::wire::config_value(),
         }))
     }

@@ -27,7 +27,18 @@ public enum PermissionRequester {
     /// without the app ever showing (ServiceLauncher). Never call this from
     /// the app's UI process before its permissions step.
     public static func requestScreenRecordingAndAccessibility() {
-        if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
+        if !CGPreflightScreenCaptureAccess() { requestScreenRecording() }
+        requestAccessibility()
+    }
+
+    /// macOS's Screen Recording prompt, which also adds the app to the
+    /// pane's list, switched off. PermissionGuide asks once when the app
+    /// has no row there.
+    public static func requestScreenRecording() { _ = CGRequestScreenCaptureAccess() }
+
+    /// macOS's Accessibility prompt, which also adds the app to the pane's
+    /// list, switched off.
+    public static func requestAccessibility() {
         let prompt = "AXTrustedCheckOptionPrompt" // kAXTrustedCheckOptionPrompt
         _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
     }

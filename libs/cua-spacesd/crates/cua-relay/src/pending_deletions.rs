@@ -46,8 +46,9 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::api::error;
-use crate::assertion::{now_secs, remove_stale_temps, write_private_with};
+use crate::assertion::{now_secs, remove_stale_temps};
 use crate::directory::{hash_token, MACHINE_TOKEN_PREFIX};
+use crate::persist::{Durable, Pending, StateFile};
 use crate::server::{bearer, Relay};
 use crate::storage::{store, Storage};
 
@@ -90,9 +91,8 @@ impl Tombstone {
 /// when a file is configured.
 #[derive(Debug, Default)]
 pub struct PendingDeletions {
-    path: Option<PathBuf>,
+    file: StateFile,
     computers: Mutex<BTreeMap<String, Tombstone>>,
-    storage: Arc<Storage>,
 }
 
 impl PendingDeletions {
@@ -114,38 +114,46 @@ impl PendingDeletions {
         let now = now_secs();
         computers.retain(|_, t| !t.expired(now));
         Ok(Self {
-            path: Some(path),
+            file: StateFile::new(Some(path), store::PENDING_DELETIONS, storage),
             computers: Mutex::new(computers),
-            storage,
         })
     }
 
-    /// Writes `next` and swaps it in; on a failed write nothing changes.
+    /// Queues the file's new content (compact JSON, streamed by the writer
+    /// thread to a temp file that replaces it). Never blocks on the disk.
+    fn persist(&self, map: &BTreeMap<String, Tombstone>) -> Durable {
+        if !self.file.is_persisted() {
+            return Durable::ready();
+        }
+        let snapshot = map.clone();
+        self.file.replace(move |out| {
+            serde_json::to_writer(&mut *out, &snapshot).map_err(std::io::Error::other)
+        })
+    }
+
+    /// Swaps `next` in (in memory) and queues its write; [`Self::settle`]
+    /// waits for it with the lock released.
     fn commit(
         &self,
-        computers: &mut BTreeMap<String, Tombstone>,
+        current: &mut BTreeMap<String, Tombstone>,
         next: BTreeMap<String, Tombstone>,
-    ) -> Result<(), String> {
-        if let Some(path) = &self.path {
-            let written = (|| {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                write_private_with(path, |out| {
-                    serde_json::to_writer(&mut *out, &next).map_err(std::io::Error::other)
-                })
-            })();
-            self.storage.record(store::PENDING_DELETIONS, &written);
-            written.map_err(|e| e.to_string())?;
-        }
-        *computers = next;
-        Ok(())
+    ) -> Pending<String, Tombstone> {
+        Pending::swap(current, next, |m| self.persist(m))
+    }
+
+    /// Waits until the change is on disk; on a failed write it is undone
+    /// (unless replaced since) and the caller gets the error.
+    async fn settle(&self, pending: Pending<String, Tombstone>) -> Result<(), String> {
+        pending
+            .settle(&self.computers, &self.file, |m| self.persist(m))
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Records that `computer` (owned by `owner`, whose token hash was
     /// `token_sha256`) must delete `spaces`. A record already there gains
     /// them (and the newest token hash); nothing to delete records nothing.
-    pub fn record(
+    pub async fn record(
         &self,
         computer: &str,
         owner: &str,
@@ -161,10 +169,11 @@ impl PendingDeletions {
             spaces,
             now_secs(),
         )
+        .await
     }
 
     /// [`Self::record`] at `now`.
-    pub fn record_at(
+    pub async fn record_at(
         &self,
         computer: &str,
         owner: &str,
@@ -176,28 +185,32 @@ impl PendingDeletions {
         if spaces.is_empty() {
             return Ok(());
         }
-        let mut computers = self.computers.lock().expect("pending deletions");
-        let mut next = computers.clone();
-        next.retain(|_, t| !t.expired(now));
-        let entry = next
-            .entry(computer.to_owned())
-            .or_insert_with(|| Tombstone {
-                owner: owner.to_owned(),
-                token_sha256: String::new(),
-                requested_by: None,
-                requested_at: now,
-                spaces: Vec::new(),
-            });
-        entry.owner = owner.to_owned();
-        entry.token_sha256 = token_sha256.to_owned();
-        entry.requested_by = requested_by;
-        entry.requested_at = now;
-        for s in spaces {
-            if !entry.spaces.iter().any(|e| e.id == s.id) {
-                entry.spaces.push(s);
+        let (pending, out) = {
+            let mut computers = self.computers.lock().expect("pending deletions");
+            let mut next = computers.clone();
+            next.retain(|_, t| !t.expired(now));
+            let entry = next
+                .entry(computer.to_owned())
+                .or_insert_with(|| Tombstone {
+                    owner: owner.to_owned(),
+                    token_sha256: String::new(),
+                    requested_by: None,
+                    requested_at: now,
+                    spaces: Vec::new(),
+                });
+            entry.owner = owner.to_owned();
+            entry.token_sha256 = token_sha256.to_owned();
+            entry.requested_by = requested_by;
+            entry.requested_at = now;
+            for s in spaces {
+                if !entry.spaces.iter().any(|e| e.id == s.id) {
+                    entry.spaces.push(s);
+                }
             }
-        }
-        self.commit(&mut computers, next)
+            (self.commit(&mut computers, next), ())
+        };
+        self.settle(pending).await?;
+        Ok(out)
     }
 
     /// `computer`'s record, unless there is none or it expired.
@@ -245,42 +258,48 @@ impl PendingDeletions {
 
     /// `computer` deleted `space`: it leaves the record, and the last one
     /// clears it. Returns whether it was pending.
-    pub fn ack(&self, computer: &str, space: &str) -> Result<bool, String> {
-        self.ack_at(computer, space, now_secs())
+    pub async fn ack(&self, computer: &str, space: &str) -> Result<bool, String> {
+        self.ack_at(computer, space, now_secs()).await
     }
 
     /// [`Self::ack`] at a given time (tests).
-    pub fn ack_at(&self, computer: &str, space: &str, now: u64) -> Result<bool, String> {
-        let mut computers = self.computers.lock().expect("pending deletions");
-        let mut next = computers.clone();
-        next.retain(|_, t| !t.expired(now));
-        let Some(t) = next.get_mut(computer) else {
-            return Ok(false);
+    pub async fn ack_at(&self, computer: &str, space: &str, now: u64) -> Result<bool, String> {
+        let (pending, out) = {
+            let mut computers = self.computers.lock().expect("pending deletions");
+            let mut next = computers.clone();
+            next.retain(|_, t| !t.expired(now));
+            let Some(t) = next.get_mut(computer) else {
+                return Ok(false);
+            };
+            let before = t.spaces.len();
+            t.spaces.retain(|s| s.id != space);
+            let was = t.spaces.len() != before;
+            if t.spaces.is_empty() {
+                next.remove(computer);
+            }
+            if !was && next.len() == computers.len() {
+                return Ok(false);
+            }
+            (self.commit(&mut computers, next), was)
         };
-        let before = t.spaces.len();
-        t.spaces.retain(|s| s.id != space);
-        let was = t.spaces.len() != before;
-        if t.spaces.is_empty() {
-            next.remove(computer);
-        }
-        if !was && next.len() == computers.len() {
-            return Ok(false);
-        }
-        self.commit(&mut computers, next)?;
-        Ok(was)
+        self.settle(pending).await?;
+        Ok(out)
     }
 
     /// Account deletion: forgets every record of `account`'s computers.
     /// Returns how many there were. The file is rewritten every call, so a
     /// retry after a failed write finishes the job.
-    pub fn erase_account(&self, account: &str) -> Result<usize, String> {
-        let mut computers = self.computers.lock().expect("pending deletions");
-        let mut next = computers.clone();
-        let before = next.len();
-        next.retain(|_, t| t.owner != account);
-        let gone = before - next.len();
-        self.commit(&mut computers, next)?;
-        Ok(gone)
+    pub async fn erase_account(&self, account: &str) -> Result<usize, String> {
+        let (pending, out) = {
+            let mut computers = self.computers.lock().expect("pending deletions");
+            let mut next = computers.clone();
+            let before = next.len();
+            next.retain(|_, t| t.owner != account);
+            let gone = before - next.len();
+            (self.commit(&mut computers, next), gone)
+        };
+        self.settle(pending).await?;
+        Ok(out)
     }
 }
 
@@ -360,7 +379,7 @@ async fn ack(
         return r;
     }
     let space = space.strip_prefix("relay:").unwrap_or(&space);
-    match relay.pending_deletions.ack(&id, space) {
+    match relay.pending_deletions.ack(&id, space).await {
         Ok(was) => {
             if was {
                 tracing::info!(computer = %id, space, "pending Space deletion acknowledged");
@@ -382,10 +401,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn records_merge_ack_clears_and_expire() {
+    #[tokio::test]
+    async fn records_merge_ack_clears_and_expire() {
         let p = PendingDeletions::in_memory();
-        p.record_at("c1", "ada", "h1", None, vec![], 100).unwrap();
+        p.record_at("c1", "ada", "h1", None, vec![], 100)
+            .await
+            .unwrap();
         assert!(
             p.get_at("c1", 100).is_none(),
             "nothing to delete records nothing"
@@ -399,8 +420,10 @@ mod tests {
             vec![space("s1")],
             100,
         )
+        .await
         .unwrap();
         p.record_at("c1", "ada", "h2", None, vec![space("s1"), space("s2")], 200)
+            .await
             .unwrap();
         let t = p.get_at("c1", 200).unwrap();
         assert_eq!(t.spaces, vec![space("s1"), space("s2")]);
@@ -410,19 +433,19 @@ mod tests {
         assert!(p.get_at("c1", 200 + TTL_SECS - 1).is_some());
         assert!(p.get_at("c1", 200 + TTL_SECS).is_none());
 
-        assert!(p.ack_at("c1", "s1", 200).unwrap());
-        assert!(!p.ack_at("c1", "s1", 200).unwrap(), "idempotent");
-        assert!(!p.ack_at("c1", "nope", 200).unwrap());
-        assert!(!p.ack_at("c9", "s2", 200).unwrap());
-        assert!(p.ack_at("c1", "s2", 200).unwrap());
+        assert!(p.ack_at("c1", "s1", 200).await.unwrap());
+        assert!(!p.ack_at("c1", "s1", 200).await.unwrap(), "idempotent");
+        assert!(!p.ack_at("c1", "nope", 200).await.unwrap());
+        assert!(!p.ack_at("c9", "s2", 200).await.unwrap());
+        assert!(p.ack_at("c1", "s2", 200).await.unwrap());
         assert!(
             p.computers.lock().unwrap().is_empty(),
             "the last ack clears it"
         );
     }
 
-    #[test]
-    fn persists_drops_expired_on_load_and_erases_by_account() {
+    #[tokio::test]
+    async fn persists_drops_expired_on_load_and_erases_by_account() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.pending-deletions.json");
         let p = PendingDeletions::open_with(path.clone(), Arc::default()).unwrap();
@@ -435,10 +458,13 @@ mod tests {
             vec![space("s0")],
             now - TTL_SECS - 1,
         )
+        .await
         .unwrap();
         p.record_at("c1", "ada", "h1", None, vec![space("s1")], now)
+            .await
             .unwrap();
         p.record_at("c2", "bob", "h2", None, vec![space("s2")], now)
+            .await
             .unwrap();
         drop(p);
         #[cfg(unix)]
@@ -454,8 +480,8 @@ mod tests {
         assert!(p.is_pending_space("s1") && !p.is_pending_space("s0"));
         assert_eq!(p.computer_for_token("h2").as_deref(), Some("c2"));
 
-        assert_eq!(p.erase_account("ada").unwrap(), 1);
-        assert_eq!(p.erase_account("ada").unwrap(), 0);
+        assert_eq!(p.erase_account("ada").await.unwrap(), 1);
+        assert_eq!(p.erase_account("ada").await.unwrap(), 0);
         drop(p);
         let p = PendingDeletions::open_with(path, Arc::default()).unwrap();
         assert!(p.get("c1").is_none() && p.get("c2").is_some());

@@ -4512,7 +4512,9 @@ fn windows_reject_reparse_directory(directory: &Dir) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(handle: &T) -> Result<()> {
+pub(crate) fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(
+    handle: &T,
+) -> Result<()> {
     windows_set_private_security(handle.as_raw_handle().cast())?;
     windows_verify_security(handle.as_raw_handle().cast())
 }
@@ -5869,9 +5871,10 @@ mod tests {
             "bin/cua-perception"
         }));
         assert_eq!(config.args[0], "--manifest");
-        assert!(config.args[1].ends_with("models/model-manifest.json"));
+        // Path::ends_with compares components, so it holds with `\` on Windows.
+        assert!(Path::new(&config.args[1]).ends_with("models/model-manifest.json"));
         assert_eq!(config.args[2], "--onnx-runtime-library");
-        assert!(config.args[3].ends_with(&format!("runtime/{runtime_name}")));
+        assert!(Path::new(&config.args[3]).ends_with(format!("runtime/{runtime_name}")));
         assert_eq!(
             &config.args[4..],
             [

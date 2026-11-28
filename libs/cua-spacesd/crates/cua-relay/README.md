@@ -609,7 +609,13 @@ jobs), snapshots up to 64 MiB, keyrings 4 MiB, the rest 64 KiB.
   `audit_events_dropped` and pool refusals. `503` when the probe fails or a
   store is failing. With one replica, do not make this the Kubernetes
   readiness probe (a full volume would take the whole relay, mesh included,
-  out of service); alert on it instead.
+  out of service); alert on it instead. A stalled volume (an I/O pause)
+  never holds the answer: one probe runs at a time in the background,
+  `/readyz` waits at most 0.5 s for it, and a pause shorter than 5 s keeps
+  the last result. A probe stuck for 5 s or more makes `/readyz` `503`
+  (`state volume not answering`), and `cua_relay_state_probe_running_seconds`
+  and `probe_running_secs` show how long. Do not restart the relay on this:
+  a restart does not unstall the disk and drops every connected machine.
 - `GET /metrics`: Prometheus text, no account data:
   `cua_relay_state_writes_total{store}`,
   `cua_relay_state_persist_failures_total{store}`,
@@ -674,7 +680,8 @@ drops), `pool write refused` (`alert=pool_write_refused`, at powers of two).
 **Alert on:**
 
 1. `/readyz` not `200` (the probe fails or a store is failing), for 2
-   minutes.
+   minutes, or `cua_relay_state_probe_running_seconds > 5` for 1 minute
+   (a stalled volume).
 2. Free space under 20%: `/readyz` `disk.free_percent < 20`, or
    `cua_relay_state_volume_available_bytes / cua_relay_state_volume_bytes < 0.2`.
 3. Any persist failure: `increase(cua_relay_state_persist_failures_total[10m]) > 0`,

@@ -115,7 +115,7 @@ mod registry {
             RegOpenKeyExW(
                 HKEY_LOCAL_MACHINE,
                 &HSTRING::from(key),
-                0,
+                None,
                 KEY_READ,
                 &mut handle,
             )
@@ -137,7 +137,7 @@ mod registry {
                 RegEnumValueW(
                     handle,
                     index,
-                    PWSTR(name.as_mut_ptr()),
+                    Some(PWSTR(name.as_mut_ptr())),
                     &mut name_len,
                     None,
                     Some(&mut kind),

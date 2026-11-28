@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::directory::Role;
 use crate::oidc::Identity;
+use crate::persist::{Durable, StateFile};
 use crate::storage::{store, Storage};
 
 /// Longest a machine-minted ticket can live (spacesd's `MAX_TICKET_TTL`, a
@@ -272,7 +273,7 @@ fn percent_decode(value: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 struct State {
     #[serde(default)]
     seen: BTreeMap<String, BTreeMap<String, Seen>>,
@@ -283,10 +284,6 @@ struct State {
     /// cannot be valid any more, without keeping the id itself.
     #[serde(default)]
     erased: BTreeMap<String, u64>,
-    /// The last write failed: the next change writes the file again even
-    /// when it would not on its own.
-    #[serde(skip)]
-    unsaved: bool,
 }
 
 impl State {
@@ -307,7 +304,8 @@ impl State {
 /// The store (see the module docs).
 #[derive(Default)]
 pub struct Grants {
-    path: Option<PathBuf>,
+    /// The grants file, written off the request path.
+    file: StateFile,
     state: Mutex<State>,
     /// Where write failures are counted and reported.
     storage: Arc<Storage>,
@@ -335,7 +333,7 @@ impl Grants {
         };
         state.prune(now_ms());
         Ok(Self {
-            path: Some(path),
+            file: StateFile::new(Some(path), store::GRANTS, storage.clone()),
             state: Mutex::new(state),
             storage,
         })
@@ -347,33 +345,28 @@ impl Grants {
         self.storage.store_ok(store::GRANTS)
     }
 
-    /// Writes the grants file: compact JSON streamed to a temp file that
-    /// replaces it. A failed write is counted and logged (store `grants` on
+    /// Queues the grants file's new content (compact JSON, streamed by the
+    /// writer thread to a temp file that replaces it); never blocks on the
+    /// disk. A failed write is counted and logged (store `grants` on
     /// `/readyz` and `/metrics`, `state persist failed`) and retried with
     /// the next change. Nothing is rolled back: a revoke mark is enforced
     /// from memory either way (dropping it would let the old tickets
     /// through again); what a failed write risks is only that a restart
     /// before the next successful one forgets it.
-    fn persist(&self, state: &mut State) {
-        let _ = self.persist_result(state);
+    /// Waits until every change so far is written (tests).
+    #[cfg(test)]
+    fn flush(&self) {
+        assert!(self.file.flush_blocking(std::time::Duration::from_secs(10)));
     }
 
-    /// [`Self::persist`], returning the write's outcome.
-    fn persist_result(&self, state: &mut State) -> std::io::Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        let written = (|| {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            crate::assertion::write_private_with(path, |out| {
-                serde_json::to_writer(&mut *out, &*state).map_err(std::io::Error::other)
-            })
-        })();
-        self.storage.record(store::GRANTS, &written);
-        state.unsaved = written.is_err();
-        written
+    fn persist(&self, state: &State) -> Durable {
+        if !self.file.is_persisted() {
+            return Durable::ready();
+        }
+        let snapshot = state.clone();
+        self.file.replace(move |out| {
+            serde_json::to_writer(&mut *out, &snapshot).map_err(std::io::Error::other)
+        })
     }
 
     /// Emails the seen rows hold for `account`.
@@ -395,41 +388,44 @@ impl Grants {
     /// horizon) so tickets minted for it before now stay refused. Returns
     /// the rows removed. The file is rewritten every call, so a retry after
     /// a failed write finishes the job.
-    pub fn erase_account(&self, account: &str, emails: &[String]) -> std::io::Result<usize> {
-        let mut state = self.state.lock().expect("grants");
-        let mut rows = 0;
-        let mut users: BTreeSet<String> = BTreeSet::from([account.to_owned()]);
-        for machine in state.seen.values_mut() {
-            machine.retain(|user, s| {
-                let mine = user == account
-                    || s.account == account
-                    || s.email
-                        .as_deref()
-                        .is_some_and(|e| emails.iter().any(|m| m.eq_ignore_ascii_case(e)));
-                if mine {
-                    users.insert(user.clone());
-                    rows += 1;
-                }
-                !mine
-            });
-        }
-        for machine in state.revoked.values_mut() {
-            machine.retain(|user, _| {
-                let mine = user == account || users.contains(user);
-                rows += usize::from(mine);
-                !mine
-            });
-        }
-        state.seen.retain(|_, u| !u.is_empty());
-        state.revoked.retain(|_, u| !u.is_empty());
-        if rows > 0 {
-            let at = now_ms();
-            for user in &users {
-                state.erased.insert(digest_hex(user), at);
+    pub async fn erase_account(&self, account: &str, emails: &[String]) -> std::io::Result<usize> {
+        let (written, rows) = {
+            let mut state = self.state.lock().expect("grants");
+            let mut rows = 0;
+            let mut users: BTreeSet<String> = BTreeSet::from([account.to_owned()]);
+            for machine in state.seen.values_mut() {
+                machine.retain(|user, s| {
+                    let mine = user == account
+                        || s.account == account
+                        || s.email
+                            .as_deref()
+                            .is_some_and(|e| emails.iter().any(|m| m.eq_ignore_ascii_case(e)));
+                    if mine {
+                        users.insert(user.clone());
+                        rows += 1;
+                    }
+                    !mine
+                });
             }
-        }
-        state.prune(now_ms());
-        self.persist_result(&mut state)?;
+            for machine in state.revoked.values_mut() {
+                machine.retain(|user, _| {
+                    let mine = user == account || users.contains(user);
+                    rows += usize::from(mine);
+                    !mine
+                });
+            }
+            state.seen.retain(|_, u| !u.is_empty());
+            state.revoked.retain(|_, u| !u.is_empty());
+            if rows > 0 {
+                let at = now_ms();
+                for user in &users {
+                    state.erased.insert(digest_hex(user), at);
+                }
+            }
+            state.prune(now_ms());
+            (self.persist(&state), rows)
+        };
+        written.await?;
         Ok(rows)
     }
 
@@ -478,9 +474,9 @@ impl Grants {
             .is_some_and(|mark| old.as_ref().is_none_or(|o| o.at <= mark.at));
         let users = state.seen.entry(machine.to_owned()).or_default();
         users.insert(who.user.clone(), next);
-        if changed || first_since_mark || state.unsaved {
+        if changed || first_since_mark || !self.file.last_ok() {
             state.prune(now_ms());
-            self.persist(&mut state);
+            self.persist(&state).detach();
         }
     }
 
@@ -523,7 +519,7 @@ impl Grants {
         let mut state = self.state.lock().expect("grants");
         if let Some(s) = state.seen.get_mut(machine).and_then(|u| u.get_mut(user)) {
             s.role = role;
-            self.persist(&mut state);
+            self.persist(&state).detach();
         }
     }
 
@@ -563,7 +559,7 @@ impl Grants {
             }
         }
         state.prune(now_ms());
-        self.persist(&mut state);
+        self.persist(&state).detach();
     }
 }
 
@@ -713,6 +709,7 @@ mod tests {
         g.record("m", &who("bob"), Role::Shared, now);
         g.revoke("m", "bob", 2, None, now);
         g.record("m", &who("old"), Role::Viewer, now - TICKET_HORIZON_MS - 1);
+        g.flush();
         let g = Grants::open(path).unwrap();
         assert!(
             g.lookup("m", "bob").1.is_some(),
@@ -733,10 +730,12 @@ mod tests {
         let g = Grants::open_with(path.clone(), storage.clone()).unwrap();
         let now = now_ms();
         g.record("m", &who("bob"), Role::Shared, now);
+        g.flush();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains('\n'), "compact JSON: {raw}");
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
         g.revoke("m", "bob", 2, None, now + 1);
+        g.flush();
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         // The revoke holds in memory either way.
         assert!(g.revoked_since("m", "bob", now + 1));
@@ -759,6 +758,7 @@ mod tests {
             g.record("m", &who("carol"), Role::Shared, now + 2);
             g.record("m", &who("carol"), Role::Shared, now + 3);
         }
+        g.flush();
         assert!(g.writes_ok());
         assert!(
             Grants::open(path).unwrap().lookup("m", "bob").1.is_some(),

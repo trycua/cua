@@ -488,7 +488,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
         }
 
         "launch_app" | "activate_app" | "bring_to_front" | "set_window_frame" | "invoke_menu"
-        | "list_apps" | "list_windows" | "kill_app" => CursorAction::App,
+        | "list_apps" | "list_windows" | "kill_app" | "agent_display" => CursorAction::App,
 
         "upload_file" | "download_file" | "copy_file" | "move_file" => CursorAction::Transfer,
 
@@ -504,6 +504,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
         "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
         | "set_agent_cursor_theme"
+        | "set_agent_cursor_badge"
         | "get_agent_cursor_state" => return None,
         _ => return None,
     };

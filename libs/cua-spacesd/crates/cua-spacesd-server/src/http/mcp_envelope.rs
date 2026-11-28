@@ -413,6 +413,7 @@ fn remote_tool(name: &str) -> bool {
             | "set_agent_cursor_enabled"
             | "set_agent_cursor_motion"
             | "set_agent_cursor_theme"
+            | "set_agent_cursor_badge"
     )
 }
 

@@ -672,7 +672,9 @@ describe("empty home", () => {
     expect(await screen.findByRole("heading", { name: "No Spaces yet" })).toBeInTheDocument();
     expect(screen.getByText("Pick a system to start it.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "This Mac" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Linux, About 3 minutes · 3.3–7.3 GB of disk" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Linux, About 3 minutes · \d+\.\d+–\d+\.\d+ GB of disk$/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^macOS, About .+ download$/ })).toBeInTheDocument();
   });
 

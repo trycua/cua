@@ -409,6 +409,73 @@ mod tests {
         }
     }
 
+    /// A batched reply as an application sends it for a Calculator-style digit
+    /// button: AXTitle unsupported, AXDescription "2", AXIdentifier present but
+    /// empty, AXHelp set, a numeric AXValue and a boolean AXEnabled. Every slot
+    /// the reply leaves unanswered is an AXError placeholder.
+    #[test]
+    fn batched_labels_keep_absent_empty_and_typed_values_apart() {
+        use super::super::bindings::*;
+        use super::NodeAttributes;
+        use core_foundation::{
+            array::CFArray,
+            base::{CFRetain, CFType, CFTypeRef, TCFType},
+            boolean::CFBoolean,
+            number::CFNumber,
+            string::CFString,
+        };
+
+        const AX_VALUE_AX_ERROR_TYPE: AXValueType = 5;
+        let unsupported = kAXErrorAttributeUnsupported;
+        let placeholder = unsafe {
+            AXValueCreate(
+                AX_VALUE_AX_ERROR_TYPE,
+                (&unsupported as *const AXError).cast(),
+            )
+        };
+        assert!(!placeholder.is_null());
+        let placeholder = unsafe { CFType::wrap_under_create_rule(placeholder as CFTypeRef) };
+
+        let slots: Vec<CFType> = NodeAttr::ALL
+            .iter()
+            .map(|attr| match attr {
+                NodeAttr::Role => CFString::new("AXButton").as_CFType(),
+                NodeAttr::Description => CFString::new("2").as_CFType(),
+                NodeAttr::Identifier => CFString::new("").as_CFType(),
+                NodeAttr::Help => CFString::new("Digit two").as_CFType(),
+                NodeAttr::Value => CFNumber::from(1_i32).as_CFType(),
+                NodeAttr::Enabled => CFBoolean::true_value().as_CFType(),
+                _ => placeholder.clone(),
+            })
+            .collect();
+        let reply = CFArray::from_CFTypes(&slots);
+        // NodeAttributes owns its reply under the create rule and releases it
+        // on drop, so hand it a reference of its own.
+        unsafe { CFRetain(reply.as_CFTypeRef()) };
+        let attrs = NodeAttributes::Batch(reply.as_concrete_TypeRef());
+
+        unsafe {
+            assert_eq!(attrs.string(NodeAttr::Role).as_deref(), Some("AXButton"));
+            assert_eq!(attrs.string(NodeAttr::Title), None);
+            assert_eq!(attrs.string(NodeAttr::Description).as_deref(), Some("2"));
+            assert_eq!(attrs.string(NodeAttr::Identifier).as_deref(), Some(""));
+            assert_eq!(attrs.string(NodeAttr::Help).as_deref(), Some("Digit two"));
+            assert_eq!(attrs.string(NodeAttr::PlaceholderValue), None);
+            // A typed value is not a string label, but its state survives.
+            assert_eq!(attrs.string(NodeAttr::Value), None);
+            let value = attrs.stringish(NodeAttr::Value).expect("numeric AXValue");
+            assert_eq!(value.string_value, None);
+            assert_eq!(value.state_value, "1");
+            assert_eq!(attrs.bool(NodeAttr::Enabled), Some(true));
+            assert_eq!(attrs.bool(NodeAttr::Selected), None);
+            // An unsupported attribute is absent, not a failed read.
+            assert!(!attrs.read_failed(NodeAttr::Title));
+        }
+        drop(attrs);
+        // The reply outlives the drop with exactly the reference we kept.
+        assert_eq!(reply.retain_count(), 1);
+    }
+
     #[test]
     fn string_slots_read_like_single_string_reads() {
         use super::super::bindings::*;

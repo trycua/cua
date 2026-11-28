@@ -551,43 +551,73 @@ pub(crate) fn screenshot_window_click_target(
 }
 
 fn screenshot_window_mapped(hwnd: u64) -> Result<(Vec<u8>, bool, Option<FrameGeometry>)> {
-    match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
-        Ok(capture) => Ok(capture),
-        Err(primary_error) => {
-            if primary_error.to_string().contains("minimized window") {
-                return Err(primary_error);
-            }
-            // A freshly restored DirectComposition window can temporarily have
-            // no usable GDI surface even though DWM is already rendering it.
-            // WGC reads the compositor-owned frame and is therefore the right
-            // first fallback for this class of capture failure.
-            match screenshot_window_via_wgc_checked(hwnd) {
-                Ok((pixels, width, height, geometry)) => Ok((
-                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?,
-                    false,
-                    Some(geometry),
-                )),
-                Err(wgc_error) => {
-                    // Headless/virtualized Windows sessions can expose DWM but
-                    // no WGC-compatible hardware device. Once a window is
-                    // visible, a desktop-region crop remains a truthful final
-                    // fallback; report whether another window covered it.
-                    let target = HWND(hwnd as *mut _);
-                    let occluded = unsafe { target_is_obscured(target) };
-                    match unsafe { screenshot_via_screen_region(target) } {
-                        Ok((pixels, width, height, geometry)) => Ok((
-                            cua_driver_core::image_utils::encode_bgra_to_png(
-                                &pixels,
-                                width as u32,
-                                height as u32,
-                            )?,
-                            occluded,
-                            Some(geometry),
-                        )),
-                        Err(screen_error) => Err(primary_error.context(format!(
+    // Issue #5783: `WS_EX_LAYERED` windows (the Wails floating ball is one)
+    // are not drawn through the ordinary GDI window surface. Calling
+    // PrintWindow on them drives the compositor into a path that kills the
+    // whole process, so an Err-based fallback below cannot help after the
+    // fact. Skip the PrintWindow attempt entirely for those windows and read
+    // the composited pixels instead — that is the only truthful image of a
+    // layered surface anyway.
+    let layered: bool = unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED,
+        };
+        let target = HWND(hwnd as *mut _);
+        (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32 & WS_EX_LAYERED.0 as u32) != 0
+    };
+
+    let primary_error = match (
+        layered,
+        unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) },
+    ) {
+        (false, Ok(capture)) => return Ok(capture),
+        (false, Err(primary_error))
+            if primary_error.to_string().contains("minimized window") =>
+        {
+            return Err(primary_error);
+        }
+        (false, Err(primary_error)) => Some(primary_error),
+        (true, _) => None,
+    };
+
+    {
+        // A freshly restored DirectComposition window can temporarily have
+        // no usable GDI surface even though DWM is already rendering it.
+        // WGC reads the compositor-owned frame and is therefore the right
+        // first fallback for this class of capture failure (and the primary
+        // path for layered overlays).
+        match screenshot_window_via_wgc_checked(hwnd) {
+            Ok((pixels, width, height, geometry)) => Ok((
+                cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?,
+                false,
+                Some(geometry),
+            )),
+            Err(wgc_error) => {
+                // Headless/virtualized Windows sessions can expose DWM but
+                // no WGC-compatible hardware device. Once a window is
+                // visible, a desktop-region crop remains a truthful final
+                // fallback; report whether another window covered it.
+                let target = HWND(hwnd as *mut _);
+                let occluded = unsafe { target_is_obscured(target) };
+                match unsafe { screenshot_via_screen_region(target) } {
+                    Ok((pixels, width, height, geometry)) => Ok((
+                        cua_driver_core::image_utils::encode_bgra_to_png(
+                            &pixels,
+                            width as u32,
+                            height as u32,
+                        )?,
+                        occluded,
+                        Some(geometry),
+                    )),
+                    Err(screen_error) => {
+                        let detail = format!(
                             "Windows.Graphics.Capture fallback failed: {wgc_error}; \
                              desktop-region fallback failed: {screen_error}"
-                        ))),
+                        );
+                        match primary_error {
+                            Some(primary_error) => Err(primary_error.context(detail)),
+                            None => Err(anyhow::anyhow!(detail)),
+                        }
                     }
                 }
             }

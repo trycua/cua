@@ -321,6 +321,23 @@ unsafe fn walk_tree_unsafe(
     max_depth: usize,
     budget: &mut WalkBudget,
 ) -> UiaTreeResult {
+    // Issue #5783: layered + noactivate + toolwindow overlays (the Wails
+    // floating ball is one) crash inside `CoCreateInstance(&CUIAutomation)`
+    // below — the access violation originates in uiautomationcore.dll, so
+    // this guard has to run before the automation object exists, not merely
+    // before the tree walk. Route those windows straight to the MSAA walker.
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        };
+        let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
+        let style = GetWindowLongPtrW(hwnd_win, GWL_EXSTYLE) as u32;
+        let mask = (WS_EX_LAYERED.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as u32;
+        if style & mask == mask {
+            return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
+        }
+    }
+
     if let Err(e) = ensure_com() {
         return UiaTreeResult {
             tree_markdown: e,

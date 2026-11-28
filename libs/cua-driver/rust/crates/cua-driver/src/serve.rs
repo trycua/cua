@@ -1999,7 +1999,7 @@ async fn serve_claimed_socket(
             // launch that lost the pipe never claims it or overwrites the PID
             // file of the daemon that holds it.
             eprintln!("Cua Driver daemon listening on {socket_path}");
-            if let Some(pid_path) = &pid_file_path {
+            if let Some(pid_path) = pid_file_path.as_deref() {
                 if let Some(dir) = std::path::Path::new(pid_path).parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }
@@ -2808,7 +2808,7 @@ const SOCKET_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 #[cfg(unix)]
 fn socket_accepts(socket_path: &str) -> bool {
     for attempt in 0..SOCKET_PROBE_ATTEMPTS {
-        match cua_driver_core::daemon::try_connect_unix(socket_path) {
+        match cua_driver_core::ipc::try_connect_unix(socket_path) {
             Ok(_) => return true,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
@@ -3425,7 +3425,7 @@ mod presence_tests {
         let listener = listen_with_no_backlog(&socket);
         let mut pending = Vec::new();
         let full = loop {
-            match cua_driver_core::daemon::try_connect_unix(path) {
+            match cua_driver_core::ipc::try_connect_unix(path) {
                 Ok(stream) => pending.push(stream),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break true,
                 Err(error) => panic!("connect: {error}"),

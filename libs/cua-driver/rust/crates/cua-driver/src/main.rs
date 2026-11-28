@@ -917,20 +917,24 @@ fn main() {
                             "sdk_owned_runtime",
                             "not_applicable",
                             true,
+                            "none",
                             startup_started.elapsed(),
                         );
                         run_mcp_direct()
                     }
                 }
                 Err(error) => Err(error),
-                Ok(false) => cli::run_mcp_via_daemon_proxy(socket, &grants, |daemon, success| {
-                    telemetry::capture_mcp_startup_completed(
-                        "daemon_proxy",
-                        daemon.telemetry_value(),
-                        success,
-                        startup_started.elapsed(),
-                    )
-                }),
+                Ok(false) => {
+                    cli::run_mcp_via_daemon_proxy(socket, &grants, |daemon, success, reason| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            reason,
+                            startup_started.elapsed(),
+                        )
+                    })
+                }
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");
@@ -1250,19 +1254,23 @@ fn main() -> anyhow::Result<()> {
                         "sdk_owned_runtime",
                         "not_applicable",
                         true,
+                        "none",
                         startup_started.elapsed(),
                     );
                     run_mcp_direct()
                 }
                 Err(error) => Err(error),
-                Ok(false) => cli::run_mcp_via_daemon_proxy(socket, &grants, |daemon, success| {
-                    telemetry::capture_mcp_startup_completed(
-                        "daemon_proxy",
-                        daemon.telemetry_value(),
-                        success,
-                        startup_started.elapsed(),
-                    )
-                }),
+                Ok(false) => {
+                    cli::run_mcp_via_daemon_proxy(socket, &grants, |daemon, success, reason| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            reason,
+                            startup_started.elapsed(),
+                        )
+                    })
+                }
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");

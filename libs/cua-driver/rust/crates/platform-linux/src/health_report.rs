@@ -415,19 +415,19 @@ async fn check_wayland_backend() -> CheckEntry {
             );
         }
     };
-    let remote_desktop_portal_reachable = if portal_input_enabled() {
+    let probe = if portal_input_enabled() {
         tokio::task::spawn_blocking(probe_portal_remote_desktop)
             .await
             .ok()
             .and_then(|r| r.ok())
-            .unwrap_or(false)
     } else {
-        false
+        None
     };
+    let remote_desktop = remote_desktop_portal(probe);
     let mut entry = classify_wayland_backend(
         &snap,
         portal_input_enabled(),
-        remote_desktop_portal_reachable,
+        &remote_desktop,
         target_activation_available(),
     );
     if let Some(note) = tokio::task::spawn_blocking(compositor_note)
@@ -440,10 +440,92 @@ async fn check_wayland_backend() -> CheckEntry {
     entry
 }
 
+/// What doctor learned about the RemoteDesktop portal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RemoteDesktopPortal {
+    Unreachable,
+    Reachable,
+    /// The frontend exports RemoteDesktop, but the backend it routes to
+    /// offers no keyboard or pointer and refuses a session (#3638).
+    NoInputDevices {
+        message: String,
+        hint: String,
+    },
+}
+
+/// The frontend's RemoteDesktop, as doctor sees it.
+#[cfg_attr(
+    not(all(target_os = "linux", feature = "portal-input")),
+    allow(dead_code)
+)]
+enum RemoteDesktopProbe {
+    NotExported,
+    /// `devices` is `AvailableDeviceTypes` (keyboard 1, pointer 2,
+    /// touchscreen 4), when it could be read. `session_refused` is whether
+    /// a `CreateSession` call, made only when a keyboard or pointer is
+    /// missing, was refused.
+    Exported {
+        devices: Option<u32>,
+        session_refused: bool,
+    },
+}
+
+/// A missing keyboard or pointer counts only when a session was refused
+/// too; anything doctor could not read keeps the earlier verdict.
+fn remote_desktop_portal(probe: Option<RemoteDesktopProbe>) -> RemoteDesktopPortal {
+    match probe {
+        Some(RemoteDesktopProbe::Exported {
+            devices: Some(devices),
+            session_refused: true,
+        }) => match missing_devices(devices) {
+            Some((message, hint)) => RemoteDesktopPortal::NoInputDevices { message, hint },
+            None => RemoteDesktopPortal::Reachable,
+        },
+        Some(RemoteDesktopProbe::Exported { .. }) => RemoteDesktopPortal::Reachable,
+        Some(RemoteDesktopProbe::NotExported) | None => RemoteDesktopPortal::Unreachable,
+    }
+}
+
+/// `(message, hint)` when `AvailableDeviceTypes` lacks a keyboard or a
+/// pointer. The frontend copies this property from the backend it routes
+/// RemoteDesktop to when it starts, so it is 0 when that backend does not
+/// export `org.freedesktop.impl.portal.RemoteDesktop`, as
+/// `xdg-desktop-portal-kde` does not in a GNOME session. The frontend does
+/// not refresh it when a backend exports the interface later, so doctor
+/// reports it only once a session through the same route is refused too.
+fn missing_devices(devices: u32) -> Option<(String, String)> {
+    let missing: Vec<&str> = [(1, "keyboard"), (2, "pointer")]
+        .into_iter()
+        .filter(|(bit, _)| devices & bit == 0)
+        .map(|(_, name)| name)
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some((
+        format!(
+            "The RemoteDesktop portal is reachable, but the backend xdg-desktop-portal \
+             routes it to offers no {} (AvailableDeviceTypes is {devices}) and refused \
+             to create a session, so clicks and key presses cannot be delivered. One \
+             cause is another desktop's backend serving RemoteDesktop, such as \
+             xdg-desktop-portal-kde in a GNOME session, which does not export \
+             org.freedesktop.impl.portal.RemoteDesktop there.",
+            missing.join(" or ")
+        ),
+        "Check which backend serves RemoteDesktop: in the portals.conf xdg-desktop-portal \
+         uses (see portals.conf(5); usually ~/.config/xdg-desktop-portal/portals.conf or \
+         <desktop>-portals.conf), keep its other entries and, under `[preferred]`, set \
+         `org.freedesktop.impl.portal.RemoteDesktop=<backend>` (for example gnome). Then \
+         restart xdg-desktop-portal (`systemctl --user restart xdg-desktop-portal`) or log \
+         out and back in."
+            .to_owned(),
+    ))
+}
+
 fn classify_wayland_backend(
     snap: &WaylandManagers,
     portal_libei_enabled: bool,
-    remote_desktop_portal_reachable: bool,
+    remote_desktop: &RemoteDesktopPortal,
     target_activation_available: bool,
 ) -> CheckEntry {
     let msg = format!(
@@ -463,6 +545,14 @@ fn classify_wayland_backend(
         );
     }
     if !snap.virtual_pointer {
+        if let RemoteDesktopPortal::NoInputDevices { message, hint } = remote_desktop {
+            return CheckEntry::fail(
+                NAME_WAYLAND_BACKEND,
+                format!("No wlroots virtual-pointer advertised ({msg}). {message}"),
+                hint.clone(),
+            );
+        }
+        let remote_desktop_portal_reachable = *remote_desktop == RemoteDesktopPortal::Reachable;
         if remote_desktop_portal_reachable && target_activation_available {
             return CheckEntry::pass(
                 NAME_WAYLAND_BACKEND,
@@ -691,7 +781,7 @@ fn probe_portal_screenshot() -> anyhow::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
+fn probe_portal_remote_desktop() -> anyhow::Result<RemoteDesktopProbe> {
     #[cfg(feature = "portal-input")]
     {
         use ashpd::desktop::remote_desktop::RemoteDesktop;
@@ -704,7 +794,8 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
             })?;
 
         rt.block_on(async {
-            let probe = tokio::time::timeout(crate::wayland::portal::PROBE_TIMEOUT, async {
+            let timeout = crate::wayland::portal::PROBE_TIMEOUT;
+            let probe = tokio::time::timeout(timeout, async {
                 let connection = crate::wayland::portal::fresh_session_connection().await?;
                 RemoteDesktop::with_connection(connection)
                     .await
@@ -714,14 +805,50 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
 
             match probe {
                 Err(_) => Err(anyhow::anyhow!("portal RemoteDesktop probe timed out")),
-                Ok(Ok(_)) => Ok(true),
+                Ok(Ok(portal)) => {
+                    // A read that fails or times out keeps the old verdict.
+                    let devices = tokio::time::timeout(timeout, portal.available_device_types())
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .map(|d| d.bits());
+                    // `$LIBEI_SOCKET` bypasses the portal for input.
+                    let suspect = devices.is_some_and(|d| missing_devices(d).is_some())
+                        && std::env::var_os("LIBEI_SOCKET").is_none();
+                    // A session is created only to see whether the routed
+                    // backend takes it, and closed at once. Creating one
+                    // shows no consent dialog; that comes with Start.
+                    let session_refused = suspect
+                        && tokio::time::timeout(timeout, async {
+                            use ashpd::desktop::CreateSessionOptions;
+                            match portal.create_session(CreateSessionOptions::default()).await {
+                                Ok(session) => {
+                                    let _ = session.close().await;
+                                    false
+                                }
+                                Err(e) => matches!(e, ashpd::Error::Response(_)),
+                            }
+                        })
+                        .await
+                        .unwrap_or(false);
+                    Ok(RemoteDesktopProbe::Exported {
+                        devices,
+                        session_refused,
+                    })
+                }
                 Ok(Err(e)) => {
                     let msg = format!("{e}");
-                    if msg.contains("ServiceUnknown")
+                    // The frontend runs but does not export RemoteDesktop.
+                    let not_found = matches!(
+                        e.downcast_ref::<ashpd::Error>(),
+                        Some(ashpd::Error::PortalNotFound(_))
+                    );
+                    if not_found
+                        || msg.contains("ServiceUnknown")
                         || msg.contains("NameHasNoOwner")
                         || msg.contains("NotFound")
                     {
-                        Ok(false)
+                        Ok(RemoteDesktopProbe::NotExported)
                     } else {
                         Err(anyhow::anyhow!("portal RemoteDesktop probe failed: {e}"))
                     }
@@ -731,13 +858,13 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
     }
     #[cfg(not(feature = "portal-input"))]
     {
-        Ok(false)
+        Ok(RemoteDesktopProbe::NotExported)
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
-    Ok(false)
+fn probe_portal_remote_desktop() -> anyhow::Result<RemoteDesktopProbe> {
+    Ok(RemoteDesktopProbe::NotExported)
 }
 
 /// Stub of `wayland::WaylandManagers` so off-Linux builds compile. Always
@@ -891,7 +1018,7 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, true, true);
+        let entry = classify_wayland_backend(&snap, true, &RemoteDesktopPortal::Reachable, true);
 
         assert_eq!(entry.status, CheckStatus::Pass);
         assert!(entry.message.contains("portal/libei"), "{}", entry.message);
@@ -909,7 +1036,7 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, false, false);
+        let entry = classify_wayland_backend(&snap, true, &RemoteDesktopPortal::Unreachable, false);
 
         assert_eq!(entry.status, CheckStatus::Fail);
         assert!(entry.message.contains("portal/libei"), "{}", entry.message);
@@ -931,7 +1058,7 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, true, false);
+        let entry = classify_wayland_backend(&snap, true, &RemoteDesktopPortal::Reachable, false);
 
         assert_eq!(entry.status, CheckStatus::Fail);
         assert!(
@@ -944,6 +1071,79 @@ mod tests {
             "{}",
             entry.message
         );
+    }
+
+    #[test]
+    fn wayland_backend_fails_when_the_portal_backend_offers_no_input_devices() {
+        let snap = WaylandManagers {
+            foreign_toplevel: false,
+            screencopy: false,
+            ext_image_copy_capture: false,
+            ext_output_image_capture_source: false,
+            virtual_pointer: false,
+            wl_shm: true,
+        };
+        let (message, hint) = missing_devices(0).unwrap();
+        let entry = classify_wayland_backend(
+            &snap,
+            true,
+            &RemoteDesktopPortal::NoInputDevices {
+                message: message.clone(),
+                hint: hint.clone(),
+            },
+            true,
+        );
+
+        assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(entry.message.ends_with(&message), "{}", entry.message);
+        assert!(
+            message.contains("offers no keyboard or pointer (AvailableDeviceTypes is 0)")
+                && message.contains("xdg-desktop-portal-kde in a GNOME session"),
+            "{message}"
+        );
+        assert_eq!(entry.hint.as_deref(), Some(hint.as_str()));
+        assert!(
+            hint.contains("org.freedesktop.impl.portal.RemoteDesktop=<backend>"),
+            "{hint}"
+        );
+    }
+
+    #[test]
+    fn missing_devices_fail_only_when_a_session_is_refused_too() {
+        let probe = |devices, session_refused| {
+            remote_desktop_portal(Some(RemoteDesktopProbe::Exported {
+                devices,
+                session_refused,
+            }))
+        };
+        assert!(matches!(
+            probe(Some(0), true),
+            RemoteDesktopPortal::NoInputDevices { .. }
+        ));
+        // A backend that exported RemoteDesktop after the frontend started:
+        // the property stays 0, but the session goes through.
+        assert_eq!(probe(Some(0), false), RemoteDesktopPortal::Reachable);
+        assert_eq!(probe(Some(3), true), RemoteDesktopPortal::Reachable);
+        assert_eq!(probe(None, true), RemoteDesktopPortal::Reachable);
+        assert_eq!(
+            remote_desktop_portal(Some(RemoteDesktopProbe::NotExported)),
+            RemoteDesktopPortal::Unreachable
+        );
+        assert_eq!(
+            remote_desktop_portal(None),
+            RemoteDesktopPortal::Unreachable
+        );
+    }
+
+    #[test]
+    fn available_device_types_need_a_keyboard_and_a_pointer() {
+        assert!(missing_devices(1 | 2).is_none());
+        assert!(missing_devices(1 | 2 | 4).is_none());
+        assert!(missing_devices(1).unwrap().0.contains("offers no pointer"));
+        assert!(missing_devices(2 | 4)
+            .unwrap()
+            .0
+            .contains("offers no keyboard"));
     }
 
     #[tokio::test]

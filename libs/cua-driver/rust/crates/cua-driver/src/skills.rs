@@ -142,29 +142,19 @@ fn is_excluded_platform_doc(basename: &str, all_platforms: bool) -> bool {
 /// artifacts that landed here before the rename.
 const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
 
-/// Local install path for the skill pack: `<HomeDir>/skills/cua-driver`.
+/// Local install path for the skill pack: `<skills dir>/cua-driver`.
 fn local_skill_dir() -> Result<PathBuf> {
-    let home = home_dir()?;
-    Ok(home.join("skills").join(SKILL_PACK_NAME))
+    Ok(skills_dir()?.join(SKILL_PACK_NAME))
 }
 
-/// `<HomeDir>` resolved from the same env override `serve.rs` uses,
-/// falling back to platform conventions.
-fn home_dir() -> Result<PathBuf> {
-    if let Ok(h) = std::env::var("CUA_DRIVER_RS_HOME") {
-        return Ok(PathBuf::from(h));
-    }
-    #[cfg(windows)]
-    {
-        let userprofile =
-            std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
-        Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()))
-    }
-    #[cfg(not(windows))]
-    {
-        let home = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
-        Ok(PathBuf::from(home).join(crate::bundle::user_home_subdirectory()))
-    }
+fn skills_dir() -> Result<PathBuf> {
+    crate::bundle::app_paths().skills_dir.ok_or_else(|| {
+        if cfg!(windows) {
+            anyhow!("USERPROFILE not set")
+        } else {
+            anyhow!("HOME not set")
+        }
+    })
 }
 
 /// The pre-rename home (`~/.cua-driver-rs/`) if it exists on disk.
@@ -174,11 +164,12 @@ fn legacy_home_dir() -> Option<PathBuf> {
     if std::env::var("CUA_DRIVER_RS_HOME").is_ok() || crate::bundle::is_local_installation() {
         return None;
     }
-    #[cfg(windows)]
-    let base = std::env::var("USERPROFILE").ok()?;
-    #[cfg(not(windows))]
-    let base = std::env::var("HOME").ok()?;
-    let p = PathBuf::from(base).join(LEGACY_HOME_SUBDIRECTORY);
+    // Without the override, the skills dir is `<user home>/.<namespace>/skills`.
+    let skills_dir = crate::bundle::app_paths().skills_dir?;
+    let p = skills_dir
+        .parent()?
+        .parent()?
+        .join(LEGACY_HOME_SUBDIRECTORY);
     if p.exists() {
         Some(p)
     } else {
@@ -490,8 +481,8 @@ fn install(flags: &[String], force: bool) -> Result<()> {
 /// The new pack still installs even if a stale junction can't be cleaned.
 fn sweep_legacy_skill_pack() {
     // (1) Old pack NAME under new home dir.
-    if let Ok(home) = home_dir() {
-        let legacy_local = home.join("skills").join(LEGACY_SKILL_PACK_NAME);
+    if let Ok(skills_dir) = skills_dir() {
+        let legacy_local = skills_dir.join(LEGACY_SKILL_PACK_NAME);
         if legacy_local.exists() {
             if let Err(e) = fs::remove_dir_all(&legacy_local) {
                 eprintln!(
@@ -1024,9 +1015,9 @@ fn uninstall(flags: &[String]) -> Result<()> {
     if remove_local {
         // Local stage at the current name + any legacy stage from before
         // the rename. Both are owned by the installer; safe to delete.
-        if let Ok(home) = home_dir() {
+        if let Ok(skills_dir) = skills_dir() {
             for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
-                let local = home.join("skills").join(name);
+                let local = skills_dir.join(name);
                 if local.exists() {
                     fs::remove_dir_all(&local)?;
                     println!("  ✅ removed local skill pack at {}", local.display());

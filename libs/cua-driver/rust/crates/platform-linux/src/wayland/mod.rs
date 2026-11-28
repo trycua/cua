@@ -8,9 +8,10 @@
 //! staging `ext_foreign_toplevel_list_v1`, captures per-output screenshots via
 //! `zwlr_screencopy_manager_v1` + `wl_shm` (native — `grim` remains a
 //! fallback), and synthesises pointer / scroll / drag input via
-//! `zwlr_virtual_pointer_v1`. Until identified per-toplevel capture is broadly
-//! available, window-scoped screenshots use output crops only for visible,
-//! compositor-attested surfaces and return a typed identity error otherwise.
+//! `zwlr_virtual_pointer_v1`. Window-scoped screenshots copy the toplevel
+//! itself where `ext_foreign_toplevel_image_capture_source_manager_v1` names
+//! it; otherwise they use output crops only for visible, compositor-attested
+//! surfaces and return a typed identity error.
 
 mod compositor_peer;
 mod cua_compositor_capture;
@@ -55,6 +56,7 @@ pub(crate) mod portal_screencast;
 /// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.
 pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
 
+use cua_driver_core::action_record::ActionTransport;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
@@ -1204,26 +1206,30 @@ fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
             window.visible,
         );
     }
-    // GNOME helpers before API 9 have no per-window capture, so the stage is
-    // cropped to the window's frame. GetRects proves geometry, not occlusion:
-    // a covering window shows in the crop. API 9+ helpers never reach this
-    // (see `WindowRoute::GnomeHelper`).
-    if let Some(window) = shell_helper::list_windows(None)
-        .and_then(|windows| windows.into_iter().find(|window| window.xid == xid))
-    {
-        return attested_wayland_crop(
-            xid,
-            window.x,
-            window.y,
-            window.width,
-            window.height,
-            window.is_on_screen,
-        );
-    }
     Err(surface_identity_unproven(
         xid,
         "no compositor-attested window geometry is available",
     ))
+}
+
+/// Copy the toplevel an ext-foreign-toplevel-list window_id names, or `None`
+/// when the window was not listed through that protocol.
+fn ext_toplevel_capture(xid: u64) -> Option<anyhow::Result<Vec<u8>>> {
+    let identifier = ext_toplevel::identifier_for(xid)?;
+    Some(ext_screencopy::screenshot_toplevel(&identifier))
+}
+
+/// The compositor's own copy of an ext-listed toplevel. No crop is needed,
+/// and a refused copy must not fall back to output pixels.
+fn ext_toplevel_window(xid: u64, capture: Option<anyhow::Result<Vec<u8>>>) -> Outcome<Vec<u8>> {
+    match capture {
+        Some(capture) => capture
+            .map_err(|error| {
+                surface_identity_unproven(xid, format!("ext toplevel capture: {error:#}"))
+            })
+            .into(),
+        None => Outcome::NotApplicable,
+    }
 }
 
 /// Crop the display capture to the window's compositor-attested geometry,
@@ -1282,21 +1288,13 @@ impl WindowRoute {
                     surface_identity_unproven(xid, format!("cua-compositor: {error:#}"))
                 })
                 .into(),
-            // A GNOME helper with API 9+ snapshots the window's own actor, so a
-            // covering window never shows. It is then the only GNOME route: a
-            // refused capture (minimized window, locked screen) must not fall
-            // back to a stage crop that could show another app.
-            WindowRoute::GnomeHelper => match shell_helper::screenshot_window(xid, pid) {
-                shell_helper::WindowCapture::Png(png) => Outcome::Done(png),
-                shell_helper::WindowCapture::Unavailable => {
-                    Outcome::Refused(surface_identity_unproven(
-                        xid,
-                        "the GNOME helper could not capture this window (minimized, closed, \
-                         or the screen is locked)",
-                    ))
+            WindowRoute::GnomeHelper => {
+                match gnome_window_capture(xid, shell_helper::screenshot_window(xid, pid)) {
+                    Some(result) => result.into(),
+                    None => Outcome::NotApplicable,
                 }
-                shell_helper::WindowCapture::Unsupported => Outcome::NotApplicable,
-            },
+            }
+            WindowRoute::ExtToplevel => ext_toplevel_window(xid, ext_toplevel_capture(xid)),
             WindowRoute::OutputCrop => crop_attested_window(xid, wayland_window_crop, || {
                 crate::routes::routes().capture_display()
             })
@@ -1304,6 +1302,42 @@ impl WindowRoute {
             WindowRoute::X11 => crate::capture::screenshot_window_bytes(xid).into(),
         }
     }
+}
+
+/// A verified GNOME helper is the only GNOME window route: its `CaptureWindow`
+/// (API 9) snapshots the window's own actor, so a covering window never shows.
+/// An older helper and a refused capture both refuse; a stage crop would show
+/// whatever covers the window. `None` means no verified helper, so the caller
+/// takes another route.
+fn gnome_window_capture(
+    xid: u64,
+    capture: shell_helper::WindowCapture,
+) -> Option<anyhow::Result<Vec<u8>>> {
+    match capture {
+        shell_helper::WindowCapture::Png(png) => Some(Ok(png)),
+        shell_helper::WindowCapture::Unavailable => Some(Err(surface_identity_unproven(
+            xid,
+            "the GNOME helper could not capture this window (minimized, closed, \
+             or the screen is locked)",
+        ))),
+        shell_helper::WindowCapture::HelperTooOld { api } => Some(Err(surface_identity_unproven(
+            xid,
+            gnome_helper_too_old_reason(api),
+        ))),
+        shell_helper::WindowCapture::NoHelper => None,
+    }
+}
+
+fn gnome_helper_too_old_reason(api: Option<u32>) -> String {
+    let loaded = match api {
+        Some(api) => format!("the loaded GNOME helper is API {api}"),
+        None => "the loaded GNOME helper did not report its API version".to_owned(),
+    };
+    format!(
+        "{loaded}; window capture needs API {} or newer. Re-run the Cua Driver \
+         installer, then log out and back in so GNOME Shell loads the new helper",
+        shell_helper::WINDOW_CAPTURE_API_VERSION
+    )
 }
 
 /// A niri display capture: only the attested wlroots screencopy, oriented by
@@ -2666,12 +2700,20 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
     )
 }
 
-/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
-pub fn move_cursor_desktop(space: &DesktopInputSpace, x: i32, y: i32) -> anyhow::Result<()> {
+/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame),
+/// returning the transport that moved it.
+pub fn move_cursor_desktop(
+    space: &DesktopInputSpace,
+    x: i32,
+    y: i32,
+) -> anyhow::Result<ActionTransport> {
     let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
-        || move_cursor_absolute_vptr(None, x, y, Some(space)),
-        || libei_move_absolute(x, y),
+        || {
+            move_cursor_absolute_vptr(None, x, y, Some(space))
+                .map(|()| ActionTransport::LinuxWaylandVirtualPointer)
+        },
+        || libei_move_absolute(x, y).map(|()| ActionTransport::LinuxLibei),
     )
 }
 
@@ -4177,6 +4219,35 @@ fn niri_window_info(window: niri::Window) -> WindowInfo {
     }
 }
 
+/// Windows listed through ext-foreign-toplevel-list when the compositor can
+/// also copy each one by its handle. Sway keeps its IPC-attested container
+/// ids and the cua compositor its own targets, so neither switches.
+fn ext_capture_listing() -> Option<Vec<WindowInfo>> {
+    if is_inject_mode() || sway_ipc::list_windows().is_some() {
+        return None;
+    }
+    let windows = match ext_toplevel::list_capturable_windows() {
+        Ok(windows) => windows?,
+        Err(error) => {
+            tracing::debug!("ext toplevel capture listing unavailable: {error:#}");
+            return None;
+        }
+    };
+    // wlroots activation still resolves a window by title and app_id.
+    for window in &windows {
+        remember_identity(
+            window.xid,
+            &Toplevel {
+                title: window.title.clone(),
+                app_id: window.app_name.clone(),
+                closed: false,
+                activated: false,
+            },
+        );
+    }
+    (!windows.is_empty()).then_some(windows)
+}
+
 fn apply_pid_filter(mut windows: Vec<WindowInfo>, filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if let Some(pid) = filter_pid {
         windows.retain(|window| window.pid == Some(pid));
@@ -4244,21 +4315,26 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         if let Some(ws) = kwin_helper::list_window_infos() {
             return listed_windows(apply_pid_filter(ws, filter_pid));
         }
-        // Prefer the richer wlroots protocol when no trusted KWin helper is available.
-        // only consulted when wlroots yields no windows (including when its
-        // manager global is absent).
-        let native = match list_windows() {
-            Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
-                ws,
-                wayland_atspi_windows(filter_pid),
-                is_inject_mode(),
-            )),
-            Ok(_) => ext_toplevel::list_windows(),
-            Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
-                anyhow::anyhow!(
-                    "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
-                )
-            }),
+        // A compositor that copies toplevels by their ext handle gets ext
+        // window_ids, so window capture names the exact toplevel (#5327).
+        // Otherwise prefer the richer wlroots protocol; ext-foreign-toplevel
+        // is then only consulted when wlroots yields no windows (including
+        // when its manager global is absent).
+        let native = match ext_capture_listing() {
+            Some(ws) => Ok(ws),
+            None => match list_windows() {
+                Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
+                    ws,
+                    wayland_atspi_windows(filter_pid),
+                    is_inject_mode(),
+                )),
+                Ok(_) => ext_toplevel::list_windows(),
+                Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
+                    anyhow::anyhow!(
+                        "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
+                    )
+                }),
+            },
         };
         match native {
             Ok(ws) if !ws.is_empty() => {
@@ -5247,6 +5323,40 @@ mod tests {
     }
 
     #[test]
+    fn gnome_window_capture_refuses_helpers_below_api_9() {
+        for (api, loaded) in [
+            (Some(8), "the loaded GNOME helper is API 8;"),
+            (
+                None,
+                "the loaded GNOME helper did not report its API version;",
+            ),
+        ] {
+            let error =
+                gnome_window_capture(0x2962, shell_helper::WindowCapture::HelperTooOld { api })
+                    .expect("an older helper must not fall through to another route")
+                    .expect_err("an older helper has no per-window capture");
+            assert!(is_surface_identity_unproven(&error));
+            let message = error.to_string();
+            assert!(message.contains(loaded), "{message}");
+            assert!(message.contains("needs API 9 or newer"), "{message}");
+            assert!(
+                message.contains("Re-run the Cua Driver installer, then log out and back in"),
+                "{message}"
+            );
+        }
+        let refused = gnome_window_capture(0x2962, shell_helper::WindowCapture::Unavailable)
+            .expect("a refused capture must not fall through to another route")
+            .expect_err("a refused capture has no image");
+        assert!(is_surface_identity_unproven(&refused));
+        assert_eq!(
+            gnome_window_capture(0x2962, shell_helper::WindowCapture::Png(vec![1]))
+                .map(Result::unwrap),
+            Some(vec![1])
+        );
+        assert!(gnome_window_capture(0x2962, shell_helper::WindowCapture::NoHelper).is_none());
+    }
+
+    #[test]
     fn listed_wayland_identity_remains_valid_when_current_enumeration_hides_it() {
         let pid = std::process::id();
         let window_id = 0x000f_2962_0001;
@@ -5296,6 +5406,39 @@ mod tests {
         .expect("visible compositor-attested Wayland surface should capture");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
         assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn ext_toplevel_window_capture_returns_the_toplevel_copy_without_a_crop() {
+        let Outcome::Done(bytes) = ext_toplevel_window(0xF000_0000, Some(Ok(vec![7, 7, 7]))) else {
+            panic!("an ext-listed window should capture through its toplevel source");
+        };
+        assert_eq!(bytes, vec![7, 7, 7]);
+        assert!(
+            matches!(ext_toplevel_window(0x2962, None), Outcome::NotApplicable),
+            "a window not listed through ext-foreign-toplevel-list takes the next route"
+        );
+    }
+
+    #[test]
+    fn refused_ext_toplevel_copy_fails_closed_naming_the_cause() {
+        let Outcome::Refused(error) = ext_toplevel_window(
+            0xF000_0000,
+            Some(Err(anyhow::anyhow!(
+                "compositor does not expose \
+                 ext_foreign_toplevel_image_capture_source_manager_v1"
+            ))),
+        ) else {
+            panic!("a refused toplevel copy must not fall back to a crop");
+        };
+
+        assert!(is_surface_identity_unproven(&error));
+        assert_eq!(
+            error.to_string(),
+            "surface_identity_unproven: Wayland capture cannot prove pixels belong to window \
+             4026531840: ext toplevel capture: compositor does not expose \
+             ext_foreign_toplevel_image_capture_source_manager_v1"
+        );
     }
 
     #[test]

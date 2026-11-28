@@ -10,6 +10,8 @@
 
 use std::path::Path;
 
+use cua_driver_core::paths::{AppPaths, LOCAL_NAMESPACE, RELEASE_NAMESPACE};
+
 pub const RELEASE_CLI_NAME: &str = "cua-driver";
 pub const LOCAL_CLI_NAME: &str = "cua-driver-local";
 
@@ -52,18 +54,15 @@ pub fn cli_name() -> &'static str {
 
 pub fn state_namespace() -> &'static str {
     if is_local_installation() {
-        "cua-driver-local"
+        LOCAL_NAMESPACE
     } else {
-        "cua-driver"
+        RELEASE_NAMESPACE
     }
 }
 
-pub fn user_home_subdirectory() -> &'static str {
-    if is_local_installation() {
-        ".cua-driver-local"
-    } else {
-        ".cua-driver"
-    }
+/// This installation's per-user locations.
+pub fn app_paths() -> AppPaths {
+    AppPaths::from_env(state_namespace(), &crate::env_vars::var_os)
 }
 
 #[cfg(target_os = "windows")]

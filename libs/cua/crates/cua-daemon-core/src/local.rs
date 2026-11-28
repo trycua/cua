@@ -4529,10 +4529,15 @@ mod tests {
         if !managed::in_use() {
             assert_eq!(local.power_control("gvisor"), Some(PowerControl::Suspend));
         }
-        assert_eq!(
-            local.power_control("firecracker"),
-            Some(PowerControl::Suspend)
-        );
+        // On Windows the "firecracker" microVM is a QEMU VM with no
+        // snapshots, so power_control() deliberately stops it (see the
+        // `"firecracker" if cfg!(windows)` arm); elsewhere it pauses in memory.
+        let firecracker = if cfg!(windows) {
+            PowerControl::Stop
+        } else {
+            PowerControl::Suspend
+        };
+        assert_eq!(local.power_control("firecracker"), Some(firecracker));
     }
 
     /// A Mac's microVMs under cua-vz: found by their label, paused when

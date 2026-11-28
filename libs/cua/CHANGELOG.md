@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.31.5](https://github.com/trycua/cua/compare/cua-sdk-v0.31.4...cua-sdk-v0.31.5) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-agent-setup,cua-volume:** finish the Windows CI lane (CUA-4556) ([#8789](https://github.com/trycua/cua/issues/8789)) ([259a950](https://github.com/trycua/cua/commit/259a950c267f67f37022539d8c2283def0bd307d))
+
+## [0.31.4](https://github.com/trycua/cua/compare/cua-sdk-v0.31.3...cua-sdk-v0.31.4) (2026-11-27)
+
+
+### Bug Fixes
+
+* **ci:** clear the Windows test failures and show every failure in one run ([#8780](https://github.com/trycua/cua/issues/8780)) ([9aaed68](https://github.com/trycua/cua/commit/9aaed68f618d01ed7ab0080362adeef34e15cea5))
+
+## [0.31.3](https://github.com/trycua/cua/compare/cua-sdk-v0.31.2...cua-sdk-v0.31.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cua-volume:** a write waits for a holder whose link is briefly down ([#8777](https://github.com/trycua/cua/issues/8777)) ([ebc4848](https://github.com/trycua/cua/commit/ebc48482f12e27a395dcc87491ef39df60cb69c8))
+
+## [0.31.2](https://github.com/trycua/cua/compare/cua-sdk-v0.31.1...cua-sdk-v0.31.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* **ci:** make the cua SDK workflow finish and pass on main ([#8765](https://github.com/trycua/cua/issues/8765)) ([16dc4e3](https://github.com/trycua/cua/commit/16dc4e377940baf38ce6ee5606478103eba8c5fd))
+
+## [0.31.1](https://github.com/trycua/cua/compare/cua-sdk-v0.31.0...cua-sdk-v0.31.1) (2026-11-25)
+
+
+### Performance Improvements
+
+* **cua-sdk:** link the cua SDK release binaries with fat LTO to slow PyPI project growth ([#8715](https://github.com/trycua/cua/issues/8715)) ([53a43ed](https://github.com/trycua/cua/commit/53a43edb4e3b0b194d1f139e7ef942009eea935b))
+
 ## [0.31.0](https://github.com/trycua/cua/compare/cua-sdk-v0.30.1...cua-sdk-v0.31.0) (2026-11-21)
 
 

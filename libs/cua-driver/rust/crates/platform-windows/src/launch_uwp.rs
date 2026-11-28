@@ -43,11 +43,11 @@ use cua_driver_core::single_flight::SingleFlight;
 
 use windows::core::{Interface, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, IBindCtx, CLSCTX_LOCAL_SERVER,
     COINIT_APARTMENTTHREADED,
 };
-use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
 use windows::Win32::UI::Shell::{
     ApplicationActivationManager, BHID_EnumItems, IApplicationActivationManager, IEnumShellItems,
     IShellItem, IShellItem2, SHCreateItemFromParsingName, AO_NONE, SIGDN_NORMALDISPLAY,
@@ -179,7 +179,7 @@ fn restore_foreground_best_effort(prior: HWND) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         unsafe {
-            if !IsWindow(prior).as_bool() {
+            if !IsWindow(Some(prior)).as_bool() {
                 tracing::debug!(target: "launch_uwp", "prior foreground HWND no longer valid");
                 return;
             }

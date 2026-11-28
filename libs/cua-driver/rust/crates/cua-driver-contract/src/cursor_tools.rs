@@ -3,9 +3,10 @@
 
 use crate::{
     GetAgentCursorStateInput, GetAgentCursorStateOutput, Platform, SchemaMode,
-    SetAgentCursorEnabledInput, SetAgentCursorEnabledOutput, SetAgentCursorMotionInput,
-    SetAgentCursorMotionOutput, SetAgentCursorThemeInput, SetAgentCursorThemeOutput,
-    ToolAnnotations, ToolContract, ToolInput, ToolOutput,
+    SetAgentCursorBadgeInput, SetAgentCursorBadgeOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorEnabledOutput, SetAgentCursorMotionInput, SetAgentCursorMotionOutput,
+    SetAgentCursorThemeInput, SetAgentCursorThemeOutput, ToolAnnotations, ToolContract, ToolInput,
+    ToolOutput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -30,9 +31,15 @@ pub fn contracts() -> Vec<ToolContract> {
             &["agent_cursor.set_theme"],
             false,
         ),
+        contract::<SetAgentCursorBadgeInput, SetAgentCursorBadgeOutput>(
+            "set_agent_cursor_badge",
+            "Show or hide the session label text beneath a session's cursor.",
+            &["agent_cursor.set_badge"],
+            false,
+        ),
         contract::<GetAgentCursorStateInput, GetAgentCursorStateOutput>(
             "get_agent_cursor_state",
-            "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+            "Return the session cursor's theme, semantic playback, position, visibility, motion, and badge settings.",
             &["agent_cursor.state"],
             true,
         ),
@@ -70,8 +77,9 @@ fn contract<I: ToolInput, O: ToolOutput>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        CursorEffectSetting, CursorMotionStyle, SetAgentCursorMotionInput, StartSessionInput,
-        ToolInput,
+        CursorBadgeOutput, CursorBadgeSelection, CursorEffectSetting, CursorMotionStyle,
+        GetAgentCursorStateOutput, SetAgentCursorBadgeInput, SetAgentCursorMotionInput,
+        StartSessionInput, ToolInput,
     };
     use serde_json::json;
 
@@ -127,6 +135,82 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&started).unwrap()["cursor_motion"]["effects"],
             json!({"trail": "default"})
+        );
+    }
+
+    #[test]
+    fn session_label_visibility_round_trips_and_is_optional_on_older_daemons() {
+        let started: StartSessionInput = serde_json::from_value(json!({
+            "session": "s",
+            "cursor_badge": {"show_session_label": false}
+        }))
+        .unwrap();
+        assert_eq!(
+            started.cursor_badge,
+            Some(CursorBadgeSelection {
+                show_session_label: Some(false)
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&started).unwrap()["cursor_badge"],
+            json!({"show_session_label": false})
+        );
+        let omitted: StartSessionInput = serde_json::from_value(json!({"session": "s"})).unwrap();
+        assert!(serde_json::to_value(&omitted)
+            .unwrap()
+            .get("cursor_badge")
+            .is_none());
+
+        let schema = SetAgentCursorBadgeInput::input_schema();
+        assert_eq!(schema["required"], json!(["session", "show_session_label"]));
+        assert_eq!(
+            schema["properties"]["show_session_label"]["type"],
+            "boolean"
+        );
+        assert!(
+            serde_json::from_value::<SetAgentCursorBadgeInput>(json!({"session": "s"})).is_err()
+        );
+
+        let mut state = json!({
+            "session": "s",
+            "enabled": true,
+            "position": null,
+            "theme": {
+                "id": "cua.default",
+                "version": "1",
+                "profile": "p",
+                "reduced_motion": "auto",
+                "fallback": null
+            },
+            "visual_state": {
+                "requested_action": "idle",
+                "resolved_action": "idle",
+                "modifiers": [],
+                "phase": "idle",
+                "frame": 0,
+                "preempted_count": 0
+            },
+            "motion": {
+                "start_handle": 0.3,
+                "end_handle": 0.3,
+                "arc_size": 0.25,
+                "arc_flow": 0.0,
+                "spring": 0.72,
+                "glide_duration_ms": 0.0,
+                "dwell_after_click_ms": 80.0,
+                "idle_hide_ms": 15000.0,
+                "turn_radius": 80.0
+            }
+        });
+        let older: GetAgentCursorStateOutput = serde_json::from_value(state.clone()).unwrap();
+        assert_eq!(older.badge, None);
+        state["badge"] = json!({"show_session_label": false});
+        let current: GetAgentCursorStateOutput = serde_json::from_value(state).unwrap();
+        assert_eq!(
+            current.badge,
+            Some(CursorBadgeOutput {
+                show_session_label: false
+            })
         );
     }
 

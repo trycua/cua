@@ -376,6 +376,9 @@ POST /lume/vms/:name/run
 | `clipboard` | `boolean` | `false` | Enable bidirectional clipboard sync via SSH (experimental). |
 | `vnc` | `string` | `enabled` | VNC server policy: 'enabled' or 'disabled'. 'disabled' requires noDisplay=true, starts no VNC listener, and reports a null vncUrl. |
 | `forwards` | `array` |  | Guest ports to publish on host loopback ports over a virtio socket device, through Cua's guest vsock agent. GET reports the host ports under 'forwards' once the agent answers; these connections are not subject to macOS Local Network privacy or VPN routes. |
+| `noAudioDevice` | `boolean` | `false` | Leave the virtio sound device (host audio input and output) out of the VM, so the guest has no audio device. |
+| `noClipboardDevice` | `boolean` | `false` | Leave the clipboard-sharing device (SPICE agent port) out of the VM and turn off clipboard sync, so the guest shares no clipboard with the host. Cannot be combined with clipboard=true. |
+| `timeVsockPort` | `integer` |  | Vsock port on which the host serves its UTC time to the guest (adds a virtio socket device). Each guest connection to the host (CID 2) on this port receives one line, 'time-v1 &lt;seconds&gt; &lt;nanoseconds&gt;', then closes; for guests with no clock to read at boot. Absent leaves it off. |
 
 **Example request**
 

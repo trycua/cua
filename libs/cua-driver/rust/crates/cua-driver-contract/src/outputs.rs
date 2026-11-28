@@ -258,6 +258,9 @@ pub struct StartSessionOutput {
     /// The `cursor_motion` this call applied, echoed as sent. Absent when the call did not set one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_motion: Option<crate::CursorMotionSelection>,
+    /// The `cursor_badge` this call applied, echoed as sent. Absent when the call did not set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_badge: Option<crate::CursorBadgeSelection>,
 }
 
 impl ToolOutput for StartSessionOutput {}
@@ -339,6 +342,12 @@ pub struct CursorVisualOutput {
     pub preempted_count: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct CursorBadgeOutput {
+    /// Whether the badge may show the session label text.
+    pub show_session_label: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct CursorPointOutput {
     pub x: f64,
@@ -369,6 +378,14 @@ pub struct SetAgentCursorThemeOutput {
 
 impl ToolOutput for SetAgentCursorThemeOutput {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SetAgentCursorBadgeOutput {
+    pub session: String,
+    pub badge: CursorBadgeOutput,
+}
+
+impl ToolOutput for SetAgentCursorBadgeOutput {}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct GetAgentCursorStateOutput {
     pub session: String,
@@ -380,6 +397,9 @@ pub struct GetAgentCursorStateOutput {
     pub theme: CursorThemeOutput,
     pub visual_state: CursorVisualOutput,
     pub motion: CursorMotionOutput,
+    /// Badge settings. Absent from daemons that predate badge settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<CursorBadgeOutput>,
 }
 
 impl ToolOutput for GetAgentCursorStateOutput {}

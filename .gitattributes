@@ -13,3 +13,9 @@ libs/cua/crates/cua-cli/tests/fixtures/** text eol=lf
 libs/cua/crates/cua-spaces-ext/tests/fixtures/** text eol=lf
 apps/cua-spaces-macos/Sources/CuaSpacesMacKit/Resources/azure-logo_azure.svg -text
 apps/cua-spaces-web/public/cloud-logos/azure-logo_azure.svg -text
+# Bundled agent skills are embedded in cua-agent-setup and installed byte for byte;
+# the tests match them against LF text and hash them against their sources, so a
+# CRLF checkout (Windows) would fail them.
+libs/cua/skills/** text eol=lf
+libs/cua-driver/rust/Skills/** text eol=lf
+skills/gui-automation/** text eol=lf

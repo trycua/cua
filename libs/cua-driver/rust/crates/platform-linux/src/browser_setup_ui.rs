@@ -133,7 +133,7 @@ fn exact_setup_checkbox<'a>(
 
 fn setup_not_ready_message(descriptor: &BrowserSetupDescriptor) -> String {
     format!(
-        "the exact {} remote-debugging setup page did not become ready; on Linux, existing-profile setup requires the browser's complete AT-SPI tree (launch Chromium-family browsers with --force-renderer-accessibility, or use a screen reader that enables full renderer accessibility)",
+        "the exact {} remote-debugging setup page did not become ready; on Linux, existing-profile setup requires the browser's complete AT-SPI tree (turn the accessibility bus on and restart the browser, or launch it with --force-renderer-accessibility)",
         descriptor.product_name
     )
 }

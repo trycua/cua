@@ -56,6 +56,7 @@ CUA = "cua"
 NAME = ""
 MIN_FPS = 0.0
 RESULTS: list[tuple[str, bool, str]] = []
+EVIDENCE: Path | None = None
 
 
 def log(msg: str) -> None:
@@ -89,6 +90,72 @@ def poll(what: str, fn, timeout: float, every: float = 3.0):
     raise TimeoutError(f"{what}: gave up after {timeout:.0f}s (last: {last!r})")
 
 
+def cpu_idle(seconds: float = 2.0) -> float:
+    """Fraction of guest CPU time spent idle over `seconds`."""
+    out = sh(
+        "a=$(head -1 /proc/stat); sleep "
+        f'{seconds}; b=$(head -1 /proc/stat); echo "$a"; echo "$b"',
+        timeout=60,
+    ).splitlines()
+    a, b = ([int(v) for v in line.split()[1:]] for line in out[-2:])
+    total = sum(b) - sum(a)
+    idle = (b[3] + b[4]) - (a[3] + a[4])  # idle + iowait
+    return idle / total if total > 0 else 0.0
+
+
+def wait_settled(what: str, timeout: float = 180, idle_needed: float = 0.6) -> None:
+    """Block until the guest is quiet. Hyprland answers `hyprctl` long before
+    the session's autostart (bar, notifications, idle daemon, a new shell's rc
+    files) has finished; on a software-emulated guest that work runs for tens
+    of seconds, and input delivered into a desktop that is still rearranging
+    itself can land on a window that has just changed. Timing out is logged and
+    not fatal: the checks that follow still report what they see."""
+    deadline = time.monotonic() + timeout
+    quiet = 0
+    last = 0.0
+    while time.monotonic() < deadline:
+        last = cpu_idle()
+        quiet = quiet + 1 if last >= idle_needed else 0
+        if quiet >= 2:
+            log(f"settled: {what} (guest {last:.0%} idle)")
+            return
+    log(f"WARN not settled after {timeout:.0f}s: {what} (guest {last:.0%} idle)")
+
+
+def fresh_prompt() -> None:
+    """End any half-typed line in the focused terminal, so one failed typing
+    check cannot corrupt the next check's command."""
+    cua("do", "key", "enter", check=False)
+    time.sleep(1)
+
+
+def hyprland_forensics(evidence: Path, name: str) -> None:
+    """What the compositor and the Cua plugin saw, kept with a failed check:
+    the windows and layers, and the tail of the Hyprland log."""
+    out = evidence / f"forensics-{name}.txt"
+    parts = [
+        ("hyprctl -j clients", "hyprctl -j clients"),
+        ("hyprctl -j layers", "hyprctl -j layers"),
+        ("hyprctl -j activewindow", "hyprctl -j activewindow"),
+        (
+            "hyprland.log (tail)",
+            'tail -n 400 "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log',
+        ),
+        ("ps", "ps -eo pid,ppid,stat,pcpu,etimes,args --sort=-pcpu | head -40"),
+        (
+            "journal (user)",
+            "journalctl --user --no-pager -n 200 2>&1 | tail -n 200",
+        ),
+    ]
+    text = []
+    for title, command in parts:
+        try:
+            text.append(f"### {title}\n{sh(command, timeout=60, check=False)}")
+        except Exception as e:  # noqa: BLE001 - forensics must never fail the run
+            text.append(f"### {title}\n(unavailable: {e})")
+    out.write_text("\n".join(text))
+
+
 def check(name: str, fn) -> None:
     t0 = time.monotonic()
     try:
@@ -98,6 +165,12 @@ def check(name: str, fn) -> None:
     except Exception as e:  # noqa: BLE001
         RESULTS.append((name, False, str(e)))
         log(f"FAIL {name}: {e}")
+        if EVIDENCE is not None:
+            slug = "".join(ch if ch.isalnum() else "-" for ch in name.lower()).strip("-")
+            try:
+                hyprland_forensics(EVIDENCE, slug)
+            except Exception as ee:  # noqa: BLE001
+                log(f"forensics for {name} failed: {ee}")
 
 
 def clients() -> list[dict]:
@@ -215,7 +288,7 @@ def overlay_shot(
 
 
 def main() -> int:
-    global CUA, NAME, MIN_FPS
+    global CUA, NAME, MIN_FPS, EVIDENCE
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -248,6 +321,7 @@ def main() -> int:
     MIN_FPS = a.min_fps
     evidence = Path(a.evidence)
     evidence.mkdir(parents=True, exist_ok=True)
+    EVIDENCE = evidence
     token = a.token or secrets.token_hex(16)
     NAME = f"cua-e2e-omarchy-{secrets.token_hex(3)}"
 
@@ -327,6 +401,7 @@ def run_checks(evidence: Path, boot_timeout: float) -> None:
         boot_timeout,
         every=10,
     )
+    wait_settled("the Hyprland session's autostart")
 
     def facts():
         versions = sh("pacman -Q omarchy-dev cua-driver-bin cua-hyprland-plugin hyprland").strip()
@@ -343,6 +418,10 @@ def run_checks(evidence: Path, boot_timeout: float) -> None:
     def launch():
         cua("do", "launch", "foot", "--app-id", title, timeout=120)
         w = poll("foot window", lambda: window(title), 180)
+        # A new shell runs its rc files; keys typed before it is idle race the
+        # terminal's own redraws and the compositor's relayout.
+        wait_settled("the new terminal's shell")
+        w = window(title) or w
         return f"{w['address']} at {w['at']} size {w['size']}"
 
     check("SDK launch_app: foot on Hyprland", launch)
@@ -353,6 +432,7 @@ def run_checks(evidence: Path, boot_timeout: float) -> None:
         # Focus another window first, so the click is what focuses the terminal.
         cua("do", "launch", "foot", "--app-id", "cua-e2e-other", timeout=120)
         poll("other focused", lambda: active_class() == "cua-e2e-other", 60, 1)
+        wait_settled("the second terminal's shell")
         w = window(title)
         x, y = w["at"][0] + w["size"][0] // 2, w["at"][1] + w["size"][1] // 2
         cua("do", "click", str(x), str(y))
@@ -599,6 +679,7 @@ def stream_checks(evidence: Path, title: str) -> None:
 
     def desktop_type():
         marker = f"cua-e2e-stream-{secrets.token_hex(3)}"
+        fresh_prompt()
         report = probe(
             evidence,
             "stream-desktop-type",
@@ -629,6 +710,7 @@ def stream_checks(evidence: Path, title: str) -> None:
 
     def window_type():
         marker = f"cua-e2e-window-{secrets.token_hex(3)}"
+        fresh_prompt()
         report = probe(
             evidence,
             "stream-window-type",

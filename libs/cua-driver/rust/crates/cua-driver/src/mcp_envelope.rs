@@ -348,10 +348,11 @@ where
 }
 
 pub(crate) async fn proxy(socket_path: &str) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    let stream = tokio::net::UnixStream::connect(socket_path).await?;
-    #[cfg(windows)]
-    let stream = tokio::net::windows::named_pipe::ClientOptions::new().open(socket_path)?;
+    let stream = cua_driver_core::ipc::LocalIpcStream::connect(
+        socket_path,
+        cua_driver_core::ipc::ConnectPolicy::REQUEST,
+    )
+    .await?;
     relay(stream).await
 }
 

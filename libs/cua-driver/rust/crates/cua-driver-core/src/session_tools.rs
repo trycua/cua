@@ -262,6 +262,7 @@ impl Tool for StartSessionTool {
             active: true,
             revived,
             cursor_motion: input.cursor_motion.clone(),
+            cursor_badge: input.cursor_badge.clone(),
         })
         .expect("start_session output serializes");
         ToolResult::text(format!(

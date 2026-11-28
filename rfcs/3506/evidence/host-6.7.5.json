@@ -1,0 +1,1548 @@
+{
+  "base_sha": "93f7afc89a09e7f9d39da22990e26036a74adfbd",
+  "running_versions": [
+    "KWin version: 6.7.5",
+    "Qt Version: 6.11.2",
+    "Qt compile version: 6.11.2",
+    "XCB compile version: 1.17.0",
+    "SHAPE: yes; Version: 0x11",
+    "RANDR: yes; Version: 0x14",
+    "Composite: yes; Version: 0x4",
+    "RENDER: yes; Version: 0xb",
+    "XFIXES: yes; Version: 0x50",
+    "SYNC: yes; Version: 0x31"
+  ],
+  "packages": [
+    "kwin 6.7.5-1.1",
+    "plasma-workspace 6.7.5-1.1",
+    "qt6-base 6.11.2-3.1",
+    "kcoreaddons 6.30.0-1.1",
+    "xdg-desktop-portal 1.22.1-2.1",
+    "xdg-desktop-portal-kde 6.7.5-1.1",
+    "pipewire 1:1.6.9-1"
+  ],
+  "display": "Wayland",
+  "desktop_uid": 1000,
+  "kwin_owner": ":1.8",
+  "kwin_pid": 1139,
+  "hashes_sha256": {
+    "rfcs/3506/helper-identity.patch": "a7ba8d55b85dae206e8d57b74b53f1259ae86a921e203960922fd9ee17e88b82",
+    "rfcs/3506/fixture.py": "7d92d6d06182d965f0c78bc53a2267ffc1cf10b0f8e2b6fc0adf7cbb48c13131",
+    "rfcs/3506/activation_probe.py": "e61371c4633fd4fef923e04c02d0dde2b5ef2898bd057c47ae832703977b94db",
+    "rfcs/3506/run_activation_cases.py": "a343318b951294f8b06f8e2307ede620c7ceec927e2db4bb38c351fc3c619991",
+    "rfcs/3506/run_input_case.py": "4f883ad6a48a30e32a63bc0fe40c2df37d099281bf9a8c1398e70a33670d24a2",
+    "rfcs/3506/record_fixture_windows.py": "21f063520be3ffab711d8a77deeca5c2a7b2a0e77b760cd98b0f7edae302123b",
+    "rfcs/3506/driver-prototype/driver.patch": "3994b717302a799f1f032c313415f1f037f605be5524985151cf3ae270378b95",
+    "rfcs/3506/driver-prototype/prototype.rs": "d9865b9ca65129134a825a5e6a5296a5357829a8d48027b1a023dd6fd5f6a116",
+    "rfcs/3506/driver-prototype/sdk_harness.rs": "7d890f5eb0f01bd4380db880fea4acaa6f4d814e21c9865b6af80d35aab20499",
+    "tested_driver_binary": "204de49e9ef3a137f29dbed7ccd75ccfb0d514db23180d410685c6d2afa7429c",
+    "recording": "90b90cc0731f34636be1c7a205f13d1864e46f2bad6af5c2d833d836e3240273"
+  },
+  "activation_cases": [
+    {
+      "case": "B_initial_activation",
+      "start_ns": 181595301817866,
+      "end_ns": 181595312143669,
+      "result": {
+        "received_ns": 181595305787679,
+        "matches": 1,
+        "requested": true,
+        "confirmed": true,
+        "active_uuid": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+        "active_pid": 1615294,
+        "activation_notifications": 1,
+        "started_ns": 181595302661406,
+        "finished_ns": 181595307749312,
+        "helper_owner": ":1.8",
+        "kwin_pid": 1139,
+        "generation": "{9eef03e0-95d8-4d2e-a213-00262e7df5fb}",
+        "token": 14,
+        "pid": 1615294,
+        "internal_id": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+        "fresh_active": true
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181595301746102,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181595311929518,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "A_exact_same_process_activation",
+      "start_ns": 181595312448329,
+      "end_ns": 181595323193607,
+      "result": {
+        "received_ns": 181595316029334,
+        "matches": 1,
+        "requested": true,
+        "confirmed": true,
+        "active_uuid": "{78f4f162-0c20-4607-b74f-59db038b94a0}",
+        "active_pid": 1615294,
+        "activation_notifications": 1,
+        "started_ns": 181595313603382,
+        "finished_ns": 181595319841681,
+        "helper_owner": ":1.8",
+        "kwin_pid": 1139,
+        "generation": "{9eef03e0-95d8-4d2e-a213-00262e7df5fb}",
+        "token": 15,
+        "pid": 1615294,
+        "internal_id": "{78f4f162-0c20-4607-b74f-59db038b94a0}",
+        "fresh_active": true
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181595312374982,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181595323039278,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "B_deliberate_exact_selection",
+      "start_ns": 181595323503247,
+      "end_ns": 181595337070639,
+      "result": {
+        "received_ns": 181595327905329,
+        "matches": 1,
+        "requested": true,
+        "confirmed": true,
+        "active_uuid": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+        "active_pid": 1615294,
+        "activation_notifications": 1,
+        "started_ns": 181595324801468,
+        "finished_ns": 181595332522644,
+        "helper_owner": ":1.8",
+        "kwin_pid": 1139,
+        "generation": "{9eef03e0-95d8-4d2e-a213-00262e7df5fb}",
+        "token": 14,
+        "pid": 1615294,
+        "internal_id": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+        "fresh_active": true
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181595323421023,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181595336784543,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "wrong_active_before_confirmation",
+      "result": {
+        "received_ns": 181595340313841,
+        "matches": 1,
+        "requested": false,
+        "confirmed": false,
+        "active_uuid": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+        "active_pid": 1615294,
+        "activation_notifications": 0,
+        "started_ns": 181595338416990,
+        "finished_ns": 181595341555947,
+        "helper_owner": ":1.8",
+        "kwin_pid": 1139,
+        "generation": "{9eef03e0-95d8-4d2e-a213-00262e7df5fb}",
+        "token": 15,
+        "pid": 1615294,
+        "internal_id": "{78f4f162-0c20-4607-b74f-59db038b94a0}",
+        "fresh_active": false
+      },
+      "state": {
+        "pid": 1615294,
+        "time_ns": 181595341650524,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "lost_confirmation_timeout",
+      "start_ns": 181595341890483,
+      "end_ns": 181596348121110,
+      "result": {
+        "refusal": "confirmation_timeout_zero_input"
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181595341832825,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181596348019890,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "missing_exact_token",
+      "start_ns": 181596348270179,
+      "end_ns": 181596349438015,
+      "result": {
+        "refusal": "exact_target_missing_or_ambiguous"
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181596348217540,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181596349377212,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181568414275454,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "closed_target",
+      "start_ns": 181596350206845,
+      "end_ns": 181596353468592,
+      "result": {
+        "refusal": "exact_target_missing_or_ambiguous"
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181596350155299,
+        "windows": {
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181596353372762,
+        "windows": {
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "recreated_target_rejects_old_token",
+      "start_ns": 181596354760390,
+      "end_ns": 181596357452360,
+      "result": {
+        "refusal": "exact_target_missing_or_ambiguous"
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181596354705959,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181596357376679,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "new_selection_after_recreation",
+      "start_ns": 181596387116620,
+      "end_ns": 181596391660036,
+      "result": {
+        "received_ns": 181596390103963,
+        "matches": 1,
+        "requested": true,
+        "confirmed": true,
+        "active_uuid": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+        "active_pid": 1615294,
+        "activation_notifications": 0,
+        "started_ns": 181596388134986,
+        "finished_ns": 181596391473337,
+        "helper_owner": ":1.8",
+        "kwin_pid": 1139,
+        "generation": "{9eef03e0-95d8-4d2e-a213-00262e7df5fb}",
+        "token": 16,
+        "pid": 1615294,
+        "internal_id": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+        "fresh_active": true
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181596387029938,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181596391565990,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "same_kwin_owner_helper_reload_stale_generation",
+      "start_ns": 181596416612834,
+      "end_ns": 181596417534800,
+      "result": {
+        "refusal": "helper_generation_changed"
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181596416534678,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181596417478816,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    },
+    {
+      "case": "fresh_resolution_after_helper_reload",
+      "start_ns": 181596419579939,
+      "end_ns": 181596424786417,
+      "result": {
+        "received_ns": 181596423326765,
+        "matches": 1,
+        "requested": true,
+        "confirmed": true,
+        "active_uuid": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+        "active_pid": 1615294,
+        "activation_notifications": 0,
+        "started_ns": 181596420614787,
+        "finished_ns": 181596424635204,
+        "helper_owner": ":1.8",
+        "kwin_pid": 1139,
+        "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+        "token": 14,
+        "pid": 1615294,
+        "internal_id": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+        "fresh_active": true
+      },
+      "before": {
+        "pid": 1615294,
+        "time_ns": 181596419500841,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "after": {
+        "pid": 1615294,
+        "time_ns": 181596424717518,
+        "windows": {
+          "A": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181596353565764,
+            "ax_clicks": 0
+          },
+          "B": {
+            "presses": 0,
+            "releases": 0,
+            "clicks": 0,
+            "button_releases": 0,
+            "keys": "",
+            "held_keys": [],
+            "generation": 181392333763028,
+            "ax_clicks": 0
+          }
+        }
+      },
+      "input_transport_called": false
+    }
+  ],
+  "input_operations": [
+    {
+      "seq": 1,
+      "case": "background",
+      "operation": {
+        "confirmation_ns": 0,
+        "emission_ns": 0,
+        "may_start": false,
+        "op_seq": 1,
+        "submission_ns": 0,
+        "worker_ack_ns": 0
+      },
+      "sdk_submission_ns": 182221515191784,
+      "caller_ack_ns": 182221552315736,
+      "result": {
+        "content": [
+          {
+            "text": "Background delivery is not available: the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget. Retry this action with delivery_mode:\"foreground\"; Cua Driver will activate the target window, confirm it holds the input focus, and deliver real input to it.",
+            "type": "text"
+          }
+        ],
+        "isError": true,
+        "structuredContent": {
+          "code": "background_unavailable",
+          "detail": "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget",
+          "escalation": {
+            "reason": "background input is unavailable on this surface; retry this action with delivery_mode:\"foreground\".",
+            "recommended": "foreground"
+          },
+          "suggestion": "Retry this action with delivery_mode:\"foreground\"."
+        }
+      },
+      "observations": [],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": null,
+      "emit_to_flush_ns": null
+    },
+    {
+      "seq": 2,
+      "case": "closed",
+      "operation": {
+        "confirmation_ns": 0,
+        "emission_ns": 0,
+        "may_start": false,
+        "op_seq": 2,
+        "submission_ns": 0,
+        "worker_ack_ns": 0
+      },
+      "sdk_submission_ns": 182224141939209,
+      "caller_ack_ns": 182225426161937,
+      "result": {
+        "content": [
+          {
+            "text": "foreground_unavailable: KWin target pid=1615294 token=14 is verified, but only focus-bound portal/libei input is available; refusing raw input until a target-bound KWin input path is implemented",
+            "type": "text"
+          }
+        ],
+        "isError": true
+      },
+      "observations": [],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": null,
+      "emit_to_flush_ns": null
+    },
+    {
+      "seq": 3,
+      "case": "expired",
+      "operation": {
+        "confirmation_ns": 0,
+        "emission_ns": 0,
+        "may_start": false,
+        "op_seq": 3,
+        "submission_ns": 0,
+        "worker_ack_ns": 0
+      },
+      "sdk_submission_ns": 182227989663284,
+      "caller_ack_ns": 182228679200206,
+      "result": {
+        "content": [
+          {
+            "text": "foreground_unavailable: KWin target pid=1615294 token=14 is verified, but only focus-bound portal/libei input is available; refusing raw input until a target-bound KWin input path is implemented",
+            "type": "text"
+          }
+        ],
+        "isError": true
+      },
+      "observations": [],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": null,
+      "emit_to_flush_ns": null
+    },
+    {
+      "seq": 4,
+      "case": "closed",
+      "operation": {
+        "confirmation_ns": 0,
+        "emission_ns": 0,
+        "may_start": false,
+        "op_seq": 4,
+        "submission_ns": 182422220257515,
+        "worker_ack_ns": 0
+      },
+      "sdk_submission_ns": 182422219639758,
+      "caller_ack_ns": 182422220672042,
+      "result": {
+        "content": [
+          {
+            "text": "prototype rejected before emission: Ok(Err(closed))",
+            "type": "text"
+          }
+        ],
+        "isError": true,
+        "structuredContent": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "execution_state": "not_started",
+          "may_start": false,
+          "op_seq": 4,
+          "submission_ns": 182422220257515,
+          "worker_ack_ns": 0
+        }
+      },
+      "observations": [],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": null,
+      "emit_to_flush_ns": null
+    },
+    {
+      "seq": 5,
+      "case": "expired",
+      "operation": {
+        "confirmation_ns": 0,
+        "emission_ns": 0,
+        "may_start": false,
+        "op_seq": 5,
+        "submission_ns": 182424813125048,
+        "worker_ack_ns": 0
+      },
+      "sdk_submission_ns": 182424812403146,
+      "caller_ack_ns": 182424813673194,
+      "result": {
+        "content": [
+          {
+            "text": "prototype rejected before emission: Ok(Err(expired))",
+            "type": "text"
+          }
+        ],
+        "isError": true,
+        "structuredContent": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "execution_state": "not_started",
+          "may_start": false,
+          "op_seq": 5,
+          "submission_ns": 182424813125048,
+          "worker_ack_ns": 0
+        }
+      },
+      "observations": [],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": null,
+      "emit_to_flush_ns": null
+    },
+    {
+      "seq": 6,
+      "case": "A",
+      "operation": {
+        "confirmation_ns": 182441120683106,
+        "emission_ns": 182441120715246,
+        "may_start": true,
+        "op_seq": 6,
+        "submission_ns": 182437373561243,
+        "worker_ack_ns": 182441120798041
+      },
+      "sdk_submission_ns": 182437372785180,
+      "caller_ack_ns": 182441121641421,
+      "result": {
+        "content": [
+          {
+            "text": "prototype emission flushed; application effect unverifiable",
+            "type": "text"
+          }
+        ],
+        "structuredContent": {
+          "delivery": {
+            "mode": "foreground"
+          },
+          "effect": "unverifiable",
+          "route": "global_input",
+          "summary": "prototype emission flushed; application effect unverifiable"
+        }
+      },
+      "observations": [
+        {
+          "received_ns": 182441009413178,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "active_pid": 1615294,
+          "activation_notifications": 1,
+          "started_ns": 182441005324120,
+          "finished_ns": 182441013721856,
+          "helper_owner": ":1.8",
+          "kwin_pid": 1139,
+          "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+          "token": 14,
+          "pid": 1615294,
+          "internal_id": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "fresh_active": true
+        }
+      ],
+      "deltas": {
+        "A": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": 32140,
+      "emit_to_flush_ns": 82795
+    },
+    {
+      "seq": 7,
+      "case": "B",
+      "operation": {
+        "confirmation_ns": 182449958280179,
+        "emission_ns": 182449958300928,
+        "may_start": true,
+        "op_seq": 7,
+        "submission_ns": 182449602633666,
+        "worker_ack_ns": 182449958343668
+      },
+      "sdk_submission_ns": 182449602061013,
+      "caller_ack_ns": 182449958901051,
+      "result": {
+        "content": [
+          {
+            "text": "prototype emission flushed; application effect unverifiable",
+            "type": "text"
+          }
+        ],
+        "structuredContent": {
+          "delivery": {
+            "mode": "foreground"
+          },
+          "effect": "unverifiable",
+          "route": "global_input",
+          "summary": "prototype emission flushed; application effect unverifiable"
+        }
+      },
+      "observations": [
+        {
+          "received_ns": 182449845919368,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+          "active_pid": 1615294,
+          "activation_notifications": 1,
+          "started_ns": 182449842425436,
+          "finished_ns": 182449851461937,
+          "helper_owner": ":1.8",
+          "kwin_pid": 1139,
+          "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+          "token": 13,
+          "pid": 1615294,
+          "internal_id": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+          "fresh_active": true
+        }
+      ],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": 20749,
+      "emit_to_flush_ns": 42740
+    },
+    {
+      "seq": 8,
+      "case": "precheck_takeover",
+      "operation": {
+        "confirmation_ns": 0,
+        "emission_ns": 0,
+        "may_start": false,
+        "op_seq": 8,
+        "submission_ns": 182450535810368,
+        "worker_ack_ns": 0
+      },
+      "sdk_submission_ns": 182450535216607,
+      "caller_ack_ns": 182450881890158,
+      "result": {
+        "content": [
+          {
+            "text": "prototype rejected before emission: Ok(Err(closed/stale/inactive target))",
+            "type": "text"
+          }
+        ],
+        "isError": true,
+        "structuredContent": {
+          "confirmation_ns": 0,
+          "emission_ns": 0,
+          "execution_state": "not_started",
+          "may_start": false,
+          "op_seq": 8,
+          "submission_ns": 182450535810368,
+          "worker_ack_ns": 0
+        }
+      },
+      "observations": [
+        {
+          "received_ns": 182450773297744,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+          "active_pid": 1615294,
+          "activation_notifications": 0,
+          "started_ns": 182450769391569,
+          "finished_ns": 182450775034907,
+          "helper_owner": ":1.8",
+          "kwin_pid": 1139,
+          "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+          "token": 13,
+          "pid": 1615294,
+          "internal_id": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+          "fresh_active": true
+        }
+      ],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": null,
+      "emit_to_flush_ns": null
+    },
+    {
+      "seq": 9,
+      "case": "drop_ack",
+      "operation": {
+        "confirmation_ns": 182453862799542,
+        "emission_ns": 182453862819760,
+        "may_start": true,
+        "op_seq": 9,
+        "submission_ns": 182453457873602,
+        "worker_ack_ns": 182453862858372
+      },
+      "sdk_submission_ns": 182453457312562,
+      "caller_ack_ns": 182453863294038,
+      "result": {
+        "content": [
+          {
+            "text": "prototype unknown; never retry: Ok(Err(libei worker reply channel closed))",
+            "type": "text"
+          }
+        ],
+        "isError": true,
+        "structuredContent": {
+          "confirmation_ns": 182453862799542,
+          "emission_ns": 182453862819760,
+          "execution_state": "unknown",
+          "may_start": true,
+          "op_seq": 9,
+          "submission_ns": 182453457873602,
+          "worker_ack_ns": 182453862858372
+        }
+      },
+      "observations": [
+        {
+          "received_ns": 182453750758311,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "active_pid": 1615294,
+          "activation_notifications": 1,
+          "started_ns": 182453746480209,
+          "finished_ns": 182453755707117,
+          "helper_owner": ":1.8",
+          "kwin_pid": 1139,
+          "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+          "token": 14,
+          "pid": 1615294,
+          "internal_id": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "fresh_active": true
+        }
+      ],
+      "deltas": {
+        "A": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": 20218,
+      "emit_to_flush_ns": 38612
+    },
+    {
+      "seq": 10,
+      "case": "A",
+      "operation": {
+        "confirmation_ns": 182479306044707,
+        "emission_ns": 182479306069844,
+        "may_start": true,
+        "op_seq": 10,
+        "submission_ns": 182478957430779,
+        "worker_ack_ns": 182479306114287
+      },
+      "sdk_submission_ns": 182478956544279,
+      "caller_ack_ns": 182479306594707,
+      "result": {
+        "content": [
+          {
+            "text": "prototype emission flushed; application effect unverifiable",
+            "type": "text"
+          }
+        ],
+        "structuredContent": {
+          "delivery": {
+            "mode": "foreground"
+          },
+          "effect": "unverifiable",
+          "route": "global_input",
+          "summary": "prototype emission flushed; application effect unverifiable"
+        }
+      },
+      "observations": [
+        {
+          "received_ns": 182479197515624,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "active_pid": 1615294,
+          "activation_notifications": 0,
+          "started_ns": 182479194249478,
+          "finished_ns": 182479199262244,
+          "helper_owner": ":1.8",
+          "kwin_pid": 1139,
+          "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+          "token": 14,
+          "pid": 1615294,
+          "internal_id": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "fresh_active": true
+        }
+      ],
+      "deltas": {
+        "A": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": 25137,
+      "emit_to_flush_ns": 44443
+    },
+    {
+      "seq": 11,
+      "case": "postcheck_takeover",
+      "operation": {
+        "confirmation_ns": 182480235977858,
+        "emission_ns": 182480245631685,
+        "may_start": true,
+        "op_seq": 11,
+        "submission_ns": 182479889811253,
+        "worker_ack_ns": 182480245685185
+      },
+      "sdk_submission_ns": 182479889199557,
+      "caller_ack_ns": 182480246322679,
+      "result": {
+        "content": [
+          {
+            "text": "prototype emission flushed; application effect unverifiable",
+            "type": "text"
+          }
+        ],
+        "structuredContent": {
+          "delivery": {
+            "mode": "foreground"
+          },
+          "effect": "unverifiable",
+          "route": "global_input",
+          "summary": "prototype emission flushed; application effect unverifiable"
+        }
+      },
+      "observations": [
+        {
+          "received_ns": 182480126536276,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "active_pid": 1615294,
+          "activation_notifications": 0,
+          "started_ns": 182480123363535,
+          "finished_ns": 182480128450109,
+          "helper_owner": ":1.8",
+          "kwin_pid": 1139,
+          "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+          "token": 14,
+          "pid": 1615294,
+          "internal_id": "{ead4c2b4-b211-4c29-80d4-e57e2d1bfdbe}",
+          "fresh_active": true
+        },
+        {
+          "received_ns": 182480240110246,
+          "matches": 1,
+          "requested": true,
+          "confirmed": true,
+          "active_uuid": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+          "active_pid": 1615294,
+          "activation_notifications": 1,
+          "started_ns": 182480237692990,
+          "finished_ns": 182480244598239,
+          "helper_owner": ":1.8",
+          "kwin_pid": 1139,
+          "generation": "{23585959-c9f0-4bad-8d91-de21f68b93aa}",
+          "token": 13,
+          "pid": 1615294,
+          "internal_id": "{b706bdd3-eecb-45f7-8c14-59b25f903222}",
+          "fresh_active": true
+        }
+      ],
+      "deltas": {
+        "A": {
+          "presses": 0,
+          "releases": 0,
+          "clicks": 0,
+          "button_releases": 0
+        },
+        "B": {
+          "presses": 1,
+          "releases": 1,
+          "clicks": 0,
+          "button_releases": 0
+        }
+      },
+      "check_to_emission_ns": 9653827,
+      "emit_to_flush_ns": 53500
+    }
+  ],
+  "fixture_events": [
+    {
+      "time_ns": 181392333716421,
+      "window": "A",
+      "kind": "ready",
+      "pid": 1615294,
+      "generation": 181392309503416
+    },
+    {
+      "time_ns": 181392334527199,
+      "window": "B",
+      "kind": "ready",
+      "pid": 1615294,
+      "generation": 181392333763028
+    },
+    {
+      "time_ns": 181568410097011,
+      "window": "A",
+      "kind": "destroyed",
+      "generation": 181392309503416
+    },
+    {
+      "time_ns": 181568415248536,
+      "window": "A",
+      "kind": "ready",
+      "pid": 1615294,
+      "generation": 181568414275454
+    },
+    {
+      "time_ns": 181596349818889,
+      "window": "A",
+      "kind": "destroyed",
+      "generation": 181568414275454
+    },
+    {
+      "time_ns": 181596354543164,
+      "window": "A",
+      "kind": "ready",
+      "pid": 1615294,
+      "generation": 181596353565764
+    },
+    {
+      "time_ns": 182441123185381,
+      "window": "A",
+      "kind": "key-press",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182441131512274,
+      "window": "A",
+      "kind": "key-release",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182449958829878,
+      "window": "B",
+      "kind": "key-press",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182449959251818,
+      "window": "B",
+      "kind": "key-release",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182453863217795,
+      "window": "A",
+      "kind": "key-press",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182453863573071,
+      "window": "A",
+      "kind": "key-release",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182479306465876,
+      "window": "A",
+      "kind": "key-press",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182479306839936,
+      "window": "A",
+      "kind": "key-release",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182480249422914,
+      "window": "B",
+      "kind": "key-press",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182480249805461,
+      "window": "B",
+      "kind": "key-release",
+      "key": "a",
+      "hardware_keycode": 38,
+      "modifiers": 16
+    },
+    {
+      "time_ns": 182586125479095,
+      "window": "B",
+      "kind": "destroyed",
+      "generation": 181392333763028
+    },
+    {
+      "time_ns": 182586125803282,
+      "window": "A",
+      "kind": "destroyed",
+      "generation": 181596353565764
+    }
+  ],
+  "recording": {
+    "local_path": "/home/netbos/Documents/GitHub/cua-evidence/3506/20260929-host-6.7.5/host-6.7.5-proof.webm",
+    "duration_seconds": 419,
+    "width": 1280,
+    "height": 480,
+    "finding": "Both composed panes showed A despite separate A/B selections; B sentinel video is missing. This capture limitation does not erase independently journaled B receipt."
+  },
+  "result": "observed_wrong_window_delivery_after_confirmation",
+  "pointer_tests": "not run after keyboard focus-race leak",
+  "no_replay": "sequence9 duplicate blocked by exclusive ledger creation before SDK construction; fresh sequence10 admitted separately",
+  "cleanup": "fixture quit; temporary scripts unloaded per call; helper unloaded and both separately named installed proof modules removed; no desktop restart"
+}

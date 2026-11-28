@@ -177,6 +177,19 @@ fn legacy_home_dir() -> Option<PathBuf> {
     }
 }
 
+const MANAGED_COPY_MARKER: &str = ".cua-driver-managed";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallStrategy {
+    Symlink,
+    Copy,
+}
+
+#[cfg(windows)]
+const ANTIGRAVITY_STRATEGY: InstallStrategy = InstallStrategy::Copy;
+#[cfg(not(windows))]
+const ANTIGRAVITY_STRATEGY: InstallStrategy = InstallStrategy::Symlink;
+
 #[derive(Debug, Clone, Copy)]
 struct Agent {
     label: &'static str,
@@ -185,6 +198,9 @@ struct Agent {
     /// A client-owned path that positively identifies an installation. When
     /// present, `skills install` may create the missing parent skills dir.
     install_marker: Option<&'static str>,
+    /// Installation strategy: symlink/junction by default, or directory copy
+    /// when the agent's runtime ignores junctions on Windows (e.g. Antigravity).
+    strategy: InstallStrategy,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -212,11 +228,13 @@ const AGENTS: &[Agent] = &[
         label: "Claude Code",
         parent: AgentParent::Home(".claude/skills"),
         install_marker: Some(".claude"),
+        strategy: InstallStrategy::Symlink,
     },
     Agent {
         label: "Codex",
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".codex"),
+        strategy: InstallStrategy::Symlink,
     },
     Agent {
         label: "Pi",
@@ -225,6 +243,7 @@ const AGENTS: &[Agent] = &[
         // of making Pi report a duplicate skill-name collision.
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".pi/agent"),
+        strategy: InstallStrategy::Symlink,
     },
     Agent {
         label: "Cursor",
@@ -232,6 +251,7 @@ const AGENTS: &[Agent] = &[
         // converge on one managed cua-driver link.
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".cursor"),
+        strategy: InstallStrategy::Symlink,
     },
     Agent {
         label: "DeepSeek Harness",
@@ -240,48 +260,57 @@ const AGENTS: &[Agent] = &[
         // Sharing the Codex/Pi/Cursor link avoids that duplicate.
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".dsh"),
+        strategy: InstallStrategy::Symlink,
     },
     Agent {
         label: "Prime Agent",
         parent: AgentParent::Home(".prime/agent/skills"),
         install_marker: None,
+        strategy: InstallStrategy::Symlink,
     },
     Agent {
         label: "OpenClaw",
         parent: AgentParent::Home(".openclaw/skills"),
         install_marker: None,
+        strategy: InstallStrategy::Symlink,
     },
     #[cfg(windows)]
     Agent {
         label: "OpenCode",
         parent: AgentParent::AppData("opencode/skills"),
         install_marker: None,
+        strategy: InstallStrategy::Symlink,
     },
     #[cfg(not(windows))]
     Agent {
         label: "OpenCode",
         parent: AgentParent::Home(".config/opencode/skills"),
         install_marker: None,
+        strategy: InstallStrategy::Symlink,
     },
     Agent {
         label: "Antigravity IDE",
         parent: AgentParent::Home(".gemini/config/skills"),
         install_marker: None,
+        strategy: ANTIGRAVITY_STRATEGY,
     },
     Agent {
         label: "Antigravity IDE (legacy dir)",
         parent: AgentParent::Home(".gemini/antigravity/skills"),
         install_marker: None,
+        strategy: ANTIGRAVITY_STRATEGY,
     },
     Agent {
         label: "Antigravity CLI",
         parent: AgentParent::Home(".gemini/antigravity-cli/skills"),
         install_marker: None,
+        strategy: ANTIGRAVITY_STRATEGY,
     },
     Agent {
         label: "Gemini CLI (legacy)",
         parent: AgentParent::Home(".gemini/skills"),
         install_marker: None,
+        strategy: ANTIGRAVITY_STRATEGY,
     },
     // Hermes (NousResearch/hermes-agent) resolves user skills from its
     // effective home at agent load time. `HERMES_HOME` can select a custom
@@ -293,6 +322,7 @@ const AGENTS: &[Agent] = &[
         label: "Hermes",
         parent: AgentParent::Hermes,
         install_marker: None,
+        strategy: InstallStrategy::Symlink,
     },
 ];
 
@@ -531,22 +561,34 @@ fn sweep_legacy_skill_pack() {
         if !parent.exists() || legacy_link.symlink_metadata().is_err() {
             continue;
         }
-        if !is_symlink_or_junction(&legacy_link) {
-            // Real directory — don't clobber user-managed content.
-            continue;
-        }
-        if let Err(e) = remove_link(&legacy_link) {
-            eprintln!(
-                "  warning: could not remove legacy {} link at {}: {e}",
-                agent.label,
-                legacy_link.display()
-            );
-        } else {
-            println!(
-                "  cleaned up legacy {} link at {}",
-                agent.label,
-                legacy_link.display()
-            );
+        if is_symlink_or_junction(&legacy_link) {
+            if let Err(e) = remove_link(&legacy_link) {
+                eprintln!(
+                    "  warning: could not remove legacy {} link at {}: {e}",
+                    agent.label,
+                    legacy_link.display()
+                );
+            } else {
+                println!(
+                    "  cleaned up legacy {} link at {}",
+                    agent.label,
+                    legacy_link.display()
+                );
+            }
+        } else if is_managed_copy(&legacy_link) {
+            if let Err(e) = fs::remove_dir_all(&legacy_link) {
+                eprintln!(
+                    "  warning: could not remove legacy {} copy at {}: {e}",
+                    agent.label,
+                    legacy_link.display()
+                );
+            } else {
+                println!(
+                    "  cleaned up legacy {} copy at {}",
+                    agent.label,
+                    legacy_link.display()
+                );
+            }
         }
     }
 }
@@ -582,11 +624,13 @@ fn ensure_skills_parent(parent: &Path, install_marker: Option<&Path>) -> Result<
 fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<LinkStatus> {
     let parent = agent.parent_path()?;
     let install_marker = agent.install_marker_path()?;
-    link_agent_paths(
+    link_agent_strategy(
         agent.label,
         &parent,
         install_marker.as_deref(),
         local_skill_dir,
+        agent.strategy,
+        true,
     )
 }
 
@@ -608,10 +652,100 @@ fn link_agent_paths_with(
     local_skill_dir: &Path,
     chatty: bool,
 ) -> Result<LinkStatus> {
+    let strategy = AGENTS
+        .iter()
+        .find(|a| a.label == agent_label)
+        .map(|a| a.strategy)
+        .unwrap_or(InstallStrategy::Symlink);
+    link_agent_strategy(
+        agent_label,
+        parent,
+        install_marker,
+        local_skill_dir,
+        strategy,
+        chatty,
+    )
+}
+
+fn link_agent_strategy(
+    agent_label: &str,
+    parent: &Path,
+    install_marker: Option<&Path>,
+    local_skill_dir: &Path,
+    strategy: InstallStrategy,
+    chatty: bool,
+) -> Result<LinkStatus> {
     if !ensure_skills_parent(parent, install_marker)? {
         return Ok(LinkStatus::NotDetected);
     }
     let link = parent.join(SKILL_PACK_NAME);
+
+    if strategy == InstallStrategy::Copy {
+        // If an NTFS junction / symlink exists from an earlier install, remove it
+        // so it can be replaced with a regular directory copy.
+        if is_symlink_or_junction(&link) {
+            remove_link(&link).with_context(|| format!("remove junction at {}", link.display()))?;
+            if chatty {
+                println!(
+                    "  migrated stale {} junction to directory copy at {}",
+                    agent_label,
+                    link.display()
+                );
+            }
+        }
+
+        if is_managed_copy(&link) {
+            sync_dir(local_skill_dir, &link).with_context(|| {
+                format!(
+                    "sync skill directory {} -> {}",
+                    local_skill_dir.display(),
+                    link.display()
+                )
+            })?;
+            if chatty {
+                println!(
+                    "  {} skill copy already exists at {} (skipping)",
+                    agent_label,
+                    link.display()
+                );
+            }
+            return Ok(LinkStatus::Existing);
+        }
+
+        if link.exists() {
+            // Real directory exists without our marker — user-managed, leave alone.
+            if chatty {
+                println!(
+                    "  {} skill directory already exists at {} (user-managed; leaving alone)",
+                    agent_label,
+                    link.display()
+                );
+            }
+            return Ok(LinkStatus::Existing);
+        }
+
+        sync_dir(local_skill_dir, &link).with_context(|| {
+            format!(
+                "copy skill directory {} -> {}",
+                local_skill_dir.display(),
+                link.display()
+            )
+        })?;
+        if chatty {
+            println!(
+                "  ✅ installed {} skill copy at {}",
+                agent_label,
+                link.display()
+            );
+        }
+        return Ok(LinkStatus::Created);
+    }
+
+    if is_managed_copy(&link) {
+        fs::remove_dir_all(&link)
+            .with_context(|| format!("remove managed copy at {}", link.display()))?;
+    }
+
     // Four states for `link`:
     //   1. doesn't exist at all                 → create
     //   2. exists + resolves                    → already linked (skip)
@@ -692,6 +826,52 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
 #[cfg(not(windows))]
 fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
     std::os::unix::fs::symlink(target, link)?;
+    Ok(())
+}
+
+fn is_managed_copy(p: &Path) -> bool {
+    p.is_dir() && !is_symlink_or_junction(p) && p.join(MANAGED_COPY_MARKER).exists()
+}
+
+fn sync_dir(source: &Path, dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            sync_dir(&entry.path(), &dest_path)?;
+        } else if file_type.is_file() {
+            let src_bytes = fs::read(entry.path())?;
+            let should_write = match fs::read(&dest_path) {
+                Ok(dst_bytes) => dst_bytes != src_bytes,
+                Err(_) => true,
+            };
+            if should_write {
+                fs::write(&dest_path, src_bytes)?;
+            }
+        }
+    }
+    for entry in fs::read_dir(dest)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == MANAGED_COPY_MARKER {
+            continue;
+        }
+        let src_path = source.join(&name);
+        if !src_path.exists() {
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                let _ = fs::remove_dir_all(entry.path());
+            } else {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    let marker_path = dest.join(MANAGED_COPY_MARKER);
+    if !marker_path.exists() {
+        fs::write(&marker_path, b"managed by cua-driver\n")?;
+    }
     Ok(())
 }
 
@@ -996,11 +1176,19 @@ fn uninstall(flags: &[String]) -> Result<()> {
             };
             let link = parent.join(name);
             if link.symlink_metadata().is_ok() {
-                // Only remove if it's a symlink/junction we manage. If a
-                // user replaced it with a real dir, leave it alone.
+                // Only remove if it's a symlink/junction or managed copy we manage. If a
+                // user replaced it with an unmanaged real dir, leave it alone.
                 if is_symlink_or_junction(&link) {
                     remove_link(&link)?;
                     println!("  ✅ removed {} link at {}", agent.label, link.display());
+                    removed_any = true;
+                } else if is_managed_copy(&link) {
+                    fs::remove_dir_all(&link)?;
+                    println!(
+                        "  ✅ removed {} skill copy at {}",
+                        agent.label,
+                        link.display()
+                    );
                     removed_any = true;
                 } else {
                     println!(
@@ -1120,6 +1308,12 @@ fn status() -> Result<()> {
                 ),
                 None => println!("  {} — ✅ linked: {}", agent.label, link.display()),
             }
+        } else if is_managed_copy(&link) {
+            println!(
+                "  {} — ✅ installed (directory copy): {}",
+                agent.label,
+                link.display()
+            );
         } else {
             println!(
                 "  {} — non-symlink path at {} (left alone)",
@@ -1140,10 +1334,10 @@ fn print_path() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        client_agents, client_skills_line, ensure_skills_parent, extract_tar_gz, link_agent_paths,
-        link_agent_paths_with, resolve_hermes_skills_dir, skill_release_url, stage_embedded,
-        unix_hermes_home, windows_hermes_home, AgentParent, ClientSkills, LinkStatus, AGENTS,
-        SKILL_FILES,
+        client_agents, client_skills_line, ensure_skills_parent, extract_tar_gz, is_managed_copy,
+        link_agent_paths, link_agent_paths_with, link_agent_strategy, resolve_hermes_skills_dir,
+        skill_release_url, stage_embedded, unix_hermes_home, windows_hermes_home, AgentParent,
+        ClientSkills, InstallStrategy, LinkStatus, AGENTS, MANAGED_COPY_MARKER, SKILL_FILES,
     };
     use anyhow::anyhow;
     use std::path::PathBuf;
@@ -1501,6 +1695,120 @@ mod tests {
 
         assert_eq!(legacy.len(), 1);
         assert_eq!(legacy[0].label, "Gemini CLI (legacy)");
+    }
+
+    #[test]
+    fn antigravity_uses_copy_strategy_on_windows_and_symlink_on_unix() {
+        for label in [
+            "Antigravity IDE",
+            "Antigravity IDE (legacy dir)",
+            "Antigravity CLI",
+            "Gemini CLI (legacy)",
+        ] {
+            let agent = AGENTS.iter().find(|a| a.label == label).unwrap();
+            #[cfg(windows)]
+            assert_eq!(agent.strategy, InstallStrategy::Copy);
+            #[cfg(not(windows))]
+            assert_eq!(agent.strategy, InstallStrategy::Symlink);
+        }
+    }
+
+    #[test]
+    fn copy_strategy_creates_managed_directory_with_marker() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let parent = home.join(".gemini/config/skills");
+        let local_skill = home.join(".cua-driver/skills/cua-driver");
+        std::fs::create_dir_all(&parent).unwrap();
+        std::fs::create_dir_all(&local_skill).unwrap();
+        std::fs::write(local_skill.join("SKILL.md"), "test skill content").unwrap();
+
+        assert_eq!(
+            link_agent_strategy(
+                "Antigravity IDE",
+                &parent,
+                None,
+                &local_skill,
+                InstallStrategy::Copy,
+                false,
+            )
+            .unwrap(),
+            LinkStatus::Created
+        );
+
+        let copied = parent.join("cua-driver");
+        assert!(copied.is_dir());
+        assert!(!super::is_symlink_or_junction(&copied));
+        assert!(is_managed_copy(&copied));
+        assert!(copied.join(MANAGED_COPY_MARKER).exists());
+        assert_eq!(
+            std::fs::read_to_string(copied.join("SKILL.md")).unwrap(),
+            "test skill content"
+        );
+
+        // Re-run reports existing and syncs modified files
+        std::fs::write(local_skill.join("SKILL.md"), "updated skill content").unwrap();
+        assert_eq!(
+            link_agent_strategy(
+                "Antigravity IDE",
+                &parent,
+                None,
+                &local_skill,
+                InstallStrategy::Copy,
+                false,
+            )
+            .unwrap(),
+            LinkStatus::Existing
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied.join("SKILL.md")).unwrap(),
+            "updated skill content"
+        );
+    }
+
+    #[test]
+    fn copy_strategy_migrates_existing_symlink_or_junction_to_directory_copy() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let parent = home.join(".gemini/config/skills");
+        let local_skill = home.join(".cua-driver/skills/cua-driver");
+        std::fs::create_dir_all(&parent).unwrap();
+        std::fs::create_dir_all(&local_skill).unwrap();
+        std::fs::write(local_skill.join("SKILL.md"), "test skill content").unwrap();
+
+        // First link with symlink/junction strategy
+        assert_eq!(
+            link_agent_strategy(
+                "Antigravity IDE",
+                &parent,
+                None,
+                &local_skill,
+                InstallStrategy::Symlink,
+                false,
+            )
+            .unwrap(),
+            LinkStatus::Created
+        );
+        let link = parent.join("cua-driver");
+        assert!(super::is_symlink_or_junction(&link));
+
+        // Now install with Copy strategy: it must migrate the existing junction/link to a regular directory copy
+        assert_eq!(
+            link_agent_strategy(
+                "Antigravity IDE",
+                &parent,
+                None,
+                &local_skill,
+                InstallStrategy::Copy,
+                false,
+            )
+            .unwrap(),
+            LinkStatus::Created
+        );
+        assert!(link.is_dir());
+        assert!(!super::is_symlink_or_junction(&link));
+        assert!(is_managed_copy(&link));
+        assert!(link.join(MANAGED_COPY_MARKER).exists());
     }
 
     #[test]

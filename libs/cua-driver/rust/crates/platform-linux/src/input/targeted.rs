@@ -521,13 +521,7 @@ pub(crate) struct KeyboardMap {
 
 impl KeyboardMap {
     pub(crate) fn load(conn: &RustConnection) -> Result<Self, TargetedInputError> {
-        // Keycodes 8..=255: the range `char_to_keycode_shift` and the
-        // spare-keycode remap index from.
-        let mapping = conn
-            .get_keyboard_mapping(8, 248)
-            .map_err(failed)?
-            .reply()
-            .map_err(failed)?;
+        let mapping = super::keyboard_mapping(conn).map_err(failed)?;
         Ok(Self { mapping })
     }
 

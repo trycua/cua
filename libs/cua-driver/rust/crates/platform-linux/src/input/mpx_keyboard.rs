@@ -621,7 +621,7 @@ struct Keymap {
 impl Keymap {
     fn load() -> Result<Self> {
         let (conn, _) = connect_x11_for_input()?;
-        let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+        let mapping = keyboard_mapping(&conn)?;
         let shift = shift_keycode(&conn);
         Ok(Self {
             conn,

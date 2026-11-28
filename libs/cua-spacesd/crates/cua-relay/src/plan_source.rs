@@ -168,8 +168,9 @@ struct Inner {
     on_change: OnceLock<OnChange>,
     counters: PlanCounters,
     permits: tokio::sync::Semaphore,
-    /// Last-known plans survive a restart here (the relay's state volume).
-    snapshot: Option<std::path::PathBuf>,
+    /// Last-known plans survive a restart here (the relay's state volume),
+    /// written off the request path.
+    snapshot: crate::persist::StateFile,
     last_persist: Mutex<Option<Instant>>,
 }
 
@@ -239,7 +240,9 @@ impl EntitlementPlans {
                 on_change: OnceLock::new(),
                 counters,
                 permits: tokio::sync::Semaphore::new(MAX_CONCURRENT_LOOKUPS),
-                snapshot,
+                // A cache: a failed write is logged (store `plans`), never
+                // a readiness failure.
+                snapshot: crate::persist::StateFile::new(snapshot, "plans", Arc::default()),
                 last_persist: Mutex::new(None),
             }),
         }
@@ -248,7 +251,7 @@ impl EntitlementPlans {
     /// Account deletion: drops `user` from the cache and rewrites the
     /// snapshot without them (now, not throttled). True when they were
     /// cached. Idempotent; the snapshot is rewritten every call.
-    pub fn forget(&self, user: &str) -> std::io::Result<bool> {
+    pub async fn forget(&self, user: &str) -> std::io::Result<bool> {
         let existed = self
             .inner
             .cache
@@ -256,8 +259,13 @@ impl EntitlementPlans {
             .expect("plan cache")
             .remove(user)
             .is_some();
-        self.inner.write_snapshot().map_err(std::io::Error::other)?;
+        self.inner.write_snapshot().await?;
         Ok(existed)
+    }
+
+    /// Waits until the snapshot holds every write queued so far (shutdown).
+    pub fn flush_blocking(&self, timeout: Duration) -> bool {
+        self.inner.snapshot.flush_blocking(timeout)
     }
 
     /// Called with a user's `sub` when a new answer changes their plan or
@@ -426,7 +434,7 @@ impl Inner {
     /// Writes the known plans to the snapshot, at most every
     /// [`PERSIST_EVERY`]. A failed write is logged, never fatal.
     fn persist(&self) {
-        if self.snapshot.is_none() {
+        if !self.snapshot.is_persisted() {
             return;
         }
         {
@@ -437,16 +445,15 @@ impl Inner {
             }
             *last = Some(now);
         }
-        if let Err(e) = self.write_snapshot() {
-            tracing::warn!(error = %e, "relay plan snapshot not written");
-        }
+        // Queued, not awaited: the writer thread writes it.
+        self.write_snapshot().detach();
     }
 
-    /// Writes the snapshot now (nothing without one).
-    fn write_snapshot(&self) -> Result<(), String> {
-        let Some(path) = &self.snapshot else {
-            return Ok(());
-        };
+    /// Queues the snapshot as the cache holds it now (nothing without one).
+    fn write_snapshot(&self) -> crate::persist::Durable {
+        if !self.snapshot.is_persisted() {
+            return crate::persist::Durable::ready();
+        }
         let known: HashMap<String, Assignment> = self
             .cache
             .lock()
@@ -454,11 +461,9 @@ impl Inner {
             .iter()
             .filter_map(|(u, c)| c.assignment.clone().map(|a| (u.clone(), a)))
             .collect();
-        let tmp = path.with_extension("tmp");
-        serde_json::to_vec(&known)
-            .map_err(|e| e.to_string())
-            .and_then(|raw| std::fs::write(&tmp, raw).map_err(|e| e.to_string()))
-            .and_then(|()| std::fs::rename(&tmp, path).map_err(|e| e.to_string()))
+        self.snapshot.replace(move |out| {
+            serde_json::to_writer(&mut *out, &known).map_err(std::io::Error::other)
+        })
     }
 
     /// [`Self::fetch`], asked again with a short backoff after a transport

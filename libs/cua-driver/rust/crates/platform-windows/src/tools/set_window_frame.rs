@@ -115,7 +115,7 @@ impl Tool for SetWindowFrameTool {
                 return Err("width/height must round to positive Windows window sizes".to_owned());
             }
             let hwnd = HWND(input.window_id as usize as *mut std::ffi::c_void);
-            if !unsafe { IsWindow(hwnd).as_bool() } {
+            if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
                 return Err(format!("window_id {} is closed, stale, or invalid", input.window_id));
             }
             let mut owner_pid = 0_u32;
@@ -180,7 +180,7 @@ impl Tool for SetWindowFrameTool {
             let mutation_error = unsafe {
                 SetWindowPos(
                     hwnd,
-                    HWND::default(),
+                    None,
                     outer_requested.0,
                     outer_requested.1,
                     outer_requested.2,

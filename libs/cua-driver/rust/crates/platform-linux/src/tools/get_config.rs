@@ -40,6 +40,9 @@ impl Tool for GetConfigTool {
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "cursor": cursor_overlay::cursor_options::saved_config_json(),
+            "get_window_state": cua_driver_core::walk_defaults::config_json(
+                super::get_window_state::WALK_LIMITS,
+            ),
             "fast_path": cua_driver_core::fast_path::wire::config_value()
         }))
     }

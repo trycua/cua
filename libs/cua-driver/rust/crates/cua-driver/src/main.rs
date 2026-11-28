@@ -51,6 +51,8 @@ mod stop;
 mod telemetry;
 mod updater;
 mod version_check;
+mod vnc;
+mod vnc_cli;
 
 use platform_main::{Platform, PlatformMainHooks};
 use std::sync::Arc;
@@ -576,9 +578,10 @@ fn dispatch() -> i32 {
             tool,
             json_args,
             screenshot_out_file,
+            text,
             socket,
         } => {
-            cli::run_call(&tool, json_args, screenshot_out_file, socket);
+            cli::run_call(&tool, json_args, screenshot_out_file, text, socket);
         }
         cli::Command::Serve {
             socket,
@@ -649,13 +652,13 @@ fn dispatch() -> i32 {
             gate.hold(&driver);
             let serve_driver = driver.clone();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
+            let pid_file = serve::PidFile::from_arg(pid_file);
             // Serve binds its socket first, so the daemon is reachable within
             // about a second while the macOS permissions gate works toward
             // the grant on the main thread (#1761).
             return Platform::run_long_lived(
                 move || {
-                    serve::run_serve_cmd(serve_driver, &sp, Some(&pid_path), socket_lock);
+                    serve::run_serve_cmd(serve_driver, &sp, pid_file, socket_lock);
                     0
                 },
                 move || {
@@ -684,8 +687,7 @@ fn dispatch() -> i32 {
         }
         cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
-            serve::run_status_cmd(&sp, &pid_path);
+            serve::run_status_cmd(&sp, pid_file.as_deref());
         }
         cli::Command::Sessions { json, socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
@@ -742,6 +744,9 @@ fn dispatch() -> i32 {
         }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
+        }
+        cli::Command::PermissionsVnc { args } => {
+            vnc_cli::run(&args);
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
@@ -819,15 +824,17 @@ fn run_mcp(socket: Option<String>, direct: bool, grants: &[String]) -> anyhow::R
             "sdk_owned_runtime",
             "not_applicable",
             true,
+            "none",
             startup_started.elapsed(),
         );
         run_mcp_direct()
     } else {
-        cli::run_mcp_via_daemon_proxy(socket, grants, |daemon, success| {
+        cli::run_mcp_via_daemon_proxy(socket, grants, |daemon, success, reason| {
             telemetry::capture_mcp_startup_completed(
                 "daemon_proxy",
                 daemon.telemetry_value(),
                 success,
+                reason,
                 startup_started.elapsed(),
             )
         })

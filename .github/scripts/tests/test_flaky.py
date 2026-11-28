@@ -147,8 +147,16 @@ def test_validate_job_entries():
 
 def test_the_repo_quarantine_list_is_valid():
     entries = json.loads(SCRIPT.parents[2].joinpath("flaky", "quarantine.json").read_text())["entries"]
-    errors, _ = flaky.check_entries(entries, dt.date.fromisoformat(min(e["expires"] for e in entries)))
+    # Judge the list as of its earliest expiry; with no entries nothing can expire, so use today.
+    today = dt.date.fromisoformat(min((e["expires"] for e in entries), default=dt.date.today().isoformat()))
+    errors, _ = flaky.check_entries(entries, today)
     assert errors == []
+
+
+def test_an_empty_quarantine_list_is_valid(env):
+    assert flaky.check_entries([], TODAY) == ([], [])
+    flaky.QUARANTINE_FILE.write_text(json.dumps({"entries": []}))
+    assert flaky.main(["validate", "--today", "2026-10-25"]) == 0
 
 
 def test_job_entries_never_match_tests():

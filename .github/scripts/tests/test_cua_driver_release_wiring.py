@@ -1152,14 +1152,15 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 61)
+        self.assertEqual(len(expected["baseTools"]), 62)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 33, "linux": 37, "win32": 33},
+            {"darwin": 34, "linux": 38, "win32": 34},
         )
         self.assertEqual(
             expected["platformTools"],
             {
+                "darwin": ["agent_display"],
                 "linux": [
                     "mouse_button_down",
                     "mouse_button_up",

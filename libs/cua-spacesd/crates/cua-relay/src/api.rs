@@ -597,7 +597,7 @@ async fn register(
     }
     // Single use: of two registrations racing on one code only one spends it.
     if let Some(p) = &pairing {
-        if let Err(e) = relay.pairing.spend(&p.id, &body.id) {
+        if let Err(e) = relay.pairing.spend(&p.id, &body.id).await {
             return error(StatusCode::UNAUTHORIZED, e.to_string());
         }
     }
@@ -605,27 +605,30 @@ async fn register(
         .as_ref()
         .and_then(|p| p.name.clone())
         .or_else(|| body.name.clone());
-    let registered = relay.directory.register(
-        &who,
-        &body.id,
-        name.as_deref(),
-        body.allow.as_deref(),
-        proven,
-    );
+    let registered = relay
+        .directory
+        .register(
+            &who,
+            &body.id,
+            name.as_deref(),
+            body.allow.as_deref(),
+            proven,
+        )
+        .await;
     if let (Err(_), Some(p)) = (&registered, &pairing) {
         relay.pairing.unspend(&p.id);
     }
     match registered {
         Ok((record, token)) => {
             let record = match body.host.as_deref() {
-                Some(host) => match relay.directory.set_host(&record.id, Some(host)) {
+                Some(host) => match relay.directory.set_host(&record.id, Some(host)).await {
                     Ok(r) => r,
                     Err(e) => return directory_error(e),
                 },
                 None => record,
             };
             let record = match meta {
-                Some(meta) => match relay.directory.set_meta(&record.id, meta) {
+                Some(meta) => match relay.directory.set_meta(&record.id, meta).await {
                     Ok(r) => r,
                     Err(e) => return directory_error(e),
                 },
@@ -671,16 +674,19 @@ async fn register(
                 .as_ref()
                 .and_then(|p| p.team.as_deref().map(|t| (p, t)))
             {
-                let added = relay.teams.add_machine(
-                    team,
-                    &crate::teams::Actor {
-                        who: &who,
-                        device: p.created_by.as_deref(),
-                    },
-                    &record,
-                    None,
-                    None,
-                );
+                let added = relay
+                    .teams
+                    .add_machine(
+                        team,
+                        &crate::teams::Actor {
+                            who: &who,
+                            device: p.created_by.as_deref(),
+                        },
+                        &record,
+                        None,
+                        None,
+                    )
+                    .await;
                 if let Err(e) = added {
                     tracing::info!(machine = %record.id, error = %e, "pairing code: not added to its team");
                     relay.devices.audit(
@@ -744,7 +750,8 @@ async fn list(State(relay): State<Relay>, headers: HeaderMap) -> Response {
                     .unwrap_or_default();
                 relay
                     .teams
-                    .accept_email_invites(&crate::teams::Actor { who, device }, &name);
+                    .accept_email_invites(&crate::teams::Actor { who, device }, &name)
+                    .await;
             }
             let mut visible = visible_machines(&relay, who, source).await;
             // A Space whose computer was removed from the account stays
@@ -975,7 +982,7 @@ async fn patch_one(
         return r;
     }
     let actor = caller.actor();
-    match relay.directory.update(&id, &patch) {
+    match relay.directory.update(&id, &patch).await {
         Ok(record) => {
             apply_sharing(&relay, &record);
             audit_allow_changes(&relay, &record, &before.allow, actor.as_deref());
@@ -1054,13 +1061,17 @@ async fn delete_one(
                 name: c.name,
             })
             .collect();
-        if let Err(e) = relay.pending_deletions.record(
-            &id,
-            &record.owner.id,
-            &record.token_sha256,
-            caller.actor().or_else(|| Some(record.owner.id.clone())),
-            spaces,
-        ) {
+        if let Err(e) = relay
+            .pending_deletions
+            .record(
+                &id,
+                &record.owner.id,
+                &record.token_sha256,
+                caller.actor().or_else(|| Some(record.owner.id.clone())),
+                spaces,
+            )
+            .await
+        {
             tracing::error!(machine = %id, error = %e, "pending deletions not recorded");
             return error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1068,7 +1079,7 @@ async fn delete_one(
             );
         }
     }
-    match relay.directory.remove(&id) {
+    match relay.directory.remove(&id).await {
         Ok(removed) => {
             relay.drop_machine(&id);
             relay.teams.forget_machine(&id);
@@ -1079,7 +1090,7 @@ async fn delete_one(
                 if !delete_spaces {
                     continue;
                 }
-                match relay.directory.remove(&child.id) {
+                match relay.directory.remove(&child.id).await {
                     Ok(_) | Err(DirectoryError::NotFound) => {
                         relay.teams.forget_machine(&child.id);
                         relay.devices.audit(
@@ -1140,7 +1151,7 @@ async fn set_sharing(relay: Relay, id: String, headers: HeaderMap, sharing: bool
             "sharing was stopped from your account; start it again from your account",
         );
     }
-    match relay.directory.set_sharing(&id, sharing, by) {
+    match relay.directory.set_sharing(&id, sharing, by).await {
         Ok(record) => {
             apply_sharing(&relay, &record);
             if before.sharing != record.sharing {
@@ -1186,7 +1197,7 @@ async fn confirm(
     if before.confirmed {
         return Json(view(&relay, &headers, &before, Role::Owner)).into_response();
     }
-    match relay.directory.confirm(&id) {
+    match relay.directory.confirm(&id).await {
         Ok(record) => {
             relay.devices.audit(
                 &record.owner.id,
@@ -1261,7 +1272,7 @@ async fn leave(State(relay): State<Relay>, Path(id): Path<String>, headers: Head
     let record = if removed.is_empty() {
         record
     } else {
-        match relay.directory.remove_shares(&id, &removed) {
+        match relay.directory.remove_shares(&id, &removed).await {
             Ok(Some(r)) => r,
             Ok(None) => record,
             Err(e) => return directory_error(e),
@@ -1272,7 +1283,7 @@ async fn leave(State(relay): State<Relay>, Path(id): Path<String>, headers: Head
         .machine_role(&record, &who)
         .and_then(|(_, teams)| teams.into_iter().next());
     if hidden_team.is_some() {
-        if let Err(e) = relay.directory.hide_for(&id, &who.account) {
+        if let Err(e) = relay.directory.hide_for(&id, &who.account).await {
             return directory_error(e);
         }
     }

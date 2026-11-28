@@ -49,3 +49,10 @@ pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path:
     write_executable(&p, format!("#!/bin/sh\n{body}\n"));
     p
 }
+
+/// `p` with the platform separator throughout. `home.join("a/b")` leaves a
+/// mixed `home\a/b` on Windows; paths the product returns and prints are
+/// all-native, so expectations that compare text must be too.
+pub fn native(p: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    p.as_ref().components().collect()
+}

@@ -1794,32 +1794,37 @@ jobs:
         with:
           pattern: winfeed-*
           path: winfeed
-      - name: Join the feeds
+      # Both architectures' installers, blockmaps and signing note, from the
+      # artifacts the packaging jobs finished. electron-windows is assembled
+      # and uploaded as one artifact here, not merged from a pattern that also
+      # names an artifact this job has just uploaded: the listing can lag, and
+      # the merge then dropped the joined feed (0.39.11, 0.41.2: "no latest.yml").
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: electron-windows-*
+          path: electron-windows
+          merge-multiple: true
+      - name: Join the feeds into the electron-windows artifact
         run: |
           set -euo pipefail
-          mkdir -p merged-feed
           for name in latest.yml beta.yml; do
             if [ -f "winfeed/winfeed-x64/$name" ] || [ -f "winfeed/winfeed-arm64/$name" ]; then
               test -f "winfeed/winfeed-x64/$name" && test -f "winfeed/winfeed-arm64/$name" \
                 || { echo "::error::$name is missing from one architecture's build"; exit 1; }
-              node apps/cua-spaces-desktop/scripts/merge-feeds.mjs --out "merged-feed/$name" \
+              node apps/cua-spaces-desktop/scripts/merge-feeds.mjs --out "electron-windows/$name" \
                 "winfeed/winfeed-x64/$name" "winfeed/winfeed-arm64/$name"
             fi
           done
-          ls merged-feed
-          test -n "$(ls merged-feed)" || { echo "::error::no Windows feed"; exit 1; }
+          ls electron-windows
+          test -f electron-windows/latest.yml || test -f electron-windows/beta.yml \
+            || { echo "::error::no Windows feed"; exit 1; }
+      # Installers, blockmaps, the signing note and the joined feed of both
+      # architectures, as electron-windows.
       - uses: actions/upload-artifact@v4
         with:
-          name: electron-windows-feed
-          path: merged-feed/
-          if-no-files-found: error
-          retention-days: 7
-      # Installers, blockmaps and the signing note of both architectures, and
-      # the joined feed, as electron-windows (merged without downloading).
-      - uses: actions/upload-artifact/merge@v4
-        with:
           name: electron-windows
-          pattern: electron-windows-*
+          path: electron-windows/
+          if-no-files-found: error
           retention-days: 7
 
   # Linux: x64 and arm64 packaged in parallel (fpm and the AppImage tools run

@@ -903,7 +903,10 @@ pub mod conformance {
     }
 }
 
-#[cfg(test)]
+// These run the job's POSIX `sh` scripts on the machine that runs the tests,
+// as the Space's guest does. A Windows guest is refused (see the module
+// docs), and Windows has no `/bin/sh`, so there is nothing to run there.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::process::Command;

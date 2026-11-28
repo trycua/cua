@@ -176,8 +176,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'screen',
     title: 'Screen tools',
-    summary: 'The desktop, screen size, cursor position and zoomed crops',
-    tools: ['get_desktop_state', 'get_screen_size', 'get_cursor_position', 'zoom'],
+    summary: 'The desktop, screen size, cursor position, zoomed crops and agent displays',
+    tools: ['get_desktop_state', 'get_screen_size', 'get_cursor_position', 'zoom', 'agent_display'],
   },
   {
     slug: 'click',
@@ -256,7 +256,7 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     slug: 'agent-cursor',
     title: 'Agent cursor tools',
     summary: 'Show, animate and style the agent cursor',
-    tools: ['set_agent_cursor_enabled', 'set_agent_cursor_motion', 'set_agent_cursor_theme', 'get_agent_cursor_state'],
+    tools: ['set_agent_cursor_enabled', 'set_agent_cursor_motion', 'set_agent_cursor_theme', 'set_agent_cursor_badge', 'get_agent_cursor_state'],
   },
   {
     slug: 'recording',

@@ -24,7 +24,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, Mutex, OnceLock,
+    Arc, Mutex, MutexGuard, OnceLock, PoisonError,
 };
 use std::time::{Duration, Instant};
 
@@ -337,13 +337,67 @@ impl SessionToolContext {
 
 static SESSION_END_HOOKS: OnceLock<Mutex<HashMap<u64, RegisteredSessionEndHook>>> = OnceLock::new();
 static NEXT_SESSION_END_HOOK_ID: AtomicU64 = AtomicU64::new(1);
-static SESSION_CLEANUP_PROGRESS: OnceLock<Mutex<HashMap<String, SessionCleanupProgress>>> =
-    OnceLock::new();
 static SESSION_REVIVE_HOOKS: OnceLock<Mutex<HashMap<u64, SessionReviveHook>>> = OnceLock::new();
 static NEXT_SESSION_REVIVE_HOOK_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Identity of one lifecycle episode. Every new episode of a session id,
+/// including a revival or a recreation by the owner's next call, gets a
+/// larger one, so state approved in one episode can tell it is not the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EpisodeId(u64);
+
+/// Where a session id's lifecycle stands, as [`episode_status`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EpisodeStatus {
+    /// No episode has been recorded for the id.
+    Absent,
+    /// The episode admits calls.
+    Live(EpisodeId),
+    /// An end was requested and waits for in-flight calls.
+    Ending(EpisodeId),
+    /// The episode has ended.
+    Ended(EpisodeId),
+}
+
+/// One session id's current episode.
+struct Episode {
+    id: EpisodeId,
+    phase: EpisodePhase,
+}
+
+enum EpisodePhase {
+    Live(LiveEpisode),
+    /// An end arrived while calls were in flight. New calls are refused, and
+    /// the last call to finish completes the end.
+    Ending {
+        live: LiveEpisode,
+        reason: SessionEndReason,
+        /// Whether an `end_session` asked for it. A transport close or the
+        /// idle sweep never sets it, whatever its reason.
+        explicit: bool,
+    },
+    /// The entry dedupes the control-connection EOF teardown (the reaper)
+    /// against any stray legacy `session_end` that a mixed-version rollout
+    /// might still send: `fire_session_end` is the single fan-out point and
+    /// must be idempotent because the overlay Remove and recording stop run
+    /// exactly once. Growth is bounded (one short entry per ended session over
+    /// the daemon's lifetime); eviction is a deliberate non-blocking
+    /// follow-up.
+    ///
+    /// It is also the resurrection guard: later calls on the id are refused,
+    /// so a stray late action cannot recreate session-owned state, except as
+    /// [`Lifecycle::claim`] allows.
+    Ended {
+        by: EndedBy,
+        /// The transport that held the episode. `None` only for a legacy end
+        /// of an id no transport had claimed.
+        owner: Option<String>,
+        cleanup: Cleanup,
+    },
+}
+
 #[derive(Debug, Clone)]
-struct LifecycleRecord {
+struct LiveEpisode {
     public_label: Option<String>,
     implicit: bool,
     owner_transport: String,
@@ -351,7 +405,7 @@ struct LifecycleRecord {
     client_kind: SessionClientKind,
     started_at: Instant,
     /// Last use. Admission, declaration and dispatch completion stamp it
-    /// with `Instant::now()` while holding the records lock, so stamps only
+    /// with `Instant::now()` while holding the lifecycle lock, so stamps only
     /// move forward and the idle sweep reads it with `in_flight` in one
     /// critical section.
     last_activity: Instant,
@@ -360,16 +414,334 @@ struct LifecycleRecord {
     /// that fallback.
     idle_ttl: Option<Duration>,
     in_flight: usize,
-    pending_end: Option<SessionEndReason>,
-    /// Whether an `end_session` asked for the pending end. A transport close
-    /// or the idle sweep never sets it, whatever its reason.
-    pending_explicit_end: bool,
 }
 
-static LIFECYCLE_RECORDS: OnceLock<Mutex<HashMap<String, LifecycleRecord>>> = OnceLock::new();
+/// What ended an episode, as later claims on its id see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EndedBy {
+    /// `end_session` (the tool or an operator revocation). Ordinary calls
+    /// stay refused until a `start_session`, also after the owner transport
+    /// closes.
+    Explicit,
+    /// The idle sweep. The episode is dormant: its owner's next call starts
+    /// a new one, and a later terminal end runs cleanup again with its own
+    /// reason.
+    Idle,
+    /// The owner transport closed, or any other end that was neither
+    /// explicit nor idle. Once the owner has closed, the label is released
+    /// to other transports.
+    TransportClosed,
+}
 
-fn lifecycle_records() -> &'static Mutex<HashMap<String, LifecycleRecord>> {
-    LIFECYCLE_RECORDS.get_or_init(|| Mutex::new(HashMap::new()))
+enum Cleanup {
+    Pending(SessionCleanupProgress),
+    Done,
+}
+
+/// Every session's lifecycle state, under one lock.
+#[derive(Default)]
+struct Lifecycle {
+    episodes: HashMap<String, Episode>,
+    /// Owner transports whose connection has closed
+    /// ([`end_sessions_for_owner`]), with when. Their labels are released:
+    /// another transport's next call starts a fresh episode instead of
+    /// inheriting a refusal it cannot recover from, and its `start_session`
+    /// claims a label ended with `end_session`. The closed owner itself stays
+    /// refused on every label, so a late call from the dead connection
+    /// neither resurrects nor binds one. An owner is forgotten once no
+    /// labelled episode names it and [`CLOSED_OWNER_GRACE`] has passed since
+    /// its close.
+    closed_transports: HashMap<String, Instant>,
+    /// Runtime generations that have received terminal revoke-all.
+    ///
+    /// This latch is intentionally independent of grants and public session
+    /// labels. Once set, every later dispatch owned by the same runtime
+    /// generation fails closed until that runtime is destroyed.
+    suspended_runtime_scopes: HashSet<String>,
+    next_episode: u64,
+}
+
+/// How long a closed transport that no label names stays refused. A call it
+/// sent before closing is already being read or dispatched when the close
+/// lands, so it arrives well within one idle TTL.
+const CLOSED_OWNER_GRACE: Duration = DEFAULT_SESSION_IDLE_TTL;
+
+static LIFECYCLE: OnceLock<Mutex<Lifecycle>> = OnceLock::new();
+
+fn lifecycle() -> MutexGuard<'static, Lifecycle> {
+    LIFECYCLE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// What a claim on a session id would do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Claimed {
+    /// No episode exists; the claim starts one.
+    Fresh,
+    /// The claimant already holds the live episode.
+    Held,
+    /// The episode has ended and the claim starts a new one, once its
+    /// cleanup has finished.
+    Replaces,
+}
+
+/// Who is claiming a session id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Claim {
+    /// An ordinary session-requiring call.
+    Call,
+    /// `start_session`.
+    Start,
+}
+
+impl Episode {
+    fn live(&self) -> Option<&LiveEpisode> {
+        match &self.phase {
+            EpisodePhase::Live(live) | EpisodePhase::Ending { live, .. } => Some(live),
+            EpisodePhase::Ended { .. } => None,
+        }
+    }
+
+    fn live_mut(&mut self) -> Option<&mut LiveEpisode> {
+        match &mut self.phase {
+            EpisodePhase::Live(live) | EpisodePhase::Ending { live, .. } => Some(live),
+            EpisodePhase::Ended { .. } => None,
+        }
+    }
+
+    fn is_ending(&self) -> bool {
+        matches!(self.phase, EpisodePhase::Ending { .. })
+    }
+
+    fn ended_by(&self) -> Option<EndedBy> {
+        match &self.phase {
+            EpisodePhase::Ended { by, .. } => Some(*by),
+            _ => None,
+        }
+    }
+
+    /// The transport that holds or last held the episode.
+    fn owner(&self) -> Option<&str> {
+        match &self.phase {
+            EpisodePhase::Live(live) | EpisodePhase::Ending { live, .. } => {
+                Some(&live.owner_transport)
+            }
+            EpisodePhase::Ended { owner, .. } => owner.as_deref(),
+        }
+    }
+
+    fn cleanup_mut(&mut self) -> Option<&mut SessionCleanupProgress> {
+        match &mut self.phase {
+            EpisodePhase::Ended {
+                cleanup: Cleanup::Pending(progress),
+                ..
+            } => Some(progress),
+            _ => None,
+        }
+    }
+
+    /// Defer an end until the in-flight calls finish. A terminal end
+    /// overrides a pending idle end, which would keep the session's launch
+    /// records.
+    fn defer_end(&mut self, reason: SessionEndReason, explicit: bool) {
+        match &mut self.phase {
+            EpisodePhase::Live(live) => {
+                let live = live.clone();
+                self.phase = EpisodePhase::Ending {
+                    live,
+                    reason,
+                    explicit,
+                };
+            }
+            EpisodePhase::Ending {
+                reason: pending,
+                explicit: pending_explicit,
+                ..
+            } => {
+                if *pending == SessionEndReason::IdleTimeout {
+                    *pending = reason;
+                }
+                *pending_explicit |= explicit;
+            }
+            EpisodePhase::Ended { .. } => {}
+        }
+    }
+}
+
+impl Lifecycle {
+    fn next_episode_id(&mut self) -> EpisodeId {
+        self.next_episode += 1;
+        EpisodeId(self.next_episode)
+    }
+
+    fn is_closed(&self, owner_transport: &str) -> bool {
+        self.closed_transports.contains_key(owner_transport)
+    }
+
+    /// The one check admission and revival share: whether `owner_transport`
+    /// may use `session_id` for `claim`, and what that would do.
+    ///
+    /// A closed transport binds no label again, even with a call it sent
+    /// before the close; its own unnamed id is judged like any other. A live
+    /// episode belongs to its owner. An ended one is claimed:
+    /// - by its owner's next call, when the idle sweep ended it;
+    /// - by another transport's next call, when its owner has closed and it
+    ///   was not ended with `end_session`;
+    /// - by its owner's `start_session`, or another transport's once the
+    ///   owner has closed. A legacy end that recorded no owner is claimed
+    ///   only where the owner key and id coincide.
+    fn claim(
+        &self,
+        session_id: &str,
+        owner_transport: &str,
+        claim: Claim,
+    ) -> Result<Claimed, DispatchRefusal> {
+        if !is_trackable(session_id) {
+            return Err(DispatchRefusal::Ended);
+        }
+        if session_id != owner_transport && self.is_closed(owner_transport) {
+            return Err(DispatchRefusal::TransportClosed);
+        }
+        let Some(episode) = self.episodes.get(session_id) else {
+            return Ok(Claimed::Fresh);
+        };
+        let (by, owner) = match &episode.phase {
+            EpisodePhase::Live(live) | EpisodePhase::Ending { live, .. }
+                if live.owner_transport != owner_transport =>
+            {
+                return Err(DispatchRefusal::OwnedByOtherTransport(live.transport));
+            }
+            EpisodePhase::Ending { .. } => return Err(DispatchRefusal::Ending),
+            EpisodePhase::Live(_) => return Ok(Claimed::Held),
+            EpisodePhase::Ended { by, owner, .. } => (*by, owner.as_deref()),
+        };
+        let released = owner.is_some_and(|owner| {
+            owner != session_id && owner != owner_transport && self.is_closed(owner)
+        });
+        let claimable = match claim {
+            Claim::Call => {
+                (by == EndedBy::Idle && owner == Some(owner_transport))
+                    || (released && by != EndedBy::Explicit)
+            }
+            // A closed owner reaching here is on its own unnamed id.
+            Claim::Start => match owner {
+                Some(owner) if owner == owner_transport => true,
+                Some(_) => released,
+                None => owner_transport == session_id,
+            },
+        };
+        if claimable {
+            Ok(Claimed::Replaces)
+        } else {
+            Err(DispatchRefusal::Ended)
+        }
+    }
+
+    /// Whether an ended session still has cleanup to run. Revival checks this
+    /// under the lifecycle lock, so a terminal end that has started its
+    /// cleanup cannot be overtaken by a revival whose new launches that
+    /// cleanup would then erase.
+    fn cleanup_pending(&self, session_id: &str) -> bool {
+        self.episodes.get(session_id).is_some_and(|episode| {
+            matches!(
+                episode.phase,
+                EpisodePhase::Ended {
+                    cleanup: Cleanup::Pending(_),
+                    ..
+                }
+            )
+        })
+    }
+
+    /// Complete a claim [`Lifecycle::claim`] allowed: refresh the held
+    /// episode, or start a new one bound to `owner_transport`.
+    #[allow(clippy::too_many_arguments)]
+    fn bind(
+        &mut self,
+        claimed: Claimed,
+        session_id: &str,
+        public_label: Option<&str>,
+        owner_transport: &str,
+        implicit: bool,
+        transport: SessionTransport,
+        client_kind: SessionClientKind,
+        idle_ttl: Option<Duration>,
+    ) -> &mut LiveEpisode {
+        if claimed != Claimed::Held {
+            let now = Instant::now();
+            let id = self.next_episode_id();
+            self.episodes.insert(
+                session_id.to_owned(),
+                Episode {
+                    id,
+                    phase: EpisodePhase::Live(LiveEpisode {
+                        public_label: public_label.map(str::to_owned),
+                        implicit,
+                        owner_transport: owner_transport.to_owned(),
+                        transport,
+                        client_kind,
+                        started_at: now,
+                        last_activity: now,
+                        idle_ttl,
+                        in_flight: 0,
+                    }),
+                },
+            );
+        }
+        let live = self
+            .episodes
+            .get_mut(session_id)
+            .and_then(Episode::live_mut)
+            .expect("a bound episode is live");
+        if idle_ttl.is_some() {
+            live.idle_ttl = idle_ttl;
+        }
+        live.last_activity = Instant::now();
+        live
+    }
+
+    /// Forget closed owners past [`CLOSED_OWNER_GRACE`] that no labelled
+    /// episode, live or ended, names.
+    fn forget_closed_owners(&mut self, now: Instant) {
+        if self
+            .closed_transports
+            .values()
+            .all(|closed_at| now.saturating_duration_since(*closed_at) < CLOSED_OWNER_GRACE)
+        {
+            return;
+        }
+        let named = self
+            .episodes
+            .iter()
+            .filter_map(|(id, episode)| episode.owner().filter(|owner| *owner != id.as_str()))
+            .collect::<HashSet<_>>();
+        self.closed_transports.retain(|owner, closed_at| {
+            now.saturating_duration_since(*closed_at) < CLOSED_OWNER_GRACE
+                || named.contains(owner.as_str())
+        });
+    }
+
+    /// Ids whose episode is live or ending and passes `keep`.
+    fn live_ids(&self, keep: impl Fn(&str, &LiveEpisode) -> bool) -> Vec<String> {
+        self.episodes
+            .iter()
+            .filter(|(id, episode)| episode.live().is_some_and(|live| keep(id, live)))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Dormant session ids whose last owner passes `keep`.
+    fn dormant_ids(&self, keep: impl Fn(&str, Option<&str>) -> bool) -> Vec<String> {
+        self.episodes
+            .iter()
+            .filter(|(id, episode)| {
+                episode.ended_by() == Some(EndedBy::Idle) && keep(id, episode.owner())
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -398,6 +770,8 @@ pub enum DispatchRefusal {
     OwnedByOtherTransport(SessionTransport),
     /// The episode is waiting for in-flight calls before it ends.
     Ending,
+    /// The calling transport has closed, and binds no label again.
+    TransportClosed,
 }
 
 impl DispatchRefusal {
@@ -405,7 +779,9 @@ impl DispatchRefusal {
         match self {
             Self::Ended => "session has ended",
             Self::CleanupIncomplete => "session cleanup is incomplete; retry the call",
-            Self::OwnedByOtherTransport(_) => "session is not available to this transport",
+            Self::OwnedByOtherTransport(_) | Self::TransportClosed => {
+                "session is not available to this transport"
+            }
             Self::Ending => "session is ending",
         }
     }
@@ -422,23 +798,25 @@ pub struct SessionDispatchGuard {
 impl Drop for SessionDispatchGuard {
     fn drop(&mut self) {
         let pending = {
-            let mut records = lifecycle_records().lock().unwrap();
-            let Some(record) = records.get_mut(&self.session_id) else {
+            let mut lifecycle = lifecycle();
+            let Some(episode) = lifecycle.episodes.get_mut(&self.session_id) else {
                 return;
             };
-            record.in_flight = record.in_flight.saturating_sub(1);
-            record.last_activity = Instant::now();
-            (record.in_flight == 0)
-                .then(|| {
-                    record.pending_end.take().map(|reason| {
-                        (
-                            reason,
-                            record.pending_explicit_end,
-                            record.owner_transport.clone(),
-                        )
-                    })
-                })
-                .flatten()
+            let Some(live) = episode.live_mut() else {
+                return;
+            };
+            live.in_flight = live.in_flight.saturating_sub(1);
+            live.last_activity = Instant::now();
+            match &episode.phase {
+                EpisodePhase::Ending {
+                    live,
+                    reason,
+                    explicit,
+                } if live.in_flight == 0 => {
+                    Some((*reason, *explicit, live.owner_transport.clone()))
+                }
+                _ => None,
+            }
         };
         // Bound to this episode's owner: if another end and a new owner's
         // claim land before this finish, the new episode is left alone.
@@ -499,73 +877,37 @@ fn begin_session_dispatch_inner(
     client_kind: SessionClientKind,
     idle_ttl: Option<Duration>,
 ) -> Result<SessionDispatchGuard, DispatchRefusal> {
-    if !is_trackable(session_id) {
-        return Err(DispatchRefusal::Ended);
-    }
     // A session reclaimed by the idle sweep, named or unnamed, starts a new
     // lifecycle episode on its owner's next call instead of refusing every
     // later call, and so does a label whose owner transport has closed, for
     // any other transport, unless the label was ended with `end_session`. Its
     // cleanup must have finished first, so snapshots, element tokens, grants,
     // and recordings from the ended episode stay retired.
-    let recreate = recreates_on_next_call(session_id, owner_transport);
-    if recreate && !retry_session_cleanup(session_id).complete {
+    let claimed = lifecycle().claim(session_id, owner_transport, Claim::Call)?;
+    if claimed == Claimed::Replaces && !retry_session_cleanup(session_id).complete {
         return Err(DispatchRefusal::CleanupIncomplete);
     }
-    let now = Instant::now();
+    // Decide and bind in one critical section, so an end cannot land between
+    // the check and the binding and leave an ended id silently recreated.
     let recreated = {
-        // Keep tombstone admission and live-record insertion in one critical
-        // section. Otherwise an end could land between the old pre-check and
-        // insertion, leaving a tombstoned record that was silently recreated
-        // by a racing first action.
-        let mut ended = ended_sessions().lock().unwrap();
-        let mut idle_ended = idle_ended_sessions().lock().unwrap();
-        let recreated = ended.contains_key(session_id);
-        if recreated
-            && !(recreate
-                && ((idle_ended.contains(session_id)
-                    && ended
-                        .get(session_id)
-                        .is_some_and(|owner| owner.as_deref() == Some(owner_transport)))
-                    || released_to_next_call(&ended, session_id, owner_transport)))
-        {
-            return Err(DispatchRefusal::Ended);
-        }
-        if recreated && cleanup_pending(session_id) {
+        let mut lifecycle = lifecycle();
+        let claimed = lifecycle.claim(session_id, owner_transport, Claim::Call)?;
+        if claimed == Claimed::Replaces && lifecycle.cleanup_pending(session_id) {
             return Err(DispatchRefusal::CleanupIncomplete);
         }
-        let mut records = lifecycle_records().lock().unwrap();
-        let record = records
-            .entry(session_id.to_owned())
-            .or_insert_with(|| LifecycleRecord {
-                public_label: public_label.map(str::to_owned),
+        lifecycle
+            .bind(
+                claimed,
+                session_id,
+                public_label,
+                owner_transport,
                 implicit,
-                owner_transport: owner_transport.to_owned(),
                 transport,
                 client_kind,
-                started_at: now,
-                last_activity: Instant::now(),
                 idle_ttl,
-                in_flight: 0,
-                pending_end: None,
-                pending_explicit_end: false,
-            });
-        if record.owner_transport != owner_transport {
-            return Err(DispatchRefusal::OwnedByOtherTransport(record.transport));
-        }
-        if record.pending_end.is_some() {
-            return Err(DispatchRefusal::Ending);
-        }
-        if idle_ttl.is_some() {
-            record.idle_ttl = idle_ttl;
-        }
-        record.in_flight += 1;
-        record.last_activity = Instant::now();
-        if recreated {
-            remove_tombstone(&mut ended, &records, session_id);
-            idle_ended.remove(session_id);
-        }
-        recreated
+            )
+            .in_flight += 1;
+        claimed == Claimed::Replaces
     };
     if recreated {
         // Platform overlays keep their own late-command tombstones; clear
@@ -628,39 +970,28 @@ fn activate_session_inner(
     client_kind: SessionClientKind,
     idle_ttl: Option<Duration>,
 ) -> Result<(), &'static str> {
-    let now = Instant::now();
-    {
-        let mut records = lifecycle_records().lock().unwrap();
-        if let Some(record) = records.get_mut(session_id) {
-            if record.owner_transport != owner_transport {
+    let mut lifecycle = lifecycle();
+    let claimed = match lifecycle.episodes.get(session_id) {
+        None => Claimed::Fresh,
+        Some(episode) => match episode.live() {
+            None => return Err("session has ended"),
+            Some(live) if live.owner_transport != owner_transport => {
                 return Err("session is not available to this transport");
             }
-            if record.pending_end.is_some() {
-                return Err("session is ending");
-            }
-            if idle_ttl.is_some() {
-                record.idle_ttl = idle_ttl;
-            }
-            record.last_activity = Instant::now();
-        } else {
-            records.insert(
-                session_id.to_owned(),
-                LifecycleRecord {
-                    public_label: public_label.map(str::to_owned),
-                    implicit,
-                    owner_transport: owner_transport.to_owned(),
-                    transport,
-                    client_kind,
-                    started_at: now,
-                    last_activity: Instant::now(),
-                    idle_ttl,
-                    in_flight: 0,
-                    pending_end: None,
-                    pending_explicit_end: false,
-                },
-            );
-        }
-    }
+            Some(_) if episode.is_ending() => return Err("session is ending"),
+            Some(_) => Claimed::Held,
+        },
+    };
+    lifecycle.bind(
+        claimed,
+        session_id,
+        public_label,
+        owner_transport,
+        implicit,
+        transport,
+        client_kind,
+        idle_ttl,
+    );
     Ok(())
 }
 
@@ -669,8 +1000,8 @@ fn activate_session_inner(
 /// Unlike calling `revive_session_for_owner` and `activate_session` in two
 /// steps, this does not leave a gap where another transport can claim a
 /// recycled public label after its tombstone is cleared. Cleanup is completed
-/// before the transition, then the tombstone removal and live owner binding
-/// happen under one lock order.
+/// before the transition, then the claim is rechecked and the new episode
+/// bound in one critical section.
 #[allow(clippy::too_many_arguments)]
 pub fn activate_or_revive_session_for_owner(
     session_id: &str,
@@ -681,78 +1012,36 @@ pub fn activate_or_revive_session_for_owner(
     client_kind: SessionClientKind,
     idle_ttl: Option<Duration>,
 ) -> Result<bool, &'static str> {
-    if !is_trackable(session_id) {
-        return Err("session is not available to this transport");
-    }
-
-    let needs_cleanup = {
-        let ended = ended_sessions().lock().unwrap();
-        match ended.get(session_id) {
-            Some(Some(_)) if claim_refused(&ended, session_id, owner_transport) => {
-                return Err("session is not available to this transport");
-            }
-            Some(None) if owner_transport != session_id => {
-                return Err("session is not available to this transport");
-            }
-            Some(_) => true,
-            None => false,
+    let refused = |refusal: DispatchRefusal| match refusal {
+        DispatchRefusal::CleanupIncomplete => {
+            "session cleanup is incomplete; retry end_session before revival"
         }
+        _ => "session is not available to this transport",
     };
-    if needs_cleanup && !retry_session_cleanup(session_id).complete {
-        return Err("session cleanup is incomplete; retry end_session before revival");
+    let claimed = lifecycle()
+        .claim(session_id, owner_transport, Claim::Start)
+        .map_err(refused)?;
+    if claimed == Claimed::Replaces && !retry_session_cleanup(session_id).complete {
+        return Err(refused(DispatchRefusal::CleanupIncomplete));
     }
-
-    let now = Instant::now();
-    let revived = {
-        let mut ended = ended_sessions().lock().unwrap();
-        let revived = match ended.get(session_id) {
-            Some(Some(_)) if claim_refused(&ended, session_id, owner_transport) => {
-                return Err("session is not available to this transport");
-            }
-            Some(None) if owner_transport != session_id => {
-                return Err("session is not available to this transport");
-            }
-            Some(_) => true,
-            None => false,
-        };
-        if revived && cleanup_pending(session_id) {
-            return Err("session cleanup is incomplete; retry end_session before revival");
-        }
-
-        let mut records = lifecycle_records().lock().unwrap();
-        if let Some(record) = records.get_mut(session_id) {
-            if record.owner_transport != owner_transport || record.pending_end.is_some() {
-                return Err("session is not available to this transport");
-            }
-            if idle_ttl.is_some() {
-                record.idle_ttl = idle_ttl;
-            }
-            record.last_activity = Instant::now();
-        } else {
-            records.insert(
-                session_id.to_owned(),
-                LifecycleRecord {
-                    public_label: public_label.map(str::to_owned),
-                    implicit,
-                    owner_transport: owner_transport.to_owned(),
-                    transport,
-                    client_kind,
-                    started_at: now,
-                    last_activity: Instant::now(),
-                    idle_ttl,
-                    in_flight: 0,
-                    pending_end: None,
-                    pending_explicit_end: false,
-                },
-            );
-        }
-        if revived {
-            remove_tombstone(&mut ended, &records, session_id);
-            idle_ended_sessions().lock().unwrap().remove(session_id);
-        }
-        revived
-    };
-    Ok(revived)
+    let mut lifecycle = lifecycle();
+    let claimed = lifecycle
+        .claim(session_id, owner_transport, Claim::Start)
+        .map_err(refused)?;
+    if claimed == Claimed::Replaces && lifecycle.cleanup_pending(session_id) {
+        return Err(refused(DispatchRefusal::CleanupIncomplete));
+    }
+    lifecycle.bind(
+        claimed,
+        session_id,
+        public_label,
+        owner_transport,
+        implicit,
+        transport,
+        client_kind,
+        idle_ttl,
+    );
+    Ok(claimed == Claimed::Replaces)
 }
 
 pub fn session_snapshot(
@@ -760,41 +1049,62 @@ pub fn session_snapshot(
     owner_transport: &str,
     ttl: Duration,
 ) -> Option<LifecycleSessionSnapshot> {
-    let record = lifecycle_records().lock().unwrap().get(session_id)?.clone();
-    if record.owner_transport != owner_transport {
-        return None;
-    }
-    let idle = record.last_activity.elapsed();
-    let ttl = record.idle_ttl.unwrap_or(ttl);
-    Some(LifecycleSessionSnapshot {
+    let lifecycle = lifecycle();
+    let episode = lifecycle.episodes.get(session_id)?;
+    episode
+        .live()
+        .filter(|live| live.owner_transport == owner_transport)
+        .map(|live| snapshot_of(session_id, episode, live, ttl))
+}
+
+fn snapshot_of(
+    session_id: &str,
+    episode: &Episode,
+    live: &LiveEpisode,
+    ttl: Duration,
+) -> LifecycleSessionSnapshot {
+    let idle = live.last_activity.elapsed();
+    let idle_ttl = live.idle_ttl.unwrap_or(ttl);
+    LifecycleSessionSnapshot {
         runtime_id: session_id.to_owned(),
-        public_label: record.public_label.clone(),
-        implicit: record.implicit,
-        transport: record.transport,
-        client_kind: record.client_kind,
-        owner_transport: record.owner_transport.clone(),
-        ending: record.pending_end.is_some(),
-        started_for: record.started_at.elapsed(),
+        public_label: live.public_label.clone(),
+        implicit: live.implicit,
+        transport: live.transport,
+        client_kind: live.client_kind,
+        owner_transport: live.owner_transport.clone(),
+        ending: episode.is_ending(),
+        started_for: live.started_at.elapsed(),
         idle,
-        idle_ttl: ttl,
-        expires_in: ttl.saturating_sub(idle),
-    })
+        idle_ttl,
+        expires_in: idle_ttl.saturating_sub(idle),
+    }
+}
+
+/// Where `session_id`'s lifecycle stands. Protected-resource grants use it to
+/// stay inside the episode they were approved in.
+pub fn episode_status(session_id: &str) -> EpisodeStatus {
+    match lifecycle().episodes.get(session_id) {
+        None => EpisodeStatus::Absent,
+        Some(Episode {
+            id,
+            phase: EpisodePhase::Live(_),
+        }) => EpisodeStatus::Live(*id),
+        Some(Episode {
+            id,
+            phase: EpisodePhase::Ending { .. },
+        }) => EpisodeStatus::Ending(*id),
+        Some(Episode {
+            id,
+            phase: EpisodePhase::Ended { .. },
+        }) => EpisodeStatus::Ended(*id),
+    }
 }
 
 fn session_owner_matches(session_id: &str, owner_transport: &str) -> bool {
-    if lifecycle_records()
-        .lock()
-        .unwrap()
+    lifecycle()
+        .episodes
         .get(session_id)
-        .is_some_and(|record| record.owner_transport == owner_transport)
-    {
-        return true;
-    }
-    ended_sessions()
-        .lock()
-        .unwrap()
-        .get(session_id)
-        .is_some_and(|owner| owner.as_deref() == Some(owner_transport))
+        .is_some_and(|episode| episode.owner() == Some(owner_transport))
 }
 
 /// End a lifecycle episode only when it belongs to the authenticated
@@ -843,17 +1153,7 @@ pub fn list_session_snapshots(
     owner_transport: &str,
     ttl: Duration,
 ) -> Vec<LifecycleSessionSnapshot> {
-    let mut ids = lifecycle_records()
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(_, record)| record.owner_transport == owner_transport)
-        .map(|(id, record)| (record.started_at, id.clone()))
-        .collect::<Vec<_>>();
-    ids.sort_by_key(|(started, id)| (*started, id.clone()));
-    ids.into_iter()
-        .filter_map(|(_, id)| session_snapshot(&id, owner_transport, ttl))
-        .collect()
+    snapshots_matching(ttl, |_, live| live.owner_transport == owner_transport)
 }
 
 /// Trusted local-host view scoped to one runtime generation. This is not used
@@ -862,33 +1162,28 @@ pub fn list_session_snapshots_with_prefix(
     runtime_prefix: &str,
     ttl: Duration,
 ) -> Vec<LifecycleSessionSnapshot> {
-    let mut records = lifecycle_records()
-        .lock()
-        .unwrap()
+    snapshots_matching(ttl, |id, _| id.starts_with(runtime_prefix))
+}
+
+fn snapshots_matching(
+    ttl: Duration,
+    keep: impl Fn(&str, &LiveEpisode) -> bool,
+) -> Vec<LifecycleSessionSnapshot> {
+    let lifecycle = lifecycle();
+    let mut snapshots = lifecycle
+        .episodes
         .iter()
-        .filter(|(id, _)| id.starts_with(runtime_prefix))
-        .map(|(id, record)| (record.started_at, id.clone(), record.clone()))
-        .collect::<Vec<_>>();
-    records.sort_by_key(|(started, id, _)| (*started, id.clone()));
-    records
-        .into_iter()
-        .map(|(_, runtime_id, record)| {
-            let idle = record.last_activity.elapsed();
-            let idle_ttl = record.idle_ttl.unwrap_or(ttl);
-            LifecycleSessionSnapshot {
-                runtime_id,
-                public_label: record.public_label,
-                implicit: record.implicit,
-                transport: record.transport,
-                client_kind: record.client_kind,
-                owner_transport: record.owner_transport,
-                ending: record.pending_end.is_some(),
-                started_for: record.started_at.elapsed(),
-                idle,
-                idle_ttl,
-                expires_in: idle_ttl.saturating_sub(idle),
-            }
+        .filter_map(|(id, episode)| {
+            let live = episode.live().filter(|live| keep(id, live))?;
+            Some((live.started_at, snapshot_of(id, episode, live, ttl)))
         })
+        .collect::<Vec<_>>();
+    snapshots.sort_by(|(a_started, a), (b_started, b)| {
+        (a_started, &a.runtime_id).cmp(&(b_started, &b.runtime_id))
+    });
+    snapshots
+        .into_iter()
+        .map(|(_, snapshot)| snapshot)
         .collect()
 }
 
@@ -896,34 +1191,29 @@ pub fn list_session_snapshots_with_prefix(
 /// closed. The labels it owned are released once their episodes end: another
 /// transport's next call starts a fresh episode, except on a label it ended
 /// with `end_session` earlier, which any other transport may claim only with
-/// `start_session`. The closed transport itself stays refused. These ends are
-/// never explicit, whatever `reason` the transport reports.
+/// `start_session`. The closed transport itself stays refused, including a
+/// call it sent before the close that lands after it. These ends are never
+/// explicit, whatever `reason` the transport reports.
 pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -> usize {
-    let mut ids = lifecycle_records()
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(_, record)| record.owner_transport == owner_transport)
-        .map(|(id, _)| id.clone())
-        .collect::<Vec<_>>();
-    ids.extend(dormant_sessions(|_, owner| owner == Some(owner_transport)));
-    // Each end is bound to this owner, so an overlapping close of the same
-    // transport cannot end an episode another transport has since claimed.
+    let ids = {
+        let mut lifecycle = lifecycle();
+        // Refuse the owner before ending what it holds, so a call it sent
+        // before closing cannot bind a new episode while the ends below run.
+        if is_trackable(owner_transport) {
+            let now = Instant::now();
+            lifecycle.forget_closed_owners(now);
+            lifecycle
+                .closed_transports
+                .insert(owner_transport.to_owned(), now);
+        }
+        let mut ids = lifecycle.live_ids(|_, live| live.owner_transport == owner_transport);
+        ids.extend(lifecycle.dormant_ids(|_, owner| owner == Some(owner_transport)));
+        ids
+    };
+    // Each end is bound to this owner, so a label another transport claims
+    // in between is not ended by the loop.
     for id in &ids {
         end_session_with_reason(id, reason, false, Some(owner_transport));
-    }
-    // Release the labels only once every episode above has ended. Released
-    // earlier, another transport could claim a label in between and the loop
-    // would end that new episode.
-    if is_trackable(owner_transport) {
-        let ended = ended_sessions().lock().unwrap();
-        let records = lifecycle_records().lock().unwrap();
-        if names_labels_of(&ended, &records, owner_transport) {
-            closed_transports()
-                .lock()
-                .unwrap()
-                .insert(owner_transport.to_owned());
-        }
     }
     ids.len()
 }
@@ -1054,194 +1344,21 @@ fn capture_modality_for(tool_name: &str, args: &serde_json::Value) -> Option<Cap
     }
 }
 
-/// Session ids that have already had their `session_end` fired. Dedupes the
-/// control-connection EOF teardown (the reaper) against any stray legacy
-/// `session_end` method that a mixed-version (new proxy / old proxy) rollout
-/// might still send — `fire_session_end` is the single fan-out point and must
-/// be idempotent because the overlay Remove + recording stop must run exactly
-/// once. Growth is bounded (one short string per ended session over the
-/// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
-///
-/// A tombstone also refuses later calls on its id, so a stray late action
-/// cannot recreate session-owned state. A `start_session` from the owner
-/// transport lifts it, and so does the owner's next call after the idle sweep
-/// reclaimed the session. Once the owner transport has closed,
-/// its labels are free: another transport's next call starts a fresh episode,
-/// except on a label ended with `end_session`, which stays refused until a
-/// `start_session` from any transport.
-static ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-/// Tombstoned sessions whose episode ended only because the idle sweep
-/// reclaimed it. They are dormant: the owner transport's next call recreates
-/// them, and a later explicit, transport or revoke end makes the end terminal
-/// and runs cleanup again with that reason. Mutated only while holding the
-/// `ENDED_SESSIONS` lock, and meaningful only while the matching tombstone
-/// exists.
-static IDLE_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-/// Tombstoned sessions ended with `end_session` (the tool or an operator
-/// revocation) rather than by their transport closing or the idle sweep.
-/// Such a label stays refused for ordinary calls until a `start_session`,
-/// also after its owner transport has closed. Mutated only while holding the
-/// `ENDED_SESSIONS` lock, and meaningful only while the matching tombstone
-/// exists.
-static EXPLICITLY_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-/// Owner transports whose connection has closed ([`end_sessions_for_owner`])
-/// while a labelled episode, live or tombstoned, still names them. Their
-/// labels are released: another transport's next call starts a fresh episode
-/// instead of inheriting a refusal it cannot recover from, and its
-/// `start_session` claims a label ended with `end_session`. The closed owner
-/// itself stays refused, so a late call from the dead connection resurrects
-/// nothing. An owner is forgotten once no labelled episode names it, so the
-/// set never outgrows the tombstones and live episodes. Mutated and read only
-/// while holding the `ENDED_SESSIONS` lock.
-static CLOSED_TRANSPORTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-/// Runtime generations that have received terminal revoke-all.
-///
-/// This latch is intentionally independent of grants and public session
-/// labels. Once set, every later dispatch owned by the same runtime
-/// generation fails closed until that runtime is destroyed.
-static SUSPENDED_RUNTIME_SCOPES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Taken by every end before it marks an episode ended, and held by
+/// [`fire_session_revive_for_owner`] across its callbacks. Always taken
+/// before the lifecycle lock, never while holding it.
+static END_ORDER: Mutex<()> = Mutex::new(());
+
+fn end_order() -> MutexGuard<'static, ()> {
+    END_ORDER.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 fn hooks() -> &'static Mutex<HashMap<u64, RegisteredSessionEndHook>> {
     SESSION_END_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn cleanup_progress() -> &'static Mutex<HashMap<String, SessionCleanupProgress>> {
-    SESSION_CLEANUP_PROGRESS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 fn revive_hooks() -> &'static Mutex<HashMap<u64, SessionReviveHook>> {
     SESSION_REVIVE_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn ended_sessions() -> &'static Mutex<HashMap<String, Option<String>>> {
-    ENDED_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn idle_ended_sessions() -> &'static Mutex<HashSet<String>> {
-    IDLE_ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-fn explicitly_ended_sessions() -> &'static Mutex<HashSet<String>> {
-    EXPLICITLY_ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-fn closed_transports() -> &'static Mutex<HashSet<String>> {
-    CLOSED_TRANSPORTS.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-/// Whether `owner_transport` may claim the tombstoned `session_id` with
-/// `start_session` because the transport that owned it has closed. Only a
-/// labelled episode is released (never a transport's own unnamed id), and
-/// never to the closed owner itself. The caller holds the `ENDED_SESSIONS`
-/// lock and passes its map.
-fn released_to(
-    ended: &HashMap<String, Option<String>>,
-    session_id: &str,
-    owner_transport: &str,
-) -> bool {
-    let Some(Some(owner)) = ended.get(session_id) else {
-        return false;
-    };
-    owner != session_id
-        && owner != owner_transport
-        && closed_transports().lock().unwrap().contains(owner)
-}
-
-/// Whether `owner_transport` may not claim the tombstoned `session_id`: the
-/// tombstone names another live transport, or names `owner_transport` after
-/// it closed. A closed transport never comes back, so a late call from it
-/// must not revive what its close ended. The caller holds the
-/// `ENDED_SESSIONS` lock and passes its map.
-fn claim_refused(
-    ended: &HashMap<String, Option<String>>,
-    session_id: &str,
-    owner_transport: &str,
-) -> bool {
-    match ended.get(session_id) {
-        Some(Some(owner)) if owner == owner_transport => {
-            closed_transports().lock().unwrap().contains(owner)
-        }
-        Some(Some(_)) => !released_to(ended, session_id, owner_transport),
-        _ => false,
-    }
-}
-
-/// [`released_to`] for an ordinary call, which starts a fresh episode on the
-/// label. A label ended with `end_session` stays refused until a
-/// `start_session` claims it.
-fn released_to_next_call(
-    ended: &HashMap<String, Option<String>>,
-    session_id: &str,
-    owner_transport: &str,
-) -> bool {
-    released_to(ended, session_id, owner_transport)
-        && !explicitly_ended_sessions()
-            .lock()
-            .unwrap()
-            .contains(session_id)
-}
-
-/// Whether a labelled episode, live or tombstoned, still names `owner` as its
-/// transport. Its own unnamed id never counts, because it is never released.
-fn names_labels_of(
-    ended: &HashMap<String, Option<String>>,
-    records: &HashMap<String, LifecycleRecord>,
-    owner: &str,
-) -> bool {
-    ended
-        .iter()
-        .any(|(id, ended_owner)| id != owner && ended_owner.as_deref() == Some(owner))
-        || records
-            .iter()
-            .any(|(id, record)| id != owner && record.owner_transport == owner)
-}
-
-/// Drop a tombstone that a new episode or a revival replaces, and forget its
-/// closed owner once no labelled episode names it. Returns whether a
-/// tombstone existed. The caller holds the `ENDED_SESSIONS` and lifecycle
-/// record locks and passes both maps.
-fn remove_tombstone(
-    ended: &mut HashMap<String, Option<String>>,
-    records: &HashMap<String, LifecycleRecord>,
-    session_id: &str,
-) -> bool {
-    explicitly_ended_sessions()
-        .lock()
-        .unwrap()
-        .remove(session_id);
-    let Some(owner) = ended.remove(session_id) else {
-        return false;
-    };
-    if let Some(owner) = owner {
-        if !names_labels_of(ended, records, &owner) {
-            closed_transports().lock().unwrap().remove(&owner);
-        }
-    }
-    true
-}
-
-/// Dormant session ids whose tombstone owner passes `keep`.
-fn dormant_sessions(keep: impl Fn(&str, Option<&str>) -> bool) -> Vec<String> {
-    let ended = ended_sessions().lock().unwrap();
-    idle_ended_sessions()
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|id| keep(id, ended.get(*id).and_then(Option::as_deref)))
-        .cloned()
-        .collect()
-}
-
-/// Whether an ended session still has cleanup to run. Revival checks this
-/// under the tombstone lock, so a terminal end that has started its cleanup
-/// cannot be overtaken by a revival whose new launches that cleanup would
-/// then erase.
-fn cleanup_pending(session_id: &str) -> bool {
-    cleanup_progress().lock().unwrap().contains_key(session_id)
-}
-
-fn suspended_runtime_scopes() -> &'static Mutex<HashSet<String>> {
-    SUSPENDED_RUNTIME_SCOPES.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 /// Terminally suspend authorization for one private runtime generation.
@@ -1249,25 +1366,18 @@ fn suspended_runtime_scopes() -> &'static Mutex<HashSet<String>> {
 /// The opaque scope is generated inside Cua and is never accepted from a
 /// public tool argument.
 pub fn suspend_runtime_scope(runtime_scope: &str) -> bool {
-    suspended_runtime_scopes()
-        .lock()
-        .unwrap()
+    lifecycle()
+        .suspended_runtime_scopes
         .insert(runtime_scope.to_owned())
 }
 
 pub fn is_runtime_scope_suspended(runtime_scope: &str) -> bool {
-    suspended_runtime_scopes()
-        .lock()
-        .unwrap()
-        .contains(runtime_scope)
+    lifecycle().suspended_runtime_scopes.contains(runtime_scope)
 }
 
 /// Forget a suspend latch only when its owning runtime is being destroyed.
 pub fn forget_suspended_runtime_scope(runtime_scope: &str) -> bool {
-    suspended_runtime_scopes()
-        .lock()
-        .unwrap()
-        .remove(runtime_scope)
+    lifecycle().suspended_runtime_scopes.remove(runtime_scope)
 }
 
 pub(crate) fn public_session_label(session_id: &str) -> &str {
@@ -1353,9 +1463,10 @@ impl Drop for SessionReviveHookRegistration {
     }
 }
 
-/// owned by the same transport. Holding the tombstone lock across callbacks
+/// owned by the same transport. Holding the end-order lock across callbacks
 /// orders a racing end after revival, so its cleanup cannot be followed by a
-/// late overlay resurrection.
+/// late overlay resurrection. The lifecycle lock itself is released first,
+/// so a callback may still read session state.
 pub fn fire_session_revive_for_owner(session_id: &str, owner_transport: &str) -> bool {
     let registered = revive_hooks()
         .lock()
@@ -1363,16 +1474,10 @@ pub fn fire_session_revive_for_owner(session_id: &str, owner_transport: &str) ->
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    let ended = ended_sessions().lock().unwrap();
-    if ended.contains_key(session_id)
-        || !lifecycle_records()
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .is_some_and(|record| {
-                record.owner_transport == owner_transport && record.pending_end.is_none()
-            })
-    {
+    let _ends = end_order();
+    if !lifecycle().episodes.get(session_id).is_some_and(|episode| {
+        matches!(&episode.phase, EpisodePhase::Live(live) if live.owner_transport == owner_transport)
+    }) {
         return false;
     }
     for hook in registered {
@@ -1410,40 +1515,16 @@ pub fn release_process_state_for_shutdown() {
         registered.clear();
         registered.shrink_to_fit();
     }
-    if let Some(progress) = SESSION_CLEANUP_PROGRESS.get() {
-        let mut progress = progress.lock().unwrap();
-        progress.clear();
-        progress.shrink_to_fit();
-    }
-    if let Some(records) = LIFECYCLE_RECORDS.get() {
-        let mut records = records.lock().unwrap();
-        records.clear();
-        records.shrink_to_fit();
-    }
-    if let Some(ended) = ENDED_SESSIONS.get() {
-        let mut ended = ended.lock().unwrap();
-        ended.clear();
-        ended.shrink_to_fit();
-        if let Some(idle_ended) = IDLE_ENDED_SESSIONS.get() {
-            let mut idle_ended = idle_ended.lock().unwrap();
-            idle_ended.clear();
-            idle_ended.shrink_to_fit();
-        }
-        if let Some(explicitly_ended) = EXPLICITLY_ENDED_SESSIONS.get() {
-            let mut explicitly_ended = explicitly_ended.lock().unwrap();
-            explicitly_ended.clear();
-            explicitly_ended.shrink_to_fit();
-        }
-        if let Some(closed) = CLOSED_TRANSPORTS.get() {
-            let mut closed = closed.lock().unwrap();
-            closed.clear();
-            closed.shrink_to_fit();
-        }
-    }
-    if let Some(scopes) = SUSPENDED_RUNTIME_SCOPES.get() {
-        let mut scopes = scopes.lock().unwrap();
-        scopes.clear();
-        scopes.shrink_to_fit();
+    if let Some(lifecycle) = LIFECYCLE.get() {
+        let mut lifecycle = lifecycle.lock().unwrap_or_else(PoisonError::into_inner);
+        // Episode ids stay monotonic for the life of the process.
+        *lifecycle = Lifecycle {
+            next_episode: lifecycle.next_episode,
+            ..Lifecycle::default()
+        };
+        lifecycle.episodes.shrink_to_fit();
+        lifecycle.closed_transports.shrink_to_fit();
+        lifecycle.suspended_runtime_scopes.shrink_to_fit();
     }
 }
 
@@ -1486,13 +1567,14 @@ enum EndTransition {
     Repeat,
 }
 
-/// Atomically remove a live lifecycle record, install its tombstone, and
-/// register the cleanup the transition needs.
+/// Atomically end a live episode, record why, and register the cleanup the
+/// transition needs.
 ///
 /// Hooks run after this short critical section. Keeping this transition under
-/// the same lock order as dispatch admission prevents a racing first action
-/// from recreating a record immediately before or after termination, and a
-/// revival from slipping in before the cleanup it would have to wait for.
+/// the lifecycle lock that dispatch admission takes prevents a racing first
+/// action from recreating an episode immediately before or after termination,
+/// and a revival from slipping in before the cleanup it would have to wait
+/// for.
 fn mark_session_ended(
     session_id: &str,
     owner_transport: Option<&str>,
@@ -1501,119 +1583,146 @@ fn mark_session_ended(
     bound_to: Option<&str>,
     idle: Option<IdleCheck>,
 ) -> EndTransition {
-    let mut ended = ended_sessions().lock().unwrap();
-    let record = {
-        let mut records = lifecycle_records().lock().unwrap();
-        // An end bound to an owner ends only an episode that owner still
-        // holds, live or dormant.
-        if let Some(bound) = bound_to {
-            let held = match records.get(session_id) {
-                Some(record) => record.owner_transport == bound,
-                None => ended
-                    .get(session_id)
-                    .is_some_and(|owner| owner.as_deref() == Some(bound)),
-            };
-            if !held {
-                return EndTransition::StillLive;
-            }
-        }
-        // The sweep's idle decision and the removal share this critical
-        // section, so a call that started and finished after the sweep picked
-        // the session keeps it alive.
-        if idle.is_some_and(|idle| !records.get(session_id).is_some_and(|r| idle.expired(r))) {
+    let _ends = end_order();
+    let mut lifecycle = lifecycle();
+    let lifecycle = &mut *lifecycle;
+    let episode = lifecycle.episodes.get_mut(session_id);
+    // An end bound to an owner ends only an episode that owner still holds,
+    // live or dormant.
+    if let Some(bound) = bound_to {
+        if !episode
+            .as_ref()
+            .is_some_and(|episode| episode.owner() == Some(bound))
+        {
             return EndTransition::StillLive;
         }
+    }
+    let live = episode.as_ref().and_then(|episode| episode.live());
+    // The sweep's idle decision and the end share this critical section, so
+    // a call that started and finished after the sweep picked the session
+    // keeps it alive.
+    if idle.is_some_and(|idle| !live.is_some_and(|live| idle.expired(live))) {
+        return EndTransition::StillLive;
+    }
+    let registered_hooks = || {
+        let mut registered = hooks()
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(id, hook)| (*id, hook.clone()))
+            .collect::<Vec<_>>();
+        registered.sort_by_key(|(id, _)| *id);
+        registered
+    };
+    match episode {
         // A call admitted after the end released this lock owns the session
         // now; its guard drop finishes the end.
-        if let Some(record) = records.get_mut(session_id).filter(|r| r.in_flight > 0) {
-            let pending = record.pending_end.get_or_insert(reason);
-            if *pending == SessionEndReason::IdleTimeout {
-                *pending = reason;
+        Some(episode) if episode.live().is_some_and(|live| live.in_flight > 0) => {
+            episode.defer_end(reason, explicit);
+            EndTransition::StillLive
+        }
+        Some(Episode {
+            phase: EpisodePhase::Ended { by, cleanup, .. },
+            ..
+        }) => {
+            let transition = if *by == EndedBy::Idle && reason != SessionEndReason::IdleTimeout {
+                *by = if explicit {
+                    EndedBy::Explicit
+                } else {
+                    EndedBy::TransportClosed
+                };
+                EndTransition::TerminalAfterIdle
+            } else {
+                // A later end_session also keeps the label from being
+                // released.
+                if explicit {
+                    *by = EndedBy::Explicit;
+                }
+                EndTransition::Repeat
+            };
+            if transition == EndTransition::TerminalAfterIdle {
+                restart_cleanup(cleanup, reason, registered_hooks());
             }
-            record.pending_explicit_end |= explicit;
-            return EndTransition::StillLive;
+            transition
         }
-        records.remove(session_id)
-    };
-    let mut idle_ended = idle_ended_sessions().lock().unwrap();
-    let mut explicitly_ended = explicitly_ended_sessions().lock().unwrap();
-    let transition = if ended.contains_key(session_id) {
-        // A later end_session also keeps the label from being released.
-        if explicit {
-            explicitly_ended.insert(session_id.to_owned());
+        episode => {
+            // A session reclaimed for inactivity is recreated on its owner's
+            // next call. Any other end keeps the resurrection guard until an
+            // explicit start_session, except that a label not ended with
+            // end_session is released to other transports once its owner
+            // transport closes.
+            let (id, owner) = match episode {
+                Some(episode) => (episode.id, episode.owner().map(str::to_owned)),
+                None => (lifecycle.next_episode_id(), None),
+            };
+            let by = if reason == SessionEndReason::IdleTimeout {
+                EndedBy::Idle
+            } else if explicit {
+                EndedBy::Explicit
+            } else {
+                EndedBy::TransportClosed
+            };
+            let mut cleanup = Cleanup::Done;
+            restart_cleanup(&mut cleanup, reason, registered_hooks());
+            lifecycle.episodes.insert(
+                session_id.to_owned(),
+                Episode {
+                    id,
+                    phase: EpisodePhase::Ended {
+                        by,
+                        owner: owner_transport.map(str::to_owned).or(owner),
+                        cleanup,
+                    },
+                },
+            );
+            EndTransition::First
         }
-        if reason != SessionEndReason::IdleTimeout && idle_ended.remove(session_id) {
-            EndTransition::TerminalAfterIdle
-        } else {
-            EndTransition::Repeat
-        }
-    } else {
-        // A session reclaimed for inactivity is recreated on its owner's next
-        // call. Any other end keeps the resurrection guard until an explicit
-        // start_session, except that a label not ended with end_session is
-        // released to other transports once its owner transport closes.
-        ended.insert(
-            session_id.to_owned(),
-            owner_transport
-                .map(str::to_owned)
-                .or(record.map(|record| record.owner_transport)),
-        );
-        if reason == SessionEndReason::IdleTimeout {
-            idle_ended.insert(session_id.to_owned());
-        } else {
-            idle_ended.remove(session_id);
-        }
-        if explicit {
-            explicitly_ended.insert(session_id.to_owned());
-        } else {
-            explicitly_ended.remove(session_id);
-        }
-        EndTransition::First
-    };
-    if transition != EndTransition::Repeat {
-        initialize_session_cleanup(session_id, reason);
     }
-    transition
 }
 
 /// A terminal end after an idle end reruns every hook with its own reason.
 /// An idle run still in flight keeps `running` and picks up the rerun.
-fn initialize_session_cleanup(session_id: &str, reason: SessionEndReason) {
-    let mut registered = hooks()
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(id, hook)| (*id, hook.clone()))
-        .collect::<Vec<_>>();
-    registered.sort_by_key(|(id, _)| *id);
-    let mut all = cleanup_progress().lock().unwrap();
-    let progress = all
-        .entry(session_id.to_owned())
-        .or_insert_with(|| SessionCleanupProgress {
-            reason,
-            hooks: Vec::new(),
-            completed: HashSet::new(),
-            failures: Vec::new(),
-            running: false,
-        });
-    progress.reason = reason;
-    progress.hooks = registered;
-    progress.completed.clear();
-    progress.failures.clear();
+fn restart_cleanup(
+    cleanup: &mut Cleanup,
+    reason: SessionEndReason,
+    hooks: Vec<(u64, RegisteredSessionEndHook)>,
+) {
+    match cleanup {
+        Cleanup::Pending(progress) => {
+            progress.reason = reason;
+            progress.hooks = hooks;
+            progress.completed.clear();
+            progress.failures.clear();
+        }
+        Cleanup::Done => {
+            *cleanup = Cleanup::Pending(SessionCleanupProgress {
+                reason,
+                hooks,
+                completed: HashSet::new(),
+                failures: Vec::new(),
+                running: false,
+            });
+        }
+    }
 }
 
 /// Retry only the cleanup hooks that have not yet succeeded for this ended
 /// lifecycle episode. Panics are converted to structured failures so another
 /// explicit end can retry them instead of losing cleanup state.
 pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
+    let complete = || SessionCleanupReport {
+        complete: true,
+        in_progress: false,
+        failures: Vec::new(),
+    };
     let (mut reason, mut work) = {
-        let mut all = cleanup_progress().lock().unwrap();
-        let Some(progress) = all.get_mut(session_id) else {
-            return SessionCleanupReport {
-                complete: true,
-                in_progress: false,
-                failures: Vec::new(),
-            };
+        let mut lifecycle = lifecycle();
+        let Some(progress) = lifecycle
+            .episodes
+            .get_mut(session_id)
+            .and_then(Episode::cleanup_mut)
+        else {
+            return complete();
         };
         if progress.running {
             return SessionCleanupReport {
@@ -1639,7 +1748,7 @@ pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
     crate::capture_scope::clear_session(session_id);
     let mut successes = Vec::new();
     let mut failures = Vec::new();
-    let mut all = loop {
+    let mut lifecycle = loop {
         for (id, hook) in work {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 (hook.callback)(session_id)
@@ -1656,8 +1765,12 @@ pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
                 }),
             }
         }
-        let all = cleanup_progress().lock().unwrap();
-        match all.get(session_id) {
+        let mut lifecycle = lifecycle();
+        match lifecycle
+            .episodes
+            .get_mut(session_id)
+            .and_then(Episode::cleanup_mut)
+        {
             // A terminal end arrived while these idle hooks ran: run its
             // hooks before anyone may revive the session.
             Some(progress) if progress.reason != reason => {
@@ -1666,39 +1779,40 @@ pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
                 successes.clear();
                 failures.clear();
             }
-            _ => break all,
+            _ => break lifecycle,
         }
     };
-    let Some(progress) = all.get_mut(session_id) else {
-        return SessionCleanupReport {
-            complete: true,
-            in_progress: false,
-            failures: Vec::new(),
-        };
+    let Some(episode) = lifecycle.episodes.get_mut(session_id) else {
+        return complete();
+    };
+    let EpisodePhase::Ended { cleanup, .. } = &mut episode.phase else {
+        return complete();
+    };
+    let Cleanup::Pending(progress) = cleanup else {
+        return complete();
     };
     progress.completed.extend(successes);
     progress.failures = failures;
     progress.running = false;
-    let complete = progress.completed.len() == progress.hooks.len();
-    let failures = progress.failures.clone();
-    if complete {
-        all.remove(session_id);
-    }
-    SessionCleanupReport {
-        complete,
+    let report = SessionCleanupReport {
+        complete: progress.completed.len() == progress.hooks.len(),
         in_progress: false,
-        failures,
+        failures: progress.failures.clone(),
+    };
+    if report.complete {
+        *cleanup = Cleanup::Done;
     }
+    report
 }
 
 /// Why the session ended, while its cleanup hooks run or have unfinished
 /// work. A hook reads this to keep state that outlives an idle end; a later
 /// terminal end runs the hooks again with its own reason.
 pub fn session_end_reason(session_id: &str) -> Option<SessionEndReason> {
-    cleanup_progress()
-        .lock()
-        .unwrap()
-        .get(session_id)
+    lifecycle()
+        .episodes
+        .get_mut(session_id)
+        .and_then(Episode::cleanup_mut)
         .map(|progress| progress.reason)
 }
 
@@ -1708,8 +1822,12 @@ pub fn session_end_reason(session_id: &str) -> Option<SessionEndReason> {
 /// each unfinished hook at most once. A later explicit `end_session` call is
 /// the bounded retry boundary for hooks that failed.
 pub fn session_cleanup_status(session_id: &str) -> SessionCleanupReport {
-    let all = cleanup_progress().lock().unwrap();
-    let Some(progress) = all.get(session_id) else {
+    let mut lifecycle = lifecycle();
+    let Some(progress) = lifecycle
+        .episodes
+        .get_mut(session_id)
+        .and_then(Episode::cleanup_mut)
+    else {
         return SessionCleanupReport {
             complete: true,
             in_progress: false,
@@ -1727,62 +1845,44 @@ pub fn session_cleanup_status(session_id: &str) -> SessionCleanupReport {
 /// a local operator control path without requiring an authorization grant:
 /// revocation can only remove authority, never create it.
 pub fn revoke_all_sessions() -> usize {
-    let mut sessions: Vec<String> = lifecycle_records()
-        .lock()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
-    sessions.extend(dormant_sessions(|_, _| true));
-    for session in &sessions {
-        end_session(session);
-    }
-    sessions.len()
+    revoke_sessions_matching(|_| true)
 }
 
 /// Revoke only sessions owned by one runtime-private namespace.
 pub fn revoke_sessions_with_prefix(prefix: &str) -> usize {
-    let mut sessions: Vec<String> = lifecycle_records()
-        .lock()
-        .unwrap()
-        .keys()
-        .filter(|session| session.starts_with(prefix))
-        .cloned()
-        .collect();
-    sessions.extend(dormant_sessions(|session, _| session.starts_with(prefix)));
+    revoke_sessions_matching(|session| session.starts_with(prefix))
+}
+
+fn revoke_sessions_matching(keep: impl Fn(&str) -> bool) -> usize {
+    let sessions = {
+        let lifecycle = lifecycle();
+        let mut sessions = lifecycle.live_ids(|session, _| keep(session));
+        sessions.extend(lifecycle.dormant_ids(|session, _| keep(session)));
+        sessions
+    };
     for session in &sessions {
         end_session(session);
     }
     sessions.len()
 }
 
-/// Forget terminal tombstones owned by a runtime generation that is itself
-/// being destroyed. Live runtimes must retain tombstones until a revival or a
-/// released label's next episode lifts them (see `ENDED_SESSIONS`); otherwise
-/// an operator revocation could be bypassed by reusing the same public session
-/// label on another transport.
+/// Forget ended episodes owned by a runtime generation that is itself being
+/// destroyed. Live runtimes must retain them until a revival or a released
+/// label's next episode replaces them (see [`EpisodePhase::Ended`]);
+/// otherwise an operator revocation could be bypassed by reusing the same
+/// public session label on another transport.
 pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
-    let mut ended = ended_sessions().lock().unwrap();
-    let before = ended.len();
-    ended.retain(|session, _| !session.starts_with(prefix));
-    let forgotten = before - ended.len();
-    idle_ended_sessions()
-        .lock()
-        .unwrap()
-        .retain(|session| !session.starts_with(prefix));
-    explicitly_ended_sessions()
-        .lock()
-        .unwrap()
-        .retain(|session| !session.starts_with(prefix));
-    closed_transports()
-        .lock()
-        .unwrap()
-        .retain(|owner| !owner.starts_with(prefix));
-    drop(ended);
-    cleanup_progress()
-        .lock()
-        .unwrap()
-        .retain(|session, _| !session.starts_with(prefix));
+    let forgotten = {
+        let mut lifecycle = lifecycle();
+        let before = lifecycle.episodes.len();
+        lifecycle
+            .episodes
+            .retain(|session, episode| !session.starts_with(prefix) || episode.live().is_some());
+        lifecycle
+            .closed_transports
+            .retain(|owner, _| !owner.starts_with(prefix));
+        before - lifecycle.episodes.len()
+    };
     crate::capture_scope::clear_sessions_with_prefix(prefix);
     forgotten
 }
@@ -1791,26 +1891,30 @@ pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
 /// daemon-side authority for "this session is permanently gone"; the macOS
 /// overlay keeps its own render-side tombstone keyed on the same id.
 pub fn is_session_ended(session_id: &str) -> bool {
-    ended_sessions().lock().unwrap().contains_key(session_id)
+    lifecycle()
+        .episodes
+        .get(session_id)
+        .is_some_and(|episode| episode.ended_by().is_some())
 }
 
 /// Whether `owner_transport`'s next session-requiring call recreates the
 /// ended lifecycle id instead of being refused: a session of that transport,
 /// named or unnamed, reclaimed only by the idle sweep, or, for any other
-/// transport, a
-/// label whose owner transport has since closed and that was not ended with
-/// `end_session`. Every other ended id returns `false`, including a label
-/// ended with `end_session` (only `start_session` claims it) and every call
-/// from the closed transport itself.
+/// transport, a label whose owner transport has since closed and that was
+/// not ended with `end_session`. Every other ended id returns `false`,
+/// including a label ended with `end_session` (only `start_session` claims
+/// it) and every call from a closed transport on a label.
 pub fn recreates_on_next_call(session_id: &str, owner_transport: &str) -> bool {
-    let ended = ended_sessions().lock().unwrap();
-    if released_to_next_call(&ended, session_id, owner_transport) {
-        return true;
-    }
-    ended
-        .get(session_id)
-        .is_some_and(|owner| owner.as_deref() == Some(owner_transport))
-        && idle_ended_sessions().lock().unwrap().contains(session_id)
+    lifecycle().claim(session_id, owner_transport, Claim::Call) == Ok(Claimed::Replaces)
+}
+
+/// Why `owner_transport`'s next session-requiring call on `session_id` would
+/// be refused, or `None` when it would be admitted. The same check admission
+/// applies, for callers that refuse before reaching it.
+pub fn next_call_refusal(session_id: &str, owner_transport: &str) -> Option<DispatchRefusal> {
+    lifecycle()
+        .claim(session_id, owner_transport, Claim::Call)
+        .err()
 }
 
 /// Whether termination has been requested for a runtime-private lifecycle.
@@ -1820,15 +1924,10 @@ pub fn recreates_on_next_call(session_id: &str, owner_transport: &str) -> bool {
 /// unwound. This read-only cancellation signal neither grants authority nor
 /// revives a session; callers must use the registry's private id, not a label.
 pub fn is_session_ending(session_id: &str) -> bool {
-    // Match admission/termination lock order and observe pending termination
-    // and completed termination in one read-side critical section.
-    let ended = ended_sessions().lock().unwrap();
-    ended.contains_key(session_id)
-        || lifecycle_records()
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .is_some_and(|record| record.pending_end.is_some())
+    lifecycle()
+        .episodes
+        .get(session_id)
+        .is_some_and(|episode| episode.live().is_none() || episode.is_ending())
 }
 
 /// Revive a previously-ended session id by clearing its tombstone, so a fresh
@@ -1841,8 +1940,8 @@ pub fn is_session_ending(session_id: &str) -> bool {
 /// session-owned state; reviving requires an explicit `start_session` re-declare
 /// of the same id, which is exactly what a caller reusing an id intends. The
 /// exceptions, such as a label released by its closed owner transport, are
-/// listed on `ENDED_SESSIONS`. No-op for the anonymous fallback (`"default"` /
-/// empty), which is never tracked.
+/// listed on [`Lifecycle::claim`]. No-op for the anonymous fallback
+/// (`"default"` / empty), which is never tracked.
 pub fn revive_session(session_id: &str) -> bool {
     if !is_trackable(session_id) {
         return false;
@@ -1850,12 +1949,19 @@ pub fn revive_session(session_id: &str) -> bool {
     if !retry_session_cleanup(session_id).complete {
         return false;
     }
-    let mut ended = ended_sessions().lock().unwrap();
-    if cleanup_pending(session_id) {
+    let mut lifecycle = lifecycle();
+    if lifecycle.cleanup_pending(session_id) || !is_ended(&lifecycle, session_id) {
         return false;
     }
-    idle_ended_sessions().lock().unwrap().remove(session_id);
-    remove_tombstone(&mut ended, &lifecycle_records().lock().unwrap(), session_id)
+    lifecycle.episodes.remove(session_id);
+    true
+}
+
+fn is_ended(lifecycle: &Lifecycle, session_id: &str) -> bool {
+    lifecycle
+        .episodes
+        .get(session_id)
+        .is_some_and(|episode| episode.ended_by().is_some())
 }
 
 /// Owner-checked revival used by the public `start_session` tool. A public
@@ -1870,67 +1976,54 @@ pub fn revive_session_for_owner(
     if !is_trackable(session_id) {
         return Ok(false);
     }
+    let check = |lifecycle: &Lifecycle| {
+        if !is_ended(lifecycle, session_id) {
+            return Ok(false);
+        }
+        lifecycle
+            .claim(session_id, owner_transport, Claim::Start)
+            .map(|_| true)
+            .map_err(|_| "session is not available to this transport")
+    };
 
     // Validate ownership before running any cleanup callback. A caller that
     // merely guesses another transport's public label must not be able to
     // trigger work for that lifecycle episode.
-    {
-        let ended = ended_sessions().lock().unwrap();
-        let Some(ended_owner) = ended.get(session_id) else {
-            return Ok(false);
-        };
-        match ended_owner.as_deref() {
-            Some(_) if claim_refused(&ended, session_id, owner_transport) => {
-                return Err("session is not available to this transport");
-            }
-            // Legacy tombstones did not retain ownership. Allow only the
-            // direct runtime shape where the trusted owner key and lifecycle
-            // id coincide; transport-backed callers fail closed.
-            None if owner_transport != session_id => {
-                return Err("session is not available to this transport");
-            }
-            _ => {}
-        }
+    if !check(&lifecycle())? {
+        return Ok(false);
     }
-
     if !retry_session_cleanup(session_id).complete {
         return Err("session cleanup is incomplete; retry end_session before revival");
     }
 
     // Recheck after cleanup because another thread may have completed the
     // revival while callbacks were running.
-    let mut ended = ended_sessions().lock().unwrap();
-    let Some(ended_owner) = ended.get(session_id) else {
+    let mut lifecycle = lifecycle();
+    if !check(&lifecycle)? {
         return Ok(false);
-    };
-    match ended_owner.as_deref() {
-        Some(_) if claim_refused(&ended, session_id, owner_transport) => {
-            Err("session is not available to this transport")
-        }
-        None if owner_transport != session_id => Err("session is not available to this transport"),
-        _ if cleanup_pending(session_id) => {
-            Err("session cleanup is incomplete; retry end_session before revival")
-        }
-        _ => {
-            remove_tombstone(&mut ended, &lifecycle_records().lock().unwrap(), session_id);
-            idle_ended_sessions().lock().unwrap().remove(session_id);
-            Ok(true)
-        }
     }
+    if lifecycle.cleanup_pending(session_id) {
+        return Err("session cleanup is incomplete; retry end_session before revival");
+    }
+    lifecycle.episodes.remove(session_id);
+    Ok(true)
 }
 
 #[doc(hidden)]
 pub fn has_session_activity(session_id: &str) -> bool {
-    lifecycle_records().lock().unwrap().contains_key(session_id)
+    lifecycle()
+        .episodes
+        .get(session_id)
+        .is_some_and(|episode| episode.live().is_some())
 }
 
 #[doc(hidden)]
 pub fn session_idle_duration(session_id: &str) -> Option<Duration> {
-    lifecycle_records()
-        .lock()
-        .unwrap()
+    lifecycle()
+        .episodes
         .get(session_id)
-        .map(|record| record.last_activity.elapsed())
+        .and_then(Episode::live)
+        .map(|live| live.last_activity.elapsed())
 }
 
 /// End a session explicitly (the `end_session` tool / `session end` CLI verb):
@@ -1952,27 +2045,19 @@ fn end_session_with_reason(
     if !is_trackable(session_id) {
         return;
     }
-    let defer = {
-        let mut records = lifecycle_records().lock().unwrap();
-        match records.get_mut(session_id) {
-            Some(record) if bound_to.is_some_and(|bound| bound != record.owner_transport) => {
-                return;
-            }
-            Some(record) if record.in_flight > 0 => {
-                // A terminal end overrides a pending idle end, which would
-                // keep the session's launch records.
-                let pending = record.pending_end.get_or_insert(reason);
-                if *pending == SessionEndReason::IdleTimeout {
-                    *pending = reason;
+    {
+        let mut lifecycle = lifecycle();
+        if let Some(episode) = lifecycle.episodes.get_mut(session_id) {
+            if let Some(live) = episode.live() {
+                if bound_to.is_some_and(|bound| bound != live.owner_transport) {
+                    return;
                 }
-                record.pending_explicit_end |= explicit;
-                true
+                if live.in_flight > 0 {
+                    episode.defer_end(reason, explicit);
+                    return;
+                }
             }
-            _ => false,
         }
-    };
-    if defer {
-        return;
     }
     finish_session_end(session_id, reason, explicit, bound_to, None);
 }
@@ -2021,7 +2106,7 @@ fn finish_session_end(
     transition
 }
 
-/// The idle sweep's test for one live record. Admitted work keeps a session
+/// The idle sweep's test for one live episode. Admitted work keeps a session
 /// alive however old its last use is.
 #[derive(Debug, Clone, Copy)]
 struct IdleCheck {
@@ -2030,13 +2115,13 @@ struct IdleCheck {
 }
 
 impl IdleCheck {
-    fn expired(self, record: &LifecycleRecord) -> bool {
+    fn expired(self, live: &LiveEpisode) -> bool {
         // A use after the sweep's `now` is fresh even under a zero TTL.
-        record.in_flight == 0
+        live.in_flight == 0
             && self
                 .now
-                .checked_duration_since(record.last_activity)
-                .is_some_and(|idle| idle >= record.idle_ttl.unwrap_or(self.default_ttl))
+                .checked_duration_since(live.last_activity)
+                .is_some_and(|idle| idle >= live.idle_ttl.unwrap_or(self.default_ttl))
     }
 }
 
@@ -2061,13 +2146,8 @@ fn evict_idle_matching(ttl: Duration, keep: impl Fn(&str) -> bool) -> Vec<String
         now: Instant::now(),
         default_ttl: ttl,
     };
-    let candidates = lifecycle_records()
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(id, record)| is_trackable(id) && keep(id) && idle.expired(record))
-        .map(|(id, _)| id.clone())
-        .collect::<Vec<_>>();
+    let candidates =
+        lifecycle().live_ids(|id, live| is_trackable(id) && keep(id) && idle.expired(live));
     candidates
         .into_iter()
         .filter(|id| {
@@ -2079,7 +2159,7 @@ fn evict_idle_matching(ttl: Duration, keep: impl Fn(&str) -> bool) -> Vec<String
 
 /// Number of live lifecycle sessions. Diagnostics only.
 pub fn active_session_count() -> usize {
-    lifecycle_records().lock().unwrap().len()
+    lifecycle().live_ids(|_, _| true).len()
 }
 
 #[cfg(test)]
@@ -2241,7 +2321,7 @@ mod tests {
             now: Instant::now(),
             default_ttl: Duration::from_millis(10),
         };
-        assert!(idle.expired(&lifecycle_records().lock().unwrap()[sid]));
+        assert!(idle.expired(lifecycle().episodes[sid].live().unwrap()));
         // A whole call lands between the sweep's pick and its end.
         use_session(sid).unwrap();
         assert_eq!(
@@ -2260,7 +2340,7 @@ mod tests {
             now: Instant::now(),
             default_ttl: Duration::ZERO,
         };
-        assert!(idle.expired(&lifecycle_records().lock().unwrap()[sid]));
+        assert!(idle.expired(lifecycle().episodes[sid].live().unwrap()));
         std::thread::sleep(Duration::from_millis(2));
         use_session(sid).unwrap();
         assert_eq!(
@@ -2534,7 +2614,10 @@ mod tests {
         // A late call from the closed transport resurrects nothing, and its
         // own unnamed id is never released.
         assert!(!recreates_on_next_call(label, owner_a));
-        assert_eq!(begin(label, owner_a).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(
+            begin(label, owner_a).err(),
+            Some(DispatchRefusal::TransportClosed)
+        );
         assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             start(ended_label, owner_a),
@@ -2743,12 +2826,60 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_transport_is_forgotten_once_no_tombstone_names_it() {
+    fn a_closed_transport_cannot_claim_a_label_with_a_late_call() {
+        let label = "test-late-closed-owner-label-K3L4M5";
+        let owner_a = "test-late-closed-owner-transport-a";
+        let owner_b = "test-late-closed-owner-transport-b";
+        let begin = |owner: &str| {
+            begin_session_dispatch(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        let start = |owner: &str| {
+            activate_or_revive_session_for_owner(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            )
+        };
+
+        // A closes while it holds no label; a call it sent earlier lands after.
+        assert_eq!(
+            end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
+            0
+        );
+        assert_eq!(begin(owner_a).err(), Some(DispatchRefusal::TransportClosed));
+        assert_eq!(
+            start(owner_a),
+            Err("session is not available to this transport")
+        );
+        assert!(!recreates_on_next_call(label, owner_a));
+
+        // The label stays free for every other transport.
+        drop(begin(owner_b).unwrap());
+        assert_eq!(start(owner_b), Ok(false));
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            1
+        );
+        forget_ended_sessions_with_prefix("test-late-closed-owner-");
+    }
+
+    #[test]
+    fn a_closed_transport_stays_refused_until_its_runtime_forgets_it() {
         let label = "test-forgotten-owner-label-F7A8B9";
         let ended_label = "test-forgotten-owner-ended-F7A8B9";
         let owner_a = "test-forgotten-owner-transport-a";
         let owner_b = "test-forgotten-owner-transport-b";
-        let unnamed_only = "test-forgotten-owner-transport-unnamed";
         let begin = |sid: &str, owner: &str| {
             begin_session_dispatch(
                 sid,
@@ -2759,16 +2890,7 @@ mod tests {
                 SessionClientKind::Mcp,
             )
         };
-        let closed = |owner: &str| closed_transports().lock().unwrap().contains(owner);
-
-        // A transport that closes without a labelled episode, like a one-shot
-        // CLI call, is never recorded: it has no label to release.
-        drop(begin(unnamed_only, unnamed_only).unwrap());
-        assert_eq!(
-            end_sessions_for_owner(unnamed_only, SessionEndReason::ProcessExit),
-            1
-        );
-        assert!(!closed(unnamed_only));
+        let closed = |owner: &str| lifecycle().is_closed(owner);
 
         drop(begin(owner_a, owner_a).unwrap());
         drop(begin(label, owner_a).unwrap());
@@ -2778,12 +2900,9 @@ mod tests {
             end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
             2
         );
-        assert!(closed(owner_a));
 
-        // Each claim drops one of A's tombstones. A stays recorded while one
-        // still names it, and is forgotten with the last.
+        // Another transport claims both of A's labels.
         drop(begin(label, owner_b).unwrap());
-        assert!(closed(owner_a));
         assert_eq!(
             activate_or_revive_session_for_owner(
                 ended_label,
@@ -2796,23 +2915,130 @@ mod tests {
             ),
             Ok(true)
         );
-        assert!(!closed(owner_a));
 
-        // Forgetting A loosens nothing: its own unnamed id and its late calls
-        // stay refused.
+        // With no ended episode left naming A, its late calls stay refused.
         assert!(is_session_ended(owner_a));
         assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
         assert_eq!(begin(owner_a, owner_a).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             begin(label, owner_a).err(),
-            Some(DispatchRefusal::OwnedByOtherTransport(
-                SessionTransport::McpStdio
-            ))
+            Some(DispatchRefusal::TransportClosed)
+        );
+        assert_eq!(
+            begin("test-forgotten-owner-fresh-F7A8B9", owner_a).err(),
+            Some(DispatchRefusal::TransportClosed)
         );
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
             2
         );
+
+        // Destroying the runtime drops the record with its ended episodes.
+        assert!(closed(owner_a));
+        forget_ended_sessions_with_prefix("test-forgotten-owner-");
+        assert!(!closed(owner_a) && !closed(owner_b));
+    }
+
+    #[test]
+    fn a_closed_transport_no_label_names_is_forgotten_after_its_grace() {
+        let label = "test-grace-closed-owner-label-G1H2";
+        let idle = "test-grace-closed-owner-transport-idle";
+        let labelled = "test-grace-closed-owner-transport-labelled";
+        drop(
+            begin_session_dispatch(
+                label,
+                Some("label"),
+                labelled,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            end_sessions_for_owner(idle, SessionEndReason::ProcessExit),
+            0
+        );
+        assert_eq!(
+            end_sessions_for_owner(labelled, SessionEndReason::ProcessExit),
+            1
+        );
+
+        {
+            let mut lifecycle = lifecycle();
+            let now = Instant::now();
+            lifecycle.forget_closed_owners(now);
+            assert!(lifecycle.is_closed(idle) && lifecycle.is_closed(labelled));
+            lifecycle.forget_closed_owners(now + CLOSED_OWNER_GRACE);
+            assert!(!lifecycle.is_closed(idle), "nothing names it");
+            assert!(
+                lifecycle.is_closed(labelled),
+                "its ended episode still names it"
+            );
+        }
+        forget_ended_sessions_with_prefix("test-grace-closed-owner-");
+    }
+
+    #[test]
+    fn every_new_episode_of_an_id_gets_a_larger_episode_id() {
+        let sid = "test-episode-id-revival-P4Q5";
+        let owner = "test-episode-id-revival-owner";
+        let start = || {
+            activate_or_revive_session_for_owner(
+                sid,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            )
+        };
+        let live = || match episode_status(sid) {
+            EpisodeStatus::Live(id) => id,
+            other => panic!("expected a live episode, got {other:?}"),
+        };
+        assert_eq!(episode_status(sid), EpisodeStatus::Absent);
+        assert_eq!(start(), Ok(false));
+        let first = live();
+        assert_eq!(start(), Ok(false));
+        assert_eq!(live(), first, "a repeated start keeps its episode");
+
+        // An end while a call is in flight leaves the episode ending.
+        let guard = begin_session_dispatch(
+            sid,
+            Some("label"),
+            owner,
+            false,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        assert!(end_session_for_owner(sid, owner));
+        assert_eq!(episode_status(sid), EpisodeStatus::Ending(first));
+        drop(guard);
+        assert_eq!(episode_status(sid), EpisodeStatus::Ended(first));
+
+        assert_eq!(start(), Ok(true));
+        let second = live();
+        assert!(second > first);
+
+        // The idle sweep's recreation by the next call is a new episode too.
+        assert_eq!(evict_idle_matching(Duration::ZERO, |id| id == sid).len(), 1);
+        drop(
+            begin_session_dispatch(
+                sid,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+            .unwrap(),
+        );
+        assert!(live() > second);
+        assert!(end_session_for_owner(sid, owner));
+        forget_ended_sessions_with_prefix(sid);
     }
 
     #[test]

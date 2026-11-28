@@ -211,6 +211,11 @@ contract_stub_tool!(
     SetAgentCursorThemeTool,
     "set_agent_cursor_theme"
 );
+contract_stub_tool!(
+    cursor_badge_m,
+    SetAgentCursorBadgeTool,
+    "set_agent_cursor_badge"
+);
 
 mod invoke_menu_m {
     use super::*;
@@ -282,6 +287,7 @@ stub_tool!(
 
 mod move_cursor_m {
     use super::*;
+    use cua_driver_core::action_record::{ActionExecutionRecord, ActionTransport};
     pub struct MoveCursorTool;
     static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
     impl MoveCursorTool {
@@ -319,6 +325,10 @@ mod move_cursor_m {
             ToolResult::text(format!(
                 "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."
             ))
+            .with_action_record(ActionExecutionRecord::cursor_move(
+                ActionTransport::AgentCursorOverlay,
+                &args,
+            ))
         }
     }
 }
@@ -355,6 +365,7 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(SetAgentCursorMotionV2Tool));
     r.register(Box::new(GetAgentCursorStateV2Tool));
     r.register(Box::new(SetAgentCursorThemeTool));
+    r.register(Box::new(SetAgentCursorBadgeTool));
     r.register(Box::new(CheckPermissionsTool));
     // health_report is cross-platform — the Windows provider here lets
     // non-Windows hosts running the stubbed registry still advertise

@@ -1,9 +1,9 @@
 {
   "serverName": "cua-driver",
   "outputSchemaCountByPlatform": {
-    "darwin": 33,
-    "linux": 37,
-    "win32": 33
+    "darwin": 34,
+    "linux": 38,
+    "win32": 34
   },
   "baseTools": [
     "bring_to_front",
@@ -55,6 +55,7 @@
     "run_script",
     "run_steps",
     "scroll",
+    "set_agent_cursor_badge",
     "set_agent_cursor_enabled",
     "set_agent_cursor_motion",
     "set_agent_cursor_theme",
@@ -69,6 +70,9 @@
     "zoom"
   ],
   "platformTools": {
+    "darwin": [
+      "agent_display"
+    ],
     "linux": [
       "mouse_button_down",
       "mouse_button_up",

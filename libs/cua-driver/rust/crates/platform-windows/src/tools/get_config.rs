@@ -33,7 +33,9 @@ impl Tool for GetConfigTool {
                 {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \
                 \"source_sha\": \"<maintainer build commit or null>\",\n    \"platform\": \"windows\",\n    \
                 \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \
-                \"max_image_dimension\": 0\n  }\n\n\
+                \"max_image_dimension\": 0,\n    \
+                \"get_window_state\": {\"max_elements\": 250, \"max_depth\": 25, \
+                \"saved\": {\"max_elements\": null, \"max_depth\": null}}\n  }\n\n\
                 `capture_mode` is deprecated and no longer affects behavior — \
                 `get_window_state` always returns both the UIA tree and a screenshot.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
@@ -58,6 +60,7 @@ impl Tool for GetConfigTool {
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
             "cursor":              cursor_overlay::cursor_options::saved_config_json(),
+            "get_window_state":    cua_driver_core::walk_defaults::config_json(super::get_window_state::WALK_LIMITS),
             "fast_path":           cua_driver_core::fast_path::wire::config_value(),
         });
         // Match Swift's text format 1:1: `"✅ <pretty JSON>"`.

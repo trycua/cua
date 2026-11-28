@@ -28,6 +28,10 @@ use super::ToolState;
 const WHEEL_STEP_LINE_PX: i32 = 120;
 const WHEEL_STEP_PAGE_PX: i32 = 600;
 
+fn keyboard_fallback_action() -> cua_driver_core::background_input::BackgroundAction {
+    super::window_keyboard_action(cua_driver_core::background_input::BackgroundAction::GenericKey)
+}
+
 /// Resolved pixel-wheel target in screen space, plus optional window-local
 /// stamp + window id for backgrounded delivery.
 struct WheelTarget {
@@ -635,11 +639,7 @@ impl Tool for ScrollTool {
             if let Some(wid) = window_id {
                 if let Some(lease) = _mutation_lease.as_ref() {
                     if let Err(refusal_result) = lease
-                        .gate_again(
-                            wid,
-                            pre_focus_ptr,
-                            cua_driver_core::background_input::BackgroundAction::GenericKey,
-                        )
+                        .gate_again(wid, pre_focus_ptr, keyboard_fallback_action())
                         .await
                     {
                         return refusal_result;
@@ -649,7 +649,7 @@ impl Tool for ScrollTool {
                         pid,
                         wid,
                         pre_focus_ptr,
-                        cua_driver_core::background_input::BackgroundAction::GenericKey,
+                        keyboard_fallback_action(),
                     )
                     .await
                     {
@@ -659,6 +659,14 @@ impl Tool for ScrollTool {
                 }
             }
         }
+
+        // Match press_key's exact-window transport before any focus write or
+        // key post. If the addressed window cannot be made key, refuse.
+        let key_scope =
+            match super::acquire_key_scope(pid, window_id, delivery_mode.is_foreground()).await {
+                Ok(scope) => scope,
+                Err(refusal) => return refusal,
+            };
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Scroll keystrokes (PageDown / arrow) into search-box autocomplete
@@ -687,6 +695,9 @@ impl Tool for ScrollTool {
                 }
 
                 tokio::task::spawn_blocking(move || {
+                    // Keep the scope through the final key even if the
+                    // awaiting tool call is cancelled while this worker runs.
+                    let _key_scope = key_scope;
                     for _ in 0..amount {
                         crate::input::keyboard::press_key(pid, &key, &[])?;
                         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -858,6 +869,44 @@ unsafe fn collect_ax_buttons(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_fallback_matches_the_window_scoped_keyboard_route() {
+        use cua_driver_core::background_input::{
+            decide_background_input, BackgroundAction, BackgroundInputDecision,
+            BackgroundTargetFacts, ElementAncestry, ExactWindowTarget, WindowServerOwnership,
+        };
+        let target = ExactWindowTarget {
+            pid: 42,
+            window_id: 700,
+        };
+        let facts = BackgroundTargetFacts {
+            window_server: WindowServerOwnership::SamePid,
+            ax_window_present: true,
+            target_minimized: Some(false),
+            app_hidden: Some(false),
+            competing_keyboard_destinations: 1,
+            element: ElementAncestry::NotAddressed,
+            screen_locked: false,
+        };
+        let decision = decide_background_input(target, &facts, keyboard_fallback_action());
+        if crate::input::skylight::is_focus_without_raise_available() {
+            assert!(
+                decision.is_execute(),
+                "exact-window scrolling was refused: {decision:?}"
+            );
+        } else {
+            let BackgroundInputDecision::Refuse(refusal) = decision else {
+                panic!("without the key-window transport, a competing window must refuse");
+            };
+            assert_eq!(refusal.code, "same_pid_keyboard_ambiguity");
+        }
+        assert!(matches!(
+            decide_background_input(target, &facts, BackgroundAction::GenericKey),
+            BackgroundInputDecision::Refuse(refusal)
+                if refusal.code == "same_pid_keyboard_ambiguity"
+        ));
+    }
 
     #[test]
     fn amount_is_clamped_to_the_advertised_range() {

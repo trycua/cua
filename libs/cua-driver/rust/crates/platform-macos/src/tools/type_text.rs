@@ -35,6 +35,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::apps;
+use crate::ax::batch::copy_string_attrs;
 use crate::ax::bindings::{
     copy_string_attr, focused_element_of_pid, kAXErrorSuccess, set_string_attr, AXUIElementRef,
 };
@@ -1874,8 +1875,9 @@ fn type_text_in_key_window(
 
     let mut ax_attempt = AxAttempt::NotAttempted;
     if let Some((element, owns, idx_opt)) = ax_target {
-        let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
-        let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+        let [role, title] = unsafe { copy_string_attrs(element, ["AXRole", "AXTitle"]) };
+        let role = role.unwrap_or_default();
+        let title = title.unwrap_or_default();
         // The Return goes out as a pid-routed key, which a semantic-only
         // request may not send.
         let submit_body = matches!(keyboard_policy, BackgroundKeyboardPolicy::Allowed)

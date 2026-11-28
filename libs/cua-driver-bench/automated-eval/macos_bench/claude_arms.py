@@ -117,6 +117,22 @@ RUN_SCRIPT_ADDENDUM = (
 # From mini-run v037b (A6.5): run_script's wall-time limit is a per-call argument (default 30 s, max 120 s); v037-full
 # saw 14 script timeouts, so the AX addendum asks for the maximum on every call. The driver binary is unchanged.
 RUN_SCRIPT_ADDENDUM += 'Pass "timeout_ms": 120000 on every run_script call.\n'
+# The script-only arm (codemode): the same main binary and app as cc-cua-driver-script, on its own socket, with
+# CUA_DRIVER_SCRIPT_ONLY=1, so tools/list offers run_script alone and every read goes through a script too.
+SCRIPT_ONLY_SOCKET = "/tmp/cdb-bench-cua-script-only.sock"
+SCRIPT_ONLY_FLAG = ("CUA_DRIVER_SCRIPT_ONLY", "1")
+SCRIPT_ONLY_ADDENDUM = (
+    "\n\nrun_script is the driver's only tool: every read and every action is a JavaScript async function body "
+    "that calls the driver's tools directly as `await cua.tools.<name>(args)`; run_script's description lists "
+    "every tool's signature and `cua.describe(name)` returns one tool's full schema. To look, return "
+    "`(await cua.tools.get_window_state({pid, window_id})).tree_markdown`. To act, call the action tools "
+    "(click, type_text, set_value, press_key, scroll, move_cursor, ...) with {pid, role, name} targets or an "
+    "element_token, use loops and if/else, and `return` what you need to check the result. A failed call throws "
+    "with the script line and the nearest elements; fix the script and run it again from the step that failed. "
+    "`delivery_mode:'foreground'` is per call: add it only to the call that was refused, and keep other element actions in the background. "
+    "After an action that opens or closes something (a menu, banner or dialog), return and look before the next action.\n"
+    'Pass "timeout_ms": 120000 on every run_script call.\n'
+)
 
 
 @dataclass(frozen=True)
@@ -184,6 +200,16 @@ CUA_BUILDS = {
         CUA_MAIN_DIR / "skills" / "cua-driver",
         daemon_env=(SCRIPT_FLAG,),
         prompt_addendum=RUN_SCRIPT_ADDENDUM,
+    ),
+    "cc-cua-driver-script-only": CuaBuild(
+        "cc-cua-driver-script-only",
+        "main",
+        CUA_SCRIPT_APP,
+        SCRIPT_ONLY_SOCKET,
+        CUA_SCRIPT_DIR / "daemon-state-script-only",
+        CUA_MAIN_DIR / "skills" / "cua-driver",
+        daemon_env=(SCRIPT_FLAG, SCRIPT_ONLY_FLAG),
+        prompt_addendum=SCRIPT_ONLY_ADDENDUM,
     ),
 }
 CUA_ARMS = tuple(CUA_BUILDS)
@@ -375,6 +401,8 @@ ARM_DESCRIPTIONS = {
     "cc-cua-driver-main-skill": "The same as cc-cua-driver-main, with the skill's SKILL.md appended to the system prompt",
     "cc-cua-driver-script": "The main build in its own app with run_script on (the driver default from trycua/cua#4936; "
     "CUA_DRIVER_EXPERIMENTAL_SCRIPT=1 for earlier builds) and the run_script addendum in the system prompt",
+    "cc-cua-driver-script-only": "The script build with CUA_DRIVER_SCRIPT_ONLY=1: tools/list offers run_script alone "
+    "(codemode), and the script-only addendum in the system prompt",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "

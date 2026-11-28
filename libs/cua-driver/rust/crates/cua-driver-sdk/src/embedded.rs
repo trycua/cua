@@ -162,7 +162,7 @@ struct EndpointIdentity {
 #[derive(Debug, Clone)]
 struct EndpointIdentity;
 
-struct ManagedChild {
+struct DaemonProcess {
     child: Child,
     liveness: Option<ChildStdin>,
     stderr_pump: Option<StderrPump>,
@@ -171,7 +171,7 @@ struct ManagedChild {
 
 struct RunningProcess {
     connection: EmbeddedDriverConnection,
-    process: ManagedChild,
+    process: DaemonProcess,
     endpoint_identity: EndpointIdentity,
 }
 
@@ -266,7 +266,7 @@ impl Drop for StderrPump {
     }
 }
 
-impl ManagedChild {
+impl DaemonProcess {
     fn close_liveness(&mut self) {
         drop(self.liveness.take());
     }
@@ -695,7 +695,7 @@ impl EmbeddedCuaDriverHost {
         } else {
             None
         };
-        let mut process = ManagedChild {
+        let mut process = DaemonProcess {
             child,
             liveness: Some(liveness),
             stderr_pump,
@@ -1425,15 +1425,18 @@ async fn finish_stderr_task(task: Option<JoinHandle<()>>) {
     }
 }
 
+/// A host without a console would open a console window for the daemon; a
+/// host with one shares it.
 #[cfg(target_os = "windows")]
 fn prevent_console_window(command: &mut Command) {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GetConsoleCP() -> u32;
     }
     if unsafe { GetConsoleCP() } == 0 {
-        command.creation_flags(CREATE_NO_WINDOW);
+        cua_driver_core::process::ManagedChild::builder()
+            .no_window()
+            .configure(command.as_std_mut());
     }
 }
 
@@ -1867,7 +1870,7 @@ mod tests {
                     environment: Vec::new(),
                 },
             },
-            process: ManagedChild {
+            process: DaemonProcess {
                 child,
                 liveness,
                 stderr_pump: None,
@@ -1942,7 +1945,7 @@ mod tests {
                     environment: Vec::new(),
                 },
             },
-            process: ManagedChild {
+            process: DaemonProcess {
                 child,
                 liveness: None,
                 stderr_pump: None,

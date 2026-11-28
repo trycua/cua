@@ -120,10 +120,11 @@ enumflags2 = { version = "0.7", optional = true }
 # reply channels that preserve the "tool call blocks until compositor
 # roundtripped" contract the X11 path provides.
 crossbeam-channel = "0.5"
-# Resolves text against the compositor's XKB keymap: niri text input and the
-# libei keymap fallback when the EIS server does NOT advertise `ei_text`
-# (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
-xkbcommon = "0.9"
+# Keysym and keycode types for `wayland::xkb`, which resolves text against the
+# compositor's XKB keymap: niri text input and the libei keymap fallback when
+# the EIS server does NOT advertise `ei_text` (libei < 1.6, i.e. older GNOME /
+# KDE Plasma 6.0). Pure Rust: it links nothing.
+xkeysym = "0.2"
 # Resolve `$XDG_STATE_HOME` (with platform fallback) for persisting the
 # ScreenCast and RemoteDesktop `restore_token`s so users see the consent
 # dialog only once per install, not once per process.
@@ -165,7 +166,7 @@ tracing-subscriber = { workspace = true }
 # Cargo example that probes portal/libei device readiness without sending input.
 # Lives under
 # the `portal-input` feature gate so a stock `cargo build --examples`
-# doesn't try to compile against the (now-optional) reis/xkbcommon deps.
+# doesn't try to compile against the (now-optional) reis dep.
 [[example]]
 name = "libei_probe"
 required-features = ["portal-input"]

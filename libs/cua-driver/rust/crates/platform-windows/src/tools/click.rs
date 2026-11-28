@@ -445,6 +445,11 @@ impl Tool for ClickTool {
                 }
             }
         };
+        if args.bool_or("_keyboard_focus", false) {
+            if let Some(refusal) = crate::vmware::refuse_console_tool(hwnd) {
+                return refusal;
+            }
+        }
         let capture_point = if args.get("capture_id").is_some() {
             if elem_idx.is_some()
                 || x.is_none()

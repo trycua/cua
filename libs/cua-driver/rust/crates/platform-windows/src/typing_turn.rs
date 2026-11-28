@@ -59,6 +59,9 @@ fn reason(turn: TypingTurn) -> &'static str {
 pub(crate) fn foreground_input_error(
     error: anyhow::Error,
 ) -> cua_driver_core::protocol::ToolResult {
+    if let Some(refusal) = crate::vmware::console_refusal(&error) {
+        return refusal;
+    }
     let kept = error.downcast_ref::<ForegroundNotRestored>().is_some();
     let result = cua_driver_core::protocol::ToolResult::error(error.to_string());
     if kept {

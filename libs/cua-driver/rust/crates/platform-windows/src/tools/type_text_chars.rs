@@ -78,7 +78,7 @@ impl Tool for TypeTextCharsTool {
             Ok(Ok(())) => ToolResult::text(format!(
                 "Typed {text_len} character(s) with {delay_ms}ms delay."
             )),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => crate::vmware::input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

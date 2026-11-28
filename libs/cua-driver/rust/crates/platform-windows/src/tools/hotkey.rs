@@ -209,6 +209,9 @@ impl Tool for HotkeyTool {
                 }
             }
         };
+        if let Some(refusal) = crate::vmware::refuse_console_tool(hwnd) {
+            return refusal;
+        }
 
         // Match Swift's text format exactly: `"✅ Pressed K1+K2+... on pid X."`
         // where K1+K2+... is `keys.joined(separator: "+")` of the FULL keys

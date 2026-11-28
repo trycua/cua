@@ -181,6 +181,9 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+        if let Some(refusal) = crate::vmware::refuse_console_tool(hwnd) {
+            return refusal;
+        }
 
         // Classify known background drops before touching UIA focus. Focusing
         // first made an honest Chromium refusal transiently activate the target.
@@ -343,7 +346,7 @@ impl Tool for PressKeyTool {
                                with delivery_mode:\"foreground\" if a screenshot shows the key didn't land."
                 },
             })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => crate::vmware::input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

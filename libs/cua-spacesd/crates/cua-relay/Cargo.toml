@@ -52,7 +52,7 @@ hyper-util = { workspace = true, features = ["client-proxy", "service"] }
 tower.workspace = true
 # Account mode: OIDC access-token validation (JWKS) and relay-signed
 # EdDSA principal assertions. ring is already the workspace's TLS crypto.
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 ring = "0.17"
 # `hickory-dns`: names are resolved by an async resolver on the runtime,
 # not by blocking getaddrinfo calls on tokio's blocking pool, which the

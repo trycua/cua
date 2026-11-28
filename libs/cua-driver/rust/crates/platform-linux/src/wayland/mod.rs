@@ -415,7 +415,7 @@ struct State {
 
 wayland_client::delegate_dispatch!(State: [WlCallback: Answered] => Answered);
 
-// ── Bounded Wayland waits (niri) ─────────────────────────────────────────────
+// ── Bounded Wayland waits ────────────────────────────────────────────────────
 
 /// How long one round trip with niri may take.
 const NIRI_ROUNDTRIP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -423,20 +423,20 @@ const NIRI_ROUNDTRIP_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// with one (see [`crate::input::action`]).
 const NIRI_POINTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
-/// niri did not answer a bounded round trip in time; its connection may
-/// still work.
+/// A compositor did not answer a bounded round trip in time; its connection
+/// may still work.
 #[derive(Debug)]
-struct RoundTripTimedOut;
+struct RoundTripTimedOut(&'static str);
 
 impl std::fmt::Display for RoundTripTimedOut {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("niri did not answer a Wayland round trip in time")
+        write!(f, "{} did not answer a Wayland round trip in time", self.0)
     }
 }
 
 impl std::error::Error for RoundTripTimedOut {}
 
-/// Set when the `wl_display.sync` of a [`bounded_roundtrip`] is answered.
+/// Set when the `wl_display.sync` of a [`bounded_roundtrip_for`] is answered.
 #[derive(Clone, Default)]
 struct Answered(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
@@ -453,11 +453,11 @@ impl<D: Dispatch<WlCallback, Answered>> Dispatch<WlCallback, Answered, D> for An
     }
 }
 
-/// Send `wl_display.sync` and dispatch until niri answers or `deadline`
-/// (at most [`NIRI_ROUNDTRIP_TIMEOUT`] away) passes. `EventQueue::roundtrip`
-/// blocks until the compositor answers, so a stalled niri would hang the
-/// call and leave a pressed button held.
-fn bounded_roundtrip<D>(
+/// Send `wl_display.sync` and dispatch until `compositor` answers or
+/// `deadline` passes. `EventQueue::roundtrip` blocks until the compositor
+/// answers, so a silent compositor would hang the call forever.
+fn bounded_roundtrip_for<D>(
+    compositor: &'static str,
     connection: &Connection,
     queue: &mut wayland_client::EventQueue<D>,
     state: &mut D,
@@ -468,21 +468,22 @@ where
 {
     use anyhow::Context as _;
     use std::os::fd::AsRawFd as _;
-    let deadline = deadline.min(std::time::Instant::now() + NIRI_ROUNDTRIP_TIMEOUT);
     let answered = Answered::default();
     connection.display().sync(&queue.handle(), answered.clone());
     loop {
         queue
             .dispatch_pending(state)
-            .context("niri Wayland dispatch failed")?;
+            .with_context(|| format!("{compositor} Wayland dispatch failed"))?;
         if answered.0.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok(());
         }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            return Err(RoundTripTimedOut.into());
+            return Err(RoundTripTimedOut(compositor).into());
         }
-        queue.flush().context("niri Wayland flush failed")?;
+        queue
+            .flush()
+            .with_context(|| format!("{compositor} Wayland flush failed"))?;
         let Some(guard) = queue.prepare_read() else {
             continue;
         };
@@ -499,7 +500,8 @@ where
             if error.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return Err(error).context("poll on niri's Wayland socket failed");
+            return Err(error)
+                .with_context(|| format!("poll on {compositor}'s Wayland socket failed"));
         }
         if ready == 0 {
             continue;
@@ -508,9 +510,28 @@ where
             Ok(_) => {}
             Err(wayland_client::backend::WaylandError::Io(error))
                 if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error).context("niri Wayland read failed"),
+            Err(error) => {
+                return Err(error).with_context(|| format!("{compositor} Wayland read failed"))
+            }
         }
     }
+}
+
+/// Send `wl_display.sync` and dispatch until niri answers or `deadline`
+/// (at most [`NIRI_ROUNDTRIP_TIMEOUT`] away) passes. `EventQueue::roundtrip`
+/// blocks until the compositor answers, so a stalled niri would hang the
+/// call and leave a pressed button held.
+fn bounded_roundtrip<D>(
+    connection: &Connection,
+    queue: &mut wayland_client::EventQueue<D>,
+    state: &mut D,
+    deadline: std::time::Instant,
+) -> anyhow::Result<()>
+where
+    D: Dispatch<WlCallback, Answered> + 'static,
+{
+    let deadline = deadline.min(std::time::Instant::now() + NIRI_ROUNDTRIP_TIMEOUT);
+    bounded_roundtrip_for("niri", connection, queue, state, deadline)
 }
 
 /// A round trip bounded by `deadline` on niri; elsewhere the blocking one

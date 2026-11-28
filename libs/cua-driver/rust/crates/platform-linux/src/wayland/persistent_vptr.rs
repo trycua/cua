@@ -1391,7 +1391,11 @@ mod tests {
             let refused = release_drag(
                 &mut active,
                 unrecorded,
-                |_| Err(round_trip_failed(crate::wayland::RoundTripTimedOut.into())),
+                |_| {
+                    Err(round_trip_failed(
+                        crate::wayland::RoundTripTimedOut("niri").into(),
+                    ))
+                },
                 &mut forgotten,
             )
             .unwrap_err();

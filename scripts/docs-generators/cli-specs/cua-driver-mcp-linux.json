@@ -1541,7 +1541,7 @@
       "type": "integer"
      },
      "value": {
-      "description": "New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back.",
+      "description": "New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons, and Qt line edits and spin boxes, whose accessibility write would skip their validator) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back.",
       "type": "string"
      },
      "window_id": {

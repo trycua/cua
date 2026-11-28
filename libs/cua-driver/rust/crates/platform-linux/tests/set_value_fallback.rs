@@ -215,3 +215,41 @@ fn insert_text_writes_in_the_toolkit_unit() {
         }
     }
 }
+
+#[test]
+#[ignore = "needs a private dbus-run-session with at-spi2-core and Python dbus/GI"]
+fn no_write_reaches_a_qt_single_line_field() {
+    let mut f = Fixture::new();
+    for toolkit in TOOLKITS {
+        for multiline in [false, true] {
+            let reset = json!({"op": "reset", "toolkit": toolkit, "text": "", "caret": 0,
+                               "mode": "reject", "multiline": multiline});
+            f.request(reset);
+            let inserted = native::insert_text(f.child.id(), "AB").map(|written| assert!(written));
+            let indexed = native::type_into_editable_at(f.child.id(), 0, "CD");
+            let set = f.set("EF");
+            let actual = f.state();
+            eprintln!(
+                "WRITE toolkit={toolkit:?} multiline={multiline} insert={inserted:?} \
+                 indexed={indexed:?} set={set:?} state={actual}"
+            );
+            if toolkit == Some("Qt") && !multiline {
+                for result in [inserted, indexed, set] {
+                    assert!(result.unwrap_err().is::<native::QtLineEditSetsText>());
+                }
+                assert_eq!(actual["inserts"], json!([]));
+                assert_eq!(actual["sets"], 0);
+                assert_eq!(actual["text"], "");
+            } else {
+                inserted.unwrap();
+                indexed.unwrap();
+                set.unwrap();
+                assert_eq!(actual["sets"], 1, "{toolkit:?} multiline={multiline}");
+                assert_eq!(
+                    actual["text"], "ABCDEF",
+                    "{toolkit:?} multiline={multiline}"
+                );
+            }
+        }
+    }
+}

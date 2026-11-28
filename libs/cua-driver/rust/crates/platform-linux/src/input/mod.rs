@@ -4058,8 +4058,8 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
 }
 
 /// Type `text` into whatever window currently holds X keyboard focus, using the
-/// XTest extension. Unlike [`send_type_text`] (synthetic XSendEvent, which GTK/Qt
-/// silently drop for key input), XTest injects *real* input events, so they
+/// XTest extension. Unlike [`send_type_text`] (synthetic XSendEvent, which GTK
+/// silently drops for key input), XTest injects *real* input events, so they
 /// actually reach the focused widget — a spreadsheet cell, a terminal, a canvas —
 /// that exposes no AT-SPI EditableText interface to fill. There is no window
 /// argument because XTest always delivers to the focused window; the caller

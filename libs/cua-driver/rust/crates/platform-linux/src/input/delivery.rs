@@ -91,6 +91,16 @@ pub enum BackgroundUnavailable {
     /// master keyboard, which this host cannot add; a synthetic chord arrives
     /// and fires nothing (trycua/cua#7370).
     QtInactiveWindowShortcut,
+    /// Qt applies an accessibility write to a single-line field as `setText`,
+    /// which skips its validator and input mask, and the driver's Wayland
+    /// keyboard input reaches only the focused surface (trycua/cua#7327).
+    QtLineEditSetsText,
+    /// The Qt field is hidden, disabled or read-only, so keys sent to its
+    /// window would reach another widget.
+    QtFieldTakesNoKeys,
+    /// The Qt application has an open popup, menu or modal dialog, which
+    /// takes keys sent to the field's window.
+    QtWindowBlocked,
 }
 
 impl BackgroundUnavailable {
@@ -131,6 +141,19 @@ impl BackgroundUnavailable {
                  one (it needs a writable /dev/uinput, which Xvfb and Xtigervnc never offer); \
                  the synthetic chord would arrive and trigger nothing. For a command that is in \
                  a menu, invoke_menu runs it in the background"
+            }
+            Self::QtLineEditSetsText => {
+                "Qt applies an accessibility write to a single-line field as setText, which \
+                 skips the field's validator and input mask, and the driver's Wayland keyboard \
+                 input reaches only the focused surface; nothing was typed"
+            }
+            Self::QtFieldTakesNoKeys => {
+                "the Qt field is hidden, disabled or read-only, so keys sent to its window would \
+                 reach another widget; nothing was typed"
+            }
+            Self::QtWindowBlocked => {
+                "the Qt application has an open popup, menu or modal dialog, which would take \
+                 keys sent to the field's window; nothing was typed"
             }
         }
     }

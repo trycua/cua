@@ -3238,7 +3238,8 @@ async fn write_into_editable_acc(
         .proxies()
         .await
         .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
-    let Some(len) = editable_insert_length_for(text, toolkit_of(acc)).await else {
+    let toolkit = editable_write_toolkit(acc).await?;
+    let Some(len) = editable_insert_length(toolkit.as_deref(), text) else {
         dlog!("toolkit unknown, no safe InsertText length for non-ASCII text");
         return Ok(false);
     };
@@ -3270,6 +3271,17 @@ async fn write_into_editable_acc(
     }
 
     write_through_editable_proxies(&proxies, text, len).await
+}
+
+/// The toolkit behind `acc`, read within [`before_write_reserve`], once an
+/// `EditableText` write to it is known to be safe: never to a single-line
+/// field of a Qt application ([`QtLineEditSetsText`]).
+async fn editable_write_toolkit(acc: &AccessibleProxy<'_>) -> Result<Option<String>> {
+    let toolkit = before_write_reserve(toolkit_of(acc)).await.flatten();
+    if toolkit.as_deref().is_some_and(is_qt) && !is_multi_line(acc).await {
+        return Err(QtLineEditSetsText.into());
+    }
+    Ok(toolkit)
 }
 
 async fn write_through_editable_proxies(
@@ -3304,20 +3316,6 @@ async fn write_editable_text(
         return Ok(true);
     }
     send_input("EditableText.SetTextContents", et.set_text_contents(text)).await
-}
-
-/// `length` for writing `text`, from the toolkit `lookup` names (polled only
-/// for non-ASCII text). `None` when no length is safe: send nothing rather than
-/// a guess.
-async fn editable_insert_length_for(
-    text: &str,
-    lookup: impl std::future::Future<Output = Option<String>>,
-) -> Option<i32> {
-    if text.is_ascii() {
-        return editable_insert_length(None, text);
-    }
-    let toolkit = before_write_reserve(lookup).await.flatten();
-    editable_insert_length(toolkit.as_deref(), text)
 }
 
 /// Run `lookup` only while it leaves [`EDITABLE_WRITE_RESERVE`] of the budget
@@ -3357,11 +3355,19 @@ async fn walk_before_write<T>(walk: impl std::future::Future<Output = T>) -> T {
 fn editable_insert_length(toolkit: Option<&str>, text: &str) -> Option<i32> {
     let length = match toolkit {
         _ if text.is_ascii() => text.len(),
-        Some(name) if name.trim().eq_ignore_ascii_case("qt") => text.encode_utf16().count(),
+        Some(name) if is_qt(name) => text.encode_utf16().count(),
         Some(_) => text.len(),
         None => return None,
     };
     i32::try_from(length).ok()
+}
+
+fn is_qt(toolkit: &str) -> bool {
+    toolkit.trim().eq_ignore_ascii_case("qt")
+}
+
+async fn is_multi_line(acc: &AccessibleProxy<'_>) -> bool {
+    matches!(call(acc.get_state()).await, Some(Ok(states)) if states.contains(State::MultiLine))
 }
 
 /// The toolkit behind an element, from its application's root object.
@@ -4386,6 +4392,21 @@ impl std::fmt::Display for InputMayHaveLanded {
 }
 impl std::error::Error for InputMayHaveLanded {}
 
+/// Qt applies an `EditableText` write to a single-line field (a line edit,
+/// spin box or date edit) as `QLineEdit::setText`, which skips the field's
+/// validator and input mask and is not a user edit. Nothing was sent.
+#[derive(Debug)]
+pub struct QtLineEditSetsText;
+impl std::fmt::Display for QtLineEditSetsText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Qt applies an accessibility write to a single-line field as setText, which skips \
+             the field's validator and input mask",
+        )
+    }
+}
+impl std::error::Error for QtLineEditSetsText {}
+
 /// Send one AT-SPI request that changes the application, bounded by the
 /// operation deadline. Once the request is polled it may have reached the
 /// application, so an error reply or a missing answer is
@@ -4961,6 +4982,30 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// Whether a snapshot-cached field would take typed keys: its state set
+/// carries `Showing`, `Visible`, `Focusable` and enabled, and not `ReadOnly`
+/// (Qt marks a spin box focusable, not editable). `Ok(false)` when it exposes
+/// no state set.
+pub fn field_takes_keys_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(state.contains(State::Showing)
+                    && state.contains(State::Visible)
+                    && state.contains(State::Focusable)
+                    && !state.contains(State::ReadOnly)
+                    && is_enabled_state(&state)),
+                Some(Err(_)) => Ok(false),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("field_takes_keys (cached element) timed out")),
+    )
+}
+
 /// Whether a snapshot-cached element is enabled right now, read from its own
 /// state set ([`is_enabled_state`]). `Ok(None)` when the toolkit exposes no
 /// state set.
@@ -4982,6 +5027,18 @@ pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
 
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
+    grab_focus_ref(object_ref, true)
+}
+
+/// `Component.GrabFocus` on a snapshot-cached element, accepted on the
+/// application's reply alone. Qt sets the widget's focus before it replies,
+/// but reports `Focused` only while its window is active, so the observed
+/// form never succeeds for a field in a background Qt window.
+pub fn request_focus_ref(object_ref: &ObjectRef) -> Result<bool> {
+    grab_focus_ref(object_ref, false)
+}
+
+fn grab_focus_ref(object_ref: &ObjectRef, observe: bool) -> Result<bool> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -5000,8 +5057,8 @@ pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
                 Some(Err(e)) => return Err(anyhow!("Component.GrabFocus failed: {e}")),
                 None => return Err(anyhow!("Component.GrabFocus timed out")),
             };
-            if !accepted {
-                return Ok(false);
+            if !accepted || !observe {
+                return Ok(accepted);
             }
             let settle_deadline = tokio::time::Instant::now() + Duration::from_millis(500);
             while tokio::time::Instant::now() < settle_deadline {
@@ -5061,7 +5118,9 @@ async fn write_into_focused_editable(
     }
     match write_into_editable_acc(&acc, ifaces.contains(Interface::Component), text).await {
         Ok(written) => Ok(Some(written)),
-        Err(error) if error.is::<InputMayHaveLanded>() => Err(error),
+        Err(error) if error.is::<InputMayHaveLanded>() || error.is::<QtLineEditSetsText>() => {
+            Err(error)
+        }
         Err(error) => {
             dlog!("focused editable write failed: {error:#}");
             Ok(Some(false))
@@ -6618,6 +6677,7 @@ async fn set_value_on(
         .await
         .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
     if let Ok(et) = proxies.editable_text().await {
+        let toolkit = editable_write_toolkit(acc).await?;
         // Replace whole contents (parity with the Windows/macOS set_value,
         // which overwrite rather than insert at the caret).
         if et.set_text_contents(value).await.unwrap_or(false) {
@@ -6630,7 +6690,7 @@ async fn set_value_on(
             Ok(tp) => tp.caret_offset().await.unwrap_or(0),
             Err(_) => 0,
         };
-        match editable_insert_length_for(value, toolkit_of(acc)).await {
+        match editable_insert_length(toolkit.as_deref(), value) {
             Some(len) if et.insert_text(off, value, len).await.unwrap_or(false) => {
                 commit_editable_write(&proxies).await;
                 return Ok(());
@@ -10195,7 +10255,7 @@ mod pick_editable_tests {
 #[cfg(test)]
 mod editable_insert_length_tests {
     use super::{
-        deadline_passed, editable_insert_length, editable_insert_length_for, walk_before_write,
+        before_write_reserve, deadline_passed, editable_insert_length, walk_before_write,
         EDITABLE_WRITE_RESERVE, INPUT_QUERY_BUDGET, OP_DEADLINE,
     };
     use std::time::Duration;
@@ -10206,13 +10266,23 @@ mod editable_insert_length_tests {
         Some(toolkit.to_owned())
     }
 
+    /// The `length` an `EditableText` write sends for `text`: the toolkit read
+    /// within the reserve, then its unit.
+    async fn length_for(
+        text: &str,
+        lookup: impl std::future::Future<Output = Option<String>>,
+    ) -> Option<i32> {
+        let toolkit = before_write_reserve(lookup).await.flatten();
+        editable_insert_length(toolkit.as_deref(), text)
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_delayed_lookup_sends_no_length_and_leaves_the_write_its_reserve() {
         let deadline = Instant::now() + Duration::from_millis(400);
         OP_DEADLINE
             .scope(deadline, async {
                 let lookup = answers_after(Duration::from_secs(1), "GTK");
-                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
+                assert_eq!(length_for("ñ🙂ab", lookup).await, None);
                 assert_eq!(deadline - Instant::now(), EDITABLE_WRITE_RESERVE);
             })
             .await;
@@ -10231,7 +10301,7 @@ mod editable_insert_length_tests {
                 .await;
                 assert!(!deadline_passed());
                 let lookup = answers_after(Duration::from_millis(100), "Qt");
-                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, Some(5));
+                assert_eq!(length_for("ñ🙂ab", lookup).await, Some(5));
                 assert!(deadline - Instant::now() >= EDITABLE_WRITE_RESERVE);
             })
             .await;
@@ -10243,7 +10313,7 @@ mod editable_insert_length_tests {
         OP_DEADLINE
             .scope(deadline, async {
                 let lookup = answers_after(Duration::ZERO, "GTK");
-                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
+                assert_eq!(length_for("ñ🙂ab", lookup).await, None);
                 assert_eq!(Instant::now() + EDITABLE_WRITE_RESERVE, deadline);
             })
             .await;
@@ -10254,21 +10324,21 @@ mod editable_insert_length_tests {
         OP_DEADLINE
             .scope(Instant::now() + Duration::from_secs(1), async {
                 let failed = async { None };
-                assert_eq!(editable_insert_length_for("ñ🙂ab", failed).await, None);
+                assert_eq!(length_for("ñ🙂ab", failed).await, None);
             })
             .await;
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_prompt_lookup_names_the_unit_and_ascii_needs_none() {
+    async fn a_prompt_lookup_names_the_unit_and_ascii_needs_no_toolkit() {
         OP_DEADLINE
             .scope(Instant::now() + Duration::from_secs(1), async {
                 let gtk = answers_after(Duration::from_millis(10), "GTK");
-                assert_eq!(editable_insert_length_for("ñ🙂ab", gtk).await, Some(8));
+                assert_eq!(length_for("ñ🙂ab", gtk).await, Some(8));
                 let qt = answers_after(Duration::from_millis(10), "Qt");
-                assert_eq!(editable_insert_length_for("ñ🙂ab", qt).await, Some(5));
-                let never = std::future::pending();
-                assert_eq!(editable_insert_length_for("abc", never).await, Some(3));
+                assert_eq!(length_for("ñ🙂ab", qt).await, Some(5));
+                let failed = async { None };
+                assert_eq!(length_for("abc", failed).await, Some(3));
             })
             .await;
     }

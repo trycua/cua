@@ -7,12 +7,12 @@ or via the installed script:
 """
 
 import sys
-from .wrapper import run_cua_driver
+from .wrapper import exec_cua_driver
 
 
 def main() -> None:
     """Main entry point for the cua-driver CLI."""
-    exit_code = run_cua_driver()
+    exit_code = exec_cua_driver()
     sys.exit(exit_code)
 
 

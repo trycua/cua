@@ -1903,12 +1903,6 @@ async fn serve_claimed_socket(
     let pid_file_path = pid_file.and_then(|pid_file| {
         pid_file.path(|| socket_path.eq_ignore_ascii_case(&default_socket_path()))
     });
-    if let Some(pid_path) = &pid_file_path {
-        if let Some(dir) = std::path::Path::new(pid_path).parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(pid_path, std::process::id().to_string());
-    }
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
@@ -1964,9 +1958,12 @@ async fn serve_claimed_socket(
             }
         }
 
-        // All daemons use the current-user descriptor. Embedded daemons also
-        // reserve the pipe name with their first instance.
-        let first_pipe_instance = embedded && first_pipe;
+        // All daemons use the current-user descriptor and reserve the pipe
+        // name with their first instance. A standalone launch checks for a
+        // daemon before it builds its runtime, and a lockless embedded daemon
+        // can take the name in between; only the first-instance flag catches
+        // that.
+        let first_pipe_instance = first_pipe;
         let created = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
                 .first_pipe_instance(first_pipe_instance)
@@ -1980,6 +1977,11 @@ async fn serve_claimed_socket(
         };
         let server = match created {
             Ok(server) => server,
+            Err(error) if first_pipe && error.kind() == std::io::ErrorKind::PermissionDenied => {
+                anyhow::bail!(
+                    "named pipe {socket_path} is already held by another process; run `cua-driver stop` first ({error})"
+                );
+            }
             Err(error) if first_pipe => {
                 anyhow::bail!("create named pipe {socket_path}: {error}");
             }
@@ -1993,9 +1995,16 @@ async fn serve_claimed_socket(
         };
         if first_pipe {
             first_pipe = false;
-            // Announce only after the name is bound, so the banner never
-            // claims a pipe that failed to open.
+            // Announce and record the PID only after the name is bound, so a
+            // launch that lost the pipe never claims it or overwrites the PID
+            // file of the daemon that holds it.
             eprintln!("Cua Driver daemon listening on {socket_path}");
+            if let Some(pid_path) = pid_file_path.as_deref() {
+                if let Some(dir) = std::path::Path::new(pid_path).parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(pid_path, std::process::id().to_string());
+            }
         }
 
         tokio::select! {
@@ -2438,8 +2447,8 @@ mod named_pipe_authentication_tests {
 #[cfg(all(test, target_os = "windows"))]
 mod pipe_release_tests {
     use super::{
-        claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serving_daemon,
-        stop_daemon, DaemonPresence, StopOutcome,
+        claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serve_claimed_socket,
+        serving_daemon, stop_daemon, DaemonPresence, PidFile, StopOutcome,
     };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -2448,12 +2457,23 @@ mod pipe_release_tests {
         tokio::task::spawn_blocking(f).await.unwrap()
     }
 
+    /// Removes a test pipe's lock file from `%LOCALAPPDATA%` once the test
+    /// ends. Declared before the lock, so it drops after the lock closes.
+    struct RemoveLockFile(std::path::PathBuf);
+
+    impl Drop for RemoveLockFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_daemon_whose_pipe_never_answers_has_not_released() {
         let pipe = format!(
             r"\\.\pipe\cua-driver-release-{}",
             uuid::Uuid::new_v4().simple()
         );
+        let _lock_file = RemoveLockFile(daemon_lock_path(&pipe));
         // One instance that never answers. The first probe connects to it and
         // holds it waiting for a reply, so every later check finds it busy.
         let instance = ServerOptions::new()
@@ -2509,6 +2529,47 @@ mod pipe_release_tests {
         let probe = pipe.clone();
         assert_eq!(blocking(move || serving_daemon(&probe)).await, None);
         drop(lock);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_launch_never_serves_beside_a_pipe_taken_after_its_check() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (_driver, sdk, _calls) = crate::probe_sdk().await;
+        let pipe = format!(
+            r"\\.\pipe\cua-driver-late-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let _lock_file = RemoveLockFile(daemon_lock_path(&pipe));
+        // The launch found nothing and claimed its lock; a lockless embedded
+        // daemon then takes the name before the launch binds.
+        let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
+        let _embedded = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe)
+            .unwrap();
+        // The PID file names the daemon that holds the pipe.
+        let pid_dir = tempfile::tempdir().unwrap();
+        let pid_file = pid_dir.path().join("daemon.pid");
+        std::fs::write(&pid_file, "4242").unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            serve_claimed_socket(
+                sdk,
+                &pipe,
+                Some(&PidFile::At(pid_file.to_str().unwrap().to_owned())),
+                Some(lock),
+            ),
+        )
+        .await
+        .expect("the launch gives up at once")
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("is already held by another process"),
+            "{error}"
+        );
+        assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), "4242");
     }
 }
 
@@ -2710,14 +2771,21 @@ fn stop_daemon(
 
 /// Whether a probe that found no daemon answering still sees its endpoint
 /// held: on Windows any instance of its pipe, free or busy; on Unix a socket
-/// that still accepts connections. An embedded daemon takes no lock, so this
-/// is the only sign of one that answers late.
+/// that still accepts connections, reached directly or through a symlink. An
+/// embedded daemon takes no lock, so this is the only sign of one that
+/// answers late.
 fn endpoint_still_held(socket_path: &str, presence: &DaemonPresence) -> bool {
     let _ = socket_path;
     match presence {
         DaemonPresence::Serving { .. } => false,
         #[cfg(unix)]
         DaemonPresence::Stale { .. } => socket_accepts(socket_path),
+        #[cfg(unix)]
+        DaemonPresence::Absent => {
+            std::fs::metadata(socket_path).is_ok_and(|metadata| {
+                std::os::unix::fs::FileTypeExt::is_socket(&metadata.file_type())
+            }) && socket_accepts(socket_path)
+        }
         #[cfg(target_os = "windows")]
         _ => named_pipe_exists(socket_path),
         #[cfg(not(target_os = "windows"))]
@@ -2734,12 +2802,13 @@ const SOCKET_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 
 /// Whether something still listens on the Unix socket at `socket_path`. Only
 /// refusal on every try, or a missing path, counts as no listener: macOS also
-/// refuses while a live listener's accept queue is full, and any other error
-/// is no proof the listener is gone.
+/// refuses while a live listener's accept queue is full, and any other error,
+/// such as a full queue on Linux, is no proof the listener is gone. No try
+/// waits on the listener.
 #[cfg(unix)]
 fn socket_accepts(socket_path: &str) -> bool {
     for attempt in 0..SOCKET_PROBE_ATTEMPTS {
-        match std::os::unix::net::UnixStream::connect(socket_path) {
+        match cua_driver_core::ipc::try_connect_unix(socket_path) {
             Ok(_) => return true,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
@@ -2786,9 +2855,9 @@ fn is_released(socket_path: &str) -> bool {
         #[cfg(unix)]
         DaemonPresence::Starting { .. } => std::fs::symlink_metadata(socket_path).is_err(),
         #[cfg(unix)]
-        DaemonPresence::Stale { .. } => !socket_accepts(socket_path),
-        #[cfg(unix)]
-        DaemonPresence::Absent => true,
+        presence @ (DaemonPresence::Stale { .. } | DaemonPresence::Absent) => {
+            !endpoint_still_held(socket_path, &presence)
+        }
         #[cfg(target_os = "windows")]
         DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
             !named_pipe_exists(socket_path)
@@ -3278,6 +3347,113 @@ mod presence_tests {
         drop(listener);
         assert!(is_released(path));
         assert_eq!(serving_daemon(path), None);
+    }
+
+    #[test]
+    fn a_symlink_to_a_socket_that_never_answers_is_held() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let target = directory.path().join("target.sock");
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &socket).unwrap();
+        assert_eq!(probe_presence(path), DaemonPresence::Absent);
+        assert!(!is_released(path));
+        assert_eq!(serving_daemon(path), Some(None));
+
+        drop(listener);
+        assert!(is_released(path));
+        assert_eq!(serving_daemon(path), None);
+    }
+
+    #[test]
+    fn a_fifo_at_the_lock_path_never_blocks_a_probe() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap().to_owned();
+        let fifo = std::ffi::CString::new(
+            daemon_lock_path(&path)
+                .into_os_string()
+                .into_encoded_bytes(),
+        )
+        .unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let (presence_tx, presence_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = presence_tx.send(probe_presence(&path));
+        });
+        assert_eq!(
+            presence_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            DaemonPresence::Absent
+        );
+    }
+
+    /// A Unix listener with a backlog of zero, so one pending connection
+    /// fills its accept queue.
+    #[cfg(target_os = "linux")]
+    fn listen_with_no_backlog(socket: &std::path::Path) -> std::os::fd::OwnedFd {
+        use std::os::fd::FromRawFd as _;
+        use std::os::unix::ffi::OsStrExt as _;
+        let path = socket.as_os_str().as_bytes();
+        unsafe {
+            let raw = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+            assert!(raw >= 0, "socket: {}", std::io::Error::last_os_error());
+            let listener = std::os::fd::OwnedFd::from_raw_fd(raw);
+            let mut address: libc::sockaddr_un = std::mem::zeroed();
+            address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+            for (slot, byte) in address.sun_path.iter_mut().zip(path) {
+                *slot = libc::c_char::from_ne_bytes([*byte]);
+            }
+            let length = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+            assert_eq!(
+                libc::bind(raw, (&address as *const libc::sockaddr_un).cast(), length),
+                0,
+                "bind: {}",
+                std::io::Error::last_os_error()
+            );
+            assert_eq!(libc::listen(raw, 0), 0);
+            listener
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_listener_with_a_full_accept_queue_is_held_and_never_blocks_a_probe() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        let listener = listen_with_no_backlog(&socket);
+        let mut pending = Vec::new();
+        let full = loop {
+            match cua_driver_core::ipc::try_connect_unix(path) {
+                Ok(stream) => pending.push(stream),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break true,
+                Err(error) => panic!("connect: {error}"),
+            }
+            if pending.len() > 16 {
+                break false;
+            }
+        };
+        assert!(full, "the accept queue never filled");
+
+        let started = std::time::Instant::now();
+        assert!(matches!(probe_presence(path), DaemonPresence::Stale { .. }));
+        assert!(!is_released(path));
+        assert_eq!(serving_daemon(path), Some(None));
+        remove_stale_socket(path);
+        assert!(
+            socket.exists(),
+            "a socket that still listens is never cleared"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "probing a full accept queue took {:?}",
+            started.elapsed()
+        );
+
+        drop(pending);
+        drop(listener);
+        assert!(is_released(path));
     }
 
     #[cfg(target_os = "macos")]

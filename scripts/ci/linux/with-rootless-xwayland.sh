@@ -41,8 +41,16 @@ until compgen -G "${RUNTIME_DIR}/sway-ipc.*.sock" >/dev/null; do
 done
 SWAYSOCK="$(compgen -G "${RUNTIME_DIR}/sway-ipc.*.sock" | head -n 1)"
 export SWAYSOCK
-# sway hands its clients the Xwayland DISPLAY.
-swaymsg -q exec "echo \"\$DISPLAY\" > '${RUNTIME_DIR}/display'"
+# sway hands its clients the Xwayland DISPLAY. Its socket appears before it
+# answers on a loaded runner, and swaymsg waits only 3 s for a reply.
+until swaymsg -q exec "echo \"\$DISPLAY\" > '${RUNTIME_DIR}/display'"; do
+  if ((SECONDS >= deadline)) || ! kill -0 "${SWAY_PID}" 2>/dev/null; then
+    echo "headless sway did not answer its IPC socket" >&2
+    cat "${RUNTIME_DIR}/sway.log" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
 until [[ -s "${RUNTIME_DIR}/display" ]] && xdpyinfo -display "$(cat "${RUNTIME_DIR}/display")" >/dev/null 2>&1; do
   if ((SECONDS >= deadline)); then
     echo "sway's Xwayland did not start" >&2

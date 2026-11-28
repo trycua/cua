@@ -35,8 +35,10 @@ impl Tool for ScrollTool {
                 approaches reach backgrounded windows.\n\n\
                 Mapping: `by: \"page\"` → SB_PAGEDOWN/UP/LEFT/RIGHT × amount; \
                 `by: \"line\"` → SB_LINEDOWN/UP/LEFT/RIGHT × amount.\n\n\
-                Note: `element_token` is accepted for cross-platform parity but currently \
-                no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).".into(),
+                With `element_token`, the element or its nearest scrollable ancestor scrolls \
+                through UIA ScrollPattern, in the background. Chromium windows (Chrome, Edge, \
+                Electron) drop WM_VSCROLL, so a background scroll there always goes through \
+                UIA: the indexed element's container, or else the window's web Document.".into(),
             input_schema: json!({
                 "type":"object","required":["direction"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
@@ -160,14 +162,13 @@ impl Tool for ScrollTool {
         // WebView2/Tauri hosts can expose the indexed scroll container through
         // UIA while their top-level HWND ignores WM_VSCROLL. Prefer the
         // accessibility channel for an indexed target; the message path below
-        // remains the fallback for native Win32 scrollbars.
-        if delivery.is_background() && crate::input::is_chromium_target_window(hwnd) {
-            return crate::input::delivery::background_unavailable_error(
-                hwnd,
-                EventKind::MouseScroll,
-            );
-        }
-        if let Some(idx) = elem_idx {
+        // remains the fallback for native Win32 scrollbars. Chromium frames
+        // drop WM_VSCROLL and background wheel events, so a background scroll
+        // there goes through UIA even without an indexed target, and never
+        // falls through to the message path.
+        let chromium_background =
+            delivery.is_background() && crate::input::is_chromium_target_window(hwnd);
+        if elem_idx.is_some() || chromium_background {
             let prev_fg_addr = if delivery.is_background() {
                 Some(unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
@@ -183,21 +184,30 @@ impl Tool for ScrollTool {
                 None
             };
             let direction_for_uia = direction.clone();
+            let page = by == "page";
             let uia_result = tokio::task::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
-                    let retained = admitted.as_ref().ok_or_else(|| {
-                        anyhow::anyhow!("element [{idx}] is not in the UIA cache")
-                    })?;
-                    if !retained.is_uia() {
-                        anyhow::bail!("element [{idx}] is not a UIA scroll element");
-                    }
+                    let element = match elem_idx {
+                        Some(idx) => {
+                            let retained = admitted.as_ref().ok_or_else(|| {
+                                anyhow::anyhow!("element [{idx}] is not in the UIA cache")
+                            })?;
+                            if !retained.is_uia() {
+                                anyhow::bail!("element [{idx}] is not a UIA scroll element");
+                            }
+                            Some(retained.as_ptr())
+                        }
+                        None => None,
+                    };
                     unsafe {
-                        crate::uia::scroll::scroll_element(
-                            retained.as_ptr(),
+                        crate::uia::scroll::scroll_window(
+                            hwnd,
+                            element,
                             &direction_for_uia,
                             amount,
+                            page,
                         )
                     }
                 }
@@ -238,6 +248,12 @@ impl Tool for ScrollTool {
                     "verified": false,
                     "delivery_mode": "background"
                 }));
+            }
+            if chromium_background {
+                return crate::input::delivery::background_unavailable_error(
+                    hwnd,
+                    EventKind::MouseScroll,
+                );
             }
         }
 

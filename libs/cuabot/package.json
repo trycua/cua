@@ -20,7 +20,7 @@
     "serve": "npx tsx src/cuabot.tsx --serve",
     "stop": "npx tsx src/cuabot.tsx --stop",
     "status": "npx tsx src/cuabot.tsx --status",
-    "test": "node --import tsx --test test/telemetry.test.ts"
+    "test": "node --import tsx --test src/bashResult.test.ts test/telemetry.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",

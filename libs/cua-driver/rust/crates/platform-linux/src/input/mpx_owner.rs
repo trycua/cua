@@ -5,7 +5,7 @@
 //!
 //! The creator is encoded atomically in XIAddMaster's name, so a SIGKILL right
 //! after the add never leaves a master nobody can attribute. Pairs are pooled
-//! and never removed (removal crashes Qt 6.5+ clients, trycua/cua#7325); the
+//! unless CUA_DRIVER_RS_REMOVE_MPX_MASTERS=1 removes them (it crashes Qt 6.5+, #7325); the
 //! current holder is a device property on the master pointer, written as a
 //! [`Owner::holder_token`], and an empty property marks a free pair.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

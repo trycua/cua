@@ -688,15 +688,16 @@ fn applies_write_before_axvalue_updates(bundle_id: &str) -> bool {
     bundle_id.starts_with("org.mozilla.") || GECKO_BUNDLE_IDS.contains(&bundle_id)
 }
 
-/// `progress` is `None` when the write was refused. `write_applies_late` is
-/// an accepted write into a Gecko browser's `AXWebArea`, whose read-back
-/// proves nothing either way until the page applies it.
+/// `progress` is `None` when the write was refused. `may_have_landed` is an
+/// accepted write whose read-back cannot prove the field untouched: one into
+/// a Gecko browser's `AXWebArea`, which proves nothing until the page applies
+/// it, or one that showed a partial and settled on a different value.
 fn after_unlanded_ax_write(
     progress: Option<TypedProgress>,
-    write_applies_late: bool,
+    may_have_landed: bool,
 ) -> UnlandedAxWrite {
     match progress {
-        Some(TypedProgress::Unchanged | TypedProgress::Unverifiable) if write_applies_late => {
+        Some(TypedProgress::Unchanged | TypedProgress::Unverifiable) if may_have_landed => {
             UnlandedAxWrite::MayHaveLanded
         }
         Some(TypedProgress::Unchanged) => UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged),
@@ -1477,35 +1478,110 @@ fn await_typed_delivery(
     before: Option<&str>,
     text: &str,
     deadline: std::time::Instant,
-    mut read_value: impl FnMut() -> Option<String>,
+    read_value: impl FnMut() -> Option<String>,
     is_web: impl FnOnce() -> bool,
 ) -> (bool, Option<usize>) {
+    match await_typed_progress(before, text, deadline, read_value) {
+        TypedProgress::Complete => (true, Some(text.chars().count())),
+        TypedProgress::Partial(delivered) => (false, Some(delivered)),
+        TypedProgress::Unchanged if is_web() => (false, None),
+        TypedProgress::Unchanged => (false, Some(0)),
+        TypedProgress::Unverifiable => (false, None),
+    }
+}
+
+/// Whether a write that first read back as a partial settled at a length
+/// that counts as `Unchanged` without restoring the pre-write value, as a
+/// selection the write replaced does. Typing it again as keys would repeat
+/// whatever of it landed.
+fn partial_left_field_changed(
+    first: TypedProgress,
+    settled: Option<TypedProgress>,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    matches!(first, TypedProgress::Partial(_))
+        && settled == Some(TypedProgress::Unchanged)
+        && before != after
+}
+
+/// The AX rung's verdict on an accepted write, from its first read-back.
+///
+/// Only a partial is drained: an unchanged or unreadable field already
+/// decides the next rung, and draining it would delay every write a web
+/// view ignores by [`UNCHANGED_GIVE_UP`] before its keystrokes go out. A
+/// drain that never reads the field again keeps the first partial, so the
+/// keystroke rung does not type the landed prefix a second time.
+fn settled_ax_progress(
+    first: TypedProgress,
+    before: Option<&str>,
+    text: &str,
+    read_value: impl FnMut() -> Option<String>,
+) -> TypedProgress {
+    match first {
+        TypedProgress::Partial(_) => match await_typed_progress(
+            before,
+            text,
+            std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT,
+            read_value,
+        ) {
+            TypedProgress::Unverifiable => first,
+            settled => settled,
+        },
+        settled => settled,
+    }
+}
+
+/// Poll the target's read-back until it proves complete delivery or the
+/// deadline passes, and report the value the field settled on.
+///
+/// Both delivery rungs need this: neither a posted keystroke nor an accepted
+/// `AXSelectedText` write is applied by the time the call that sent it
+/// returns. Chromium acknowledges the posting process with a long tail still
+/// queued, and an AppKit field rebuilds its editor around the insertion:
+/// measured in Contacts, where the value read microseconds after the write
+/// held "(408) " of "(408) 961-1560" and was complete ~20 ms later. Sampling
+/// once turns that window into a false partial.
+fn await_typed_progress(
+    before: Option<&str>,
+    text: &str,
+    deadline: std::time::Instant,
+    mut read_value: impl FnMut() -> Option<String>,
+) -> TypedProgress {
     let mut best_partial = None;
+    let mut last_readable;
     let started = std::time::Instant::now();
     let mut deadline = deadline;
     loop {
         let after = read_value();
         match typed_progress(before, after.as_deref(), text) {
-            TypedProgress::Complete => return (true, Some(text.chars().count())),
+            TypedProgress::Complete => return TypedProgress::Complete,
             TypedProgress::Partial(delivered) => {
                 best_partial =
                     Some(best_partial.map_or(delivered, |best: usize| best.max(delivered)));
+                last_readable = Some(TypedProgress::Partial(delivered));
             }
-            TypedProgress::Unverifiable => return (false, None),
             TypedProgress::Unchanged => {
                 // A readable unchanged value is an observed zero-character
                 // delivery, not an unverifiable success.
                 best_partial.get_or_insert(0);
+                last_readable = Some(TypedProgress::Unchanged);
                 if best_partial == Some(0) && started.elapsed() >= UNCHANGED_GIVE_UP {
                     deadline = std::time::Instant::now();
                 }
             }
+            TypedProgress::Unverifiable => {
+                if best_partial.is_none() {
+                    return TypedProgress::Unverifiable;
+                }
+                last_readable = None;
+            }
         }
         if std::time::Instant::now() >= deadline {
-            if best_partial == Some(0) && is_web() {
-                best_partial = None;
-            }
-            return (false, best_partial);
+            return last_readable.unwrap_or(match best_partial {
+                Some(delivered) if delivered > 0 => TypedProgress::Partial(delivered),
+                _ => TypedProgress::Unchanged,
+            });
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
     }
@@ -1893,17 +1969,24 @@ fn type_text_in_key_window(
                     replace_utf16_range(value, location, length, body)
                 });
         let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
-        // Classify the atomic write before considering synthesis. Complete AX
+        // Classify the write before considering synthesis. Complete AX
         // delivery returns immediately. Partial delivery is surfaced as such
         // instead of appending the full payload again. When synthesis would
         // exceed its transport-safe budget, rejected/unchanged AX writes fail
         // safely and unreadable AX state is reported as indeterminate.
-        let after = unsafe { copy_string_attr(element, "AXValue") };
-        let ax_progress = if err == kAXErrorSuccess {
-            Some(typed_progress(before.as_deref(), after.as_deref(), ax_text))
-        } else {
-            None
-        };
+        //
+        // The write is atomic, its effect on the field is not: a prefix read
+        // straight after it may be a value the app is still rebuilding, so
+        // that read is settled through the keystroke rung's drain before it
+        // is reported as a partial insertion.
+        let mut after = unsafe { copy_string_attr(element, "AXValue") };
+        let first = typed_progress(before.as_deref(), after.as_deref(), ax_text);
+        let ax_progress = (err == kAXErrorSuccess).then(|| {
+            settled_ax_progress(first, before.as_deref(), ax_text, || {
+                after = unsafe { copy_string_attr(element, "AXValue") };
+                after.clone()
+            })
+        });
         // AXValue is not renderer evidence in web content. An unchanged or
         // unreadable echo there cannot prove that zero characters landed, so
         // blind retry is unsafe even though no synthesis has run yet.
@@ -1915,6 +1998,8 @@ fn type_text_in_key_window(
                 && crate::apps::bundle_id_for_pid(pid)
                     .as_deref()
                     .is_some_and(applies_write_before_axvalue_updates);
+        let may_have_landed = write_applies_late
+            || partial_left_field_changed(first, ax_progress, before.as_deref(), after.as_deref());
         // An AX insert bypasses NSTextView's edit model, so a document is
         // not marked edited and would never save the new text (DS-07).
         let document = if ax_progress == Some(TypedProgress::Complete) {
@@ -2008,9 +2093,10 @@ fn type_text_in_key_window(
                 delivered_chars: Some(delivered_chars),
             }));
         }
-        ax_attempt = match after_unlanded_ax_write(ax_progress, write_applies_late) {
+        ax_attempt = match after_unlanded_ax_write(ax_progress, may_have_landed) {
             UnlandedAxWrite::TypeKeys(attempt) => attempt,
-            // Firefox accepts the write but updates AXValue later (#5383).
+            // Firefox accepts the write but updates AXValue later (#5383),
+            // and a native field can settle on a value no count describes.
             UnlandedAxWrite::MayHaveLanded => {
                 let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
                 let return_note = if submit_body.is_some() {
@@ -2020,9 +2106,9 @@ fn type_text_in_key_window(
                 };
                 return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                     detail: format!(
-                        " via AX write into{idx_str} {role} \"{title}\", which the page \
-                         accepted but has not read back yet, so it was not typed again \
-                         as keys{return_note}; read the field before retrying"
+                        " via AX write into{idx_str} {role} \"{title}\", which the target \
+                         accepted but has not read back as inserted, so it was not typed \
+                         again as keys{return_note}; read the field before retrying"
                     ),
                     path: PATH_AX,
                     verified: false,
@@ -2667,6 +2753,151 @@ mod tests {
             || false,
         );
         assert_eq!(delivery, (false, Some(5)));
+    }
+
+    /// The drain summarises a whole polling window, and the AX rung reads that
+    /// summary to decide between reporting a partial insertion and falling
+    /// through to keystrokes. A window in which the field never moved must
+    /// stay `Unchanged`: `Partial(0)` there would publish "delivered 0 of n"
+    /// and swallow the keystroke rung that still had to run.
+    #[test]
+    fn a_write_the_field_never_took_stays_unchanged() {
+        assert_eq!(
+            await_typed_progress(
+                Some("old"),
+                "new value",
+                std::time::Instant::now(),
+                || Some("old".to_owned())
+            ),
+            TypedProgress::Unchanged
+        );
+    }
+
+    #[test]
+    fn a_partial_the_field_discards_is_not_a_partial_delivery() {
+        let mut reads = 0;
+        let progress = await_typed_progress(
+            Some(""),
+            "10600 North Tantau Avenue",
+            std::time::Instant::now() + std::time::Duration::from_millis(250),
+            || {
+                reads += 1;
+                Some(if reads == 1 {
+                    "10600 North Ta".to_owned()
+                } else {
+                    String::new()
+                })
+            },
+        );
+        assert_eq!(progress, TypedProgress::Unchanged);
+        assert!(reads > 1, "the drain read the field {reads} time(s)");
+    }
+
+    #[test]
+    fn a_partial_the_settled_read_still_shows_is_reported() {
+        assert_eq!(
+            await_typed_progress(
+                Some(""),
+                "10600 North Tantau Avenue",
+                std::time::Instant::now() + std::time::Duration::from_millis(250),
+                || Some("10600 North Ta".to_owned())
+            ),
+            TypedProgress::Partial(14)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_settled_read_falls_back_to_the_partial_observed() {
+        let mut reads = 0;
+        let progress = await_typed_progress(
+            Some(""),
+            "10600 North Tantau Avenue",
+            std::time::Instant::now() + std::time::Duration::from_millis(250),
+            || {
+                reads += 1;
+                (reads == 1).then(|| "10600 North Ta".to_owned())
+            },
+        );
+        assert_eq!(progress, TypedProgress::Partial(14));
+    }
+
+    #[test]
+    fn a_field_that_never_reads_is_unverifiable_without_draining() {
+        let mut reads = 0;
+        let progress = await_typed_progress(
+            Some(""),
+            "payload",
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+            || {
+                reads += 1;
+                None
+            },
+        );
+        assert_eq!(progress, TypedProgress::Unverifiable);
+        assert_eq!(reads, 1);
+    }
+
+    /// The Contacts case from #3841: the read straight after the write held a
+    /// prefix and the next one the whole string.
+    #[test]
+    fn an_ax_prefix_the_field_completes_is_not_a_partial_write() {
+        let text = "(408) 961-1560";
+        let first = typed_progress(Some(""), Some("(408) "), text);
+        assert_eq!(first, TypedProgress::Partial(6));
+        let mut reads = 0;
+        let progress = settled_ax_progress(first, Some(""), text, || {
+            reads += 1;
+            Some(text.to_owned())
+        });
+        assert_eq!(progress, TypedProgress::Complete);
+        assert_eq!(reads, 1);
+    }
+
+    #[test]
+    fn an_ax_prefix_followed_by_unreadable_reads_stays_partial() {
+        let first = typed_progress(Some(""), Some("(408) "), "(408) 961-1560");
+        let progress = settled_ax_progress(first, Some(""), "(408) 961-1560", || None);
+        assert_eq!(progress, TypedProgress::Partial(6));
+    }
+
+    #[test]
+    fn a_partial_is_typed_again_only_over_the_restored_value() {
+        use TypedProgress::{Partial, Unchanged};
+        // The field discarded the write and holds its old value again.
+        assert!(!partial_left_field_changed(
+            Partial(2),
+            Some(Unchanged),
+            Some("abc"),
+            Some("abc")
+        ));
+        // The write replaced a selection: same length, different value.
+        assert!(partial_left_field_changed(
+            Partial(2),
+            Some(Unchanged),
+            Some("abc"),
+            Some("ade")
+        ));
+        // No partial was ever seen: an unchanged write still takes keys.
+        assert!(!partial_left_field_changed(
+            Unchanged,
+            Some(Unchanged),
+            Some("abc"),
+            Some("abc")
+        ));
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unchanged), true),
+            UnlandedAxWrite::MayHaveLanded
+        );
+    }
+
+    #[test]
+    fn an_unchanged_or_unreadable_ax_write_is_not_drained() {
+        for first in [TypedProgress::Unchanged, TypedProgress::Unverifiable] {
+            let progress = settled_ax_progress(first, Some(""), "payload", || {
+                panic!("{first:?} read the field again")
+            });
+            assert_eq!(progress, first);
+        }
     }
 
     #[test]

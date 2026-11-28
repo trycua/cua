@@ -9,8 +9,9 @@ The native KWin capture adapter uses Plasma window-management UUIDs and
 the exact UUID through Plasma window management and confirm the window's state
 from KWin, and they send no global input afterwards.
 
-The optional Cua KWin effect is not required for this capture path. The adapter
-does not enable KWin raw keyboard or pointer input.
+The optional Cua KWin helper is not required for this capture path. The adapter
+alone does not enable KWin raw keyboard or pointer input; the helper's input
+gate does, in the foreground.
 
 ## Input limitations
 
@@ -19,14 +20,16 @@ action or targeted editable-text operation can still work without raw input.
 A control with no usable semantic action gets no pointer fallback, and a native
 window ID never reaches X11 injection.
 
-Background pointer fallback returns `background_unavailable`. Foreground raw
-input returns `foreground_unavailable`, on any window: KWin's existing
-portal/libei path is focus-bound, not window-bound. Activating a UUID and reading
-back focus would leave a race between that check and input delivery. A
-compositor-side target-bound input API is required before these requests can be
-enabled. Installing the read-only Cua KWin helper or restarting AT-SPI does not
-supply that capability. Only `bring_to_front` checks the window's current PID, and
-it returns `foreground_unavailable` when another process owns the window.
+Background pointer fallback returns `background_unavailable`. KWin's
+portal/libei path is focus-bound, not window-bound, so activating a UUID and
+reading back focus would leave a race between that check and input delivery.
+Foreground raw input therefore runs only with the Cua KWin helper's input gate
+(protocol 2) loaded: KWin then lets the driver's input reach that window or
+nothing. Without the gate it returns `foreground_unavailable`, and restarting
+AT-SPI does not change that. See
+[the helper's README](../kwin-target-helper/README.md). Only `bring_to_front`
+checks the window's current PID, and it returns `foreground_unavailable` when
+another process owns the window.
 
 ## Turning it on and off
 
@@ -52,6 +55,12 @@ without this adapter: window capture on KWin returns `surface_identity_unproven`
 and `bring_to_front` returns `foreground_unavailable`. Window ids listed while
 it was on become unknown ids, so the next call refuses them and the caller lists
 windows again.
+
+`on` also loads the Cua KWin helper, when it is installed, and has KWin start
+it with every session (`cua_kwin_target_helperEnabled=true` under `[Plugins]`
+in `kwinrc`). `off` unloads it and removes that entry. `status` prints a
+`kwin helper:` line that says whether the helper is installed, loaded, and set
+to start, and what to run when it is not.
 
 A screenshot Deny saved in the desktop portal (`xdg-desktop-portal` permission
 store, table `screenshot`) keeps the adapter off, because `ScreenShot2` doesn't

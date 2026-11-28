@@ -321,6 +321,16 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
+        codes: &["app_unresponsive"],
+        build: |c| {
+            RecoveryHint::new(
+                "The app did not answer UI Automation in time, so nothing was sent. Wait until it \
+                 responds, then read the window again and retry.",
+            )
+            .call(c.read_window())
+        },
+    },
+    Rule {
         codes: &["target_changed", "stale_target", "stale_observation"],
         build: |c| {
             RecoveryHint::new(
@@ -890,6 +900,11 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
             "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that \
              is not a drag first (Move button, menu item, shortcut). {foreground}"
         ))
+        .call(c.read_window()),
+        (_, Some("earlier_call_failed")) => RecoveryHint::new(
+            "An earlier UI Automation call failed and may have taken effect. Read the window again \
+             and check the target before you act again.",
+        )
         .call(c.read_window()),
         (_, Some("electron_main_process_unavailable")) => RecoveryHint::new(format!(
             "This Electron window cannot take a background drag. Use the app's own controls (button, \

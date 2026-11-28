@@ -19,15 +19,87 @@ use super::impl_::{
     winui3_background_gesture, ToolState,
 };
 
-fn tool_result_text(result: ToolResult) -> String {
+fn structured_code(result: &ToolResult) -> Option<String> {
     result
-        .content
-        .into_iter()
-        .find_map(|content| match content {
-            cua_driver_core::protocol::Content::Text { text, .. } => Some(text),
-            _ => None,
-        })
-        .unwrap_or_else(|| "element action was refused".to_owned())
+        .structured_content
+        .as_ref()
+        .and_then(|structured| structured["code"].as_str())
+        .map(str::to_owned)
+}
+
+fn unknown_effect_after_failed_calls(
+    failed_calls: &[ActionTransport],
+    cause_code: Option<&str>,
+    message: impl FnOnce(&str) -> String,
+) -> ToolResult {
+    let failed: Vec<String> = failed_calls
+        .iter()
+        .map(|call| format!("{call:?}"))
+        .collect();
+    let mut structured = json!({
+        "code": "background_unavailable",
+        "reason": "earlier_call_failed",
+        "effect": "unverifiable",
+        "verified": false,
+        "path": "ax",
+        "failed_calls": failed,
+    });
+    if let Some(cause) = cause_code {
+        structured["cause_code"] = json!(cause);
+    }
+    ToolResult::error(message(&failed.join(", "))).with_structured(structured)
+}
+
+fn late_pattern_after_failed_calls(failed_calls: &[ActionTransport], idx: usize) -> ToolResult {
+    unknown_effect_after_failed_calls(failed_calls, Some("app_unresponsive"), |failed| {
+        format!(
+            "Element [{idx}] did not answer for its UI Automation pattern after an earlier \
+             pattern call failed ({failed}). No fallback input was sent. The click effect is \
+             unknown; inspect the target state before another action."
+        )
+    })
+}
+
+fn background_click_refusal(
+    refusal: ToolResult,
+    failed_calls: &[ActionTransport],
+    idx: usize,
+) -> Box<ToolResult> {
+    if failed_calls.is_empty() {
+        return Box::new(refusal);
+    }
+    let cause = structured_code(&refusal);
+    let shown = cause.clone().unwrap_or_else(|| "refusal".to_owned());
+    Box::new(unknown_effect_after_failed_calls(
+        failed_calls,
+        cause.as_deref(),
+        |failed| {
+            format!(
+                "Element [{idx}] was refused ({shown}) after an earlier pattern call failed \
+                 ({failed}). No fallback input was sent. The click effect is unknown; read the \
+                 window and check the target before another action."
+            )
+        },
+    ))
+}
+
+fn background_send_failure(
+    reply: ToolResult,
+    failed_calls: &[ActionTransport],
+    idx: usize,
+) -> ToolResult {
+    if failed_calls.is_empty() {
+        return reply;
+    }
+    let cause = structured_code(&reply);
+    let shown = cause.clone().unwrap_or_else(|| "send error".to_owned());
+    unknown_effect_after_failed_calls(failed_calls, cause.as_deref(), |failed| {
+        format!(
+            "Element [{idx}]'s fallback click did not complete ({shown}) after an earlier \
+             pattern call failed ({failed}). The click effect is unknown; read the window and \
+             check the target before another action."
+        )
+    })
 }
 
 fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
@@ -109,6 +181,7 @@ enum BackgroundElementClick {
         y: i32,
         failed_calls: Vec<ActionTransport>,
     },
+    Refused(Box<ToolResult>),
 }
 
 fn background_element_click_result(
@@ -716,21 +789,24 @@ impl Tool for ClickTool {
                 // stale rectangle is still inside the outer HWND. Ask the item
                 // to scroll itself into view before trusting that rectangle.
                 let recorded_center = (cx, cy);
-                let (cx, cy) = if !modifiers.is_empty() {
+                let scrolled =
                     admitted
-                        .clone()
-                        .and_then(|retained| {
-                            retained.is_uia().then(|| unsafe {
-                                crate::uia::scroll::scroll_into_view_and_recenter(
-                                    hwnd,
-                                    retained.as_ptr(),
-                                )
-                            })
-                        })
-                        .flatten()
-                        .unwrap_or((cx, cy))
-                } else {
-                    (cx, cy)
+                        .as_ref()
+                        .filter(|_| !modifiers.is_empty())
+                        .map(|retained| {
+                            crate::uia::windows_enum::scroll_into_view_bounded(hwnd, retained)
+                        });
+                let (cx, cy) = match scrolled {
+                    Some(Err(())) => {
+                        return super::impl_::app_unresponsive_refusal(format!(
+                            "Element [{idx}] did not answer whether it scrolled into view within \
+                             4 s (its app took longer, or has not returned an earlier UI \
+                             Automation call), so a foreground click was refused before any \
+                             input. Retry once the app responds."
+                        ));
+                    }
+                    Some(Ok(Some(point))) => point,
+                    _ => (cx, cy),
                 };
                 let (cx, cy) = match resolve_onscreen_point_with_scroll(
                     &admitted,
@@ -862,11 +938,12 @@ impl Tool for ClickTool {
                 if delivery.is_background()
                     && crate::input::is_chromium_target_window(hwnd)
                 {
-                    let (cx, cy) = resolve_onscreen_point_with_scroll(
+                    return Ok(match resolve_onscreen_point_with_scroll(
                         &admitted, hwnd, idx, cx, cy, "clicking",
-                    )
-                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
+                    ) {
+                        Ok((x, y)) => BackgroundElementClick::Inject { x, y, failed_calls },
+                        Err(refusal) => BackgroundElementClick::Refused(Box::new(refusal)),
+                    });
                 }
                 if use_uia_invoke {
                     // Retain the element out of the cache (AddRef under the
@@ -876,17 +953,31 @@ impl Tool for ClickTool {
                     // lives to the end of this `if let` block, past every UIA
                     // pattern dispatch below; its Release fires when it drops.
                     if let Some(element_guard) = admitted.as_ref() {
-                        let ptr = element_guard.as_ptr();
                         use windows::Win32::UI::Accessibility::{
-                            IUIAutomationElement, IUIAutomationInvokePattern,
+                            IUIAutomationInvokePattern,
                             IUIAutomationTogglePattern, IUIAutomationSelectionItemPattern,
                             IUIAutomationExpandCollapsePattern,
                             UIA_InvokePatternId, UIA_TogglePatternId,
                             UIA_SelectionItemPatternId, UIA_ExpandCollapsePatternId,
                         };
-                        use windows::core::Interface;
-                        let elem: IUIAutomationElement =
-                            unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+                        let pattern_read = |id| {
+                            crate::uia::windows_enum::element_pattern_bounded(
+                                hwnd,
+                                element_guard,
+                                id,
+                            )
+                        };
+                        let pattern_refusal = |failed_calls: &[ActionTransport]| {
+                            if failed_calls.is_empty() {
+                                return Box::new(super::impl_::app_unresponsive_refusal(format!(
+                                    "Element [{idx}] did not answer for its UI Automation pattern \
+                                     (its app took over 2 s, or has not returned an earlier UI \
+                                     Automation call), so clicking was refused before any input. \
+                                     Retry once the app responds."
+                                )));
+                            }
+                            Box::new(late_pattern_after_failed_calls(failed_calls, idx))
+                        };
 
                         // Try patterns in order of click-semantics specificity:
                         //   1. Invoke      - buttons / hyperlinks (canonical)
@@ -900,14 +991,15 @@ impl Tool for ClickTool {
                         // fallthroughs, cua-driver couldn't drive WinUI3
                         // CheckBox / RadioButton / ComboBox because PostMessage
                         // doesn't reach their handlers (CoreInput dispatcher).
-                        let invoke_result = unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) };
-                        if let Ok(pattern) = invoke_result {
+                        let Ok(invoke_result) = pattern_read(UIA_InvokePatternId) else {
+                            return Ok(BackgroundElementClick::Refused(pattern_refusal(&failed_calls)));
+                        };
+                        if let Some(pattern) = invoke_result {
                             if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
                                 let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
                                     hwnd as isize, || unsafe { inv.Invoke() });
                                 match outcome {
                                     Ok(()) => {
-                                        std::mem::forget(elem);
                                         return Ok(BackgroundElementClick::Semantic { message: format!(
                                             "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
                                         ), transport: ActionTransport::WindowsUiaInvoke, failed_calls });
@@ -918,13 +1010,14 @@ impl Tool for ClickTool {
                                 failed_calls.push(ActionTransport::WindowsUiaInvoke);
                             }
                         }
-                        let toggle_result = unsafe { elem.GetCurrentPattern(UIA_TogglePatternId) };
-                        if let Ok(pattern) = toggle_result {
+                        let Ok(toggle_result) = pattern_read(UIA_TogglePatternId) else {
+                            return Ok(BackgroundElementClick::Refused(pattern_refusal(&failed_calls)));
+                        };
+                        if let Some(pattern) = toggle_result {
                             if let Ok(tg) = pattern.cast::<IUIAutomationTogglePattern>() {
                                 let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
                                     hwnd as isize, || unsafe { tg.Toggle() });
                                 if outcome.is_ok() {
-                                    std::mem::forget(elem);
                                     return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
                                     ), transport: ActionTransport::WindowsUiaToggle, failed_calls });
@@ -932,13 +1025,14 @@ impl Tool for ClickTool {
                                 failed_calls.push(ActionTransport::WindowsUiaToggle);
                             }
                         }
-                        let sel_result = unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) };
-                        if let Ok(pattern) = sel_result {
+                        let Ok(sel_result) = pattern_read(UIA_SelectionItemPatternId) else {
+                            return Ok(BackgroundElementClick::Refused(pattern_refusal(&failed_calls)));
+                        };
+                        if let Some(pattern) = sel_result {
                             if let Ok(si) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
                                 let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
                                     hwnd as isize, || unsafe { si.Select() });
                                 if outcome.is_ok() {
-                                    std::mem::forget(elem);
                                     return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
                                     ), transport: ActionTransport::WindowsUiaSelection, failed_calls });
@@ -946,13 +1040,14 @@ impl Tool for ClickTool {
                                 failed_calls.push(ActionTransport::WindowsUiaSelection);
                             }
                         }
-                        let exp_result = unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) };
-                        if let Ok(pattern) = exp_result {
+                        let Ok(exp_result) = pattern_read(UIA_ExpandCollapsePatternId) else {
+                            return Ok(BackgroundElementClick::Refused(pattern_refusal(&failed_calls)));
+                        };
+                        if let Some(pattern) = exp_result {
                             if let Ok(ec) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
                                 let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
                                     hwnd as isize, || unsafe { ec.Expand() });
                                 if outcome.is_ok() {
-                                    std::mem::forget(elem);
                                     return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
                                     ), transport: ActionTransport::WindowsUiaExpandCollapse, failed_calls });
@@ -960,7 +1055,6 @@ impl Tool for ClickTool {
                                 failed_calls.push(ActionTransport::WindowsUiaExpandCollapse);
                             }
                         }
-                        std::mem::forget(elem);
                     }
                 }
                 if delivery.is_background()
@@ -969,22 +1063,28 @@ impl Tool for ClickTool {
                         EventKind::MouseClick,
                     )
                 {
-                    let (cx, cy) = resolve_onscreen_point_with_scroll(
-                        &admitted,
-                        hwnd,
-                        idx,
-                        cx,
-                        cy,
-                        "clicking",
-                    )
-                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
+                    return Ok(
+                        match resolve_onscreen_point_with_scroll(
+                            &admitted, hwnd, idx, cx, cy, "clicking",
+                        ) {
+                            Ok((x, y)) => BackgroundElementClick::Inject { x, y, failed_calls },
+                            Err(refusal) => BackgroundElementClick::Refused(
+                                background_click_refusal(refusal, &failed_calls, idx),
+                            ),
+                        },
+                    );
                 }
                 if admitted.as_ref().is_some_and(|element| element.read_while_minimized) {
-                    let (x, y) =
-                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, cx, cy, "clicking")
-                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Post { x, y, failed_calls });
+                    return Ok(
+                        match resolve_onscreen_point_with_scroll(
+                            &admitted, hwnd, idx, cx, cy, "clicking",
+                        ) {
+                            Ok((x, y)) => BackgroundElementClick::Post { x, y, failed_calls },
+                            Err(refusal) => BackgroundElementClick::Refused(
+                                background_click_refusal(refusal, &failed_calls, idx),
+                            ),
+                        },
+                    );
                 }
                 Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
             } }).await;
@@ -1003,6 +1103,7 @@ impl Tool for ClickTool {
                 }
                 BackgroundElementClick::Inject { x, y, failed_calls } => (x, y, failed_calls, true),
                 BackgroundElementClick::Post { x, y, failed_calls } => (x, y, failed_calls, false),
+                BackgroundElementClick::Refused(refusal) => return *refusal,
             };
             // Return to the dispatch task before capturing: task-local recording
             // context does not propagate into the blocking scroll resolver.
@@ -1040,13 +1141,25 @@ impl Tool for ClickTool {
                     };
                     background_element_click_result(message, transport, failed_calls)
                 }
-                Ok(Err(error)) if inject => crate::input::delivery::background_injection_error(
-                    hwnd,
-                    EventKind::MouseClick,
-                    &error,
+                Ok(Err(error)) if inject => background_send_failure(
+                    crate::input::delivery::background_injection_error(
+                        hwnd,
+                        EventKind::MouseClick,
+                        &error,
+                    ),
+                    &failed_calls,
+                    idx,
                 ),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
-                Err(error) => ToolResult::error(format!("Task error: {error}")),
+                Ok(Err(error)) => background_send_failure(
+                    ToolResult::error(error.to_string()),
+                    &failed_calls,
+                    idx,
+                ),
+                Err(error) => background_send_failure(
+                    ToolResult::error(format!("Task error: {error}")),
+                    &failed_calls,
+                    idx,
+                ),
             }
         } else if let (Some(mut px), Some(mut py)) = (x, y) {
             let from_zoom = args
@@ -1441,6 +1554,100 @@ mod pixel_click_transport_tests {
             .expect("serialize ActionResult");
         assert_eq!(public["route"], "synthetic_events");
         assert_eq!(public["delivery"]["mode"], "background");
+    }
+}
+
+#[cfg(test)]
+mod background_click_refusal_tests {
+    use super::{background_click_refusal, ActionTransport};
+    use cua_driver_core::protocol::{Content, ToolResult};
+    use serde_json::json;
+
+    fn refusal(code: &str) -> ToolResult {
+        ToolResult::error(format!(
+            "refused: {code}. Retry this action with delivery_mode:\"foreground\"."
+        ))
+        .with_structured(json!({
+            "status": "refused",
+            "code": code,
+            "effect": "refused",
+            "escalation": {"recommended": "foreground", "reason": "r"},
+        }))
+    }
+
+    fn assert_unknown_effect(result: &ToolResult, cause: &str, failed: serde_json::Value) {
+        let text: String = result
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(!text.contains("foreground"), "{text}");
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("structured reply");
+        assert!(
+            !structured.to_string().contains("foreground"),
+            "{structured}"
+        );
+        assert!(structured.get("escalation").is_none(), "{structured}");
+        assert!(structured.get("suggestion").is_none(), "{structured}");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["reason"], "earlier_call_failed");
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["path"], "ax");
+        assert_eq!(structured["cause_code"], cause);
+        assert_eq!(structured["failed_calls"], failed);
+    }
+
+    #[test]
+    fn a_refusal_before_any_pattern_call_reaches_the_caller_unchanged() {
+        for code in ["app_unresponsive", "element_not_visible"] {
+            let carried = background_click_refusal(refusal(code), &[], 4);
+            assert_eq!(carried.structured_content, refusal(code).structured_content);
+        }
+    }
+
+    #[test]
+    fn a_refusal_after_a_failed_pattern_call_has_an_unknown_effect() {
+        let carried = background_click_refusal(
+            refusal("element_not_visible"),
+            &[ActionTransport::WindowsUiaInvoke],
+            4,
+        );
+        assert_unknown_effect(&carried, "element_not_visible", json!(["WindowsUiaInvoke"]));
+    }
+
+    #[test]
+    fn a_failed_send_after_a_failed_pattern_call_has_an_unknown_effect() {
+        let kept = super::background_send_failure(refusal("background_occluded"), &[], 4);
+        assert_eq!(
+            kept.structured_content,
+            refusal("background_occluded").structured_content
+        );
+
+        let wrapped = super::background_send_failure(
+            refusal("background_occluded"),
+            &[
+                ActionTransport::WindowsUiaInvoke,
+                ActionTransport::WindowsUiaToggle,
+            ],
+            4,
+        );
+        assert_unknown_effect(
+            &wrapped,
+            "background_occluded",
+            json!(["WindowsUiaInvoke", "WindowsUiaToggle"]),
+        );
+    }
+
+    #[test]
+    fn a_late_pattern_read_after_a_failed_pattern_call_has_an_unknown_effect() {
+        let reply = super::late_pattern_after_failed_calls(&[ActionTransport::WindowsUiaInvoke], 4);
+        assert_unknown_effect(&reply, "app_unresponsive", json!(["WindowsUiaInvoke"]));
     }
 }
 

@@ -163,14 +163,23 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
         // inside the restored window rect.
         let trust_cached = cached_center_in_window && !retained.read_while_minimized;
         if retained.is_uia() {
-            let is_offscreen =
-                unsafe { crate::uia::scroll::element_is_offscreen(retained.as_ptr()) };
+            let Ok(is_offscreen) =
+                crate::uia::windows_enum::element_is_offscreen_bounded(hwnd, retained)
+            else {
+                return Err(app_unresponsive_refusal(format!(
+                    "Element [{idx}] did not answer whether it is on screen (its app took over \
+                     2 s, or has not returned an earlier UI Automation call), so {action_verb} \
+                     was refused before any input. Retry once the app responds."
+                )));
+            };
             if trust_cached && is_offscreen != Some(true) {
                 return Ok((cx, cy));
             }
-            if let Some((nx, ny)) = unsafe {
-                crate::uia::scroll::scroll_into_view_and_recenter(hwnd, retained.as_ptr())
-            } {
+            let scrolled = crate::uia::windows_enum::scroll_into_view_bounded(hwnd, retained);
+            if let Some(refusal) = unanswered_scroll_refusal(&scrolled, idx, action_verb) {
+                return Err(refusal);
+            }
+            if let Ok(Some((nx, ny))) = scrolled {
                 if crate::input::point_in_window_bounds(hwnd, nx, ny) {
                     return Ok((nx, ny));
                 }
@@ -199,20 +208,79 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
     })))
 }
 
+fn unanswered_scroll_refusal(
+    scrolled: &Result<Option<(i32, i32)>, ()>,
+    idx: usize,
+    action_verb: &str,
+) -> Option<ToolResult> {
+    scrolled.is_err().then(|| {
+        app_unresponsive_refusal(format!(
+            "Element [{idx}] did not answer whether it scrolled into view within 4 s (its app \
+             took longer, or has not returned an earlier UI Automation call), so {action_verb} \
+             was refused before any input. Retry once the app responds."
+        ))
+    })
+}
+
+pub(crate) fn app_unresponsive_refusal(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "code": "app_unresponsive",
+        "effect": "refused",
+        "refusal": {
+            "code": "app_unresponsive",
+            "message": message,
+        }
+    }))
+}
+
 /// Re-read `IsEnabled` on an admitted token target and refuse a disabled one
 /// before any cursor or input work, as macOS does (`element_disabled`). The
 /// snapshot's `enabled` can be stale. An element whose state cannot be read
-/// is left to the tool.
+/// is left to the tool; one whose app does not answer in time is refused.
 pub(crate) async fn refuse_if_disabled(
     pid: u32,
     admitted: &Option<crate::uia::snapshot::RetainedElement>,
     tool: &str,
 ) -> Option<ToolResult> {
+    is_enabled_refusal(read_is_enabled(pid, admitted).await?, true, pid, tool)
+}
+
+pub(crate) async fn refuse_if_unanswered(
+    pid: u32,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
+    tool: &str,
+) -> Option<ToolResult> {
+    is_enabled_refusal(read_is_enabled(pid, admitted).await?, false, pid, tool)
+}
+
+async fn read_is_enabled(
+    pid: u32,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
+) -> Option<Result<Option<bool>, ()>> {
     let element = admitted.clone()?;
-    let enabled = tokio::task::spawn_blocking(move || element.element_is_enabled())
-        .await
-        .ok()?;
-    (enabled == Some(false)).then(|| element_disabled_refusal(pid, tool))
+    tokio::task::spawn_blocking(move || {
+        crate::uia::windows_enum::element_is_enabled_bounded(pid, &element)
+    })
+    .await
+    .ok()
+}
+
+fn is_enabled_refusal(
+    read: Result<Option<bool>, ()>,
+    refuse_disabled: bool,
+    pid: u32,
+    tool: &str,
+) -> Option<ToolResult> {
+    match read {
+        Err(()) => Some(app_unresponsive_refusal(format!(
+            "Element did not answer whether it is enabled (its app took over 2 s, or has not \
+             returned an earlier UI Automation call), so the {tool} was refused before any \
+             input. Retry once the app responds."
+        ))),
+        Ok(Some(false)) if refuse_disabled => Some(element_disabled_refusal(pid, tool)),
+        Ok(_) => None,
+    }
 }
 
 pub(crate) fn element_disabled_refusal(pid: u32, tool: &str) -> ToolResult {
@@ -1506,6 +1574,132 @@ pub fn build_registry_with_provider(
     r.register_recording_tools();
     r.register_session_tools();
     r
+}
+
+#[cfg(test)]
+pub(crate) fn live_uia_root_snapshot() -> crate::uia::snapshot::UiaSnapshot {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+    static ROOT_READ: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = ROOT_READ
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root = unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let uia: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).unwrap();
+        uia.GetRootElement().unwrap()
+    };
+    let node = crate::uia::UiaNode {
+        element_index: Some(0),
+        control_type: "Pane".to_owned(),
+        name: None,
+        value: None,
+        automation_id: None,
+        help_text: None,
+        actions: Vec::new(),
+        enabled: Some(true),
+        selected: None,
+        is_password: None,
+        element_ptr: root.into_raw() as usize,
+        center_x: 0,
+        center_y: 0,
+        rect: None,
+        msaa_role: None,
+        depth: 0,
+        parent_element_index: None,
+        in_web_content: false,
+    };
+    crate::uia::snapshot::UiaSnapshot::from_nodes(
+        &mut [node],
+        crate::uia::snapshot::SnapshotKind::Uia,
+    )
+}
+
+#[cfg(test)]
+mod is_enabled_refusal_tests {
+    use super::is_enabled_refusal;
+    use cua_driver_core::snapshot_store::SnapshotPayload;
+
+    fn code(refusal: Option<cua_driver_core::protocol::ToolResult>) -> Option<String> {
+        refusal.map(|result| {
+            result.structured_content.expect("structured refusal")["code"]
+                .as_str()
+                .expect("refusal code")
+                .to_owned()
+        })
+    }
+
+    #[test]
+    fn the_element_tools_refuse_an_unanswered_read_and_only_five_refuse_a_disabled_one() {
+        for refuse_disabled in [true, false] {
+            assert_eq!(
+                code(is_enabled_refusal(Err(()), refuse_disabled, 1, "click")).as_deref(),
+                Some("app_unresponsive")
+            );
+            assert_eq!(
+                code(is_enabled_refusal(Ok(None), refuse_disabled, 1, "click")),
+                None
+            );
+            assert_eq!(
+                code(is_enabled_refusal(
+                    Ok(Some(true)),
+                    refuse_disabled,
+                    1,
+                    "click"
+                )),
+                None
+            );
+        }
+        assert_eq!(
+            code(is_enabled_refusal(Ok(Some(false)), true, 1, "click")).as_deref(),
+            Some("element_disabled")
+        );
+        assert_eq!(
+            code(is_enabled_refusal(Ok(Some(false)), false, 1, "scroll")),
+            None
+        );
+    }
+
+    #[test]
+    fn only_an_unanswered_scroll_into_view_refuses_with_app_unresponsive() {
+        assert_eq!(
+            code(super::unanswered_scroll_refusal(&Err(()), 3, "clicking")).as_deref(),
+            Some("app_unresponsive")
+        );
+        assert_eq!(
+            code(super::unanswered_scroll_refusal(&Ok(None), 3, "clicking")),
+            None
+        );
+        assert_eq!(
+            code(super::unanswered_scroll_refusal(
+                &Ok(Some((1, 2))),
+                3,
+                "clicking"
+            )),
+            None
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a live UIA root (interactive desktop); drives the per-process gate"]
+    async fn a_busy_is_enabled_read_refuses_before_any_input() {
+        let pid = u32::MAX - 4;
+        let element = super::live_uia_root_snapshot().retain(0);
+        assert!(element.is_some());
+
+        let release = crate::uia::windows_enum::hold_process_gate(pid);
+        let refusal = super::refuse_if_disabled(pid, &element, "click").await;
+        release.send(()).unwrap();
+        assert_eq!(
+            code(refusal).as_deref(),
+            Some("app_unresponsive"),
+            "a busy IsEnabled read refuses the action"
+        );
+    }
 }
 
 #[cfg(test)]

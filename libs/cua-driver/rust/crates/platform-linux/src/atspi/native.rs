@@ -1154,9 +1154,30 @@ fn niri_client(window: &crate::wayland::niri::Window) -> (String, u32, u32) {
     (window.title.clone(), width, height)
 }
 
-/// [`correlate_hyprland_frame`] for niri, which also keeps the single-root
-/// shortcut, but only while niri shows the process exactly one window: the
-/// requested one.
+/// A process's native windows as correlation clients (title, width, height),
+/// and the position of the requested window among them.
+type OwnedClients = (Vec<(String, u32, u32)>, usize);
+
+/// Sway's windows of `pid` as correlation clients, and where container `id`
+/// sits among them. `None` when Sway lists no such container for the process,
+/// as for an X11 window id.
+fn sway_clients(
+    windows: &[crate::wayland::sway_ipc::Window],
+    pid: u32,
+    id: u64,
+) -> Option<OwnedClients> {
+    let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
+    let target = owned.iter().position(|window| window.id == id)?;
+    let owned = owned
+        .iter()
+        .map(|window| (window.title.clone(), window.width, window.height))
+        .collect();
+    Some((owned, target))
+}
+
+/// [`correlate_hyprland_frame`] for niri and Sway, which also keeps the
+/// single-root shortcut, but only while the compositor shows the process
+/// exactly one window: the requested one.
 fn correlate_niri_frame(
     frames: &[HyprlandFrame],
     clients: &[(&str, u32, u32)],
@@ -1318,6 +1339,57 @@ mod hyprland_frame_tests {
     }
 
     #[test]
+    fn sway_binds_only_the_requested_containers_root() {
+        // Measured on headless Sway 1.12 with Chrome 157: beside the
+        // BrowserRootView titled as Sway names the container, Chrome exports
+        // an untitled RootView popup, and its root is larger than the
+        // container, so the title is what correlates.
+        let window = |id, pid, title: &str| crate::wayland::sway_ipc::Window {
+            id,
+            pid,
+            title: title.into(),
+            app_id: "google-chrome".into(),
+            x: 0,
+            y: 0,
+            width: 1600,
+            height: 1000,
+            content_x: 2,
+            content_y: 2,
+            focused: false,
+            visible: true,
+            fullscreen: false,
+        };
+        let windows = [
+            window(5, 42, "Page - Google Chrome"),
+            window(6, 43, "Page - Google Chrome"),
+            window(9, 42, "Other - Google Chrome"),
+        ];
+        // Another process's container, or an X11 window id, keeps its route.
+        assert_eq!(sway_clients(&windows, 42, 6), None);
+        assert_eq!(sway_clients(&windows, 42, 0x1a0_0003), None);
+        let mut root = frame("Page - Google Chrome");
+        root.size = Some((1616, 1016));
+        let popup = HyprlandFrame {
+            ordinal: 8,
+            title: String::new(),
+            browser_root: false,
+            size: None,
+        };
+        let frames = [root, popup];
+        let correlate = |id| {
+            let (owned, target) = sway_clients(&windows, 42, id)?;
+            let clients = owned
+                .iter()
+                .map(|(title, width, height)| (title.as_str(), *width, *height))
+                .collect::<Vec<_>>();
+            correlate_niri_frame(&frames, &clients, target, frames.len())
+        };
+        assert_eq!(correlate(5), Some(7));
+        // No exported root carries the other container's title.
+        assert_eq!(correlate(9), None);
+    }
+
+    #[test]
     fn preserves_exact_non_chromium_matching() {
         let mut candidate = frame("Editor");
         candidate.browser_root = false;
@@ -1347,8 +1419,19 @@ async fn resolve_window_frame(
     // Before the single-root shortcut: niri may list a window whose root is
     // not exported yet, and the one root then belongs to another window.
     let niri = !hyprland && crate::wayland::is_wayland() && crate::wayland::niri::is_session();
-    if hyprland || niri {
-        let (owned, target): (Vec<(String, u32, u32)>, usize) = if hyprland {
+    // Sway names a native window by its container id. An id Sway does not
+    // list for this pid keeps the routes below.
+    let sway = if hyprland || niri || !crate::wayland::is_wayland() {
+        None
+    } else {
+        crate::wayland::sway_ipc::list_windows()
+            .and_then(|windows| sway_clients(&windows, pid, xid))
+    };
+    let on_sway = sway.is_some();
+    if hyprland || niri || on_sway {
+        let (owned, target): OwnedClients = if let Some(sway) = sway {
+            sway
+        } else if hyprland {
             let windows = crate::wayland::hyprland::list_windows().ok()?;
             let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
             let target = owned.iter().position(|window| window.address == xid)?;
@@ -1416,7 +1499,7 @@ async fn resolve_window_frame(
             .iter()
             .map(|(title, width, height)| (title.as_str(), *width, *height))
             .collect::<Vec<_>>();
-        return if niri {
+        return if niri || on_sway {
             correlate_niri_frame(&frames, &clients, target, seeds.len())
         } else {
             correlate_hyprland_frame(&frames, &clients, target)

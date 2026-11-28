@@ -363,6 +363,9 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test webkit-background-paste cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact webkit_background_paste_runs_the_edit_menu_item \
     --nocapture --test-threads=1
+  run_test web-set-value-numeric-text cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
+    --ignored --exact web_set_value_keeps_numeric_text_exact \
+    --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   NATIVE_FILTER_MATCHES=0

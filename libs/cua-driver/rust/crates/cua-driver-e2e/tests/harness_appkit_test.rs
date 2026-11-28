@@ -270,7 +270,7 @@ fn await_front_layer_zero_window(driver: &mut McpDriver, window_id: u64) -> Opti
     }
 }
 
-fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
+fn element_by_id(snapshot: &ToolResponse, identifier: &str) -> serde_json::Value {
     let index = element_index_by_id(snapshot.tree_text(), identifier)
         .unwrap_or_else(|| panic!("{identifier} element_index not found"));
     snapshot.structured()["elements"]
@@ -280,7 +280,13 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
                 .iter()
                 .find(|element| element["element_index"].as_u64() == Some(index))
         })
-        .and_then(|element| element["element_token"].as_str())
+        .cloned()
+        .unwrap_or_else(|| panic!("{identifier} missing from structured elements"))
+}
+
+fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
+    element_by_id(snapshot, identifier)["element_token"]
+        .as_str()
         .unwrap_or_else(|| panic!("{identifier} element_token not found"))
         .to_owned()
 }
@@ -1444,6 +1450,38 @@ fn harness_appkit_text_input() {
                 post_text.contains("hello-cua"),
                 "text_input value did not propagate to mirror; snapshot:\n{post_text}"
             );
+        },
+    );
+}
+
+/// set_value keeps a numeric-looking value exact in a text field, and still
+/// gives a slider the number.
+#[test]
+#[ignore]
+fn harness_appkit_set_value_keeps_numeric_text_exact() {
+    run_background_case(
+        "set_value_numeric_text",
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            for (identifier, value) in [("txt-input", "007"), ("sld-value", "42")] {
+                let before = snapshot_elements(driver, pid, wid);
+                let set = driver.call(
+                    "set_value",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element_token_by_id(&before, identifier),
+                        "value": value
+                    }),
+                );
+                assert!(!set.is_error(), "set_value failed: {}", set.text());
+                let shown = element_by_id(&snapshot_elements(driver, pid, wid), identifier);
+                assert_eq!(
+                    shown["value"].as_str(),
+                    Some(value),
+                    "{identifier} does not hold {value:?}: {shown}"
+                );
+            }
         },
     );
 }

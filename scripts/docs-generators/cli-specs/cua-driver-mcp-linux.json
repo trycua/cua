@@ -2117,7 +2117,7 @@
     "additionalProperties": false,
     "properties": {
      "prompt": {
-      "description": "Ignored: Linux has no permission prompts.",
+      "description": "Accepted and ignored: Linux has no permission prompts, so the call only reports state.",
       "type": "boolean"
      },
      "session": {

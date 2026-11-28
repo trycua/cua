@@ -42,7 +42,7 @@ class TunnelInfo:
         return self._url or f"http://{self.host}:{self.port}"
 
     async def close(self) -> None:
-        """Close this tunnel (no-op if already closed or inside a context manager)."""
+        """Close this tunnel (no-op if already closed)."""
         if self._closer is not None:
             await self._closer(self)  # type: ignore[operator]
             self._closer = None
@@ -88,8 +88,7 @@ class _TunnelContext:
         return await self._open()
 
     async def __aexit__(self, *_) -> None:
-        await asyncio.gather(*(self._t.close_tunnel(i) for i in self._infos))
-        self._infos.clear()
+        await asyncio.gather(*(info.close() for info in self._infos))
 
     async def _close_one(self, info: TunnelInfo) -> None:
         await self._t.close_tunnel(info)

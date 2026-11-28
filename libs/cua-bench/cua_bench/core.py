@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from .reward import coerce_reward, emit_result_envelope
+
 
 @dataclass
 class Task:
@@ -100,6 +102,9 @@ async def _interact(env_path: str, task_id: int = 0) -> None:
         if env.evaluate_task_fn:
             result = await env.evaluate()
             print(f"{GREEN}✓ Evaluation result: {result}{RESET}")
+            reward = coerce_reward(result)
+            if reward is not None:
+                print(emit_result_envelope(reward))
         else:
             print(f"{GREY}✓ Evaluation not implemented{RESET}")
     except Exception as e:

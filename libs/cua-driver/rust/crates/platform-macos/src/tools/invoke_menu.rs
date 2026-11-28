@@ -533,6 +533,47 @@ fn background_unavailable(reason: String) -> ToolResult {
     structured_refusal("background_unavailable", message)
 }
 
+fn save_failure(
+    preface: &str,
+    message: &str,
+    app_name: &str,
+    refusal: &crate::apple_events::ScriptRefusal,
+) -> ToolResult {
+    if refusal.code == "automation_consent_required" {
+        return structured_refusal(refusal.code, format!("{preface}{}", refusal.reason));
+    }
+    if !matches!(refusal.code, "save_unconfirmed" | "automation_timeout") {
+        return background_unavailable(format!(
+            "{preface}{message}, and saving through {app_name}'s scripting interface did not \
+             complete ({}: {}). Nothing was saved",
+            refusal.code, refusal.reason
+        ));
+    }
+    let sent = if refusal.code == "automation_timeout" {
+        "The save request may have reached the app"
+    } else {
+        "The save request was sent"
+    };
+    let text = format!(
+        "{preface}{message}, so the save was tried through {app_name}'s scripting interface, \
+         but it did not confirm ({}: {}). {sent} and its outcome is unknown: read the \
+         document's state (the window's edited mark or the file on disk) before saving again.",
+        refusal.code, refusal.reason
+    );
+    ToolResult::error(text).with_structured(serde_json::json!({
+        "status": "indeterminate",
+        "code": "save_indeterminate",
+        "effect": "indeterminate",
+        "retryable": false,
+        "escalation": {
+            "recommended": "verify_state",
+            "reason": format!(
+                "{sent}; read the document's state before deciding whether to save again."
+            )
+        }
+    }))
+}
+
 fn structured_refusal(code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
@@ -929,14 +970,7 @@ pub(super) async fn run_in_background(
                     ActionTransport::MacosAppleEvent,
                     "The app's scripting interface reported the document saved",
                 ),
-                Ok(Err(refusal)) if refusal.code == "automation_consent_required" => {
-                    structured_refusal(refusal.code, format!("{preface}{}", refusal.reason))
-                }
-                Ok(Err(refusal)) => background_unavailable(format!(
-                    "{preface}{message}, and saving through {app_name}'s scripting interface did not \
-                     complete ({}: {}). Nothing was saved",
-                    refusal.code, refusal.reason
-                )),
+                Ok(Err(refusal)) => save_failure(&preface, &message, &app_name, &refusal),
                 Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
             }
         }
@@ -1171,6 +1205,130 @@ mod tests {
         assert!(reason.contains("no menu action was dispatched"));
         assert!(reason.contains("on another Space"));
         assert!(reason.contains("bring_to_front"));
+    }
+
+    #[test]
+    fn a_save_that_reached_the_app_is_indeterminate_and_not_refused_as_unavailable() {
+        let failure = |code| {
+            let refusal = crate::apple_events::ScriptRefusal {
+                code,
+                reason: "no answer".into(),
+            };
+            save_failure(
+                "",
+                "invoke_menu: File > Save is disabled",
+                "TextEdit",
+                &refusal,
+            )
+        };
+        let text = |result: &ToolResult| match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text.clone(),
+            _ => panic!("a text reply"),
+        };
+        for code in ["save_unconfirmed", "automation_timeout"] {
+            let result = failure(code);
+            let reply = text(&result);
+            assert_eq!(result.is_error, Some(true));
+            assert!(!text(&result).contains("invoke_menu does not activate a background app"));
+            assert!(text(&result).contains("outcome is unknown"));
+            let data = result.structured_content.expect("structured result");
+            assert_ne!(data["code"], "background_unavailable", "{code}");
+            assert_eq!(data["effect"], "indeterminate");
+            assert_eq!(data["retryable"], false);
+            assert_eq!(data["escalation"]["recommended"], "verify_state");
+            let sent = if code == "automation_timeout" {
+                "may have reached the app"
+            } else {
+                "was sent"
+            };
+            assert!(reply.contains(sent), "{code}");
+            let reason = data["escalation"]["reason"].as_str().expect("reason");
+            assert!(reason.contains(sent), "{code}: {reason}");
+        }
+        for code in ["automation_failed", "automation_denied"] {
+            let result = failure(code);
+            assert!(text(&result).contains("invoke_menu does not activate a background app"));
+            let data = result.structured_content.expect("structured refusal");
+            assert_eq!(data["code"], "background_unavailable", "{code}");
+            assert_eq!(data["effect"], "refused");
+        }
+        let consent = failure("automation_consent_required")
+            .structured_content
+            .expect("structured refusal");
+        assert_eq!(consent["code"], "automation_consent_required");
+    }
+
+    #[test]
+    fn a_save_that_timed_out_at_the_consent_prompt_is_refused_as_unavailable() {
+        use crate::apple_events::{save_result, AutomationPermission, ScriptRefusal};
+        use AutomationPermission::{Denied, Granted, NeedsConsent, Unknown};
+        let timed_out = |before: AutomationPermission, after: AutomationPermission| {
+            let refusal = save_result(
+                Err(ScriptRefusal {
+                    code: "automation_timeout",
+                    reason: "the app did not answer within 30 s (a macOS Automation prompt may be \
+                             waiting for the user)"
+                        .into(),
+                }),
+                before,
+                || after,
+                "TextEdit",
+                std::path::Path::new("/tmp/a.txt"),
+            )
+            .expect_err("a timeout fails the save");
+            save_failure(
+                "",
+                "invoke_menu: File > Save is disabled",
+                "TextEdit",
+                &refusal,
+            )
+        };
+        let text = |result: &ToolResult| match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text.clone(),
+            _ => panic!("a text reply"),
+        };
+        for (before, after, refused) in [
+            (NeedsConsent, NeedsConsent, true),
+            (NeedsConsent, Denied, true),
+            (Granted, Unknown(-50), false),
+            (Granted, Denied, false),
+            (NeedsConsent, Granted, false),
+            (Unknown(-50), Denied, false),
+            (Unknown(-50), NeedsConsent, false),
+        ] {
+            let result = timed_out(before, after);
+            let reply = text(&result);
+            let data = result.structured_content.expect("structured result");
+            let case = format!("{before:?} then {after:?}");
+            assert_eq!(
+                reply.contains("invoke_menu does not activate a background app"),
+                refused,
+                "{case}"
+            );
+            let code = if refused {
+                "background_unavailable"
+            } else {
+                "save_indeterminate"
+            };
+            assert_eq!(data["code"], code, "{case}");
+            if !refused {
+                assert!(!reply.contains("prompt may be waiting"), "{case}: {reply}");
+            }
+        }
+        let declined = text(&timed_out(NeedsConsent, Denied));
+        assert!(
+            declined.contains("the user declined Automation for TextEdit"),
+            "{declined}"
+        );
+        assert!(
+            !declined.contains("still has no Automation permission"),
+            "{declined}"
+        );
+        let pending = text(&timed_out(NeedsConsent, NeedsConsent));
+        assert!(
+            pending.contains("consent prompt may be waiting"),
+            "{pending}"
+        );
     }
 
     #[test]

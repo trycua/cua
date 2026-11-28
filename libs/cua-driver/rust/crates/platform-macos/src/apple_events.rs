@@ -341,7 +341,11 @@ const SAVE_DOCUMENT_SCRIPT: &str = r#"on run argv
 			end if
 			if theDocumentPath is thePath then
 				«event coresave» theDocument
-				return («property imod» of theDocument) as text
+				try
+					return («property imod» of theDocument) as text
+				on error
+					return "saved-unread"
+				end try
 			end if
 		end repeat
 	end tell
@@ -407,40 +411,81 @@ pub fn save_document(
     app_name: &str,
     path: &Path,
 ) -> Result<SavedDocument, ScriptRefusal> {
-    ensure_permitted(bundle_id, app_name)?;
+    let permission = automation_permission(bundle_id);
+    check_permission(
+        permission,
+        REFUSE_UNGRANTED_AUTOMATION.load(Ordering::Acquire),
+        bundle_id,
+        app_name,
+    )?;
     let before = modified_time(path);
     let path_text = path.to_string_lossy();
     let result = run_script(
         SAVE_DOCUMENT_SCRIPT,
         &[&path_text, bundle_id],
         Duration::from_secs(30),
+    );
+    save_result(
+        result,
+        permission,
+        || automation_permission(bundle_id),
+        app_name,
+        path,
     )?;
-    match result.as_str() {
-        "false" => {}
-        "true" => {
-            return Err(ScriptRefusal {
-                code: "save_unconfirmed",
-                reason: format!(
-                    "{app_name} accepted the save, but still reports unsaved changes in {}",
-                    path.display()
-                ),
-            })
-        }
-        "no-document" => {
-            return Err(ScriptRefusal {
-                code: "automation_failed",
-                reason: format!("{app_name} lists no open document for {}", path.display()),
-            })
-        }
-        other => {
-            return Err(ScriptRefusal {
-                code: "save_unconfirmed",
-                reason: format!("{app_name} answered \"{other}\" to the save"),
-            })
-        }
-    }
     let file_written = wait_for_new_mtime(path, before, Duration::from_millis(1500));
     Ok(SavedDocument { file_written })
+}
+
+pub(crate) fn save_result(
+    result: Result<String, ScriptRefusal>,
+    before: AutomationPermission,
+    after: impl FnOnce() -> AutomationPermission,
+    app_name: &str,
+    path: &Path,
+) -> Result<(), ScriptRefusal> {
+    let answer = match result {
+        Err(refusal) if refusal.code == "automation_timeout" => {
+            let after = (before == AutomationPermission::NeedsConsent).then(after);
+            return Err(match after {
+                Some(AutomationPermission::NeedsConsent) => ScriptRefusal {
+                    code: "automation_consent_pending",
+                    reason: format!(
+                        "Cua Driver still has no Automation permission for {app_name} (a macOS \
+                         consent prompt may be waiting for the user), so no save reached it"
+                    ),
+                },
+                Some(AutomationPermission::Denied) => ScriptRefusal {
+                    code: "automation_consent_declined",
+                    reason: format!(
+                        "the user declined Automation for {app_name}, so no save reached it"
+                    ),
+                },
+                _ => ScriptRefusal {
+                    code: refusal.code,
+                    reason: format!("{app_name} did not answer within 30 s"),
+                },
+            });
+        }
+        result => result?,
+    };
+    match answer.as_str() {
+        "false" => Ok(()),
+        "true" => Err(ScriptRefusal {
+            code: "save_unconfirmed",
+            reason: format!(
+                "{app_name} accepted the save, but still reports unsaved changes in {}",
+                path.display()
+            ),
+        }),
+        "no-document" => Err(ScriptRefusal {
+            code: "automation_failed",
+            reason: format!("{app_name} lists no open document for {}", path.display()),
+        }),
+        other => Err(ScriptRefusal {
+            code: "save_unconfirmed",
+            reason: format!("{app_name} answered \"{other}\" to the save"),
+        }),
+    }
 }
 
 pub fn modified_time(path: &Path) -> Option<std::time::SystemTime> {
@@ -492,6 +537,29 @@ pub fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_whose_modified_flag_cannot_be_read_is_unconfirmed() {
+        assert!(SAVE_DOCUMENT_SCRIPT.contains("on error\n\t\t\t\t\treturn \"saved-unread\""));
+        let path = Path::new("/tmp/a.txt");
+        let granted = AutomationPermission::Granted;
+        let after = || AutomationPermission::Granted;
+        let unread = save_result(Ok("saved-unread".into()), granted, after, "TextEdit", path)
+            .expect_err("an unread flag does not confirm the save");
+        assert_eq!(unread.code, "save_unconfirmed");
+        assert_eq!(
+            save_result(Ok("false".into()), granted, after, "TextEdit", path),
+            Ok(())
+        );
+        let failed = ScriptRefusal {
+            code: "automation_failed",
+            reason: "the save raised".into(),
+        };
+        assert_eq!(
+            save_result(Err(failed.clone()), granted, after, "TextEdit", path),
+            Err(failed)
+        );
+    }
 
     #[test]
     fn permission_codes_map_to_states() {

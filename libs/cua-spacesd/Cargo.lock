@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cluster"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1862,14 +1862,14 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "schemars",
  "serde",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "async-trait",
  "core-foundation 0.10.1",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -2045,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "cua-oidc"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "cua-push"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2140,7 +2140,7 @@ dependencies = [
 
 [[package]]
 name = "cua-relay"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
@@ -2183,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2204,7 +2204,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "axum 0.7.9",
  "bytes",
@@ -2250,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2287,7 +2287,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-desktop"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-doctor"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "bytes",
  "cua-hotspot",
@@ -2370,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "axum 0.8.9",
  "http",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-provider-api"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "cua-media-protocol",
  "serde_json",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-session"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -2472,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -2482,14 +2482,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-supervise"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-test-apps"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "libc",
  "libloading",
@@ -2517,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -2549,7 +2549,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.31.0"
+version = "0.31.5"
 dependencies = [
  "async-trait",
  "cua-home",
@@ -2569,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -2811,6 +2811,18 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
+
+[[package]]
+name = "enum-as-inner"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1e6a265c649f3f5979b601d26f1d05ada116434c87741c9493cb56218f76cbc"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "enumflags2"
@@ -3479,6 +3491,52 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hickory-proto"
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8a6fe56c0038198998a6f217ca4e7ef3a5e51f46163bd6dd60b5c71ca6c6502"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "data-encoding",
+ "enum-as-inner",
+ "futures-channel",
+ "futures-io",
+ "futures-util",
+ "idna",
+ "ipnet",
+ "once_cell",
+ "rand 0.9.5",
+ "ring",
+ "thiserror 2.0.20",
+ "tinyvec",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "hickory-resolver"
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc62a9a99b0bfb44d2ab95a7208ac952d31060efc16241c87eaf36406fecf87a"
+dependencies = [
+ "cfg-if",
+ "futures-util",
+ "hickory-proto",
+ "ipconfig",
+ "moka",
+ "once_cell",
+ "parking_lot",
+ "rand 0.9.5",
+ "resolv-conf",
+ "smallvec",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3893,6 +3951,19 @@ name = "ip_network_table-deps-treebitmap"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e537132deb99c0eb4b752f0346b6a836200eaaa3516dd7e5514b63930a09e5d"
+
+[[package]]
+name = "ipconfig"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d40460c0ce33d6ce4b0630ad68ff63d6661961c48b6dba35e5a4d81cfb48222"
+dependencies = [
+ "socket2",
+ "widestring",
+ "windows-registry",
+ "windows-result 0.4.1",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "ipnet"
@@ -4348,6 +4419,23 @@ dependencies = [
  "log",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "moka"
+version = "0.12.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4293f18e7567a1caf3c584855554377025c65e0aa445344d04171f5ad63d19b9"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-epoch",
+ "crossbeam-utils",
+ "equivalent",
+ "parking_lot",
+ "portable-atomic",
+ "smallvec",
+ "tagptr",
+ "uuid",
 ]
 
 [[package]]
@@ -4983,6 +5071,10 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+dependencies = [
+ "critical-section",
+ "portable-atomic",
+]
 
 [[package]]
 name = "once_cell_polyfill"
@@ -5319,7 +5411,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -5364,7 +5456,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5401,7 +5493,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.56.5"
+version = "0.66.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6089,6 +6181,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "h2",
+ "hickory-resolver",
  "http",
  "http-body",
  "http-body-util",
@@ -6097,6 +6190,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "once_cell",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -6118,6 +6212,12 @@ dependencies = [
  "web-sys",
  "webpki-roots 1.0.10",
 ]
+
+[[package]]
+name = "resolv-conf"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e061d1b48cb8d38042de4ae0a7a6401009d6143dc80d2e2d6f31f0bdd6470c7"
 
 [[package]]
 name = "ring"
@@ -6856,6 +6956,12 @@ dependencies = [
  "objc2-io-kit",
  "windows 0.59.0",
 ]
+
+[[package]]
+name = "tagptr"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
 name = "tap"
@@ -8228,6 +8334,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "widestring"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8451,6 +8563,17 @@ checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
  "windows-core 0.61.2",
  "windows-link 0.1.3",
+]
+
+[[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
 ]
 
 [[package]]

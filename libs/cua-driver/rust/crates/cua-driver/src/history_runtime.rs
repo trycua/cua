@@ -426,45 +426,7 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
 }
 
 pub fn history_root() -> PathBuf {
-    if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty()) {
-        return PathBuf::from(home).join("computer-history");
-    }
-    default_history_root()
-}
-
-fn default_history_root() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-        home.join("Library")
-            .join("Application Support")
-            .join(crate::bundle::state_namespace())
-            .join("computer-history")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let root = std::env::var_os("XDG_STATE_HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .map(|home| home.join(".local/state"))
-            })
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-        root.join(crate::bundle::state_namespace())
-            .join("computer-history")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let root = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("C:/Temp"));
-        root.join(crate::bundle::state_namespace())
-            .join("computer-history")
-    }
+    crate::bundle::app_paths().history_root
 }
 
 fn platform_name() -> &'static str {
@@ -508,15 +470,6 @@ fn platform_application_identity_provider() -> std::sync::Arc<dyn ApplicationIde
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_root_is_namespace_specific() {
-        let root = default_history_root();
-        assert!(root.ends_with(format!(
-            "{}/computer-history",
-            crate::bundle::state_namespace()
-        )));
-    }
 
     #[test]
     fn admission_preference_roundtrips_and_rejects_malformed_state() {

@@ -85,7 +85,7 @@ impl Loc {
             let local = env
                 .var("LOCALAPPDATA")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| env.home.join("AppData/Local"));
+                .unwrap_or_else(|| crate::join_rel(&env.home, "AppData/Local"));
             return join(local, rel);
         }
         let root = match self.base {
@@ -95,11 +95,11 @@ impl Loc {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| env.home.join(".config")),
             Base::AppData => match env.os {
-                crate::Os::MacOs => env.home.join("Library/Application Support"),
+                crate::Os::MacOs => crate::join_rel(&env.home, "Library/Application Support"),
                 crate::Os::Windows => env
                     .var("APPDATA")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| env.home.join("AppData/Roaming")),
+                    .unwrap_or_else(|| crate::join_rel(&env.home, "AppData/Roaming")),
                 crate::Os::Linux => env
                     .var("XDG_CONFIG_HOME")
                     .map(PathBuf::from)

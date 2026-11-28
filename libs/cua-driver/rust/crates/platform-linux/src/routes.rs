@@ -105,9 +105,12 @@ pub(crate) enum WindowRoute {
     Niri,
     /// The nested cua-compositor's capture. Terminal.
     CuaCompositor,
-    /// A GNOME helper (API 9+) snapshot of the window's own actor. Terminal
-    /// unless the helper has no per-window capture.
+    /// A verified GNOME helper's snapshot of the window's own actor.
+    /// Terminal when a verified helper is loaded: one below API 9 refuses.
     GnomeHelper,
+    /// The compositor's copy of a window listed through
+    /// ext-foreign-toplevel-list. Terminal for such a window.
+    ExtToplevel,
     /// The display capture cropped to compositor-attested window geometry.
     /// Terminal: it fails closed when the geometry is unproven.
     OutputCrop,
@@ -164,7 +167,7 @@ pub(crate) fn window_routes(desktop: Desktop) -> Vec<WindowRoute> {
         Desktop::Wayland(Compositor::Hyprland) => vec![KWin, Hyprland],
         Desktop::Wayland(Compositor::Injected) => vec![KWin, CuaCompositor],
         Desktop::Wayland(Compositor::Niri | Compositor::Other) => {
-            vec![KWin, Niri, GnomeHelper, OutputCrop]
+            vec![KWin, Niri, GnomeHelper, ExtToplevel, OutputCrop]
         }
     }
 }
@@ -320,7 +323,7 @@ mod tests {
         for compositor in [Compositor::Niri, Compositor::Other] {
             assert_eq!(
                 window_routes(Desktop::Wayland(compositor)),
-                [KWin, Niri, GnomeHelper, OutputCrop],
+                [KWin, Niri, GnomeHelper, ExtToplevel, OutputCrop],
                 "{compositor:?}"
             );
         }
@@ -369,12 +372,14 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn routes_follow_the_classified_desktop() {
-        let wayland = Desktop::Wayland(Compositor::Other);
-        assert_eq!(*rebuild(wayland), LinuxRoutes::new(wayland));
-        assert_eq!(*routes(), LinuxRoutes::new(wayland));
-        assert_eq!(*rebuild(Desktop::X11), LinuxRoutes::new(Desktop::X11));
+    fn reclassifying_the_desktop_rebuilds_its_routes() {
+        // The override holds the environment lock, so no other test
+        // reclassifies in between, and reclassifies again when dropped.
+        let _x11 = crate::test_env::x11_display(":9999999");
+        rebuild(Desktop::Wayland(Compositor::Other));
+        crate::desktop::reclassify();
         assert_eq!(*routes(), LinuxRoutes::new(Desktop::X11));
     }
 

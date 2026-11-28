@@ -474,7 +474,8 @@ extension WebUIBridge {
                 return NSNull()
             }
             // Screen Recording and Accessibility: the app's guide to the
-            // pane (PermissionFlow), never macOS's bare prompt.
+            // pane (PermissionFlow). With no row for the app in the pane's
+            // list, the guide asks macOS once, and its prompt adds the row.
             if !PermissionGuide.guide(url) { NSWorkspace.shared.open(u) }
             return NSNull()
 

@@ -206,20 +206,20 @@ impl HostEnv {
             let appdata = self
                 .var("APPDATA")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| self.home.join("AppData/Roaming"));
+                .unwrap_or_else(|| join_rel(&self.home, "AppData/Roaming"));
             vec![
-                self.home.join(".local/bin"),
+                join_rel(&self.home, ".local/bin"),
                 appdata.join("npm"),
-                self.home.join(".bun/bin"),
-                self.home.join(".cargo/bin"),
+                join_rel(&self.home, ".bun/bin"),
+                join_rel(&self.home, ".cargo/bin"),
             ]
         } else {
             vec![
-                self.home.join(".local/bin"),
-                self.home.join(".claude/local"),
-                self.home.join(".npm-global/bin"),
-                self.home.join(".bun/bin"),
-                self.home.join(".cargo/bin"),
+                join_rel(&self.home, ".local/bin"),
+                join_rel(&self.home, ".claude/local"),
+                join_rel(&self.home, ".npm-global/bin"),
+                join_rel(&self.home, ".bun/bin"),
+                join_rel(&self.home, ".cargo/bin"),
                 PathBuf::from("/opt/homebrew/bin"),
                 PathBuf::from("/usr/local/bin"),
             ]
@@ -339,6 +339,15 @@ impl HostEnv {
             .map(PathBuf::from)
             .unwrap_or_else(|| self.home.join(self.channel.home_dir_name()))
     }
+}
+
+/// `base` plus a `/`-separated relative path, one component at a time, so
+/// the result uses the platform separator throughout. (`home.join("a/b")`
+/// on Windows leaves a mixed `home\a/b`, which then shows up in configs.)
+pub(crate) fn join_rel(base: &Path, rel: &str) -> PathBuf {
+    let mut p = base.to_path_buf();
+    p.extend(rel.split('/').filter(|c| !c.is_empty()));
+    p
 }
 
 fn is_executable(p: &Path) -> bool {

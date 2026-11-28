@@ -29,8 +29,6 @@
 //! can delete that person in PostHog. Logs name the account by a short
 //! keyed tag only ([`crate::ident`]).
 
-use std::sync::Mutex;
-
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -38,7 +36,7 @@ use axum::response::{IntoResponse, Response};
 use crate::server::Relay;
 
 /// One erase at a time: two calls for one account would only repeat work.
-static ERASING: Mutex<()> = Mutex::new(());
+static ERASING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Longest account id accepted.
 const MAX_SUB: usize = 256;
@@ -75,8 +73,8 @@ pub(crate) async fn erase(
     }
     let tag = tag(&sub);
     let run = {
-        let _one = ERASING.lock().unwrap_or_else(|p| p.into_inner());
-        run(&relay, &sub, &emails)
+        let _one = ERASING.lock().await;
+        run(&relay, &sub, &emails).await
     };
     match run {
         Ok(counts) => {
@@ -98,7 +96,7 @@ pub(crate) async fn erase(
     }
 }
 
-fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, String> {
+async fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, String> {
     // The addresses the caller named plus every one the relay itself holds
     // for the account, found before anything is erased.
     let mut emails: Vec<String> = given.to_vec();
@@ -156,7 +154,7 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
         if record.owner.id != sub {
             continue;
         }
-        match relay.directory.remove(&record.id) {
+        match relay.directory.remove(&record.id).await {
             Ok(_) | Err(crate::directory::DirectoryError::NotFound) => {}
             Err(e) => return Err(failed("machines", format!("{e:?}"))),
         }
@@ -181,7 +179,7 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
         if n == 0 {
             continue;
         }
-        match relay.directory.remove_shares(&record.id, &people) {
+        match relay.directory.remove_shares(&record.id, &people).await {
             Ok(Some(_)) => {
                 shares_removed += n;
                 touched.push(record.id);
@@ -195,6 +193,7 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
     let teams = relay
         .teams
         .erase_account(sub, emails)
+        .await
         .map_err(|e| failed("teams", e))?;
 
     // 5. Whatever the account still reaches loses it: cut again with the
@@ -209,21 +208,25 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
     let devices = relay
         .devices
         .erase_account(sub, emails)
+        .await
         .map_err(|e| failed("devices", e))?;
     let pairing_codes = relay
         .pairing
         .erase_account(sub)
+        .await
         .map_err(|e| failed("pairing", e))?;
     let grants = relay
         .grants
         .erase_account(sub, emails)
+        .await
         .map_err(|e| failed("grants", e))?;
     let usage = relay
         .meter
         .erase_user(sub)
+        .await
         .map_err(|e| failed("usage", e))?;
     let plan_cache = match &relay.plans {
-        Some(plans) => plans.forget(sub).map_err(|e| failed("plans", e))?,
+        Some(plans) => plans.forget(sub).await.map_err(|e| failed("plans", e))?,
         None => false,
     };
     relay.org.erase_account(sub, emails, &machine_ids);
@@ -235,14 +238,17 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
     let spaces_settings = relay
         .spaces
         .erase_account(sub)
+        .await
         .map_err(|e| failed("spaces", e))?;
     let pool = relay
         .pool
         .erase_account(sub)
+        .await
         .map_err(|e| failed("pool", e))?;
     let pending_deletions = relay
         .pending_deletions
         .erase_account(sub)
+        .await
         .map_err(|e| failed("pending_deletions", e))?;
 
     Ok(serde_json::json!({

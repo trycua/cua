@@ -70,6 +70,7 @@ generated SDKs:
 - `set_agent_cursor_enabled`
 - `set_agent_cursor_motion`
 - `set_agent_cursor_theme`
+- `set_agent_cursor_badge`
 - `get_agent_cursor_state`
 
 Cursor artwork is selected by installed theme ID. Theme installation and
@@ -150,3 +151,12 @@ SDK loader tests live in `python/tests/test_uniffi_loader.py` and
 deterministically regenerates both UniFFI binding sets, verifies parity against
 the live tool registry, and crosses the real Python and Node FFI loaders into a
 deterministic daemon-socket fixture.
+
+## Runtime conformance witness
+
+The generated manifest and live `tools/list` surface describe advertised
+contract shape. A separate experimental typed
+[`RuntimeWitnessV0`](../docs/runtime-conformance-witness-v0.md) records
+metadata-only evidence that one concrete build/platform actually exercised a
+small read-only probe set. It consumes the existing capability vocabulary and
+output validators; it is not another capability registry.

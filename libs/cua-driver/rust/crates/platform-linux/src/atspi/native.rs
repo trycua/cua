@@ -489,20 +489,38 @@ mod listener_startup_tests {
     }
 }
 
+/// Whether a walked node's `Text`-interface content represents editable user
+/// text that should be surfaced as `value`.
+///
+/// GTK and Qt publish `org.a11y.atspi.EditableText` in `GetInterfaces()`,
+/// whereas Chromium and Electron (`AXPlatformNodeAuraLinux`) omit
+/// `EditableText` from `GetInterfaces()` on `<input>`, `<textarea>`,
+/// `contenteditable`, and the browser omnibox and instead set
+/// `State::Editable` in `GetState()`. Password fields never surface their
+/// text content.
+fn is_editable_text_node(has_editable: bool, editable_state: bool, role_lower: &str) -> bool {
+    (has_editable || editable_state) && !role_lower.contains("password")
+}
+
 /// A node discovered during the pre-order walk, with its proxy retained so the
 /// per-index operations can act on it without re-walking the tree.
 /// The `value` of one walked node: its Value-interface value, else, for an
 /// editable text widget without a Value interface, its non-empty Text
 /// content (the typed string). A SpinButton implements Text and Value, so it
-/// keeps its numeric value. Callers pass `has_editable: false` for password
-/// fields.
+/// keeps its numeric value. Callers pass `is_editable_text: false` for
+/// password fields; ATK embedded-object placeholders (`\u{fffc}`) alone on an
+/// empty rich-text container do not count as typed text.
 fn editable_text_value(
-    has_editable: bool,
+    is_editable_text: bool,
     has_value: bool,
     value: Option<String>,
     text_content: &str,
 ) -> Option<String> {
-    if value.is_some() || has_value || !has_editable || text_content.is_empty() {
+    if value.is_some()
+        || has_value
+        || !is_editable_text
+        || text_content.trim_matches('\u{fffc}').is_empty()
+    {
         return value;
     }
     Some(text_content.to_owned())
@@ -510,7 +528,7 @@ fn editable_text_value(
 
 #[cfg(test)]
 mod editable_text_value_tests {
-    use super::editable_text_value;
+    use super::{editable_text_value, is_editable_text_node};
 
     #[test]
     fn editable_text_reports_its_content_as_value() {
@@ -521,8 +539,30 @@ mod editable_text_value_tests {
     }
 
     #[test]
+    fn chromium_state_editable_without_editable_text_iface_reports_value() {
+        let editable = is_editable_text_node(false, true, "entry");
+        assert!(editable);
+        assert_eq!(
+            editable_text_value(editable, false, None, "Emulation Desktop Proof").as_deref(),
+            Some("Emulation Desktop Proof")
+        );
+    }
+
+    #[test]
+    fn password_fields_never_surface_value() {
+        assert!(!is_editable_text_node(true, false, "password text"));
+        assert!(!is_editable_text_node(false, true, "password text"));
+        assert!(!is_editable_text_node(true, true, "password"));
+    }
+
+    #[test]
     fn empty_or_non_editable_text_has_no_value() {
         assert_eq!(editable_text_value(true, false, None, ""), None);
+        assert_eq!(editable_text_value(true, false, None, "\u{fffc}"), None);
+        assert_eq!(
+            editable_text_value(true, false, None, "\u{fffc}\u{fffc}"),
+            None
+        );
         assert_eq!(
             editable_text_value(false, false, None, "static label"),
             None
@@ -1849,6 +1889,7 @@ async fn collect_visited_bounded_opts<'a>(
             _ => String::new(),
         };
         let focused = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Focused));
+        let editable_state = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Editable));
         let role_lower = role.to_ascii_lowercase();
         // Chromium puts the Document interface on nearly every node; only a
         // document's own URI names the rendered page, so read it there alone.
@@ -1964,7 +2005,7 @@ async fn collect_visited_bounded_opts<'a>(
         // ValuePattern). Without it a named entry ("Note") hides what it holds
         // from `elements[].value` and `verify_state`.
         // A password field's content is never surfaced.
-        let editable_text = has_editable && !role_lower.contains("password");
+        let editable_text = is_editable_text_node(has_editable, editable_state, &role_lower);
         value = editable_text_value(editable_text, has_value, value, &text_content);
 
         // Surface Text content as the display name when the widget has no
@@ -1980,6 +2021,7 @@ async fn collect_visited_bounded_opts<'a>(
         let is_control = has_action
             || has_value
             || has_editable
+            || editable_state
             || (has_component && is_control_role(&role_lower));
         let mut description = String::new();
         if is_control {
@@ -1990,7 +2032,9 @@ async fn collect_visited_bounded_opts<'a>(
         // An unnamed value/editable control: its `LABELLED_BY` relation names
         // it (GTK grids, Qt forms with buddies). One relation read plus one
         // name read, only for the controls that need it.
-        if name.trim().is_empty() && (has_value || has_editable || is_control_role(&role_lower)) {
+        if name.trim().is_empty()
+            && (has_value || has_editable || editable_state || is_control_role(&role_lower))
+        {
             if let Some(label) = labelled_by_name(conn, &acc).await {
                 name = label;
             }

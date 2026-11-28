@@ -1884,12 +1884,6 @@ async fn serve_claimed_socket(
     let pid_file_path = pid_file.and_then(|pid_file| {
         pid_file.path(|| socket_path.eq_ignore_ascii_case(&default_socket_path()))
     });
-    if let Some(pid_path) = &pid_file_path {
-        if let Some(dir) = std::path::Path::new(pid_path).parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(pid_path, std::process::id().to_string());
-    }
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
@@ -1982,9 +1976,16 @@ async fn serve_claimed_socket(
         };
         if first_pipe {
             first_pipe = false;
-            // Announce only after the name is bound, so the banner never
-            // claims a pipe that failed to open.
+            // Announce and record the PID only after the name is bound, so a
+            // launch that lost the pipe never claims it or overwrites the PID
+            // file of the daemon that holds it.
             eprintln!("Cua Driver daemon listening on {socket_path}");
+            if let Some(pid_path) = pid_file_path.as_deref() {
+                if let Some(dir) = std::path::Path::new(pid_path).parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(pid_path, std::process::id().to_string());
+            }
         }
 
         tokio::select! {
@@ -2428,7 +2429,7 @@ mod named_pipe_authentication_tests {
 mod pipe_release_tests {
     use super::{
         claim_daemon_lock, is_released, probe_presence, serve_claimed_socket, serving_daemon,
-        stop_daemon, AppPaths, DaemonPresence, StopOutcome,
+        stop_daemon, AppPaths, DaemonPresence, PidFile, StopOutcome,
     };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -2437,12 +2438,23 @@ mod pipe_release_tests {
         tokio::task::spawn_blocking(f).await.unwrap()
     }
 
+    /// Removes a test pipe's lock file from `%LOCALAPPDATA%` once the test
+    /// ends. Declared before the lock, so it drops after the lock closes.
+    struct RemoveLockFile(std::path::PathBuf);
+
+    impl Drop for RemoveLockFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_daemon_whose_pipe_never_answers_has_not_released() {
         let pipe = format!(
             r"\\.\pipe\cua-driver-release-{}",
             uuid::Uuid::new_v4().simple()
         );
+        let _lock_file = RemoveLockFile(AppPaths::pipe_lock_for(&pipe));
         // One instance that never answers. The first probe connects to it and
         // holds it waiting for a reply, so every later check finds it busy.
         let instance = ServerOptions::new()
@@ -2509,6 +2521,7 @@ mod pipe_release_tests {
             r"\\.\pipe\cua-driver-late-{}",
             uuid::Uuid::new_v4().simple()
         );
+        let _lock_file = RemoveLockFile(AppPaths::pipe_lock_for(&pipe));
         // The launch found nothing and claimed its lock; a lockless embedded
         // daemon then takes the name before the launch binds.
         let lock =
@@ -2517,9 +2530,18 @@ mod pipe_release_tests {
             .first_pipe_instance(true)
             .create(&pipe)
             .unwrap();
+        // The PID file names the daemon that holds the pipe.
+        let pid_dir = tempfile::tempdir().unwrap();
+        let pid_file = pid_dir.path().join("daemon.pid");
+        std::fs::write(&pid_file, "4242").unwrap();
         let error = tokio::time::timeout(
             Duration::from_secs(10),
-            serve_claimed_socket(sdk, &pipe, None, Some(lock)),
+            serve_claimed_socket(
+                sdk,
+                &pipe,
+                Some(&PidFile::At(pid_file.to_str().unwrap().to_owned())),
+                Some(lock),
+            ),
         )
         .await
         .expect("the launch gives up at once")
@@ -2530,6 +2552,7 @@ mod pipe_release_tests {
                 .contains("is already held by another process"),
             "{error}"
         );
+        assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), "4242");
     }
 }
 
@@ -2768,7 +2791,7 @@ const SOCKET_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 #[cfg(unix)]
 fn socket_accepts(socket_path: &str) -> bool {
     for attempt in 0..SOCKET_PROBE_ATTEMPTS {
-        match cua_driver_core::daemon::try_connect_unix(socket_path) {
+        match cua_driver_core::ipc::try_connect_unix(socket_path) {
             Ok(_) => return true,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
@@ -3385,7 +3408,7 @@ mod presence_tests {
         let listener = listen_with_no_backlog(&socket);
         let mut pending = Vec::new();
         let full = loop {
-            match cua_driver_core::daemon::try_connect_unix(path) {
+            match cua_driver_core::ipc::try_connect_unix(path) {
                 Ok(stream) => pending.push(stream),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break true,
                 Err(error) => panic!("connect: {error}"),

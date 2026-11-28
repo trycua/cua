@@ -6332,6 +6332,25 @@ resources:
         );
     }
 
+    #[cfg(not(target_os = "macos"))]
+    #[tokio::test]
+    async fn prompt_true_is_accepted_where_the_platform_has_no_prompts() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = argument_registry("check_permissions", None, hits.clone());
+        for context in [standard_context(), unrestricted_context()] {
+            let result = registry
+                .invoke_with_context(
+                    "check_permissions",
+                    serde_json::json!({"prompt": true, "session": "permissions"}),
+                    context,
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true), "{result:?}");
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn os_permission_prompt_is_never_agent_controllable() {
         let hits = Arc::new(AtomicUsize::new(0));

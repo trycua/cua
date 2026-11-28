@@ -388,6 +388,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("path", Value::String("daemon_proxy".into())),
             ("daemon", Value::String("already_running".into())),
             ("success", Value::Bool(true)),
+            ("reason", Value::String("none".into())),
             ("duration_bucket", Value::String("lt_100ms".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
@@ -1078,7 +1079,8 @@ fn tool_completion_properties(
         ToolErrorClass::PermissionDenied => "permission_denied",
         ToolErrorClass::BackgroundUnavailable => "background_unavailable",
         ToolErrorClass::TransportError => "transport_error",
-        ToolErrorClass::InternalError => "internal_error",
+        // Every other class is a closed, content-free label owned by core.
+        other => other.as_str(),
     };
     let duration_bucket = match outcome.duration_bucket {
         DurationBucket::Under10Ms => "lt_10ms",
@@ -1125,10 +1127,27 @@ fn tool_completion_properties(
     ])
 }
 
+/// Closed list of daemon launch failure reasons (see
+/// `cli::LaunchDaemonReason`). Anything else is `unknown`.
+fn startup_reason_label(reason: &str) -> &'static str {
+    match reason {
+        "none" => "none",
+        "exec_failed" => "exec_failed",
+        "app_bundle_missing" => "app_bundle_missing",
+        "open_exited_nonzero" => "open_exited_nonzero",
+        "socket_never_appeared" => "socket_never_appeared",
+        "socket_not_answering" => "socket_not_answering",
+        "executable_unavailable" => "executable_unavailable",
+        "spawn_failed" => "spawn_failed",
+        _ => "unknown",
+    }
+}
+
 pub(crate) fn capture_mcp_startup_completed(
     path: &'static str,
     daemon: &'static str,
     success: bool,
+    reason: &'static str,
     elapsed: Duration,
 ) {
     let path = match path {
@@ -1145,12 +1164,14 @@ pub(crate) fn capture_mcp_startup_completed(
         "unsupported_relaunch" => "unsupported_relaunch",
         _ => "unknown",
     };
+    let reason = startup_reason_label(reason);
     capture_bounded(
         event::MCP_STARTUP_COMPLETED,
         bounded_properties(&[
             ("path", Value::String(path.into())),
             ("daemon", Value::String(daemon.into())),
             ("success", Value::Bool(success)),
+            ("reason", Value::String(reason.into())),
             (
                 "duration_bucket",
                 Value::String(duration_bucket(elapsed).into()),

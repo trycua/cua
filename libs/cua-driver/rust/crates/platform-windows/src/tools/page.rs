@@ -21,17 +21,15 @@ use cua_driver_core::page::{PageBackend, PageReadResult};
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::Variant::VT_BSTR;
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-    TreeScope_Subtree, UIA_ButtonControlTypeId, UIA_ComboBoxControlTypeId,
-    UIA_ControlTypePropertyId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-    UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId,
-    UIA_ListItemControlTypeId, UIA_NamePropertyId, UIA_PaneControlTypeId, UIA_TextControlTypeId,
-    UIA_TextPatternId, UIA_ValueValuePropertyId, UIA_CONTROLTYPE_ID,
+    IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern, TreeScope_Subtree,
+    UIA_ButtonControlTypeId, UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId,
+    UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_HeaderControlTypeId,
+    UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_ListItemControlTypeId,
+    UIA_NamePropertyId, UIA_PaneControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId,
+    UIA_ValueValuePropertyId, UIA_CONTROLTYPE_ID,
 };
 
 pub struct WindowsPageBackend;
@@ -193,8 +191,8 @@ unsafe fn query_dom_blocking(
 /// Initialise COM (best-effort) and resolve the UIA root element for `hwnd`.
 unsafe fn uia_root_for(hwnd: u64) -> anyhow::Result<(IUIAutomation, IUIAutomationElement)> {
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-        .map_err(|e| anyhow::anyhow!("UIA init failed: {e}"))?;
+    let automation =
+        crate::uia::new_automation().map_err(|e| anyhow::anyhow!("UIA init failed: {e}"))?;
     let hwnd_win = HWND(hwnd as *mut _);
     let root = automation
         .ElementFromHandle(hwnd_win)
@@ -272,8 +270,7 @@ unsafe fn walk_text_blocking(root: &IUIAutomationElement) -> String {
 
 unsafe fn create_true_condition_or_fallback(
 ) -> Option<windows::Win32::UI::Accessibility::IUIAutomationCondition> {
-    let automation: IUIAutomation =
-        CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+    let automation = crate::uia::new_automation().ok()?;
     automation.CreateTrueCondition().ok()
 }
 

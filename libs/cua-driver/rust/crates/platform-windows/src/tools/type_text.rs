@@ -1029,18 +1029,12 @@ fn read_cached_element_value(
 /// the `debug_window_info` tool.
 fn read_focused_value_uia(expect_pid: u32) -> Option<String> {
     use windows::core::Interface;
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED,
-    };
-    use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_ValuePatternId,
-    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Accessibility::{IUIAutomationValuePattern, UIA_ValuePatternId};
 
     let coinit_ok = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
     let value = (|| -> Option<String> {
-        let uia: IUIAutomation =
-            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok()?;
+        let uia = unsafe { crate::uia::new_automation() }.ok()?;
         let focused = unsafe { uia.GetFocusedElement() }.ok()?;
         // Scope to the target: system focus may be on a different app when the
         // target is backgrounded; reading that element would give a bogus verdict.

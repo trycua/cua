@@ -169,18 +169,20 @@ agent
     log({ ev: "set_mode", modeId: ctx.params.modeId });
     return {};
   })
-  .onRequest("session/load", (ctx) => {
+  .onRequest("session/load", async (ctx) => {
     if (!sessions()[ctx.params.sessionId]) throw new Error("unknown session");
     log({ ev: "session_load", id: ctx.params.sessionId });
+    for (const update of script.replay ?? []) await ctx.client.notify("session/update", { sessionId: ctx.params.sessionId, update });
     return {};
   })
-  .onRequest("session/resume", (ctx) => {
+  .onRequest("session/resume", async (ctx) => {
     if (!sessions()[ctx.params.sessionId] && script.forgets) {
       log({ ev: "session_resume_forgot", id: ctx.params.sessionId });
       return {};
     }
     if (!sessions()[ctx.params.sessionId]) throw new Error("unknown session");
     log({ ev: "session_resume", id: ctx.params.sessionId });
+    for (const update of script.replay ?? []) await ctx.client.notify("session/update", { sessionId: ctx.params.sessionId, update });
     return {};
   })
   .onRequest("session/prompt", async (ctx) => {

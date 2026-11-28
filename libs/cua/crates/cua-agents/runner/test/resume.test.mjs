@@ -54,6 +54,28 @@ t("uses session/resume when the agent offers it", async (box) => {
   assert.deepEqual(box.prompts(), ["now pin it to UTC"]);
 });
 
+for (const resume of [false, true]) {
+  t(`session/${resume ? "resume" : "load"} history is not published as a new reply or tool call`, async (box) => {
+    resumeRun(box, {
+      sessionId: "replayed-chat",
+      known: true,
+      script: {
+        resume,
+        replay: [
+          { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "an old answer" } },
+          { sessionUpdate: "tool_call", toolCallId: "past-tool", title: "a completed old tool", kind: "other", status: "completed" },
+          { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "the last old answer" } },
+        ],
+      },
+    });
+    const r = await box.go({ env: { CUA_SESSION: "", CUA_SESSION_EPOCH: "" } });
+    assert.equal(r.code, 0, r.stderr);
+    const updates = box.lines("events.jsonl", box.run).filter((e) => e.type === "update").map((e) => e.update);
+    assert.deepEqual(updates.filter((u) => u.sessionUpdate === "agent_message_chunk").map((u) => u.content.text), ["carrying on"]);
+    assert.ok(!updates.some((u) => u.toolCallId === "past-tool"), "historical tool call was republished");
+  });
+}
+
 t("a session the agent can't reload: a new one, with the earlier conversation first", async (box) => {
   resumeRun(box, { sessionId: "gone-chat", context: "person: the timer test fails\n\nagent: it depends on the time zone", known: false });
   const r = await box.go({ env: { CUA_SESSION: "", CUA_SESSION_EPOCH: "" } });

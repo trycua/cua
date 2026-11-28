@@ -469,11 +469,11 @@
       "variant": "container",
       "summary": "OSWorld Verified desktop tasks.",
       "spacesd": true,
-      "digest": "sha256:e55cf3a314793f89be7efbffdc043aab29bf85990c6213a9ebbb204825504439",
+      "digest": "sha256:c788d8f6b43f03701cac46065c59a81a073d0b97c561db49db2b4ad3dd80f271",
       "sizes": {
-        "digest": "sha256:e55cf3a314793f89be7efbffdc043aab29bf85990c6213a9ebbb204825504439",
+        "digest": "sha256:c788d8f6b43f03701cac46065c59a81a073d0b97c561db49db2b4ad3dd80f271",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:5191d649e582bbfec382cfd2a06983a53df4c326e234da4cacbae535bf4bbbc2", "download": 3467139642, "unpacked": 9410652160, "disk": 9410652160 }
+          { "arch": "amd64", "manifest": "sha256:d1d3fcb7e8cdbd14da32a679aa40ee7baf5e955574a1df8bc24e68b2858e0003", "download": 3473328448, "unpacked": 9430947840, "disk": 9430947840 }
         ]
       },
       "browsers": ["firefox"],
@@ -496,11 +496,11 @@
       "variant": "vm",
       "summary": "OSWorld Verified as a full VM.",
       "spacesd": true,
-      "digest": "sha256:e33e8801cd2eeedd9bf458b66b3ecd8beab26adbb0aa2a938d53b81ef05106d9",
+      "digest": "sha256:3b8891bb5f810a79e1aa2bed8a8d6855a65d38dc4994ccdc467d081be5547aca",
       "sizes": {
-        "digest": "sha256:e33e8801cd2eeedd9bf458b66b3ecd8beab26adbb0aa2a938d53b81ef05106d9",
+        "digest": "sha256:3b8891bb5f810a79e1aa2bed8a8d6855a65d38dc4994ccdc467d081be5547aca",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:21c392b099a01cbd1c7ec5590e92ff97b1a9661ee068a2db3bacf0e5b157a5e7", "download": 9532149760, "unpacked": 0, "disk": 53687091200 }
+          { "arch": "amd64", "manifest": "sha256:c3d3393d9630c84ea1be0eb3671a0a6a391dfcc5ab2b6526207a59e91a9a7ec3", "download": 9537658880, "unpacked": 0, "disk": 53687091200 }
         ]
       },
       "browsers": ["firefox"],

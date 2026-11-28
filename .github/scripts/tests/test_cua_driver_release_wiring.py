@@ -1234,8 +1234,10 @@ fi
         telemetry = self.read("libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs")
 
         self.assertNotIn("telemetry::ensure_first_run_registration();", main)
-        self.assertGreaterEqual(main.count("telemetry::run_lifecycle_worker_if_requested()"), 2)
-        self.assertGreaterEqual(main.count("telemetry::spawn_first_run_registration_worker()"), 3)
+        # One shared main: the lifecycle worker check, and registration in
+        # both the finite-command wrapper and the command dispatch.
+        self.assertGreaterEqual(main.count("telemetry::run_lifecycle_worker_if_requested()"), 1)
+        self.assertGreaterEqual(main.count("telemetry::spawn_first_run_registration_worker()"), 2)
         self.assertIn("CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER", telemetry)
         self.assertIn(".stdin(Stdio::null())", telemetry)
         self.assertIn(".stdout(Stdio::null())", telemetry)

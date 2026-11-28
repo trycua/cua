@@ -65,6 +65,128 @@ pub struct BridgeState {
     inflight: HashMap<String, Arc<AtomicUsize>>,
 }
 
+fn request_id(message: &Value) -> Option<String> {
+    message
+        .get("id")
+        .filter(|id| id.is_string() || id.is_number())
+        .map(Value::to_string)
+}
+
+fn record_answers(response: &Value, answered: &mut HashMap<String, usize>) -> Result<()> {
+    if let Some(batch) = response.as_array().filter(|batch| !batch.is_empty()) {
+        for response in batch {
+            if response.is_array() {
+                return Err(Error::Agent(
+                    "bridge response journal contains an invalid response".into(),
+                ));
+            }
+            record_answers(response, answered)?;
+        }
+        return Ok(());
+    }
+    if response["jsonrpc"] != "2.0"
+        || response.get("method").is_some()
+        || response.get("result").is_some() == response.get("error").is_some()
+        || response.get("error").is_some_and(|error| {
+            !error.get("code").is_some_and(Value::is_i64)
+                || !error.get("message").is_some_and(Value::is_string)
+        })
+        || !response
+            .get("id")
+            .is_some_and(|id| id.is_null() || id.is_string() || id.is_number())
+    {
+        return Err(Error::Agent(
+            "bridge response journal contains an invalid response".into(),
+        ));
+    }
+    if let Some(id) = request_id(response) {
+        *answered.entry(id).or_insert(0) += 1;
+    }
+    Ok(())
+}
+
+fn unanswered(message: Value, answered: &mut HashMap<String, usize>) -> Option<Value> {
+    if let Value::Array(batch) = message {
+        if batch.is_empty() {
+            return Some(Value::Array(batch));
+        }
+        let pending: Vec<_> = batch
+            .into_iter()
+            .filter_map(|m| unanswered(m, answered))
+            .collect();
+        return (!pending.is_empty()).then_some(Value::Array(pending));
+    }
+    if let Some(remaining) = request_id(&message).and_then(|id| answered.get_mut(&id)) {
+        if *remaining > 0 {
+            *remaining -= 1;
+            return None;
+        }
+    }
+    Some(message)
+}
+
+/// Responses are the durable receipts for completed calls. Recover them
+/// before reading an old pipe after a host restart; otherwise its input
+/// would repeat side effects such as posting a message or asking approval.
+/// Counts also handle sequential reuse of an ID, without depending on the
+/// order in which concurrent calls finished. Numeric and string IDs differ.
+async fn answered_calls(
+    guest: &SpacesdClient,
+    path: &str,
+    size: u64,
+) -> Result<HashMap<String, usize>> {
+    let mut answered = HashMap::new();
+    let mut offset = 0;
+    let mut pending = Vec::new();
+    while offset < size {
+        let mut bytes = Vec::new();
+        guest
+            .download_with(
+                path,
+                DownloadOptions {
+                    offset,
+                    length: (size - offset).min(64 * 1024),
+                    ..Default::default()
+                },
+                &mut bytes,
+            )
+            .await
+            .map_err(Error::Env)?;
+        if bytes.is_empty() {
+            return Err(Error::Agent(
+                "bridge response journal ended during recovery".into(),
+            ));
+        }
+        offset += bytes.len() as u64;
+        for byte in bytes {
+            if byte != b'\n' {
+                pending.push(byte);
+                if pending.len() > MAX_LINE {
+                    return Err(Error::Agent(
+                        "bridge response journal line is too large".into(),
+                    ));
+                }
+                continue;
+            }
+            if !pending.iter().all(u8::is_ascii_whitespace) {
+                let response: Value = serde_json::from_slice(&pending).map_err(|_| {
+                    Error::Agent("bridge response journal contains an invalid response".into())
+                })?;
+                record_answers(&response, &mut answered)?;
+            }
+            pending.clear();
+        }
+    }
+    // A partial receipt is ambiguous. Refuse to replay its request rather
+    // than risk repeating a side effect whose response was interrupted.
+    if !pending.is_empty() {
+        return Err(Error::Agent(
+            "bridge response journal contains an incomplete response".into(),
+        ));
+    }
+    Ok(answered)
+}
+
 /// The MCP server that answers `rec`'s bridge.
 pub fn server(
     spaces: &Spaces,
@@ -109,6 +231,18 @@ pub async fn pump(
         };
         let offset = *state.offsets.get(id).unwrap_or(&0);
         if e.size > offset {
+            let out_path = format!("{dir}/{id}.out");
+            let mut answered = if !state.offsets.contains_key(id) {
+                match entries
+                    .iter()
+                    .find(|entry| entry.name == format!("{id}.out"))
+                {
+                    Some(output) => answered_calls(guest, &out_path, output.size).await?,
+                    None => HashMap::new(),
+                }
+            } else {
+                HashMap::new()
+            };
             let mut buf = Vec::new();
             guest
                 .download_with(
@@ -134,7 +268,6 @@ pub async fn pump(
                 continue;
             };
             let complete: Vec<u8> = pending.drain(..=last_nl).collect();
-            let out_path = format!("{dir}/{id}.out");
             let writer = state
                 .writers
                 .entry(id.to_string())
@@ -149,11 +282,14 @@ pub async fn pump(
                 if line.iter().all(u8::is_ascii_whitespace) {
                     continue;
                 }
-                dispatched += 1;
                 let message: Value = match serde_json::from_slice(line) {
                     Ok(v) => v,
                     Err(e) => json!({"jsonrpc": "2.0", "id": null, "__parse_error": e.to_string()}),
                 };
+                let Some(message) = unanswered(message, &mut answered) else {
+                    continue;
+                };
+                dispatched += 1;
                 let (server, guest, out_path, writer, inflight) = (
                     server.clone(),
                     guest.clone(),

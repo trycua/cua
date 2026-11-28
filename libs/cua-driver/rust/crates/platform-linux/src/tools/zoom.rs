@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::ToolState;
+use crate::routes::LinuxCapture as _;
 
 // ── zoom ──────────────────────────────────────────────────────────────────────
 
@@ -101,7 +102,7 @@ impl Tool for ZoomTool {
             // pure-Wayland sessions surface a typed "per-window capture not
             // supported yet" error instead of accidentally calling the
             // X11-only path with a foreign-toplevel id.
-            let png = crate::wayland::screenshot_window_dispatch(xid)?;
+            let png = crate::routes::routes().capture_window(xid, None)?;
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, x1, y1, x2, y2, 500)
         })
         .await;

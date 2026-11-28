@@ -18,10 +18,11 @@
 use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
+use cua_driver_core::process::ManagedChild;
 use cua_driver_core::video::{VideoBackend, VideoBackendFactory, VideoMetadata};
 use cua_driver_core::video_ffmpeg::find_ffmpeg;
 
@@ -92,9 +93,15 @@ fn prepare_output_dir(output_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Recorders are killed with their backend: a backend dropped without
+/// `stop` must not leave an encoder running or a zombie behind.
+fn owned_encoder() -> cua_driver_core::process::ManagedChildBuilder {
+    ManagedChild::builder().kill_with_owner().reap_on_drop()
+}
+
 /// Collect the tail of a child's stderr without letting the pipe fill up.
-fn drain_stderr_tail(child: &mut Child) -> Option<std::thread::JoinHandle<Vec<u8>>> {
-    child.stderr.take().map(|mut stderr| {
+fn drain_stderr_tail(child: &mut ManagedChild) -> Option<std::thread::JoinHandle<Vec<u8>>> {
+    child.take_stderr().map(|mut stderr| {
         std::thread::spawn(move || {
             let mut output = Vec::new();
             let _ = stderr.read_to_end(&mut output);
@@ -158,39 +165,40 @@ fn run_gnome_shell_encoder(
     stop_rx: mpsc::Receiver<()>,
     ready_tx: &mpsc::SyncSender<Result<(), String>>,
 ) -> anyhow::Result<()> {
-    let mut child = Command::new(ffmpeg)
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "image2pipe",
-            "-framerate",
-            "5",
-            "-vcodec",
-            "png",
-            "-i",
-            "-",
-            "-an",
-            "-vf",
-            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-y",
-        ])
-        .arg(output_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut child = owned_encoder()
+        .spawn(
+            Command::new(ffmpeg)
+                .args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "image2pipe",
+                    "-framerate",
+                    "5",
+                    "-vcodec",
+                    "png",
+                    "-i",
+                    "-",
+                    "-an",
+                    "-vf",
+                    "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    "-y",
+                ])
+                .arg(output_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped()),
+        )
         .map_err(|error| anyhow::anyhow!("failed to start GNOME FFmpeg encoder: {error}"))?;
     let mut stdin = child
-        .stdin
-        .take()
+        .take_stdin()
         .ok_or_else(|| anyhow::anyhow!("GNOME FFmpeg encoder exposed no stdin"))?;
     stdin.write_all(&first_frame)?;
     stdin.flush()?;
@@ -239,7 +247,7 @@ impl VideoBackend for GnomeShellVideoBackend {
 }
 
 struct WfRecorderVideoBackend {
-    child: Child,
+    child: ManagedChild,
     output_path: PathBuf,
     started_at: Instant,
     stderr_thread: Option<std::thread::JoinHandle<Vec<u8>>>,
@@ -247,7 +255,7 @@ struct WfRecorderVideoBackend {
 
 impl WfRecorderVideoBackend {
     fn start(output_path: &Path) -> anyhow::Result<Self> {
-        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        if crate::desktop::desktop() == crate::desktop::Desktop::X11 {
             anyhow::bail!("wf-recorder requires WAYLAND_DISPLAY");
         }
         let available = Command::new("wf-recorder")
@@ -276,8 +284,8 @@ impl WfRecorderVideoBackend {
         if let Some(output) = std::env::var_os("CUA_WAYLAND_RECORDING_OUTPUT") {
             command.arg("-o").arg(output);
         }
-        let mut child = command
-            .spawn()
+        let mut child = owned_encoder()
+            .spawn(&mut command)
             .map_err(|error| anyhow::anyhow!("failed to start wf-recorder: {error}"))?;
         let stderr_thread = drain_stderr_tail(&mut child);
 
@@ -588,7 +596,7 @@ mod portal_video {
     }
 
     struct Encoder {
-        child: Child,
+        child: ManagedChild,
         stdin: Option<std::process::ChildStdin>,
         stderr_thread: Option<std::thread::JoinHandle<Vec<u8>>>,
         geometry: Geometry,
@@ -600,25 +608,27 @@ mod portal_video {
 
     impl Encoder {
         fn spawn(ffmpeg: &Path, output_path: &Path, geometry: Geometry) -> anyhow::Result<Self> {
-            let mut child = Command::new(ffmpeg)
-                .args(["-hide_banner", "-loglevel", "error", "-f", "rawvideo"])
-                .args(["-pix_fmt", geometry.pix_fmt])
-                .args([
-                    "-video_size",
-                    &format!("{}x{}", geometry.width, geometry.height),
-                ])
-                .args(["-framerate", &FPS.to_string()])
-                .args(["-i", "-", "-an"])
-                .args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
-                .args(["-c:v", "libx264", "-preset", "ultrafast"])
-                .args(["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y"])
-                .arg(output_path)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
+            let mut child = owned_encoder()
+                .spawn(
+                    Command::new(ffmpeg)
+                        .args(["-hide_banner", "-loglevel", "error", "-f", "rawvideo"])
+                        .args(["-pix_fmt", geometry.pix_fmt])
+                        .args([
+                            "-video_size",
+                            &format!("{}x{}", geometry.width, geometry.height),
+                        ])
+                        .args(["-framerate", &FPS.to_string()])
+                        .args(["-i", "-", "-an"])
+                        .args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
+                        .args(["-c:v", "libx264", "-preset", "ultrafast"])
+                        .args(["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y"])
+                        .arg(output_path)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped()),
+                )
                 .map_err(|error| anyhow::anyhow!("failed to start FFmpeg encoder: {error}"))?;
-            let stdin = child.stdin.take();
+            let stdin = child.take_stdin();
             if let Some(stdin) = &stdin {
                 if let Err(error) = set_nonblocking(stdin) {
                     let _ = child.kill();

@@ -92,6 +92,7 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 /// Linux evdev BTN_LEFT — the button code the virtual-pointer protocol expects.
 const BTN_LEFT: u32 = 0x110;
 
+use crate::routes::{DisplayRoute, LinuxCapture as _, Outcome, WindowRoute};
 use crate::x11::WindowInfo;
 
 thread_local! {
@@ -142,12 +143,6 @@ pub fn is_wayland() -> bool {
         crate::desktop::desktop(),
         crate::desktop::Desktop::Wayland(_)
     )
-}
-
-/// Whether [`ENABLE_WAYLAND_ENV`] opts into the native Wayland backend,
-/// whatever the session.
-pub fn wayland_enabled() -> bool {
-    crate::desktop::opted_in(std::env::var(ENABLE_WAYLAND_ENV).ok().as_deref())
 }
 
 /// Reason string when X11 input injection cannot possibly work, so callers
@@ -1224,86 +1219,89 @@ fn ext_toplevel_capture(xid: u64) -> Option<anyhow::Result<Vec<u8>>> {
     Some(ext_screencopy::screenshot_toplevel(&identifier))
 }
 
-fn screenshot_window_bytes_with_dispatch(
-    wayland: bool,
+/// The compositor's own copy of an ext-listed toplevel. No crop is needed,
+/// and a refused copy must not fall back to output pixels.
+fn ext_toplevel_window(xid: u64, capture: Option<anyhow::Result<Vec<u8>>>) -> Outcome<Vec<u8>> {
+    match capture {
+        Some(capture) => capture
+            .map_err(|error| {
+                surface_identity_unproven(xid, format!("ext toplevel capture: {error:#}"))
+            })
+            .into(),
+        None => Outcome::NotApplicable,
+    }
+}
+
+/// Crop the display capture to the window's compositor-attested geometry,
+/// failing closed before any capture when the geometry is unproven.
+fn crop_attested_window(
     xid: u64,
-    toplevel_capture: impl FnOnce(u64) -> Option<anyhow::Result<Vec<u8>>>,
     wayland_crop: impl FnOnce(u64) -> anyhow::Result<WaylandWindowCrop>,
     display_capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
-    x11_capture: impl FnOnce(u64) -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {
-    if wayland {
-        // The compositor copied this exact toplevel: no crop is needed, and
-        // a refused copy must not fall back to output pixels.
-        if let Some(capture) = toplevel_capture(xid) {
-            return capture.map_err(|error| {
-                surface_identity_unproven(xid, format!("ext toplevel capture: {error:#}"))
-            });
-        }
-        let crop = wayland_crop(xid)?;
-        let output = display_capture()?;
-        return crop_png_to_rect(
-            &output,
-            crop.x,
-            crop.y,
-            crop.width,
-            crop.height,
-            &format!("Wayland window {xid}"),
-        );
-    }
-    x11_capture(xid)
-}
-
-/// Window capture dispatcher. X11 uses its per-window capture path. Wayland
-/// copies the toplevel itself when its window_id came from
-/// ext-foreign-toplevel-list, and otherwise crops output pixels only when
-/// compositor metadata proves that the requested surface is currently
-/// rendered; otherwise it fails closed. Output-level
-/// capture remains available through [`screenshot_display_dispatch`].
-pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
-    screenshot_dispatch_for_pid(xid, None)
-}
-
-pub fn screenshot_dispatch_with_pid(xid: u64, pid: u32) -> anyhow::Result<Vec<u8>> {
-    screenshot_dispatch_for_pid(xid, Some(pid))
-}
-
-fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
-    if is_wayland() && kwin_capture::knows_window(xid) {
-        return kwin_capture::capture(xid, pid).map_err(|error| {
-            tracing::debug!("KWin window capture refused: {error:#}");
-            surface_identity_unproven(xid, "KWin could not capture this exact window")
-        });
-    }
-    if is_wayland() && hyprland::is_session() {
-        return hyprland::capture(xid, pid).map_err(|error| {
-            tracing::debug!("Hyprland target capture refused: {error:#}");
-            surface_identity_unproven(
-                xid,
-                "Hyprland target identity or toplevel export could not be verified",
-            )
-        });
-    }
-    if niri::is_session() {
-        return niri_window_capture(xid, pid);
-    }
-    if is_wayland() && is_inject_mode() {
-        return cua_compositor_capture::capture(xid, pid)
-            .map_err(|error| surface_identity_unproven(xid, format!("cua-compositor: {error:#}")));
-    }
-    if is_wayland() {
-        if let Some(result) = gnome_window_capture(xid, shell_helper::screenshot_window(xid, pid)) {
-            return result;
-        }
-    }
-    screenshot_window_bytes_with_dispatch(
-        is_wayland(),
-        xid,
-        ext_toplevel_capture,
-        wayland_window_crop,
-        screenshot_display_dispatch,
-        crate::capture::screenshot_window_bytes,
+    let crop = wayland_crop(xid)?;
+    let output = display_capture()?;
+    crop_png_to_rect(
+        &output,
+        crop.x,
+        crop.y,
+        crop.width,
+        crop.height,
+        &format!("Wayland window {xid}"),
     )
+}
+
+impl WindowRoute {
+    /// Capture window `xid` on this route. Wayland crops output pixels only
+    /// when compositor metadata proves that the requested surface is
+    /// currently rendered; otherwise it fails closed.
+    pub(crate) fn run(self, xid: u64, pid: Option<u32>) -> Outcome<Vec<u8>> {
+        match self {
+            WindowRoute::KWin => {
+                if !kwin_capture::knows_window(xid) {
+                    return Outcome::NotApplicable;
+                }
+                kwin_capture::capture(xid, pid)
+                    .map_err(|error| {
+                        tracing::debug!("KWin window capture refused: {error:#}");
+                        surface_identity_unproven(xid, "KWin could not capture this exact window")
+                    })
+                    .into()
+            }
+            WindowRoute::Hyprland => hyprland::capture(xid, pid)
+                .map_err(|error| {
+                    tracing::debug!("Hyprland target capture refused: {error:#}");
+                    surface_identity_unproven(
+                        xid,
+                        "Hyprland target identity or toplevel export could not be verified",
+                    )
+                })
+                .into(),
+            WindowRoute::Niri => {
+                if !niri::is_session() {
+                    return Outcome::NotApplicable;
+                }
+                niri_window_capture(xid, pid).into()
+            }
+            WindowRoute::CuaCompositor => cua_compositor_capture::capture(xid, pid)
+                .map_err(|error| {
+                    surface_identity_unproven(xid, format!("cua-compositor: {error:#}"))
+                })
+                .into(),
+            WindowRoute::GnomeHelper => {
+                match gnome_window_capture(xid, shell_helper::screenshot_window(xid, pid)) {
+                    Some(result) => result.into(),
+                    None => Outcome::NotApplicable,
+                }
+            }
+            WindowRoute::ExtToplevel => ext_toplevel_window(xid, ext_toplevel_capture(xid)),
+            WindowRoute::OutputCrop => crop_attested_window(xid, wayland_window_crop, || {
+                crate::routes::routes().capture_display()
+            })
+            .into(),
+            WindowRoute::X11 => crate::capture::screenshot_window_bytes(xid).into(),
+        }
+    }
 }
 
 /// A verified GNOME helper is the only GNOME window route: its `CaptureWindow`
@@ -1432,79 +1430,70 @@ fn crop_png_to_rect(
     Ok(cursor.into_inner())
 }
 
-/// Display-level capture dispatcher. Cascade:
-/// 1. Opt-in GNOME compositor helper. If available, capture failure is
-///    terminal rather than cascading into GNOME's portal implementation.
-/// 2. KWin's ScreenShot2, only while `cua-driver kwin-capture` is on. A Deny
-///    saved in the portal keeps it off unless the operator overrode it.
-/// 3. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
-///    consent).
-/// 4. ext-image-copy-capture-v1 on supported compositors.
-/// 5. xdg-desktop-portal Screenshot via ashpd. Asks once and saves the answer. A
-///    refusal from the portal is terminal; the request has a 30-second deadline,
-///    after which the cascade continues.
-/// 6. X11: existing root-window path.
-pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
-    if niri::is_session() {
-        return niri_display_capture().map(|capture| capture.png);
-    }
-    if is_wayland() && hyprland::is_session() {
-        // The desktop action frame spans every powered output. The cascade
-        // below copies only the first output, so a multi-monitor layout is
-        // composed per output; a single output keeps the cascade.
-        if let Some(capture) = hyprland::composite_desktop_capture() {
-            return capture;
-        }
-    }
-    if is_wayland() {
-        // Tier 1: the opt-in GNOME compositor helper. It avoids probing
-        // wlroots-only protocols and captures the Shell stage without consent.
-        // If the helper is present but capture fails, do not fall through to
-        // GNOME's portal implementation: on GNOME 50 a malformed 0x0 cursor
-        // sprite can crash Shell in GNOME's unsafe stage-content capture path.
-        if let Some(result) = checked_shell_helper_capture(
-            shell_helper::available(),
-            shell_helper::screenshot_display,
-        ) {
-            return result;
-        }
-        // Tier 2: every output from KWin, with no portal request to wait on.
-        if let Some(bytes) = kwin_workspace_capture(
-            kwin_capture::may_be_session(),
-            kwin_access::allowed,
-            kwin_capture::capture_workspace,
-        ) {
-            return Ok(bytes);
-        }
-        // Tier 3: native wlroots screencopy (fast, zero consent).
-        match screenshot_bytes() {
-            Ok(bytes) => return orient_display_png(bytes),
-            Err(e) => {
-                tracing::debug!(
-                    "wlroots screencopy unavailable ({e}); trying ext-image-copy-capture-v1"
-                );
+impl DisplayRoute {
+    /// Capture the whole display on this route.
+    pub(crate) fn run(self) -> Outcome<Vec<u8>> {
+        match self {
+            DisplayRoute::Niri => {
+                if !niri::is_session() {
+                    return Outcome::NotApplicable;
+                }
+                niri_display_capture().map(|capture| capture.png).into()
             }
+            // The desktop action frame spans every powered output. The routes
+            // after this copy only the first output, so a multi-monitor layout
+            // is composed per output; a single output passes on.
+            DisplayRoute::HyprlandOutputs => match hyprland::composite_desktop_capture() {
+                Some(capture) => capture.into(),
+                None => Outcome::NotApplicable,
+            },
+            // The opt-in GNOME compositor helper avoids probing wlroots-only
+            // protocols and captures the Shell stage without consent. If the
+            // helper is present but capture fails, do not fall through to
+            // GNOME's portal implementation: on GNOME 50 a malformed 0x0 cursor
+            // sprite can crash Shell in GNOME's unsafe stage-content capture path.
+            DisplayRoute::GnomeHelper => match checked_shell_helper_capture(
+                shell_helper::available(),
+                shell_helper::screenshot_display,
+            ) {
+                Some(result) => result.into(),
+                None => Outcome::NotApplicable,
+            },
+            // Every output from KWin, with no portal request to wait on.
+            DisplayRoute::KWinWorkspace => match kwin_workspace_capture(
+                kwin_capture::may_be_session(),
+                kwin_access::allowed,
+                kwin_capture::capture_workspace,
+            ) {
+                Some(bytes) => Outcome::Done(bytes),
+                None => Outcome::NotApplicable,
+            },
+            // Native wlroots screencopy (fast, zero consent).
+            DisplayRoute::WlrScreencopy => match screenshot_bytes() {
+                Ok(bytes) => orient_display_png(bytes).into(),
+                Err(e) => {
+                    tracing::debug!(
+                        "wlroots screencopy unavailable ({e}); trying ext-image-copy-capture-v1"
+                    );
+                    Outcome::NotApplicable
+                }
+            },
+            // sway 1.10+, labwc 0.8+, hyprland, KDE 6.2+, GNOME 47+.
+            DisplayRoute::ExtImageCopy => match ext_screencopy::screenshot_via_ext_copy() {
+                Ok(bytes) => orient_display_png(bytes).into(),
+                Err(e) => {
+                    tracing::debug!(
+                        "ext-image-copy-capture-v1 unavailable ({e}); trying xdg-desktop-portal"
+                    );
+                    Outcome::NotApplicable
+                }
+            },
+            // GNOME, KDE, COSMIC fallback. Asks once and saves the answer; the
+            // request has a 30-second deadline, after which X11 is tried.
+            DisplayRoute::Portal => portal_route(portal_screenshot::screenshot_via_portal),
+            DisplayRoute::X11Root => crate::capture::screenshot_display_bytes_x11().into(),
         }
-        // Tier 4: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
-        // hyprland, KDE 6.2+, GNOME 47+).
-        match ext_screencopy::screenshot_via_ext_copy() {
-            Ok(bytes) => return orient_display_png(bytes),
-            Err(e) => {
-                tracing::debug!(
-                    "ext-image-copy-capture-v1 unavailable ({e}); trying xdg-desktop-portal"
-                );
-            }
-        }
-        // Tier 5: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
-        return portal_or_x11(
-            portal_screenshot::screenshot_via_portal,
-            crate::capture::screenshot_display_bytes_x11,
-        );
     }
-    // Final fallback: X11 root window. Call the X11-only path explicitly
-    // so we don't re-enter screenshot_display_bytes (which routes back here
-    // on Wayland — would loop forever).
-    crate::capture::screenshot_display_bytes_x11()
 }
 
 /// Logical size of an output whose native mode is `mode` under wl_output
@@ -1587,24 +1576,14 @@ fn kwin_workspace_capture(
         .ok()
 }
 
-/// The cascade tail: the portal tier, then the X11 root window. A portal
-/// refusal (`Err`) ends the cascade; only an unavailable portal (`Ok(None)`)
-/// falls through to X11.
-fn portal_or_x11(
-    portal: impl FnOnce() -> anyhow::Result<Option<Vec<u8>>>,
-    x11: impl FnOnce() -> anyhow::Result<Vec<u8>>,
-) -> anyhow::Result<Vec<u8>> {
-    if let Some(bytes) = portal()? {
-        return Ok(bytes);
+/// The portal route: a refusal (`Err`) is terminal; only an unavailable
+/// portal (`Ok(None)`) passes on.
+fn portal_route(portal: impl FnOnce() -> anyhow::Result<Option<Vec<u8>>>) -> Outcome<Vec<u8>> {
+    match portal() {
+        Ok(Some(bytes)) => Outcome::Done(bytes),
+        Ok(None) => Outcome::NotApplicable,
+        Err(error) => Outcome::Refused(error),
     }
-    x11()
-}
-
-/// Per-window capture dispatcher. Kept as the explicit window-capture entry
-/// point for callers outside `get_window_state`; it shares the same fail-closed
-/// Wayland contract as [`screenshot_dispatch`].
-pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
-    screenshot_dispatch(xid)
 }
 
 // ── Input session helper ─────────────────────────────────────────────────────
@@ -5321,13 +5300,10 @@ mod tests {
     }
 
     #[test]
-    fn wayland_window_capture_fails_closed_without_using_x11_pixels() {
+    fn unproven_wayland_geometry_fails_closed_before_capture() {
         let display_called = std::cell::Cell::new(false);
-        let x11_called = std::cell::Cell::new(false);
-        let error = screenshot_window_bytes_with_dispatch(
-            true,
+        let error = crop_attested_window(
             0x2962,
-            |_| None,
             |xid| {
                 Err(surface_identity_unproven(
                     xid,
@@ -5338,17 +5314,12 @@ mod tests {
                 display_called.set(true);
                 Ok(vec![9, 9, 9])
             },
-            |_| {
-                x11_called.set(true);
-                Ok(vec![1, 2, 3])
-            },
         )
         .expect_err("Wayland output pixels cannot prove a window surface");
 
         assert!(is_surface_identity_unproven(&error));
         assert!(error.to_string().contains("window 10594"));
         assert!(!display_called.get());
-        assert!(!x11_called.get());
     }
 
     #[test]
@@ -5386,26 +5357,6 @@ mod tests {
     }
 
     #[test]
-    fn x11_window_capture_keeps_the_existing_per_window_path() {
-        let captured_xid = std::cell::Cell::new(None);
-        let bytes = screenshot_window_bytes_with_dispatch(
-            false,
-            42,
-            |_| panic!("X11 must not copy an ext toplevel"),
-            |_| panic!("X11 must not resolve a Wayland crop"),
-            || panic!("X11 must not capture the Wayland output"),
-            |xid| {
-                captured_xid.set(Some(xid));
-                Ok(vec![1, 2, 3])
-            },
-        )
-        .expect("X11 per-window capture should remain available");
-
-        assert_eq!(captured_xid.get(), Some(42));
-        assert_eq!(bytes, vec![1, 2, 3]);
-    }
-
-    #[test]
     fn listed_wayland_identity_remains_valid_when_current_enumeration_hides_it() {
         let pid = std::process::id();
         let window_id = 0x000f_2962_0001;
@@ -5440,10 +5391,8 @@ mod tests {
         source
             .write_to(&mut encoded, image::ImageFormat::Png)
             .expect("encode fixture PNG");
-        let cropped = screenshot_window_bytes_with_dispatch(
-            true,
+        let cropped = crop_attested_window(
             42,
-            |_| None,
             |_| {
                 Ok(WaylandWindowCrop {
                     x: 2,
@@ -5453,7 +5402,6 @@ mod tests {
                 })
             },
             || Ok(encoded.into_inner()),
-            |_| panic!("Wayland must not use the X11 capture path"),
         )
         .expect("visible compositor-attested Wayland surface should capture");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
@@ -5462,40 +5410,27 @@ mod tests {
 
     #[test]
     fn ext_toplevel_window_capture_returns_the_toplevel_copy_without_a_crop() {
-        let requested = std::cell::Cell::new(None);
-        let bytes = screenshot_window_bytes_with_dispatch(
-            true,
-            0xF000_0000,
-            |xid| {
-                requested.set(Some(xid));
-                Some(Ok(vec![7, 7, 7]))
-            },
-            |_| panic!("an ext toplevel copy needs no geometry"),
-            || panic!("an ext toplevel copy must not capture the output"),
-            |_| panic!("Wayland must not use the X11 capture path"),
-        )
-        .expect("an ext-listed window should capture through its toplevel source");
-
-        assert_eq!(requested.get(), Some(0xF000_0000));
+        let Outcome::Done(bytes) = ext_toplevel_window(0xF000_0000, Some(Ok(vec![7, 7, 7]))) else {
+            panic!("an ext-listed window should capture through its toplevel source");
+        };
         assert_eq!(bytes, vec![7, 7, 7]);
+        assert!(
+            matches!(ext_toplevel_window(0x2962, None), Outcome::NotApplicable),
+            "a window not listed through ext-foreign-toplevel-list takes the next route"
+        );
     }
 
     #[test]
     fn refused_ext_toplevel_copy_fails_closed_naming_the_cause() {
-        let error = screenshot_window_bytes_with_dispatch(
-            true,
+        let Outcome::Refused(error) = ext_toplevel_window(
             0xF000_0000,
-            |_| {
-                Some(Err(anyhow::anyhow!(
-                    "compositor does not expose \
-                     ext_foreign_toplevel_image_capture_source_manager_v1"
-                )))
-            },
-            |_| panic!("a refused toplevel copy must not fall back to a crop"),
-            || panic!("a refused toplevel copy must not capture the output"),
-            |_| panic!("Wayland must not use the X11 capture path"),
-        )
-        .expect_err("a refused toplevel copy must not return pixels");
+            Some(Err(anyhow::anyhow!(
+                "compositor does not expose \
+                 ext_foreign_toplevel_image_capture_source_manager_v1"
+            ))),
+        ) else {
+            panic!("a refused toplevel copy must not fall back to a crop");
+        };
 
         assert!(is_surface_identity_unproven(&error));
         assert_eq!(
@@ -5564,7 +5499,7 @@ mod tests {
         assert!(!called.get());
     }
 
-    /// Run the display cascade's portal-then-X11 tail with a portal request
+    /// Run the display routes' portal-then-X11 tail with a portal request
     /// that resolves to `outcome`, reporting whether X11 was captured. The
     /// refusal contract is owned by `tests/portal_screenshot_cascade.rs`,
     /// which drives the public capture path against a portal on D-Bus.
@@ -5576,16 +5511,22 @@ mod tests {
             .build()
             .unwrap();
         let x11_called = std::cell::Cell::new(false);
-        let result = portal_or_x11(
-            || {
-                rt.block_on(portal_screenshot::request_outcome(
-                    async { outcome },
-                    portal_screenshot::SCREENSHOT_TIMEOUT,
-                ))
-            },
-            || {
-                x11_called.set(true);
-                Ok(b"x11-root".to_vec())
+        let mut outcome = Some(outcome);
+        let result = crate::routes::first_route(
+            "display capture",
+            &[DisplayRoute::Portal, DisplayRoute::X11Root],
+            |route| match route {
+                DisplayRoute::Portal => portal_route(|| {
+                    rt.block_on(portal_screenshot::request_outcome(
+                        async { outcome.take().expect("one portal request") },
+                        portal_screenshot::SCREENSHOT_TIMEOUT,
+                    ))
+                }),
+                DisplayRoute::X11Root => {
+                    x11_called.set(true);
+                    Outcome::Done(b"x11-root".to_vec())
+                }
+                other => panic!("{other:?} is not in the tail"),
             },
         );
         (result, x11_called.get())

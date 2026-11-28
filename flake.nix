@@ -3,6 +3,12 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    # FFmpeg for the E2E recording shells comes from this exact nixpkgs revision
+    # (nixos-26.05 on 24 Nov 2026, ffmpeg_8 = 8.1.3), not from the moving
+    # `nixpkgs` input. 8.1.3 fixes CVE-2026-137905, CVE-2026-137906 and
+    # CVE-2026-137907. To move: pick a nixos-26.05 revision whose ffmpeg_8 is
+    # newer, run `nix flake update nixpkgs-ffmpeg`, and raise ffmpegMinVersion.
+    nixpkgs-ffmpeg.url = "github:NixOS/nixpkgs/5b31ff946309736077f0c4ee23bb85d0a0a1c181";
     flake-utils.url = "github:numtide/flake-utils";
     crane.url = "github:ipetkov/crane";
   };
@@ -11,6 +17,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-ffmpeg,
       flake-utils,
       crane,
       ...
@@ -24,6 +31,17 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          # Pinned FFmpeg (see the nixpkgs-ffmpeg input). The assertion makes a
+          # lock update that moves ffmpeg below the fixed release fail at eval
+          # time, so an advisory fix cannot be undone by a later bump.
+          ffmpegMinVersion = "8.1.3";
+          ffmpegPinned =
+            let
+              ffmpeg = nixpkgs-ffmpeg.legacyPackages.${system}.ffmpeg_8;
+            in
+            assert nixpkgs.lib.assertMsg (nixpkgs.lib.versionAtLeast ffmpeg.version ffmpegMinVersion)
+              "ffmpeg ${ffmpeg.version} from nixpkgs-ffmpeg is older than ${ffmpegMinVersion} (CVE-2026-137907)";
+            ffmpeg;
           craneLib = crane.mkLib pkgs;
 
           # cua-driver builds inside libs/: its crates reach the shared
@@ -142,7 +160,7 @@
               clang
               chromium
               dbus
-              ffmpeg
+              ffmpegPinned
               # The shared Wayland history gate requires an unlocked Secret Service.
               gnome-keyring
               gobject-introspection

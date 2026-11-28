@@ -26,6 +26,26 @@ pub const VIRGL: &str = "virgl";
 /// Containers: NVIDIA GPUs through the engine's `nvidia` runtime.
 pub const NVIDIA: &str = "nvidia";
 
+/// The NVIDIA GPUs a container option names: `nvidia` is every GPU (an empty list),
+/// `nvidia:<id>[,<id>...]` is those GPUs, each an index (`0`) or a UUID (`GPU-...`) as
+/// `nvidia-smi -L` lists them. `None` when `option` is not an NVIDIA option.
+pub fn nvidia_devices(option: &str) -> Option<Vec<String>> {
+    if option == NVIDIA {
+        return Some(Vec::new());
+    }
+    let ids = option.strip_prefix("nvidia:")?;
+    let ids: Vec<String> = ids
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect();
+    let valid = |id: &String| {
+        id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
+    (!ids.is_empty() && ids.iter().all(valid)).then_some(ids)
+}
+
 /// The Lume GPU guide (published docs route of
 /// `docs/content/docs/lume/guides/gpu-passthrough.mdx`).
 pub const LUME_GPU_DOCS: &str = "https://cua.ai/docs/lume/guides/gpu-passthrough";
@@ -262,6 +282,24 @@ pub fn container_support_wsl(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nvidia_option_names_the_gpus_it_wants() {
+        use super::nvidia_devices;
+        assert_eq!(nvidia_devices("nvidia"), Some(vec![]), "every GPU");
+        assert_eq!(
+            nvidia_devices("nvidia:GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60"),
+            Some(vec!["GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60".to_string()])
+        );
+        assert_eq!(
+            nvidia_devices("nvidia:0, 2"),
+            Some(vec!["0".to_string(), "2".to_string()])
+        );
+        for bad in ["virgl", "nvidia:", "nvidia:,", "nvidia:a b", "nvidia:a;b", "nvidia:../x", "NVIDIA:0"] {
+            assert_eq!(nvidia_devices(bad), None, "{bad}");
+        }
+        assert_eq!(nvidia_devices(&format!("nvidia:{}", "x".repeat(65))), None);
+    }
+
     use super::*;
 
     #[test]

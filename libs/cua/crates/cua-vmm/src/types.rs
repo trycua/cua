@@ -480,6 +480,7 @@ pub fn reject_gpu(backend: BackendKind, spec: &StartSpec, offered: &[&str]) -> c
     match spec.gpu.as_deref() {
         None => Ok(()),
         Some(g) if offered.contains(&g) => Ok(()),
+        Some(g) if backend == BackendKind::Container && crate::gpu::nvidia_devices(g).is_some() => Ok(()),
         Some(g) => Err(crate::VmmError::Unsupported {
             backend: backend.as_str(),
             op: match (backend, g) {

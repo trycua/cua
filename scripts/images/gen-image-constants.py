@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.check:
         print(
-            f"error: {OUT} is stale: run python3 scripts/images/gen-image-constants.py",
+            f"error: {OUT} is stale: run scripts/regen-all.sh --only images",
             file=sys.stderr,
         )
         return 1

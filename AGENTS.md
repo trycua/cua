@@ -55,6 +55,9 @@ that are easy to miss:
 - `libs/cua` (cua SDK, `cua` CLI, `cua daemon`) is the only client library.
   `cua-sdk` is its only UniFFI export crate. Bindings, the Spaces manifest,
   and bundled skills are generated or synced and have `--check` drift gates.
+  After changing Rust FFI types, protos, docs-generated surfaces or a contract,
+  run `scripts/regen-all.sh` (all generated outputs) before pushing; `--check`
+  mirrors CI and `--only swift,electron` narrows it.
 - `libs/cua-spacesd` is server-only and runs inside the sandbox. Client
   code goes in `libs/cua`; the driver depends on `libs/cua`, never the reverse.
   The driver never injects input itself: all input goes through cua-driver.

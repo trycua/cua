@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.67.0...cua-driver-rs-v0.67.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **cua-driver:** run every OS through one main with platform hooks ([#8457](https://github.com/trycua/cua/issues/8457)) ([196de75](https://github.com/trycua/cua/commit/196de759126f16fe6ecfd5e2222574f94993eda2))
+
 ## [0.67.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.66.0...cua-driver-rs-v0.67.0) (2026-11-28)
 
 

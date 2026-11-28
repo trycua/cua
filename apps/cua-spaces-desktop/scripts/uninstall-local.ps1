@@ -50,7 +50,7 @@ if ($state -eq 'foreign') {
 # Stop what runs from the Local folder (the app, its daemon): nothing else.
 if ($state -ne 'absent') {
     Write-Step 'stopping Cua Spaces Local'
-    $n = Stop-ProcessesUnder $InstallDir
+    $n = Stop-LocalInstall $InstallDir
     if ($n -gt 0) { Write-Host "  stopped $n process(es)" }
 }
 

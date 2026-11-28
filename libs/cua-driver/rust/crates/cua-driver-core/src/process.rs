@@ -356,7 +356,7 @@ mod win {
     use std::process::{Child, Command};
 
     use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
@@ -478,10 +478,10 @@ mod win {
         unsafe {
             CreateProcessW(
                 PCWSTR(wide_program.as_ptr()),
-                PWSTR(command_line.as_mut_ptr()),
+                Some(PWSTR(command_line.as_mut_ptr())),
                 None,
                 None,
-                BOOL::from(false),
+                false,
                 flags,
                 None,
                 PCWSTR::null(),
@@ -557,7 +557,7 @@ mod win {
             let mut ids: ProcessIds = unsafe { std::mem::zeroed() };
             unsafe {
                 QueryInformationJobObject(
-                    job.handle(),
+                    Some(job.handle()),
                     JobObjectBasicProcessIdList,
                     &mut ids as *mut _ as *mut core::ffi::c_void,
                     std::mem::size_of::<ProcessIds>() as u32,

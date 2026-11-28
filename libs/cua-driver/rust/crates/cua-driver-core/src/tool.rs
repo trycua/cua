@@ -2943,14 +2943,19 @@ impl ToolRegistry {
         let (mut resource, summary) = if let Some((resource, summary)) = history_resource {
             (resource, summary.to_owned())
         } else if let Some(resource) = browser_scope {
-            let target_id = browser_target.unwrap_or("unknown");
             (
                 resource,
-                match browser_tab {
-                    Some(tab_id) => {
+                match (browser_target, browser_tab) {
+                    (Some(target_id), Some(tab_id)) => {
                         format!("Allow Cua to observe browser target {target_id}, tab {tab_id}")
                     }
-                    None => format!("Allow Cua to observe browser target {target_id}"),
+                    (Some(target_id), None) => {
+                        format!("Allow Cua to observe browser target {target_id}")
+                    }
+                    (None, _) => {
+                        "Allow Cua to observe the headless browser it launched in this session"
+                            .to_owned()
+                    }
                 },
             )
         } else if browser_target.is_some() {

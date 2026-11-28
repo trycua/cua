@@ -35,6 +35,27 @@ pub trait IsolatedBrowserProcess: Send {
     fn kill(&mut self) -> std::io::Result<()>;
     fn wait(&mut self) -> std::io::Result<ExitStatus>;
 
+    /// Signal the browser's whole process group. Core spawns the isolated
+    /// browser as its own group leader, so this reaches only the
+    /// driver-launched tree (Chrome's renderer/utility descendants) and never
+    /// another browser. Callers go through `signal_group_if_unreaped`, which
+    /// signals only while the leader is unreaped so the group id cannot have
+    /// been reused.
+    fn kill_process_group(&mut self) {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(self.id() as i32), libc::SIGKILL);
+        }
+    }
+
+    /// Whether the leader has not been reaped. Until it is, its pid, and so
+    /// its process group id, cannot be reused, even after it exits. The
+    /// default asks `try_wait`, which reaps an exited leader and so answers
+    /// false for it.
+    fn leader_unreaped(&mut self) -> bool {
+        matches!(self.try_wait(), Ok(None))
+    }
+
     /// Run `work` with the authority of the browser's token. The browser can
     /// write its profile directory, so a more privileged Driver must not
     /// follow browser-planted links there with its own rights. When the
@@ -61,6 +82,24 @@ impl IsolatedBrowserProcess for Child {
 
     fn wait(&mut self) -> std::io::Result<ExitStatus> {
         Child::wait(self)
+    }
+
+    /// An exited leader that is still a zombie holds its pid, so it counts as
+    /// unreaped and its surviving descendants are still signalled. `WNOWAIT`
+    /// leaves it a zombie; `ECHILD` means it was already reaped. Once this
+    /// `Child` has been reaped, another child may hold its pid, so callers
+    /// never ask after reaping it themselves.
+    #[cfg(unix)]
+    fn leader_unreaped(&mut self) -> bool {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::waitid(
+                libc::P_PID,
+                Child::id(self) as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            ) == 0
+        }
     }
 }
 
@@ -164,6 +203,11 @@ pub struct PrepareRequest {
     /// that cannot attach in the background refuses with
     /// `background_unavailable` before any visible effect.
     pub foreground: bool,
+    /// Launch the driver-owned browser with `--headless=new`: no native
+    /// window, compositor, or desktop input. Valid only with
+    /// `allow_launch` and `profile.mode=isolated_new`; the outcome carries a
+    /// session-scoped `headless_target` that binds in place of pid+window_id.
+    pub headless: bool,
 }
 
 /// What a platform adapter actually did (or found) during prepare.
@@ -205,12 +249,16 @@ pub struct PrepareAttachment {
     pub browser: String,
     pub capabilities_invalidated: bool,
     pub next_action: String,
+    /// Opaque, session-scoped bind anchor for a driver-owned headless launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrepareAttachmentKind {
     ExistingProfile,
+    DriverOwnedHeadless,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -233,6 +233,21 @@ jobs:
           ../../../scripts/ci/linux/with-rootless-xwayland.sh \
             cargo test -p platform-linux --lib --locked -- --ignored --exact \
             capture::tests::live_desktop_capture_shows_stacked_windows_at_their_screen_position
+      - name: Run the real driver-owned headless Chrome flow
+        working-directory: libs/cua-driver/rust
+        run: |
+          # Isolated launch accepts only a root-owned Chrome whose complete
+          # path is not group- or world-writable. Normalize the hosted image
+          # to that contract, as the standalone browser lane does.
+          chrome_payload="$(readlink -f "$(command -v google-chrome)")"
+          sudo chown root:root /opt /opt/google /opt/google/chrome "$chrome_payload"
+          sudo chmod go-w /opt /opt/google /opt/google/chrome "$chrome_payload"
+          # Hosted Linux has no browser sandbox for the disposable profile.
+          env -u DISPLAY -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE \
+            CUA_TEST_REAL_HEADLESS_CHROME=1 CUA_DRIVER_BROWSER_NO_SANDBOX=1 \
+            cargo test -p platform-linux --lib --locked -- --ignored --exact \
+            browser_platform::tests::real_headless_chrome_types_clicks_reads_back_and_cleans_up \
+            --nocapture --test-threads=1
       - name: Run X11 spare keycode restore regressions
         working-directory: libs/cua-driver/rust
         run: |

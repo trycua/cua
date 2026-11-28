@@ -126,7 +126,7 @@ pub(super) struct FixtureState {
     windowless_targets: Vec<Value>,
     /// Extra page targets living in the bound window, after T1 in the
     /// browser's `Target.getTargets` order.
-    sibling_tabs: Vec<Value>,
+    pub(super) sibling_tabs: Vec<Value>,
     /// Fail the read-only prepare probe without closing the WebSocket.
     fail_get_targets: bool,
     silent_get_targets: bool,
@@ -158,7 +158,7 @@ pub(super) struct FixtureState {
     /// Answer every post-snapshot semantic readback after this delay.
     dom_click_readback_delay: Option<std::time::Duration>,
     /// Every incoming CDP call: (sessionId, method, params).
-    calls: Vec<(Option<String>, String, Value)>,
+    pub(super) calls: Vec<(Option<String>, String, Value)>,
 }
 
 impl Default for FixtureState {
@@ -240,7 +240,7 @@ fn screenshot_png_base64(width: u32, height: u32) -> String {
     BASE64.encode(encoded.into_inner())
 }
 
-type SharedState = Arc<StdMutex<FixtureState>>;
+pub(super) type SharedState = Arc<StdMutex<FixtureState>>;
 
 /// Main-frame document: a plain button, an open shadow root with an
 /// input, a user-agent shadow root (must be skipped), a same-process
@@ -549,7 +549,7 @@ fn oopif_document() -> Value {
     })
 }
 
-fn fixture_handler(state: SharedState) -> MockHandler {
+pub(super) fn fixture_handler(state: SharedState) -> MockHandler {
     Arc::new(move |call| {
         let mut st = state.lock().unwrap();
         st.calls.push((
@@ -1629,7 +1629,7 @@ async fn attach_fixture(
     )
 }
 
-fn structured(result: &ToolResult) -> &Value {
+pub(super) fn structured(result: &ToolResult) -> &Value {
     result
         .structured_content
         .as_ref()
@@ -2636,7 +2636,7 @@ async fn semantic_snapshot_with(f: &Fixture, target_id: &str, tab_id: &str, extr
 
 /// The `ref` string of the first snapshot entry in the given frame kind
 /// with the given backing label fragment (or any, if empty).
-fn ref_of(snapshot: &Value, frame: &str, label_fragment: &str) -> String {
+pub(super) fn ref_of(snapshot: &Value, frame: &str, label_fragment: &str) -> String {
     snapshot["refs"]
         .as_array()
         .unwrap()

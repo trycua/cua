@@ -139,7 +139,7 @@ fn is_scoped_action(tool_name: &str) -> bool {
 fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
     if matches!(
         tool_name,
-        "get_desktop_state" | "get_screen_size" | "get_cursor_position"
+        "get_desktop_state" | "get_screen_size" | "get_cursor_position" | "get_user_input_events"
     ) {
         return ToolScope::Desktop;
     }

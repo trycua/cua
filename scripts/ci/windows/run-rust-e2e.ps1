@@ -475,6 +475,10 @@ if ($suite -in @("native", "all")) {
         "test", "-p", "cua-driver-e2e", "--test", "agent_cursor_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+    Invoke-CargoTest "Windows user input events" @(
+        "test", "-p", "cua-driver-e2e", "--test", "user_input_events_windows_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
 }
 
 if ($suite -in @("capture", "all")) {

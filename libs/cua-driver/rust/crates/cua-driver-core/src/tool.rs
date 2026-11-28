@@ -940,6 +940,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 ///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
+/// - `input.user_activity.read`
 /// - `input.delivery_mode` (the live tool schema accepts the shared
 ///   `background` / `foreground` delivery ladder)
 /// - `screen.capture`, `screen.capture.window`,
@@ -1063,6 +1064,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "bring_to_front" => &["window.activate"],
         "set_window_frame" => &["window.frame.set"],
         "debug_window_info" => &["window.debug_info"],
+        "get_user_input_events" => &["input.user_activity.read"],
 
         // ── permissions / config ─────────────────────────────────────
         // The macOS TCC tokens are claimed even on Windows/Linux —
@@ -8355,6 +8357,7 @@ mod capability_tests {
         "bring_to_front",
         "set_window_frame",
         "debug_window_info",
+        "get_user_input_events",
         // permissions / config
         "check_permissions",
         "get_config",
@@ -8421,6 +8424,7 @@ mod capability_tests {
         "input.keyboard.hotkey",
         "input.keyboard.press",
         "input.delivery_mode",
+        "input.user_activity.read",
         // screen
         "screen.capture",
         "screen.capture.window",

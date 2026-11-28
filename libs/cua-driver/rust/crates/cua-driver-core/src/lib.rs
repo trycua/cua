@@ -139,6 +139,7 @@ pub mod tool_args;
 pub mod tool_schema;
 pub mod type_pacing;
 pub mod ui_tree_revision;
+pub mod user_input;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;

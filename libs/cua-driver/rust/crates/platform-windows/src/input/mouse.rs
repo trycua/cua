@@ -624,7 +624,7 @@ fn send_click_synthesized_mods_impl(
                 mouseData: 0,
                 dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -637,7 +637,7 @@ fn send_click_synthesized_mods_impl(
                 mouseData: 0,
                 dwFlags: down_flag,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -650,7 +650,7 @@ fn send_click_synthesized_mods_impl(
                 mouseData: 0,
                 dwFlags: up_flag,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -971,7 +971,7 @@ fn send_drag_synthesized_impl(
                 mouseData: 0,
                 dwFlags: flags | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };
@@ -1225,7 +1225,7 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
                 mouseData: mouse_data,
                 dwFlags: flag,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::user_input_monitor::DRIVER_INPUT_TAG,
             },
         },
     };

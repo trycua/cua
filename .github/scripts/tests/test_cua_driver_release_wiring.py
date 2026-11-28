@@ -1167,7 +1167,7 @@ fi
                     "mouse_drag",
                     "parallel_mouse_drag",
                 ],
-                "win32": ["debug_window_info"],
+                "win32": ["debug_window_info", "get_user_input_events"],
             },
         )
 

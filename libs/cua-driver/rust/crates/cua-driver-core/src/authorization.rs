@@ -239,6 +239,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "list_apps",
     "list_windows",
     "debug_window_info",
+    "get_user_input_events",
     "get_browser_state",
     "browser_dialog[action=inspect]",
     "page[action=get_text|query_dom]",
@@ -783,6 +784,7 @@ pub fn enforcement_adapters_for_call(
             | "list_apps"
             | "list_windows"
             | "debug_window_info"
+            | "get_user_input_events"
             | "get_browser_state"
             | "zoom"
             | "start_recording"
@@ -958,6 +960,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "list_apps"
         | "list_windows"
         | "debug_window_info"
+        | "get_user_input_events"
         | "check_permissions"
         | "get_accessibility_tree"
         | "verify_state"
@@ -1101,6 +1104,7 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
         | "list_apps"
         | "list_windows"
         | "debug_window_info"
+        | "get_user_input_events"
         | "get_browser_state"
         | "zoom"
         | "clipboard_read" => RiskAssessment {

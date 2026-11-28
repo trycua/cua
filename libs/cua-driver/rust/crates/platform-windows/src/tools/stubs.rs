@@ -360,6 +360,12 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(ScrollTool));
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
+    r.register(Box::new(
+        cua_driver_core::user_input::UserInputEventsTool::new(
+            std::sync::Arc::new(crate::user_input_monitor::WindowsUserInputMonitor),
+            cua_driver_core::user_input::process_log(),
+        ),
+    ));
     r.register(Box::new(MoveCursorTool));
     r.register(Box::new(SetAgentCursorEnabledV2Tool));
     r.register(Box::new(SetAgentCursorMotionV2Tool));

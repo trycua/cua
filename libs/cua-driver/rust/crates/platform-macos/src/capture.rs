@@ -321,6 +321,99 @@ struct WindowCapturePlan {
     filter: screencapturekit::prelude::SCContentFilter,
     config: screencapturekit::prelude::SCStreamConfiguration,
     identity: WindowCaptureIdentity,
+    /// The window's own pixels inside the captured image, when the capture
+    /// covers its parent and child windows too (see [`group_capture`]).
+    crop: Option<PixelRect>,
+}
+
+/// A pixel rectangle inside a captured image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PixelRect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+/// A rectangle in screen points: origin x, origin y, width, height.
+type PointRect = (f64, f64, f64, f64);
+
+/// Output size and crop for a window that has AppKit parent or child windows.
+///
+/// ScreenCaptureKit's single-window filter renders the whole window group
+/// (the window, its parent and their child windows) and fits that group's
+/// bounding box, top-left anchored, into the configured output size. Sized
+/// for one window of the group, the image then shows the group scaled down
+/// (a GTK dialog transient for its main window came back as the main window
+/// at 40%), and pixel coordinates read off it miss. Capturing at the group's
+/// size and cutting the window's own rectangle out keeps it 1:1.
+///
+/// `None` when the group's box is the window's own frame (no relatives on
+/// screen, or children inside it), so the usual single-window size applies.
+fn group_capture(
+    target: PointRect,
+    group: &[PointRect],
+    scale: f64,
+) -> anyhow::Result<Option<((u32, u32), PixelRect)>> {
+    let (tx, ty, tw, th) = target;
+    let (mut left, mut top, mut right, mut bottom) = (tx, ty, tx + tw, ty + th);
+    for &(x, y, w, h) in group {
+        if !(x.is_finite() && y.is_finite() && w > 0.0 && h > 0.0) {
+            continue;
+        }
+        left = left.min(x);
+        top = top.min(y);
+        right = right.max(x + w);
+        bottom = bottom.max(y + h);
+    }
+    let same = |a: f64, b: f64| (a - b).abs() < 0.5;
+    if same(left, tx) && same(top, ty) && same(right, tx + tw) && same(bottom, ty + th) {
+        return Ok(None);
+    }
+    let out_w = rounded_pixel_dim((right - left) * scale, "group width")?;
+    let out_h = rounded_pixel_dim((bottom - top) * scale, "group height")?;
+    let x = ((tx - left) * scale).round().max(0.0);
+    let y = ((ty - top) * scale).round().max(0.0);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (x, y) = (x as u32, y as u32);
+    let width = rounded_pixel_dim(tw * scale, "width")?.min(out_w.saturating_sub(x));
+    let height = rounded_pixel_dim(th * scale, "height")?.min(out_h.saturating_sub(y));
+    if width == 0 || height == 0 {
+        anyhow::bail!("window lies outside its group's capture box");
+    }
+    Ok(Some((
+        (out_w, out_h),
+        PixelRect {
+            x,
+            y,
+            width,
+            height,
+        },
+    )))
+}
+
+/// Cut `rect` out of a premultiplied RGBA frame.
+fn crop_rgba(frame: RgbaFrame, rect: PixelRect) -> anyhow::Result<RgbaFrame> {
+    let right = rect.x.checked_add(rect.width);
+    let bottom = rect.y.checked_add(rect.height);
+    if right.is_none_or(|r| r > frame.width) || bottom.is_none_or(|b| b > frame.height) {
+        anyhow::bail!(
+            "crop {rect:?} does not fit the {}x{} group capture",
+            frame.width,
+            frame.height
+        );
+    }
+    let row = frame.width as usize * 4;
+    let mut rgba = Vec::with_capacity(rect.width as usize * rect.height as usize * 4);
+    for y in rect.y..rect.y + rect.height {
+        let start = y as usize * row + rect.x as usize * 4;
+        rgba.extend_from_slice(&frame.rgba[start..start + rect.width as usize * 4]);
+    }
+    Ok(RgbaFrame {
+        width: rect.width,
+        height: rect.height,
+        rgba,
+    })
 }
 
 /// Cheap WindowServer fingerprint used to reject a cached filter after a
@@ -561,8 +654,35 @@ fn build_window_capture_plan(
         }
     };
 
-    let out_w = rounded_pixel_dim(width_pts * scale, "width")?;
-    let out_h = rounded_pixel_dim(height_pts * scale, "height")?;
+    let mut out_w = rounded_pixel_dim(width_pts * scale, "width")?;
+    let mut out_h = rounded_pixel_dim(height_pts * scale, "height")?;
+
+    // A window with AppKit parent or child windows is captured with them;
+    // size the image for the whole group and keep only this window's part.
+    let relatives = crate::input::skylight::associated_windows(window_id);
+    let group: Vec<PointRect> = if relatives.len() > 1 {
+        content
+            .windows()
+            .into_iter()
+            .filter(|w| w.window_id() != window_id && relatives.contains(&w.window_id()))
+            .filter(|w| w.is_on_screen())
+            .map(|w| {
+                let f = w.frame();
+                (f.origin.x, f.origin.y, f.size.width, f.size.height)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let target = (frame.origin.x, frame.origin.y, width_pts, height_pts);
+    let crop = match group_capture(target, &group, scale)? {
+        Some(((group_w, group_h), crop)) => {
+            out_w = group_w;
+            out_h = group_h;
+            Some(crop)
+        }
+        None => None,
+    };
 
     let config = window_capture_config(out_w, out_h);
 
@@ -570,6 +690,7 @@ fn build_window_capture_plan(
         filter,
         config,
         identity: expected_identity,
+        crop,
     }))
 }
 
@@ -606,7 +727,11 @@ fn capture_window_from_plan(
         anyhow::anyhow!("SCScreenshotManager::capture_image failed for window {window_id}: {e}")
     })?;
 
-    cgimage_to_rgba(&image, &format!("window {window_id}")).map(CapturedImage::Rgba)
+    let frame = cgimage_to_rgba(&image, &format!("window {window_id}"))?;
+    match plan.crop {
+        Some(rect) => crop_rgba(frame, rect).map(CapturedImage::Rgba),
+        None => Ok(CapturedImage::Rgba(frame)),
+    }
 }
 
 /// Encode a ScreenCaptureKit `CGImage` as PNG after checking its geometry.
@@ -756,6 +881,12 @@ fn capture_window_from_plan_validated(
     )
 }
 
+/// Drop any cached plan for `window_id`.
+fn evict_window_capture_plan_for(window_id: u32) {
+    let mut cache = lock_window_plan_cache();
+    cache.remove_if(&window_id, |_| true);
+}
+
 fn evict_window_capture_plan(window_id: u32, plan: &std::sync::Arc<WindowCapturePlan>) {
     let mut cache = lock_window_plan_cache();
     cache.remove_if(&window_id, |stored| std::sync::Arc::ptr_eq(stored, plan));
@@ -798,6 +929,19 @@ fn retry_after_identity_change(
 /// Warm hits reuse a bounded two-second filter/config plan cache.
 fn screenshot_window_bytes_sck_inner(window_id: u32) -> anyhow::Result<CapturedImage> {
     let identity = current_window_capture_identity(window_id)?;
+    // A window with AppKit parent or child windows is captured as part of
+    // its group, sized from every member's frame; the plan cache only tracks
+    // this window's own frame, so such a plan is built fresh each time.
+    if crate::input::skylight::associated_windows(window_id).len() > 1 {
+        evict_window_capture_plan_for(window_id);
+        let plan = build_window_capture_plan(window_id, identity)?;
+        return match capture_window_from_plan_validated(window_id, &plan)? {
+            CaptureIdentityValidation::Matched(bytes) => Ok(bytes),
+            CaptureIdentityValidation::Changed(_) => anyhow::bail!(
+                "ScreenCaptureKit: window id {window_id} changed identity while it was captured"
+            ),
+        };
+    }
     let cached = {
         let mut cache = lock_window_plan_cache();
         cache.get_cloned_at(&window_id, Instant::now())
@@ -1306,6 +1450,85 @@ mod tests {
     /// Regression for trycua/cua#5476: with the pointer outside the window,
     /// a pointer-showing window capture came back scaled and offset while
     /// still sized like the window, so clicks aimed from it missed by ~37 px.
+    #[test]
+    fn a_window_without_relatives_outside_it_keeps_its_own_size() {
+        let main = (0.0, 30.0, 800.0, 632.0);
+        assert_eq!(group_capture(main, &[], 2.0).unwrap(), None);
+        // A dialog inside its parent leaves the parent's box unchanged.
+        let dialog = (312.0, 185.0, 400.0, 332.0);
+        assert_eq!(group_capture(main, &[dialog], 1.0).unwrap(), None);
+    }
+
+    #[test]
+    fn a_dialog_is_cut_out_of_its_group_at_full_size() {
+        // GnuCash in a 1024x768 VM: the Tip of the Day dialog (transient for
+        // the main window) once moved half outside it. Captured alone, the
+        // dialog came back as the 1000x722 group squeezed into 400x332.
+        let main = (0.0, 30.0, 800.0, 632.0);
+        let dialog = (600.0, 420.0, 400.0, 332.0);
+        let (size, crop) = group_capture(dialog, &[main], 1.0).unwrap().unwrap();
+        assert_eq!(size, (1000, 722));
+        assert_eq!(
+            crop,
+            PixelRect {
+                x: 600,
+                y: 390,
+                width: 400,
+                height: 332
+            }
+        );
+        // The parent is captured at the group's size too, and keeps its own part.
+        let (size, crop) = group_capture(main, &[dialog], 2.0).unwrap().unwrap();
+        assert_eq!(size, (2000, 1444));
+        assert_eq!(
+            crop,
+            PixelRect {
+                x: 0,
+                y: 0,
+                width: 1600,
+                height: 1264
+            }
+        );
+    }
+
+    #[test]
+    fn a_group_crop_keeps_exactly_the_window_rows() {
+        // 4x3 frame whose pixel value is its index.
+        let frame = RgbaFrame {
+            width: 4,
+            height: 3,
+            rgba: (0u8..12).flat_map(|i| [i, i, i, 255]).collect(),
+        };
+        let cut = crop_rgba(
+            frame,
+            PixelRect {
+                x: 1,
+                y: 1,
+                width: 2,
+                height: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!((cut.width, cut.height), (2, 2));
+        let firsts: Vec<u8> = cut.rgba.chunks(4).map(|px| px[0]).collect();
+        assert_eq!(firsts, vec![5, 6, 9, 10]);
+        let small = RgbaFrame {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 16],
+        };
+        assert!(crop_rgba(
+            small,
+            PixelRect {
+                x: 1,
+                y: 0,
+                width: 2,
+                height: 1
+            }
+        )
+        .is_err());
+    }
+
     #[test]
     fn window_capture_config_leaves_the_pointer_out_at_the_planned_size() {
         let config = window_capture_config(1240, 900);

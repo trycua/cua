@@ -968,9 +968,8 @@ fn press_pixel_checkbox(
     descriptor: &BrowserSetupDescriptor,
     navigation_committed: bool,
 ) -> anyhow::Result<bool> {
-    // Under the guarded background attach the browser window is on another
-    // Space: the checkbox is toggled by keyboard, with Chrome left in the
-    // background.
+    // Under the guarded background attach the checkbox is toggled by
+    // keyboard, with Chrome left in the background.
     let background = super::platform::guarded_attach_active();
     let click = |delivery: crate::input::mouse::WindowClickDelivery| -> anyhow::Result<()> {
         if matches!(
@@ -1056,6 +1055,17 @@ fn press_pixel_checkbox(
     })
 }
 
+/// The one AX checkbox carrying the setup label, which the keyboard toggle focuses.
+fn keyboard_checkbox(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> Option<usize> {
+    let mut matches = nodes.iter().filter(|node| {
+        node.role == "AXCheckBox" && node.title.as_deref() == Some(descriptor.checkbox_label)
+    });
+    match (matches.next(), matches.next()) {
+        (Some(node), None) => Some(node.element_ptr),
+        _ => None,
+    }
+}
+
 /// Toggle the setup checkbox with the keyboard: give the exact AX checkbox
 /// focus and send Space to the browser's pid while its window is key inside
 /// the browser only. Works for a window on another Space, where a pointer
@@ -1065,27 +1075,12 @@ fn toggle_checkbox_by_keyboard(
     window_id: u32,
     descriptor: &BrowserSetupDescriptor,
 ) -> bool {
-    let find = |tree: &TreeWalkResult| {
-        let matches = tree
-            .nodes
-            .iter()
-            .filter(|node| {
-                node.role == "AXCheckBox"
-                    && node.title.as_deref() == Some(descriptor.checkbox_label)
-            })
-            .map(|node| node.element_ptr)
-            .collect::<Vec<_>>();
-        match matches.as_slice() {
-            [element] => Some(*element),
-            _ => None,
-        }
-    };
     let mut tree = walk_tree(pid, Some(window_id), None);
-    let mut checkbox = find(&tree);
+    let mut checkbox = keyboard_checkbox(&tree.nodes, descriptor);
     if checkbox.is_none() {
         release_actionable_nodes(&tree.nodes);
         tree = walk_tree(pid, None, None);
-        checkbox = find(&tree);
+        checkbox = keyboard_checkbox(&tree.nodes, descriptor);
     }
     let Some(checkbox) = checkbox else {
         release_actionable_nodes(&tree.nodes);
@@ -1163,6 +1158,14 @@ impl SetupUiHandle {
                                 } else {
                                     Some(false)
                                 }
+                            } else if self.descriptor.product == BrowserProduct::MicrosoftEdge
+                                && !trusted_fallback_attempted
+                                && super::platform::guarded_attach_active()
+                            {
+                                trusted_fallback_attempted = true;
+                                release_actionable_nodes(&tree.nodes);
+                                toggle_checkbox_by_keyboard(pid, window_id, self.descriptor);
+                                continue;
                             } else if self.descriptor.product == BrowserProduct::MicrosoftEdge
                                 && !trusted_fallback_attempted
                             {
@@ -1556,7 +1559,8 @@ fn set_remote_debugging(
                 .nodes
                 .iter()
                 .any(|node| node.element_ptr == omnibox && has_action(node, "AXConfirm"));
-            let confirmed = can_confirm
+            let confirmed = exact_value
+                && can_confirm
                 && unsafe { perform_action(omnibox as AXUIElementRef, "AXConfirm") }
                     == kAXErrorSuccess;
             unsafe { CFRetain(omnibox as CFTypeRef) };
@@ -1662,6 +1666,29 @@ fn set_remote_debugging(
                                 ),
                             ));
                         }
+                    }
+                    Ok(None) if super::platform::guarded_attach_active() => {
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        return Err(handle.abort(
+                            pid,
+                            window_id,
+                            BrowserRefusal::new(
+                                BrowserRefusalCode::BackgroundUnavailable,
+                                format!(
+                                    "{} did not open the setup page in the background, and the \
+                                     remaining route needs the foreground, which a background \
+                                     attach never takes. The setup was rolled back; \
+                                     setup_side_effects lists anything left. Retry with \
+                                     delivery_mode:\"foreground\" only when nobody is using this \
+                                     screen or the user agreed to the browser coming forward.",
+                                    descriptor.product_name
+                                ),
+                            )
+                            .with_detail(serde_json::json!({
+                                "limitation": "setup_requires_foreground",
+                                "alternative_delivery_mode": "foreground",
+                            })),
+                        ));
                     }
                     Ok(None) => {
                         handle.foregrounded_window = true;
@@ -1839,6 +1866,16 @@ fn set_remote_debugging(
 
                         if descriptor.product == BrowserProduct::MicrosoftEdge
                             && !handle.trusted_checkbox_fallback_attempted
+                            && super::platform::guarded_attach_active()
+                        {
+                            handle.trusted_checkbox_fallback_attempted = true;
+                            release_actionable_nodes(&tree.nodes);
+                            toggle_checkbox_by_keyboard(pid, window_id, descriptor);
+                            continue;
+                        }
+
+                        if descriptor.product == BrowserProduct::MicrosoftEdge
+                            && !handle.trusted_checkbox_fallback_attempted
                         {
                             let center =
                                 unsafe { element_screen_center(element as AXUIElementRef) };
@@ -1906,6 +1943,14 @@ fn set_remote_debugging(
                         return Err(handle.abort(pid, window_id, error));
                     }
                 }
+            }
+            // The guarded attach toggles a checkbox found by pixels through
+            // its AX element, which Chrome may expose after the page paints.
+            Ok(None)
+                if super::platform::guarded_attach_active()
+                    && keyboard_checkbox(&tree.nodes, descriptor).is_none() =>
+            {
+                release_actionable_nodes(&tree.nodes)
             }
             Ok(None) => match exact_pixel_setup_checkbox(
                 pid,
@@ -2245,6 +2290,17 @@ mod tests {
             exact_setup_checkbox(&tree(wrong_url), chrome()).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn the_keyboard_toggle_needs_exactly_one_labelled_ax_checkbox() {
+        let label = chrome().checkbox_label;
+        let checkbox = || node("AXCheckBox", Some(label), None, &["AXPress"]);
+        let other = || node("AXCheckBox", Some("Other"), None, &["AXPress"]);
+
+        assert_eq!(keyboard_checkbox(&[other()], chrome()), None);
+        assert_eq!(keyboard_checkbox(&[other(), checkbox()], chrome()), Some(7));
+        assert_eq!(keyboard_checkbox(&[checkbox(), checkbox()], chrome()), None);
     }
 
     #[test]

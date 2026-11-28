@@ -125,6 +125,33 @@ fn window_is_cloaked(hwnd: HWND) -> bool {
     }
 }
 
+/// Report whether DWM currently cloaks `hwnd` (`DWMWA_CLOAKED != 0`), such as
+/// a closed UWP shell flyout, a suspended UWP frame, or a window on another
+/// virtual desktop. Returns `false` if DWM is unavailable so non-DWM
+/// environments do not mark ordinary windows as off-screen.
+fn is_dwm_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_ok()
+            && cloaked != 0
+    }
+}
+
+/// Whether a visible top-level window is actually on screen.
+///
+/// Minimized windows, DWM-cloaked windows (closed UWP shell hosts, suspended
+/// frames, windows on another virtual desktop), and zero-area shell hosts
+/// remain visible to `IsWindowVisible` but are not painted on screen.
+fn window_is_on_screen(minimized: bool, cloaked: bool, width: i32, height: i32) -> bool {
+    !minimized && !cloaked && width > 0 && height > 0
+}
+
 /// Resolve one exact Win32 window without enumerating the desktop.
 pub(crate) fn find_window_by_pid_and_handle(pid: u32, hwnd: u64) -> Option<WindowInfo> {
     exact_window_from_probe(pid, hwnd, window_info_by_handle)
@@ -342,6 +369,7 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
         return None;
     }
     let minimized = unsafe { IsIconic(native) }.as_bool();
+    let cloaked = is_dwm_cloaked(native);
     let (x, y, width, height) = get_window_bounds(native);
     Some(WindowInfo {
         hwnd,
@@ -351,7 +379,7 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
         y,
         width,
         height,
-        is_on_screen: !minimized,
+        is_on_screen: window_is_on_screen(minimized, cloaked, width, height),
         minimized,
     })
 }
@@ -409,6 +437,7 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
     // Get bounds — prefer DWM extended frame bounds (includes shadow), fallback to GetWindowRect.
     let (x, y, w, h) = get_window_bounds(hwnd);
+    let cloaked = is_dwm_cloaked(hwnd);
 
     state.lock().unwrap().windows.push(WindowInfo {
         hwnd: hwnd.0 as u64,
@@ -418,7 +447,7 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         y,
         width: w,
         height: h,
-        is_on_screen: !minimized,
+        is_on_screen: window_is_on_screen(minimized, cloaked, w, h),
         minimized,
     });
 
@@ -678,7 +707,7 @@ mod exact_window_tests {
     use super::{
         exact_window_from_probe, lookup_window_for_pid_with, merge_top_level_windows,
         owner_chain_reaches_target, post_action_foreground_allowed, target_dismissed,
-        PidWindowLookup, PostActionForegroundRelation, WindowInfo,
+        window_is_on_screen, PidWindowLookup, PostActionForegroundRelation, WindowInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -857,6 +886,16 @@ mod exact_window_tests {
         stale.actual_visible = false;
         assert!(!post_action_foreground_allowed(stale));
         assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
+    }
+
+    #[test]
+    fn cloaked_minimized_or_zero_area_windows_are_not_on_screen() {
+        assert!(window_is_on_screen(false, false, 1280, 720));
+        assert!(!window_is_on_screen(true, false, 1280, 720));
+        assert!(!window_is_on_screen(false, true, 1920, 1080));
+        assert!(!window_is_on_screen(false, false, 396, 0));
+        assert!(!window_is_on_screen(false, false, 0, 100));
+        assert!(!window_is_on_screen(false, false, -1, 100));
     }
 }
 

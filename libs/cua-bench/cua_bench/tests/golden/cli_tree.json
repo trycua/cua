@@ -883,6 +883,21 @@
           "type": null
         },
         {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "trace_bundle",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--trace-bundle"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
           "action": "_StoreTrueAction",
           "choices": null,
           "const": true,
@@ -1331,6 +1346,36 @@
               "nargs": null,
               "options": [
                 "--task-filter"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "live_trace",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--live-trace"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "trace_only",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--trace-only"
               ],
               "required": false,
               "type": null
@@ -1878,6 +1923,36 @@
               "nargs": null,
               "options": [
                 "--session-id"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "live_trace",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--live-trace"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "trace_only",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--trace-only"
               ],
               "required": false,
               "type": null
@@ -2476,6 +2551,36 @@
               "options": [],
               "required": true,
               "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "follow",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--follow"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 100,
+              "dest": "max_download_mib",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--max-download-mib"
+              ],
+              "required": false,
+              "type": "int"
             }
           ],
           "commands": {}

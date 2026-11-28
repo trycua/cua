@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.28](https://github.com/trycua/cua/compare/bench-v0.4.27...bench-v0.4.28) (2026-11-28)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.67 ([#8841](https://github.com/trycua/cua/issues/8841)) ([1b14778](https://github.com/trycua/cua/commit/1b14778d3a2dcb94f40294ae6c6f947b4c6187e1))
+
 ## [0.4.27](https://github.com/trycua/cua/compare/bench-v0.4.26...bench-v0.4.27) (2026-11-28)
 
 

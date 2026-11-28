@@ -38,7 +38,7 @@ ALLOWED = {
     ".github/workflows/ci-vm-density.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
     ".github/workflows/e2b-core-nightly.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
     ".github/workflows/e2e-cua-sdk.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
-    ".github/workflows/e2e-rust-standalone-browsers.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
+    ".github/workflows/e2e-rust-standalone-browsers.yml": (2, "step also runs other commands; split the step and use the action (follow-up); installs a local pinned Helium .deb"),
     ".github/workflows/monitor-branded-installers.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
     ".github/workflows/nightly-build.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
     ".github/workflows/nightly-e2b-rollouts.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),

@@ -269,7 +269,8 @@ fn def() -> &'static ToolDef {
                 "x": { "type": "number", "description": "Screenshot-pixel X: pixel-click to focus, then send the key. With y, no element_token." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id sends to the frontmost app." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with("Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.")
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with("Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land."),
+                "locked_input": super::locked_input_schema()
             },
             "additionalProperties": false
         }),
@@ -381,31 +382,34 @@ impl Tool for PressKeyTool {
         // destination, proven element ancestry) BEFORE anything is sent —
         // including the px focus click. delivery_mode:"foreground" stays the
         // caller's explicit last resort and is not gated here.
-        let _mutation_lease = if !fg {
+        let locked_input = args.get("locked_input").and_then(Value::as_bool) == Some(true);
+        let (_mutation_lease, under_lock) = if !fg {
             if let Some(wid) = window_id {
-                match super::gate_background_window_action(
+                match super::gate_background_keys(
                     pid,
                     wid,
                     pre_focus_ptr,
                     super::window_keyboard_action(
                         cua_driver_core::background_input::BackgroundAction::GenericKey,
                     ),
+                    locked_input,
                 )
                 .await
                 {
-                    Ok(lease) => Some(lease),
+                    Ok((lease, under_lock)) => (Some(lease), under_lock),
                     Err(refusal_result) => return refusal_result,
                 }
             } else {
-                None
+                (None, false)
             }
         } else {
-            None
+            (None, false)
         };
 
         // The addressed window must be the app's confirmed key window before
         // any key (or focus click) goes out; otherwise refuse (window_not_key).
-        let _key_scope = match super::acquire_key_scope(pid, window_id, fg).await {
+        // Under a lock it cannot be confirmed, and the caller accepted that.
+        let _key_scope = match super::acquire_key_scope(pid, window_id, fg || under_lock).await {
             Ok(scope) => scope,
             Err(refusal) => return refusal,
         };
@@ -558,18 +562,22 @@ impl Tool for PressKeyTool {
                 };
                 let chromium_embedder = !fg
                     && !confirmed
+                    && !under_lock
                     && tokio::task::spawn_blocking(move || {
                         super::type_text::is_chromium_embedder(pid)
                     })
                     .await
                     .unwrap_or(false);
                 let mut structured = delivered_structured(confirmed, fg, chromium_embedder);
-                let note = if structured.get("escalation").is_some() {
+                changes.add_window_identity(&mut structured);
+                let note = if under_lock {
+                    structured["locked_input"] = true.into();
+                    super::UNDER_LOCK_NOTE.to_owned()
+                } else if structured.get("escalation").is_some() {
                     format!(" {}", super::CHROMIUM_BACKGROUND_KEY_NOTE)
                 } else {
                     String::new()
                 };
-                changes.add_window_identity(&mut structured);
                 ToolResult::text(format!(
                     "✅ Pressed {display_key} on pid {pid}{label}.{note}{}",
                     changes.result_suffix()
@@ -609,6 +617,14 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(!poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || false));
         assert!(started.elapsed() >= AX_ORACLE_WAIT);
+    }
+
+    #[test]
+    fn locked_input_is_an_advertised_boolean() {
+        assert_eq!(
+            def().input_schema["properties"]["locked_input"]["type"],
+            "boolean"
+        );
     }
 
     #[test]

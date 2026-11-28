@@ -17,6 +17,11 @@
 //! semantics while doing as little work as possible between receipt and
 //! native dispatch. This module provides that lower-level contract without
 //! changing the existing one-shot tools.
+//!
+//! The one thing the session adds to a viewer's events is the click count.
+//! The wire carries none, and macOS does not count a posted event's presses
+//! the way it counts a physical mouse's, so the session counts them itself
+//! and stamps `kCGMouseEventClickState` on each press and release.
 
 use std::{
     sync::{
@@ -44,7 +49,7 @@ const SCROLL_MOMENTUM_PHASE_FIELD: u32 = 123;
 // The event, batch, receipt and error types are the cross-platform contract
 // in `cua_driver_core::interactive_input`; this module is the macOS native
 // session behind it.
-use cua_driver_core::interactive_input::extract_integral;
+use cua_driver_core::interactive_input::{extract_integral, gestures::CLICK_SLOP_PX, ClickCounter};
 pub use cua_driver_core::interactive_input::{
     GesturePhase, InteractiveDeliveryMode, InteractiveInputBatch, InteractiveInputError,
     InteractiveInputEvent, InteractiveInputReceipt, KeyState, Modifier, PointerButton,
@@ -259,11 +264,24 @@ fn run_worker(
     }
 }
 
+/// One pointer sample ready to post: the native event, the point in the
+/// target's own coordinates, the button it concerns, and the click count
+/// stamped on it (`None` for a move or drag).
+struct PointerSample {
+    event: CGEvent,
+    window_local: (f64, f64),
+    button: PointerButton,
+    click_state: Option<i64>,
+}
+
 struct NativeInputState {
     config: InteractiveInputConfig,
     source: CGEventSource,
     pressed_button: Option<PointerButton>,
     click_group_id: i64,
+    clicks: ClickCounter,
+    /// Click count of the press in progress (0 when no button is down).
+    click_state: i64,
     scroll_residual_x: f64,
     scroll_residual_y: f64,
     bounds: crate::windows::WindowBounds,
@@ -281,6 +299,8 @@ impl NativeInputState {
             source,
             pressed_button: None,
             click_group_id: 1,
+            clicks: ClickCounter::new(double_click_interval(), CLICK_SLOP_PX),
+            click_state: 0,
             scroll_residual_x: 0.0,
             scroll_residual_y: 0.0,
             bounds,
@@ -396,6 +416,31 @@ impl NativeInputState {
         y_normalized: f64,
         modifiers: &[Modifier],
     ) -> Result<()> {
+        let sample = self.pointer_event(phase, button, x_normalized, y_normalized, modifiers)?;
+        self.post_pointer(
+            &sample.event,
+            sample.window_local,
+            sample.button,
+            sample.click_state,
+        );
+        Ok(())
+    }
+
+    /// The native event for one pointer sample, with the click count a
+    /// physical mouse would carry: a press, and its release, read
+    /// `kCGMouseEventClickState` 1, 2, 3… when presses of one button follow
+    /// each other within the user's double-click interval at one spot. macOS
+    /// leaves a posted event's count as created (1 on a down, 0 on an up), so
+    /// without the stamp every press reaches the app as a lone click and a
+    /// viewer's double-click never selects a word or opens an icon.
+    fn pointer_event(
+        &mut self,
+        phase: PointerPhase,
+        button: Option<PointerButton>,
+        x_normalized: f64,
+        y_normalized: f64,
+        modifiers: &[Modifier],
+    ) -> Result<PointerSample> {
         let (point, window_local) = self.resolve_point(x_normalized, y_normalized)?;
         let effective_button = button
             .or(self.pressed_button)
@@ -410,20 +455,40 @@ impl NativeInputState {
             .map_err(|_| native("pointer event creation failed"))?;
         event.set_flags(modifier_flags(modifiers));
 
-        if phase == PointerPhase::Down {
-            self.pressed_button = Some(effective_button);
-            self.click_group_id = self.click_group_id.wrapping_add(1).max(1);
+        match phase {
+            PointerPhase::Down => {
+                self.pressed_button = Some(effective_button);
+                let count = self
+                    .clicks
+                    .press(effective_button, (point.x, point.y), Instant::now());
+                self.click_state = i64::from(count);
+                if count == 1 {
+                    // One click group spans a whole multi-click, as the
+                    // tool paths' double-clicks do.
+                    self.click_group_id = self.click_group_id.wrapping_add(1).max(1);
+                }
+            }
+            PointerPhase::Cancel => self.clicks.reset(),
+            PointerPhase::Up | PointerPhase::Move => {}
         }
-        self.post_pointer(
-            &event,
-            window_local,
-            effective_button,
-            matches!(phase, PointerPhase::Down | PointerPhase::Up),
-        );
+        let click_state = matches!(
+            phase,
+            PointerPhase::Down | PointerPhase::Up | PointerPhase::Cancel
+        )
+        .then_some(self.click_state);
+        if let Some(click_state) = click_state {
+            event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, click_state);
+        }
         if matches!(phase, PointerPhase::Up | PointerPhase::Cancel) {
             self.pressed_button = None;
+            self.click_state = 0;
         }
-        Ok(())
+        Ok(PointerSample {
+            event,
+            window_local,
+            button: effective_button,
+            click_state,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -518,12 +583,14 @@ impl NativeInputState {
         }
     }
 
+    /// Post a pointer event; `click_state` is the click count of a press or
+    /// release (`None` for a move or drag).
     fn post_pointer(
         &self,
         event: &CGEvent,
         window_local: (f64, f64),
         button: PointerButton,
-        click: bool,
+        click_state: Option<i64>,
     ) {
         if self.is_foreground() {
             event.post(CGEventTapLocation::HID);
@@ -534,15 +601,26 @@ impl NativeInputState {
                 Some(window_local),
                 Some(self.config.window_id),
                 Some(self.click_group_id),
-                i64::from(click),
+                click_state.unwrap_or(0),
                 pointer_button_number(button),
-                if click { 3 } else { 0 },
+                if click_state.is_some() { 3 } else { 0 },
             );
         }
     }
 
     fn is_foreground(&self) -> bool {
         self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
+    }
+}
+
+/// The user's double-click interval from System Settings, as AppKit applies
+/// it (`com.apple.mouse.doubleClickThreshold`); half a second when unset.
+fn double_click_interval() -> Duration {
+    let seconds = unsafe { objc2_app_kit::NSEvent::doubleClickInterval() };
+    if seconds.is_finite() && seconds > 0.0 {
+        Duration::from_secs_f64(seconds)
+    } else {
+        Duration::from_millis(500)
     }
 }
 
@@ -694,6 +772,52 @@ mod tests {
         assert!(
             state.prepare_target().is_ok(),
             "a display activates nothing"
+        );
+    }
+
+    #[test]
+    fn repeated_presses_at_one_spot_carry_the_click_count() {
+        let config = InteractiveInputConfig::display(0.0, 0.0, 1024.0, 768.0);
+        let bounds = target_window_bounds(&config).unwrap();
+        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+        let mut state = NativeInputState::new(config, source, bounds);
+        let press = |state: &mut NativeInputState, phase, x, y| {
+            let sample = state
+                .pointer_event(phase, Some(PointerButton::Left), x, y, &[])
+                .unwrap();
+            let field = sample
+                .event
+                .get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE);
+            assert_eq!(
+                sample.click_state,
+                Some(field),
+                "the event carries the stamped count"
+            );
+            field
+        };
+
+        assert_eq!(press(&mut state, PointerPhase::Down, 0.5, 0.5), 1);
+        assert_eq!(press(&mut state, PointerPhase::Up, 0.5, 0.5), 1);
+        let group = state.click_group_id;
+        assert_eq!(press(&mut state, PointerPhase::Down, 0.5, 0.5), 2);
+        assert_eq!(press(&mut state, PointerPhase::Up, 0.5, 0.5), 2);
+        assert_eq!(press(&mut state, PointerPhase::Down, 0.5, 0.5), 3);
+        assert_eq!(press(&mut state, PointerPhase::Up, 0.5, 0.5), 3);
+        assert_eq!(state.click_group_id, group, "a multi-click is one group");
+
+        assert_eq!(press(&mut state, PointerPhase::Down, 0.1, 0.1), 1);
+        assert_eq!(press(&mut state, PointerPhase::Up, 0.1, 0.1), 1);
+        assert_ne!(state.click_group_id, group, "a new sequence is a new group");
+
+        let moved = state
+            .pointer_event(PointerPhase::Move, None, 0.2, 0.2, &[])
+            .unwrap();
+        assert_eq!(moved.click_state, None, "a move carries no click count");
+        assert_eq!(
+            moved
+                .event
+                .get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
+            0
         );
     }
 

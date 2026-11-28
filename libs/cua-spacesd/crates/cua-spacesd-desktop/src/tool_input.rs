@@ -322,6 +322,7 @@ impl ToolInputLease {
                 x,
                 y,
                 button,
+                count,
                 modifiers,
             } => {
                 let mut arguments = pointer();
@@ -329,6 +330,9 @@ impl ToolInputLease {
                 arguments.insert("x".into(), x.into());
                 arguments.insert("y".into(), y.into());
                 arguments.insert("button".into(), button_name(button).into());
+                if count > 1 {
+                    arguments.insert("count".into(), count.into());
+                }
                 let modifiers = modifier_names(&modifiers);
                 if !modifiers.is_empty() {
                     arguments.insert("modifier".into(), json!(modifiers));
@@ -416,7 +420,7 @@ impl InteractiveInputLease for ToolInputLease {
                 let Some((x, y)) = fold.hover(event) else {
                     continue;
                 };
-                for gesture in fold.folder.fold(&batch.events[run..index], extent) {
+                for gesture in fold.folder.fold(&batch.events[run..index], extent, started) {
                     calls.extend(self.call(gesture, extent));
                 }
                 let (x, y) = self.point(x, y, extent);
@@ -427,7 +431,7 @@ impl InteractiveInputLease for ToolInputLease {
                 run = index + 1;
             }
         }
-        for gesture in fold.folder.fold(&batch.events[run..], extent) {
+        for gesture in fold.folder.fold(&batch.events[run..], extent, started) {
             calls.extend(self.call(gesture, extent));
         }
         drop(fold);
@@ -662,6 +666,51 @@ mod tests {
                         json!({"scope": "desktop", "x": 320.0, "y": 200.0, "direction": "down", "amount": 2})
                     )
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_viewers_double_click_reaches_the_click_tool_with_a_count() {
+        let tools = Arc::new(Recorded::default());
+        let lease = open(
+            &display_target(),
+            InteractiveDeliveryMode::PersistentForeground,
+            unknown_window,
+            |_| Ok(display()),
+            Box::new(|| None),
+            tools.clone(),
+        )
+        .unwrap();
+        // The viewer sends the second press in its own batch, right after
+        // the first.
+        lease
+            .dispatch(&batch(
+                1,
+                vec![
+                    pointer(InputPointerPhase::Down, 0.5, 0.5),
+                    pointer(InputPointerPhase::Up, 0.5, 0.5),
+                ],
+            ))
+            .unwrap();
+        lease
+            .dispatch(&batch(
+                3,
+                vec![
+                    pointer(InputPointerPhase::Down, 0.5, 0.5),
+                    pointer(InputPointerPhase::Up, 0.5, 0.5),
+                ],
+            ))
+            .unwrap();
+        let calls = tools.0.lock().unwrap().clone();
+        let click = json!({"scope": "desktop", "x": 640.0, "y": 400.0, "button": "left"});
+        let mut double = click.clone();
+        double["count"] = json!(2);
+        assert_eq!(
+            calls,
+            vec![
+                ("click".into(), desktop_pointer(click)),
+                ("click".into(), desktop_pointer(double)),
             ]
         );
     }

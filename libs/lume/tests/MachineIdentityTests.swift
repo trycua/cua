@@ -7,7 +7,7 @@ import Virtualization
 /// `lume set --machine-identifier / --mac-address` exists so a VM's machine
 /// identity can be changed or *pinned* without rebuilding the image. Software
 /// that licenses per-machine (Unity, for one) treats a changed identifier as a
-/// brand-new machine, so pinning a fleet of throwaway clones to one identifier
+/// brand-new machine, so pinning a group of throwaway clones to one identifier
 /// keeps them all on a single activation instead of burning one per clone.
 struct MachineIdentityTests {
     @Test func randomMachineIdentifierIsValidAndFresh() throws {

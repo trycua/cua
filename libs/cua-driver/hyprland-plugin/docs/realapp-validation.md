@@ -1,10 +1,10 @@
 # Concurrent real-app input validation
 
-> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
-> record of validation run on it; the Fleet references below are historical.
+> Note (18 Oct 2026): Cua Cloud ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the cloud references below are historical.
 
 On 2026-09-05, two independent Cua Driver MCP connections edited LibreOffice
-Calc and Inkscape in an Omarchy Fleet VM while a foreground fixture retained
+Calc and Inkscape in an Omarchy cloud VM while a foreground fixture retained
 the primary pointer grab. Concurrent drags overlapped for 1.49-1.77 seconds.
 The parked and moving-pointer cases recorded no uncommanded primary motion,
 focus changes, foreground input leakage, or unexpected button releases.
@@ -47,7 +47,7 @@ The loaded plugin's ABI fingerprint matched
 The installed executable and the running service's `/proc/PID/exe` had the
 same Driver digest. Installation used the repository's `install-local.sh`
 with task-local guest paths. Existing Driver installations were preserved;
-no host installation, Fleet image publication, merge, or release occurred.
+no host installation, cloud image publication, merge, or release occurred.
 
 ## What the tests measure
 

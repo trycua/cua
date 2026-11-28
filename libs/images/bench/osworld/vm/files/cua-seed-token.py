@@ -47,7 +47,7 @@ def cloud_configs(raw: bytes) -> list:
 
 def main() -> int:
     if claim_share_present():
-        log("Fleet claim share present; the claim token is authoritative")
+        log("Claim share present; the claim token is authoritative")
         return 0
     seed = None
     for _ in range(20):  # bounded: udev may still be naming the drive

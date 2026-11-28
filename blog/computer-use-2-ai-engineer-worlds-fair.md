@@ -10,11 +10,11 @@ Earlier in May, [@swyx](https://x.com/swyx) invited Cua to speak at [AI Engineer
 
 That shift changes what a desktop session looks like. Several agents can work in separate windows on the same machine, each with its own session, synthetic cursor, and recording.
 
-The talk followed that shift through three connected layers: Cua Driver gives agents a consistent way to operate desktop windows, enabling multi-player scenarios; Cua-Bench evaluates how well agents complete desktop tasks; and Cua Fleets, Cua's hosted sandbox pools at the time, provided infrastructure to provision, manage, and scale computers for agent workloads.
+The talk followed that shift through three connected layers: Cua Driver gives agents a consistent way to operate desktop windows, enabling multi-player scenarios; Cua-Bench evaluates how well agents complete desktop tasks; and Cua Cloud, Cua's hosted sandbox pools at the time, provided infrastructure to provision, manage, and scale computers for agent workloads.
 
-<img alt="The Computer-Use 2.0 talk cover, introducing Cua Driver, Cua-Bench, and Cua Fleets" src="https://github.com/user-attachments/assets/1c6bac7a-69e7-4fc9-8673-cdda8de66f17" />
+<img alt="The Computer-Use 2.0 talk cover, introducing Cua Driver, Cua-Bench, and Cua Cloud" src="https://github.com/user-attachments/assets/1c6bac7a-69e7-4fc9-8673-cdda8de66f17" />
 
-_The session followed Cua Driver, Cua-Bench, and Cua Fleets from interaction to evaluation to scale._
+_The session followed Cua Driver, Cua-Bench, and Cua Cloud from interaction to evaluation to scale._
 
 To recap where we are coming from, the team behind Cua has worked in this field since 2024, when Dillon and I were building [Windows Agent Arena](https://github.com/microsoft/WindowsAgentArena) at Microsoft. Before computer-use became the common term, we called these systems GUI agents. The name fit the architecture: the model took a screenshot, reasoned over the pixels, chose an action such as click, scroll, type, or wait, and repeated. [OSWorld](https://os-world.github.io/) and Windows Agent Arena made that loop measurable through reproducible desktop tasks.
 
@@ -141,7 +141,7 @@ Dillon closed his section with one more use for recorded rollouts. At any record
 
 _A recorded trajectory can be reconstructed at one step, then used to score a model's prediction of the next state._
 
-## Keep the fleet ready
+## Keep the pool ready
 
 <img alt="The transition from measuring agents to scaling evaluation and reinforcement-learning throughput" src="https://github.com/user-attachments/assets/0b2d24a1-3116-4d3f-a5f6-c3dbd4113f5d" />
 
@@ -159,7 +159,7 @@ _Some runtimes have a startup floor, making a small warm pool cheaper than leavi
 
 _Each idle gap is time the GPU could have spent generating the next action._
 
-Cua Fleets moved startup work into a warm pool, a small group of sandboxes that are already booted and waiting. When a rollout starts, it asks the pool for a sandbox. The pool reserves one and returns its connection details. Internally, we call this reservation a claim. Since the VM has already booted, the rollout only waits for that reservation.
+Cua Cloud moved startup work into a warm pool, a small group of sandboxes that are already booted and waiting. When a rollout starts, it asks the pool for a sandbox. The pool reserves one and returns its connection details. Internally, we call this reservation a claim. Since the VM has already booted, the rollout only waits for that reservation.
 
 <img alt="A warm pool tracks sandbox demand so rollout workers spend less time waiting for cold starts" src="https://github.com/user-attachments/assets/8fddd996-7561-4983-9daf-2c1457321588" />
 
@@ -173,11 +173,11 @@ _With ready capacity, rollout workers spend more of the training run generating 
 
 The same reservation works for longer jobs. A run can keep its sandbox for as long as it needs the machine. When the run releases it, the pool restarts the sandbox into a clean state and makes it available again.
 
-<img alt="Cua Fleets platform support across Linux, Windows, Android, and macOS" src="https://github.com/user-attachments/assets/36df63bd-5162-4513-85d6-88bd17b0314d" />
+<img alt="Cua Cloud platform support across Linux, Windows, Android, and macOS" src="https://github.com/user-attachments/assets/36df63bd-5162-4513-85d6-88bd17b0314d" />
 
-_Cua Fleets spans Linux, Windows, and Android, with macOS in Labs preview on Cua's virtualization stack._
+_Cua Cloud spans Linux, Windows, and Android, with macOS in Labs preview on Cua's virtualization stack._
 
-Cua Cloud (Fleets) ended on 18 October 2026. For shared computers that teams and agents use together, see [Cua Spaces](https://cua.ai/spaces).
+Cua Cloud ended on 18 October 2026. For shared computers that teams and agents use together, see [Cua Spaces](https://cua.ai/spaces).
 
 The code and docs behind the talk are here:
 

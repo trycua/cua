@@ -1,7 +1,7 @@
 # Held-input lifecycle validation
 
-> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
-> record of validation run on it; the Fleet references below are historical.
+> Note (18 Oct 2026): Cua Cloud ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the cloud references below are historical.
 
 On 2026-09-05, the experimental Hyprland input path released a held background
 button after operator Stop, agent disconnect, lease expiry, and plugin unload.
@@ -25,7 +25,7 @@ only; the report and test instructions add no native-code changes.
 | Native Driver and plugin source | `8882780b79514e35e5f5601800a740c17c95505c` |
 | Final lifecycle helper source | `b8c7ad0c578d260bc743783824a6c45cef9106fa` |
 | Baseline Driver source | `e71ed83f43e3d8cd2963c040b8d7d287bcbc9ba8` |
-| Omarchy | `4.0.1-1`, disposable Cua Fleet VM |
+| Omarchy | `4.0.1-1`, disposable Cua Cloud VM |
 | Hyprland | `0.56.2-1`, commit `efb50993780079460b0cbed1363e2166a2de1d9f` |
 | Portal | `xdg-desktop-portal-hyprland 1.4.1-1` |
 | Driver source and installed version | `0.23.2`, task-local source build |
@@ -44,7 +44,7 @@ The SHA-256 values are:
 The installed Driver and the running service executable had identical digests.
 Driver `get_config` reported the native source SHA above. The release installation
 was preserved; the candidate and recorder were installed only in the guest's
-task directory. No host installation or Fleet image publication occurred.
+task directory. No host installation or cloud image publication occurred.
 
 ## Regression and fix
 
@@ -124,7 +124,7 @@ helpers against new synthetic fixtures.
 - All 18 common lifecycle and nine Linux `hyprland_input` unit tests passed
   natively. The tested Rust source tree matched the committed native archive.
 - All six native plugin CTests passed.
-- All 44 Python helper tests passed locally and in the Fleet guest with the
+- All 44 Python helper tests passed locally and in the cloud guest with the
   final helper. Rust formatting and diff checks passed.
 - Initial candidate disconnect released promptly but failed a test assumption
   that a new transport could reuse an ended label. The corrected helper requires

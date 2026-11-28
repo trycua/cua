@@ -413,7 +413,7 @@ envelopes over a minimal asynchronous channel with deadlines, cancellation,
 request identity, capability negotiation, and structured transport errors.
 
 The channel carries opaque Driver envelopes. It does not expose one hand-written
-method per tool. gRPC, a Fleet channel, an HTTP/2 stream, or another
+method per tool. gRPC, a cloud channel, an HTTP/2 stream, or another
 environment-specific route may implement the channel without entering the
 native core or changing the public desktop-control contract.
 

@@ -1,7 +1,7 @@
 # Isolated-input VM validation
 
-> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
-> record of validation run on it; the Fleet references below are historical.
+> Note (18 Oct 2026): Cua Cloud ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the cloud references below are historical.
 
 This is the historical single-seat record. The later
 [concurrent real-app validation](realapp-validation.md) covers two independent
@@ -9,7 +9,7 @@ lanes, Calc and Inkscape, moving-primary measurement, Cancel, and Stop on a
 different explicitly identified candidate.
 
 On 2026-09-05, the nonshipping input experiment passed a focused native GTK3
-test in an existing Omarchy Fleet VM. Real Driver MCP calls delivered click,
+test in an existing Omarchy cloud VM. Real Driver MCP calls delivered click,
 key, hotkey, scroll, and drag events to a background application while a
 different application retained its primary-seat pointer grab.
 
@@ -51,7 +51,7 @@ Artifact SHA-256 values were:
 The repository's `install-local.sh` installed the Driver into a task-local
 guest directory. Its source SHA, resolved executable, version, digest, and
 running service executable were checked. The pre-existing local and published
-Driver binaries were preserved. No Fleet image was published.
+Driver binaries were preserved. No cloud image was published.
 
 Commit `5d4c2f7432cd6a1f7c3d8de0f6f6c0937bad3687` changes only Rust formatting
 and module declaration order after this tested source. Subsequent validation

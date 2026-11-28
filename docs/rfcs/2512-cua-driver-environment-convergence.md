@@ -1,6 +1,6 @@
 ---
 rfc: 2512
-title: 'Cua Driver convergence across hosts, local sandboxes, Lume, and Fleets'
+title: 'Cua Driver convergence across hosts, local sandboxes, Lume, and cloud'
 authors:
   - Cua maintainers
 created: 2026-07-23
@@ -15,14 +15,13 @@ superseded_by:
 
 > **Status (Sep 2026):** historical design record. computer-server was removed in the consolidation: sandboxes now run cua-env-driver (port 3211), which hosts cua-driver's MCP at `/mcp` and is reached through the cua SDK (`libs/cua`). References below to computer-server as a current or compatibility service describe the state when this RFC was written.
 
-# RFC 2512: Cua Driver convergence across hosts, local sandboxes, Lume, and Fleets
+# RFC 2512: Cua Driver convergence across hosts, local sandboxes, Lume, and cloud
 
 > September 2026 review supplement:
-> [Python and Fleet first delivery slice](2512-python-fleet-first-slice.md)
-> updates the source baseline and proposes a narrower stacked delivery. The
-> Rust remote backend now exists; production carriers and Python composition
-> remain work. The supplement records the accepted narrow implementation slice;
-> this broader RFC remains in review for the additional migrations and parity.
+> The Python-first delivery slice narrowed this RFC to a stacked implementation.
+> The Rust remote backend now exists; production carriers and Python composition
+> remain work. This broader RFC remains in review for the additional migrations
+> and parity.
 
 ## Summary
 
@@ -33,10 +32,10 @@ regardless of where the controlled desktop runs:
 - the caller's existing host;
 - a local Docker, QEMU, or Hyper-V sandbox;
 - a local macOS virtual machine managed by Lume; or
-- a remote machine obtained through a Cua Fleet claim.
+- a remote machine obtained through a Cua Cloud claim.
 
 Cua Driver owns desktop perception, actions, sessions, permissions, capability
-reporting, and the agent-facing MCP adapter. Cua Sandbox, Lume, and Cua Fleet
+reporting, and the agent-facing MCP adapter. Cua Sandbox, Lume, and Cua Cloud
 own machine lifecycle and environment services such as provisioning, images,
 claims, snapshots, shell, files, PTY, and tunnels.
 
@@ -54,7 +53,7 @@ or configure that connection.
 
 The remote request and result envelopes, client dispatch, and server dispatch
 must be generated from the canonical Rust Driver contract. They must not be
-maintained independently in Python, TypeScript, computer-server, Fleet, or an
+maintained independently in Python, TypeScript, computer-server, cloud, or an
 MCP schema. MCP remains the application of the typed SDK intended for agents;
 it is not the programmatic connection used to manufacture a typed
 `CuaDriver`.
@@ -78,7 +77,7 @@ must be implemented in Cua Driver.
 This RFC does not replace that layering. It extends it across machine
 boundaries by defining how an application receives the same typed SDK object
 when the native implementation runs in another process, VM, container, or
-Fleet machine.
+Cloud machine.
 
 ## Motivation
 
@@ -98,10 +97,10 @@ Lume provides a strong direct CLI and API for local macOS VM lifecycle.
 depends on computer-server. An application using Lume directly cannot obtain a
 typed Cua Driver connection to the VM.
 
-Fleet has a generated Rust lifecycle SDK with language bindings, claims,
-authentication, routing, and a service proxy. Fleet examples can expose Cua
+Cloud has a generated Rust lifecycle SDK with language bindings, claims,
+authentication, routing, and a service proxy. Cloud examples can expose Cua
 Driver MCP to agents. However, an external Python or TypeScript application
-cannot yet obtain the same typed `CuaDriver` object for a Fleet claim. Other
+cannot yet obtain the same typed `CuaDriver` object for a cloud claim. Other
 examples continue to use computer-server or expose both MCP servers, creating
 overlapping GUI action spaces.
 
@@ -122,18 +121,18 @@ public architecture.
 ## Goals
 
 - Expose the same generated `CuaDriver` methods and result types for embedded,
-  local-daemon, local-sandbox, Lume, and Fleet execution.
+  local-daemon, local-sandbox, Lume, and cloud execution.
 - Let environment SDKs return a ready-to-use Driver without requiring users to
   understand an internal channel, RPC protocol, service port, or MCP.
 - Generate the remote wire envelopes and dispatchers from the canonical Rust
   contract.
 - Keep Cua Driver responsible for desktop semantics across every environment.
-- Keep Sandbox, Lume, and Fleet responsible for machine lifecycle and
+- Keep Sandbox, Lume, and cloud responsible for machine lifecycle and
   environment-specific routing.
 - Preserve an explicit separation between GUI control and environment services
   such as shell, files, PTY, tunnels, snapshots, and claims.
 - Make Cua-Bench a first-class consumer of the same Driver and environment
-  boundaries, so a task can move between a local sandbox and Fleet without
+  boundaries, so a task can move between a local sandbox and cloud without
   changing its desktop action contract.
 - Keep MCP as the official agent-facing adapter downstream of the typed SDK.
 - Define ownership, cleanup, cancellation, retry, version negotiation, and
@@ -146,9 +145,9 @@ public architecture.
 
 ## Non-goals
 
-- Adding VM lifecycle, Fleet claims, shell, files, PTY, tunnels, snapshots, or
+- Adding VM lifecycle, cloud claims, shell, files, PTY, tunnels, snapshots, or
   package installation to the Cua Driver contract.
-- Making Cua Driver depend on Cua Sandbox, Lume, or Cua Fleet.
+- Making Cua Driver depend on Cua Sandbox, Lume, or Cua Cloud.
 - Replacing Lume's direct CLI or requiring all Lume users to adopt Cua
   Sandbox.
 - Requiring application SDK clients to speak MCP.
@@ -157,7 +156,7 @@ public architecture.
 - Standardizing every environment service behind one universal protocol.
 - Exposing a desktop-control service on an unauthenticated public interface.
 - Guaranteeing that every environment offers every non-Driver service.
-- Defining Fleet scheduling, image formats, pool semantics, or pricing.
+- Defining cloud scheduling, image formats, pool semantics, or pricing.
 - Redesigning Cua-Bench task definitions, evaluators, reward models, simulated
   browser environments, or trace formats except where they depend directly on
   the native desktop session boundary.
@@ -190,7 +189,7 @@ that users must instantiate a public class with that name.
 ### Driver channel
 
 The small internal callback used by a remote Driver connection to exchange
-bytes with a remote Driver service. A Fleet channel uses Fleet's authenticated
+bytes with a remote Driver service. A Cloud channel uses cloud's authenticated
 service proxy. A local Sandbox or Lume channel may use a private socket,
 loopback port, VM tunnel, or runtime-native forwarding.
 
@@ -200,12 +199,12 @@ screenshots, session policy, or other computer-use semantics.
 ### Environment
 
 The machine or isolated execution context containing the controlled desktop.
-Examples include a Docker container, QEMU VM, Lume macOS VM, and Fleet claim.
+Examples include a Docker container, QEMU VM, Lume macOS VM, and cloud claim.
 
 ### Environment SDK
 
 The API responsible for creating, claiming, finding, and cleaning up an
-environment. Cua Sandbox and Cua Fleet are environment SDKs. Lume is a
+environment. Cua Sandbox and Cua Cloud are environment SDKs. Lume is a
 lower-level VM runtime and CLI.
 
 ### Driver service
@@ -266,8 +265,8 @@ images.
 Cua Sandbox chooses a local runtime such as Docker, QEMU, Hyper-V, or Lume,
 then exposes environment and GUI interfaces.
 
-Its local GUI transports currently call computer-server. Its Fleet transport
-uses the generated Fleet SDK for provisioning and authenticated service
+Its local GUI transports currently call computer-server. Its cloud transport
+uses the generated cloud SDK for provisioning and authenticated service
 routing, but the routed guest service is still computer-server on port 8000.
 
 Cua Sandbox does not currently expose a typed `sandbox.driver()` handle.
@@ -282,9 +281,9 @@ The current Sandbox Lume integration starts and configures computer-server
 inside the guest. A direct Lume user has no standard host-side route for
 obtaining a typed `CuaDriver` object connected to the guest.
 
-### Cua Fleet
+### Cua Cloud
 
-The Fleet Rust SDK owns pools, claims, authentication, token refresh, routing,
+The cloud Rust SDK owns pools, claims, authentication, token refresh, routing,
 service proxy requests, retention, renewal, and cleanup. Its generated language
 bindings already demonstrate the intended pattern for providing foreign HTTP
 and token-provider callbacks to a canonical Rust implementation.
@@ -368,9 +367,9 @@ Lume does not define desktop action semantics. A direct Lume user may:
 Cua Sandbox may automate the second route, but the underlying Lume CLI remains
 available without Sandbox.
 
-### Cua Fleet owns remote environment lifecycle
+### Cua Cloud owns remote environment lifecycle
 
-Cua Fleet owns:
+Cua Cloud owns:
 
 - authentication and token refresh;
 - pools, claims, binding, renewal, release, and retention;
@@ -378,7 +377,7 @@ Cua Fleet owns:
 - deadlines and control-plane errors; and
 - construction of a typed Driver handle connected to a claimed environment.
 
-Fleet does not own or translate Driver operation semantics. Its channel moves
+Cloud does not own or translate Driver operation semantics. Its channel moves
 opaque, versioned Driver envelopes to the named Driver service.
 
 ### computer-server owns compatibility
@@ -404,7 +403,7 @@ Cua-Bench owns:
 - benchmark result artifacts.
 
 For native tasks, Bench obtains an environment through Cua Sandbox, Lume, or
-Cua Fleet and obtains the typed Driver associated with that environment.
+Cua Cloud and obtains the typed Driver associated with that environment.
 Desktop actions and observations use Driver. Shell, files, snapshots, resets,
 and other setup or evaluation operations use environment services.
 
@@ -436,7 +435,7 @@ flowchart TD
 
     SANDBOX["Cua Sandbox<br/>local lifecycle + services"]
     LUME["Lume<br/>macOS VM lifecycle"]
-    FLEET["Cua Fleet<br/>claims + auth + routing"]
+    CLOUD["Cua Cloud<br/>claims + auth + routing"]
     RESULTS["Trajectories + scores<br/>benchmark artifacts"]
 
     PY --> SDK
@@ -458,10 +457,10 @@ flowchart TD
 
     SANDBOX -. "constructs channel" .-> REMOTE
     LUME -. "constructs or forwards channel" .-> REMOTE
-    FLEET -. "constructs authenticated channel" .-> REMOTE
+    CLOUD -. "constructs authenticated channel" .-> REMOTE
     BENCH -. "acquires local environments" .-> SANDBOX
     BENCH -. "acquires local macOS VMs" .-> LUME
-    BENCH -. "acquires remote environments" .-> FLEET
+    BENCH -. "acquires remote environments" .-> CLOUD
     BENCH --> RESULTS
 ```
 
@@ -530,14 +529,12 @@ This RFC does not require the Lume CLI itself to become a Python SDK. It
 requires that a Lume-managed VM have a documented, secure route to the same
 Driver contract.
 
-### Cua Fleet
+### Cua Cloud
 
 Target API:
 
 ```python
-from cua_fleet import Fleet
-
-async with Fleet().claim(pool="desktop") as machine:
+async with provider.claim(pool="desktop") as machine:
     driver = await machine.driver()
 
     session = await driver.start_session(...)
@@ -575,7 +572,7 @@ The names are illustrative. The required properties are:
 - the environment supplies the standard Driver and any setup or evaluation
   services;
 - the task-facing session does not know whether the environment is local or a
-  Fleet claim;
+  Cloud claim;
 - actions and observations have Driver semantics;
 - environment reset and teardown remain provider responsibilities; and
 - evaluation output remains owned by Bench.
@@ -703,7 +700,7 @@ Each Sandbox runtime provides a private route to the guest Driver service:
 | QEMU    | runtime port forwarding or guest channel | scoped to VM                 |
 | Hyper-V | runtime forwarding or private network    | interactive-session aware    |
 | Lume    | VM forwarding, tunnel, or local proxy    | preserves guest TCC identity |
-| Fleet   | authenticated `service_request` channel  | scoped to active claim       |
+| Cloud   | authenticated `service_request` channel  | scoped to active claim       |
 
 The route is an implementation choice. The public result remains a
 `CuaDriver`.
@@ -722,9 +719,9 @@ A Lume image intended for Driver use must provide:
 The host should not attempt to reuse the host application's TCC grants for
 guest control. The relevant identity is the process inside the VM.
 
-### Fleet composition
+### Cloud composition
 
-A Fleet image advertises a named Driver service with:
+A Cloud image advertises a named Driver service with:
 
 - a health endpoint that does not expose desktop contents;
 - supported Driver protocol and capability versions;
@@ -732,12 +729,12 @@ A Fleet image advertises a named Driver service with:
 - an interactive graphical session; and
 - shutdown hooks bound to claim lifecycle.
 
-The Fleet SDK constructs a remote Driver channel using its existing service
+The cloud SDK constructs a remote Driver channel using its existing service
 proxy. It may implement the generated foreign callback in Python and
 TypeScript while authentication, refresh, path validation, and routing remain
-in the canonical Fleet SDK.
+in the canonical cloud SDK.
 
-Fleet must not deserialize or reinterpret Driver request payloads.
+Cloud must not deserialize or reinterpret Driver request payloads.
 
 ### Bench composition
 
@@ -746,7 +743,7 @@ Bench separates three concerns:
 ```mermaid
 flowchart LR
     TASK["Task definition<br/>setup + goal + evaluator"]
-    PROVIDER["Environment provider<br/>Sandbox, Lume, or Fleet"]
+    PROVIDER["Environment provider<br/>Sandbox, Lume, or cloud"]
     ENV["Environment<br/>lifecycle + shell + files"]
     DRIVER["CuaDriver<br/>actions + observations + sessions"]
     RUNNER["Bench runner<br/>agent or oracle"]
@@ -776,8 +773,8 @@ or depending on a particular action sequence.
 The environment handle owns the machine. A Driver handle borrows access to it.
 
 - Closing a Driver ends its sessions and frees client resources.
-- Closing a Driver does not stop a Sandbox or release a Fleet claim.
-- Stopping a Sandbox, stopping a Lume VM, or releasing a Fleet claim invalidates
+- Closing a Driver does not stop a Sandbox or release a cloud claim.
+- Stopping a Sandbox, stopping a Lume VM, or releasing a cloud claim invalidates
   every derived Driver handle.
 - An invalidated handle returns a stable `EnvironmentUnavailable` or
   `StaleConnection` error rather than reconnecting to a potentially different
@@ -787,7 +784,7 @@ The environment handle owns the machine. A Driver handle borrows access to it.
 
 Every remote connection is bound to an immutable environment generation:
 
-- Fleet claim ID and binding generation;
+- Cloud claim ID and binding generation;
 - Sandbox instance ID;
 - Lume VM instance and boot generation; or
 - equivalent runtime identity.
@@ -882,7 +879,7 @@ failures into stable typed categories:
 
 Environment-specific details may appear in a sanitized diagnostic field.
 Callers must not need to parse HTTP codes, MCP errors, computer-server strings,
-or Fleet proxy responses to determine the category.
+or cloud proxy responses to determine the category.
 
 ## Authentication and authorization
 
@@ -902,8 +899,8 @@ A remote credential must authorize:
 - an explicit set of Driver operations or a declared full-control scope; and
 - the active environment generation.
 
-A general Fleet control-plane bearer must not automatically become an
-unbounded reusable guest Driver credential. The Fleet proxy may authenticate
+A general cloud control-plane bearer must not automatically become an
+unbounded reusable guest Driver credential. The cloud proxy may authenticate
 the caller and inject a claim-scoped service identity, or it may carry a
 separately issued service token. The final mechanism must preserve end-to-end
 claim scoping and refresh.
@@ -949,7 +946,7 @@ session. A service isolated in Session 0 cannot provide representative GUI
 behavior.
 
 The environment image must arrange an interactive host process or equivalent
-session bridge. Fleet claim readiness includes verification that the interactive
+session bridge. Cloud claim readiness includes verification that the interactive
 session and Driver service are associated correctly.
 
 ### Linux
@@ -967,7 +964,7 @@ Allowed operational telemetry includes:
 
 - SDK language and version;
 - native runtime version;
-- connection mode: embedded, local daemon, local sandbox, Lume, or Fleet;
+- connection mode: embedded, local daemon, local sandbox, Lume, or cloud;
 - platform;
 - protocol and capability versions;
 - operation identifier;
@@ -1076,19 +1073,19 @@ with different types, errors, sessions, and release cadence.
 computer-server remains a compatibility adapter, not the canonical Driver
 connection.
 
-### Put Cua Driver operations in the Fleet SDK
+### Put Cua Driver operations in the cloud SDK
 
-The Fleet SDK could expose `click`, `screenshot`, and other methods itself.
-That would couple Fleet releases to Driver semantics and would not solve local
+The cloud SDK could expose `click`, `screenshot`, and other methods itself.
+That would couple cloud releases to Driver semantics and would not solve local
 Sandbox or Lume composition.
 
-Fleet instead returns or constructs the canonical Driver object.
+Cloud instead returns or constructs the canonical Driver object.
 
 ### Require application code to run inside the guest
 
 In-guest code can use embedded `CuaDriver.create()` and is the simplest option
 for many workloads. It does not cover controller-side applications,
-orchestrators managing multiple machines, or users who expect the Fleet or
+orchestrators managing multiple machines, or users who expect the cloud or
 Sandbox SDK to return a controllable machine.
 
 It remains supported but is not the only route.
@@ -1101,7 +1098,7 @@ deadlines, cancellation, or safe platform-neutral ownership.
 
 ### Let each runtime choose its own remote protocol
 
-Docker sockets, Lume forwarding, and Fleet proxies naturally differ. Their
+Docker sockets, Lume forwarding, and cloud proxies naturally differ. Their
 outer routing may differ, but the transported Driver envelopes and public SDK
 semantics must remain common. Allowing different Driver protocols per runtime
 would prevent parity testing and cross-environment application reuse.
@@ -1120,7 +1117,7 @@ The proposal is additive at the public SDK boundary:
 
 - Accept this RFC.
 - Inventory every Driver tool, computer-server action, Sandbox GUI facade,
-  image, and Fleet example.
+  image, and cloud example.
 - Mark each surface canonical, compatibility, or environment-only.
 - Add generated-contract parity checks for the existing SDK.
 
@@ -1133,13 +1130,13 @@ and lifecycle semantics.
   the Rust Driver contract.
 - Add the internal remote Driver connection and foreign channel callback.
 - Add an authenticated Driver service invocation endpoint.
-- Implement a Fleet-backed channel using the generated Fleet SDK's
+- Implement a cloud-backed channel using the generated cloud SDK's
   `service_request`.
 - Exercise sessions, desktop state, screenshot, click, typing, and cleanup in
   Python and TypeScript.
 
 **Gate:** one shared scenario produces compatible typed results against
-embedded Driver and a Fleet claim.
+embedded Driver and a cloud claim.
 
 **Rollback:** disable the new Driver service and continue using the existing
 MCP or computer-server routes.
@@ -1159,7 +1156,7 @@ and direct Driver E2E passes on representative images.
 ### Phase 3: environment SDK composition
 
 - Add the typed Driver accessor to local Sandbox runtimes.
-- Add the typed Driver accessor to Fleet claims.
+- Add the typed Driver accessor to cloud claims.
 - Add the documented direct-Lume connection route.
 - Bind handles to environment generation and lifecycle.
 - Preserve shell, files, PTY, and tunnels as environment services.
@@ -1167,8 +1164,8 @@ and direct Driver E2E passes on representative images.
   services without changing task and evaluator contracts.
 
 **Gate:** the same application scenario runs against host, Docker/QEMU, Lume,
-and Fleet with only environment acquisition changing. A representative native
-Bench task runs locally and on Fleet through the same task-facing session.
+and cloud with only environment acquisition changing. A representative native
+Bench task runs locally and on cloud through the same task-facing session.
 
 ### Phase 4: facade migration
 
@@ -1198,7 +1195,7 @@ rollback release.
 Each phase should be independently releasable:
 
 1. Cua Driver minor release for the generated remote connection and service.
-2. Fleet SDK and environment image releases adding the Driver service route.
+2. Cloud SDK and environment image releases adding the Driver service route.
 3. Cua Sandbox minor release adding the Driver accessor.
 4. Documentation and examples after packages and images are published.
 5. Deprecation releases before any removal.
@@ -1220,9 +1217,9 @@ One parameterized scenario must run against:
 - local daemon Driver;
 - a Linux Docker or QEMU Sandbox;
 - a Lume macOS VM;
-- a Linux Fleet claim;
-- a Windows Fleet claim; and
-- a native Cua-Bench task using both a local provider and a Fleet provider.
+- a Linux cloud claim;
+- a Windows cloud claim; and
+- a native Cua-Bench task using both a local provider and a cloud provider.
 
 The scenario must verify:
 
@@ -1244,7 +1241,7 @@ The scenario must verify:
 
 - Rust tests validate native and generated dispatcher exhaustiveness.
 - Python runs the complete scenario.
-- TypeScript runs the complete Fleet scenario plus generated type compilation.
+- TypeScript runs the complete cloud scenario plus generated type compilation.
 - Wire fixtures generated in Rust are consumed by Python and TypeScript tests.
 - CI fails when an exported Driver operation lacks a remote request, result,
   dispatcher case, or parity fixture.
@@ -1269,8 +1266,8 @@ The scenario must verify:
 
 - Driver close ends owned sessions but does not release the environment.
 - Environment close invalidates every Driver handle.
-- Fleet renewal preserves handles for the same claim generation.
-- Fleet release rejects future calls promptly.
+- Cloud renewal preserves handles for the same claim generation.
+- Cloud release rejects future calls promptly.
 - Recycled machine names and forwarded ports do not revive stale handles.
 - Guest Driver processes, recordings, sockets, ports, and credentials do not
   leak after cleanup.
@@ -1331,7 +1328,7 @@ The scenario must verify:
 
 ### Bench portability tests
 
-- One native task definition runs against local Docker and Fleet without
+- One native task definition runs against local Docker and cloud without
   changing its action or observation calls.
 - One macOS task runs through a Lume-backed environment when its required
   application is available.
@@ -1353,9 +1350,9 @@ Documentation follows the product ownership model:
 - Drive a first application on the host with Cua Driver.
 - Drive the same scenario in a local Sandbox.
 - Drive a local macOS sandbox through Lume and Cua Driver.
-- Drive a claimed Fleet machine with the Python and TypeScript Cua Driver SDKs
-  after the Fleet surface is published.
-- Run the same Cua-Bench native task locally and on Fleet after both provider
+- Drive a claimed cloud machine with the Python and TypeScript Cua Driver SDKs
+  after the cloud surface is published.
+- Run the same Cua-Bench native task locally and on cloud after both provider
   routes are released.
 
 ### How-to guides
@@ -1387,8 +1384,8 @@ Documentation follows the product ownership model:
 - telemetry fields and exclusions; and
 - compatibility and deprecation status.
 
-Fleet documentation should not be published as a finished user path until the
-public Fleet packages, image, and typed Driver E2E are available.
+Cloud documentation should not be published as a finished user path until the
+public cloud packages, image, and typed Driver E2E are available.
 
 ## Implementation ownership boundaries
 
@@ -1396,8 +1393,8 @@ The work should remain separable:
 
 - **Cua Driver:** generated protocol, remote connection, dispatcher, service,
   typed errors, capability negotiation, and Driver telemetry.
-- **Cua Fleet:** claim-scoped authenticated channel, lifecycle invalidation,
-  service discovery, token refresh, and Fleet examples.
+- **Cua Cloud:** claim-scoped authenticated channel, lifecycle invalidation,
+  service discovery, token refresh, and cloud examples.
 - **Cua Sandbox:** runtime-specific channels, Driver accessor, facade migration,
   and environment-service separation.
 - **Lume:** stable guest lifecycle and private forwarding primitives required
@@ -1422,7 +1419,7 @@ The work should remain separable:
 4. Does every exported tool become a dedicated typed convenience method, or is
    a generated typed `call_tool` union acceptable for less common operations?
 5. What is the final path and framing for the service invocation endpoint?
-6. Does Fleet inject claim-scoped service identity at the proxy, or forward a
+6. Does cloud inject claim-scoped service identity at the proxy, or forward a
    separate Driver service token?
 7. Which component issues and rotates local Sandbox and Lume service
    credentials?
@@ -1434,9 +1431,9 @@ The work should remain separable:
     into a smaller guest agent?
 11. What usage and release criteria authorize removal of the duplicate
     computer-server MCP vocabulary?
-12. Which Fleet image becomes the first canonical application-SDK image, and
+12. Which cloud image becomes the first canonical application-SDK image, and
     which current dual-MCP examples are retired?
-13. Should Bench consume Cua Sandbox and Cua Fleet providers directly, or
+13. Should Bench consume Cua Sandbox and Cua Cloud providers directly, or
     should both implement a smaller shared environment protocol owned outside
     Bench?
 14. Which deterministic Driver conformance scenarios belong in Cua Driver CI,
@@ -1449,7 +1446,7 @@ This section will be completed after review. The decision summary must record:
 - the accepted connection and protocol design;
 - how generation parity is proven;
 - the authentication and claim-scoping decision;
-- the public Sandbox, Lume, and Fleet API shapes;
+- the public Sandbox, Lume, and cloud API shapes;
 - the computer-server compatibility and deprecation policy;
 - material feedback and rejected alternatives;
 - remaining cross-platform risks; and

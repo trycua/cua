@@ -4,9 +4,9 @@ Status: superseded in part by RFC 2447
 
 Decision date: 2026-07-21
 
-> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026 and its source
-> was removed from this repository. The Fleet references below are the
-> historical evidence for this decision; the Fleet source paths and commits
+> Note (18 Oct 2026): Cua Cloud ended on 18 Oct 2026 and its source
+> was removed from this repository. The cloud references below are the
+> historical evidence for this decision; the cloud source paths and commits
 > they cite resolve only in git history.
 
 > This document preserves the rationale for the 0.11.0 daemon-client SDK.

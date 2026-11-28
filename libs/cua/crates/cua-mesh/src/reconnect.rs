@@ -10,7 +10,7 @@
 //! dropped within moments is a failure like a refused connection, so a
 //! client the relay keeps dropping slows down instead of retrying at a flat
 //! pace. After the relay itself ended a session (a restart, a change), the
-//! wait also gets [`spread`], so a fleet told to reconnect at one instant
+//! wait also gets [`spread`], so a group of machines told to reconnect at one instant
 //! does not do it in the same millisecond.
 
 use std::time::Duration;

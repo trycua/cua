@@ -9,7 +9,7 @@ Approved by Francesco on 18 Oct 2026. Data: cua.ai/docs page views over the last
 | Cua Spaces | 46 | 23 (20 guides and pages, 3 reference) |
 | Cua Driver | 45 | 22 (13 guides and pages, 9 reference) |
 | Cua CLI | 40 | 13 (4 guides and pages, 9 reference) |
-| Cua SDK | 136 | 56 (17 guides and pages, 39 reference; 53 once the Fleet removal PRs delete the 3 Fleet pages) |
+| Cua SDK | 136 | 56 (17 guides and pages, 39 reference; 53 once the cloud removal PRs delete the 3 Cloud pages) |
 | Lume | 17 | 9 |
 | Cua Bench | 17 | 8 |
 | Start here | 5 | 0 (merged into the products) |

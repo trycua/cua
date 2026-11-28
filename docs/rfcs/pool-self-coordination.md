@@ -37,7 +37,7 @@ ledger, and they pause while it sleeps.
 signed in to. Tailscale's bar is: install, sign in, done. The engine behind
 the cluster (durable job queue, exactly-once results, rescheduling on node
 loss, Modal overflow, capacity-aware placement, 27k browser sessions per
-hour in fleet-bench) stays; only who runs it and how it is found changes.
+hour in pool-bench) stays; only who runs it and how it is found changes.
 
 ## Goals
 

@@ -893,7 +893,7 @@ impl Tool for TypeTextTool {
                 move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
                 // pty-master injection is preferred — it skips the X event
                 // queue entirely. Falls through to key events if the terminal
-                // isn't reachable that way (descendant pty unresolvable).
+                // isn't reachable that way (no single window and pty).
                 if inject_terminal_input(pid, xid, &text_t)? {
                     return Ok(("pty", None));
                 }

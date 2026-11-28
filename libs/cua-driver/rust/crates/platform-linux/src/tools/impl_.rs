@@ -11,7 +11,6 @@ use cua_driver_core::{
 };
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use crate::atspi::Snapshots;
@@ -1868,8 +1867,7 @@ pub(crate) fn is_chromium_embedder(pid: u32) -> bool {
         return true;
     }
     // Build PPid → children across /proc, then BFS the descendants of `pid`
-    // looking for a Chromium helper. Same /proc-walk shape as
-    // `terminal_descendant_ttys`.
+    // looking for a Chromium helper.
     let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
     let entries = match fs::read_dir("/proc") {
         Ok(e) => e,
@@ -4854,91 +4852,21 @@ pub(crate) fn is_terminal_process(pid: u32) -> bool {
     }
 }
 
-fn terminal_descendant_ttys(pid: u32) -> Vec<PathBuf> {
-    let mut parent_to_children: std::collections::HashMap<u32, Vec<u32>> =
-        std::collections::HashMap::new();
-    let proc_dir = std::path::Path::new("/proc");
-    let entries = match fs::read_dir(proc_dir) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
-    };
-
-    for entry in entries.flatten() {
-        let pid_str = entry.file_name();
-        let pid_str = pid_str.to_string_lossy();
-        let child_pid: u32 = match pid_str.parse() {
-            Ok(pid) => pid,
-            Err(_) => continue,
-        };
-        let status = match fs::read_to_string(proc_dir.join(&*pid_str).join("status")) {
-            Ok(status) => status,
-            Err(_) => continue,
-        };
-        let parent_pid = status
-            .lines()
-            .find(|l| l.starts_with("PPid:"))
-            .and_then(|l| l[5..].trim().parse::<u32>().ok());
-        if let Some(parent_pid) = parent_pid {
-            parent_to_children
-                .entry(parent_pid)
-                .or_default()
-                .push(child_pid);
-        }
-    }
-
-    let mut descendants = Vec::new();
-    let mut queue = std::collections::VecDeque::from([pid]);
-    while let Some(current) = queue.pop_front() {
-        if let Some(children) = parent_to_children.get(&current) {
-            for &child in children {
-                descendants.push(child);
-                queue.push_back(child);
-            }
-        }
-    }
-    descendants.sort_unstable();
-
-    let mut ttys = Vec::new();
-    for child in descendants {
-        let tty = match fs::read_link(format!("/proc/{child}/fd/0")) {
-            Ok(path) => path,
-            Err(_) => continue,
-        };
-        if tty.starts_with("/dev/pts/") {
-            ttys.push(tty);
-        }
-    }
-    ttys
-}
-
-fn terminal_tty_for_window(pid: u32, xid: u64) -> Option<PathBuf> {
-    if !is_terminal_process(pid) {
-        return None;
-    }
-    let mut windows = crate::x11::list_windows(Some(pid));
-    windows.sort_by_key(|w| w.xid);
-    let window_index = windows.iter().position(|w| w.xid == xid)?;
-    let ttys = terminal_descendant_ttys(pid);
-    ttys.get(window_index).cloned()
-}
-
-/// Type into a terminal window without touching X focus. Resolves the window's
-/// pty, then borrows the emulator's master fd and writes to it (see
-/// `crate::tty`). Returns `Ok(false)` when the target isn't a terminal we can
-/// reach this way so the caller falls back to the generic XSendEvent path.
+/// Type into a terminal window without touching X focus by writing to the
+/// emulator's pty master (see `crate::tty`). Returns `Ok(false)` when the
+/// target isn't a terminal we can reach this way so the caller falls back to
+/// the generic key routes. Newlines go out as CR, the byte a terminal's Return
+/// key sends: raw-mode apps read LF as Ctrl-J.
 pub(crate) fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool> {
-    let Some(tty) = terminal_tty_for_window(pid, xid) else {
+    if !is_terminal_process(pid) {
         return Ok(false);
-    };
-    // tty is `/dev/pts/<N>`; the emulator (pid) holds the master for the same N.
-    let Some(ptn) = tty
-        .file_name()
-        .and_then(|s| s.to_str())
-        .and_then(|s| s.parse::<u32>().ok())
-    else {
+    }
+    // Nothing maps an X window or a tab to its pty, so the target is only
+    // known when the emulator has this one window and a single pty.
+    if !matches!(crate::x11::list_windows(Some(pid)).as_slice(), [only] if only.xid == xid) {
         return Ok(false);
-    };
-    crate::tty::inject_via_master(pid, ptn, text)
+    }
+    crate::tty::inject_via_sole_master(pid, &text.replace("\r\n", "\r").replace('\n', "\r"))
 }
 
 pub(crate) fn capture_admission_error(error: anyhow::Error) -> ToolResult {

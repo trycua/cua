@@ -42,12 +42,12 @@ fn pts_number(fd: i32) -> Option<u32> {
     (ret == 0).then_some(n as u32)
 }
 
-/// Inject `text` into the terminal whose slave is `/dev/pts/<target_ptn>` by
-/// borrowing the master fd held by `emulator_pid`. Returns `Ok(true)` once the
-/// bytes are written, or `Ok(false)` if the master could not be borrowed
-/// (unsupported kernel, denied by ptrace policy, or no matching master found)
-/// so the caller can fall back to another path.
-pub fn inject_via_master(emulator_pid: u32, target_ptn: u32, text: &str) -> anyhow::Result<bool> {
+/// Inject `text` into the only pty whose master `emulator_pid` holds. Returns
+/// `Ok(true)` once the bytes are written, or `Ok(false)` if the masters could
+/// not be borrowed (unsupported kernel, denied by ptrace policy) or the
+/// emulator holds no pty or several, so the caller can fall back to another
+/// path.
+pub fn inject_via_sole_master(emulator_pid: u32, text: &str) -> anyhow::Result<bool> {
     let Some(pidfd) = pidfd_open(emulator_pid) else {
         return Ok(false);
     };
@@ -57,6 +57,7 @@ pub fn inject_via_master(emulator_pid: u32, target_ptn: u32, text: &str) -> anyh
         Err(_) => return Ok(false),
     };
 
+    let mut masters = std::collections::BTreeMap::new();
     for entry in entries.flatten() {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
@@ -67,14 +68,64 @@ pub fn inject_via_master(emulator_pid: u32, target_ptn: u32, text: &str) -> anyh
         let Some(local) = pidfd_getfd(&pidfd, remote_fd) else {
             continue;
         };
-        if pts_number(local.as_raw_fd()) == Some(target_ptn) {
-            // `local` is our own dup of the emulator's master; writing to it
-            // feeds the slave's input queue. Handing it to File transfers
-            // ownership so only our dup is closed on drop.
-            let mut master = unsafe { std::fs::File::from_raw_fd(local.into_raw_fd()) };
-            master.write_all(text.as_bytes())?;
-            return Ok(true);
+        if let Some(ptn) = pts_number(local.as_raw_fd()) {
+            masters.entry(ptn).or_insert(local);
         }
     }
-    Ok(false)
+    let mut masters = masters.into_values();
+    let (Some(local), None) = (masters.next(), masters.next()) else {
+        return Ok(false);
+    };
+    // `local` is our own dup of the emulator's master; writing to it feeds the
+    // slave's input queue. Handing it to File transfers ownership so only our
+    // dup is closed on drop.
+    let mut master = unsafe { std::fs::File::from_raw_fd(local.into_raw_fd()) };
+    master.write_all(text.as_bytes())?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fn open_pty() -> (OwnedFd, std::fs::File) {
+        // SAFETY: posix_openpt returns a fresh fd or -1.
+        let fd = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+        assert!(fd >= 0, "posix_openpt failed");
+        let master = unsafe { OwnedFd::from_raw_fd(fd) };
+        assert_eq!(unsafe { libc::unlockpt(master.as_raw_fd()) }, 0);
+        let ptn = pts_number(master.as_raw_fd()).expect("master pts number");
+        let slave = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
+            .open(format!("/dev/pts/{ptn}"))
+            .expect("open slave");
+        (master, slave)
+    }
+
+    fn read_input(slave: &mut std::fs::File) -> String {
+        let mut buf = [0u8; 64];
+        for _ in 0..100 {
+            if let Ok(n) = slave.read(&mut buf) {
+                return String::from_utf8_lossy(&buf[..n]).into_owned();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        String::new()
+    }
+
+    #[test]
+    fn injects_only_when_the_process_holds_a_single_pty() {
+        let pid = std::process::id();
+        let (_master, mut slave) = open_pty();
+        assert!(inject_via_sole_master(pid, "ls\r").unwrap());
+        assert_eq!(read_input(&mut slave), "ls\n");
+
+        let (_other_master, mut other_slave) = open_pty();
+        assert!(!inject_via_sole_master(pid, "ls\r").unwrap());
+        assert_eq!(read_input(&mut slave), "");
+        assert_eq!(read_input(&mut other_slave), "");
+    }
 }

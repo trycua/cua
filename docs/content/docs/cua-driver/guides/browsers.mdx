@@ -232,6 +232,10 @@ setup does not depend on the UI language. On Linux, setup accepts a localized
 browser, but the browser's internal setup page must show its English heading
 and checkbox.
 
+Helium attaches on Linux and macOS only when its profile already has a
+`DevToolsActivePort` endpoint owned by that process. It has no automated
+setup, so a Helium profile without that endpoint refuses.
+
 On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
 Disk Access or a per-app grant, so attachment through the daemon refuses with
 `browser_route_unavailable` until CuaDriver.app has that access. Grant it Full

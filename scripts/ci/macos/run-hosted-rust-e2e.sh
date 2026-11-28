@@ -22,6 +22,12 @@ STANDALONE_BROWSER_APPS=(
   "/Applications/Google Chrome.app|com.google.Chrome|EQHXZ8M8AV"
   "/Applications/Microsoft Edge.app|com.microsoft.edgemac|UBF8T346G9"
 )
+# Helium compatibility certification is an explicit hosted-workflow opt-in;
+# keep the existing Lume-equivalent Chrome/Edge default.
+if [[ "${CUA_E2E_INCLUDE_HELIUM:-0}" == 1 ]]; then
+  STANDALONE_BROWSER_PRODUCTS+=",helium"
+  STANDALONE_BROWSER_APPS+=("/Applications/Helium.app|net.imput.helium|S4Q33XPHB4")
+fi
 KEYCHAIN="${RUNNER_TEMP:-}/cua-driver-hosted-signing.keychain-db"
 DAEMON_SOCKET="${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock"
 SCREEN_CAPTURE_APPROVALS="${HOME}/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"

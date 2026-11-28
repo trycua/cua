@@ -631,7 +631,14 @@ unsafe fn sample_to_annex_b(codec: VideoCodec, sample: *mut c_void) -> Option<(V
             return None;
         }
         out.extend_from_slice(&[0, 0, 0, 1]);
-        out.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, size) });
+        let parameter_set = unsafe { std::slice::from_raw_parts(ptr, size) };
+        if codec == VideoCodec::H264 {
+            // VideoToolbox's SPS has no VUI, so it never says that this
+            // session does not reorder; see h264_low_latency_sps.
+            out.extend_from_slice(&crate::bitstream::h264_low_latency_sps(parameter_set));
+        } else {
+            out.extend_from_slice(parameter_set);
+        }
     }
     out.extend_from_slice(&body);
     Some((out, true))

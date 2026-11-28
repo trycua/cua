@@ -549,7 +549,9 @@ impl Plan {
             // An `element_token` names its snapshot, and so its window; a
             // token the runtime no longer holds names nothing (fail closed).
             let names_window = step.action.as_ref().is_some_and(|action| {
-                !action.window.is_empty() || token_window(registry, &action.args).is_some()
+                !action.window.is_empty()
+                    || token_window(registry, &action.args).is_some()
+                    || typed_target_window(&action.args).is_some()
             }) || step
                 .wait_for
                 .iter()
@@ -944,6 +946,19 @@ async fn run_step(
                     return failure(index, label, Phase::Find, miss.code, miss.message, report);
                 }
             }
+        } else if has_typed_target(&args) {
+            // The step's own `target` names its window or display; flat ids
+            // beside it are refused, so nothing is inherited (#8090).
+            if let Some(window) = typed_target_window(&args) {
+                if context.is_empty() {
+                    *context = WindowSpec {
+                        pid: Some(window.pid),
+                        window_id: Some(window.window_id),
+                        ..Default::default()
+                    };
+                }
+                *last_window = Some(window);
+            }
         } else if needs_lookup(&window_spec, &args, tool, registry) {
             match locator.window(&window_spec).await {
                 Ok(resolved) => {
@@ -1200,6 +1215,26 @@ fn accepts(registry: &ToolRegistry, tool: &str, field: &str) -> bool {
         .and_then(|def| def.input_schema.get("properties"))
         .and_then(|properties| properties.get(field))
         .is_some()
+}
+
+/// Whether a step carries its own typed `target` (window or desktop).
+fn has_typed_target(args: &Value) -> bool {
+    args.get("target").is_some_and(Value::is_object)
+}
+
+/// The window a step's typed `{kind: "window", pid, window_id}` target names.
+fn typed_target_window(args: &Value) -> Option<Window> {
+    let target = args.get("target")?;
+    if target.get("kind").and_then(Value::as_str) != Some("window") {
+        return None;
+    }
+    Some(Window {
+        pid: target.get("pid").and_then(Value::as_i64)?,
+        window_id: target.get("window_id").and_then(Value::as_u64)?,
+        app: None,
+        title: None,
+        on_screen: true,
+    })
 }
 
 /// The window a step's live `element_token` was taken of, when it names one.
@@ -1865,7 +1900,10 @@ fn parse_action(
         let needs_window = !element.is_empty() || window.app.is_some() || window.title.is_some();
         // A step that names no window takes the one an earlier step (or the
         // batch) named; the run fills it in.
-        let inherits = inherits_window && window.is_empty() && accepts(registry, tool, "pid");
+        let inherits = inherits_window
+            && window.is_empty()
+            && !has_typed_target(&args)
+            && accepts(registry, tool, "pid");
         if needs_window || inherits {
             object.entry("pid").or_insert(json!(1));
             if accepts(registry, tool, "window_id") {

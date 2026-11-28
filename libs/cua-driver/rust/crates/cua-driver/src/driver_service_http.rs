@@ -418,7 +418,8 @@ fn configured_session_mode() -> anyhow::Result<cua_driver_sdk::SessionPermission
 
 pub async fn start(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Result<Server> {
     let service = Service::for_sdk(sdk)?;
-    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
+    let address = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+    let listener = TcpListener::bind(address).await?;
     let task = tokio::spawn(async move {
         let permits = Arc::new(tokio::sync::Semaphore::new(64));
         let mut tasks = tokio::task::JoinSet::new();
@@ -426,7 +427,13 @@ pub async fn start(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyho
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
-                    let Ok((mut stream, _)) = accepted else { break };
+                    let mut stream = match accepted {
+                        Ok((stream, _)) => stream,
+                        Err(error) => {
+                            crate::serve::back_off_after_accept_error(address, error).await;
+                            continue;
+                        }
+                    };
                     crate::mcp_http::clear_inherit_flag(&stream);
                     let Ok(permit) = permits.clone().try_acquire_owned() else { continue };
                     let service = service.clone();

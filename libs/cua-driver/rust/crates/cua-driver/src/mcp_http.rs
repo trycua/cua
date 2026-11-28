@@ -106,10 +106,7 @@ pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Res
                                 }
                             });
                         }
-                        Err(e) => {
-                            warn!("MCP HTTP accept error: {e}");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        }
+                        Err(e) => crate::serve::back_off_after_accept_error(addr, e).await,
                     }
                 }
             }

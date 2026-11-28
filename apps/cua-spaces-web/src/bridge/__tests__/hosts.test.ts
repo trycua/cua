@@ -1110,6 +1110,22 @@ describe("webkit adapter", () => {
     }
   });
 
+  it("waits for file selection beyond the normal bridge timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (a: Answer) => void;
+      const { win } = webkitHost((req) => (req.method === "spaces.chooseFiles" ? new Promise<Answer>((r) => (answer = r)) : ok(null)));
+      const call = createWebkitAdapter(win, { timeoutMs: 1_000 }).call("spaces.chooseFiles", {});
+      const settled = call.catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const paths = ["/tmp/project", "/tmp/notes.txt"];
+      answer(ok(paths));
+      expect(await settled).toEqual(paths);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits as long as a teleport run takes, past the call timeout", async () => {
     vi.useFakeTimers();
     try {

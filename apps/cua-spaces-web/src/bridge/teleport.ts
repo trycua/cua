@@ -47,17 +47,14 @@ import type { BridgeStore } from "./store";
 /* ---- The core's picker (`teleport::flow`) --------------------------------- */
 
 export const pickerInitial = (core: CoreClient, spaceName: string) => core.call<PickerState>("flow.initial", { spaceName });
-export const pickerReduce = (core: CoreClient, state: PickerState, event: PickerEvent) =>
-  core.call<PickerState>("flow.reduce", { state, event });
+export const pickerReduce = (core: CoreClient, state: PickerState, event: PickerEvent) => core.call<PickerState>("flow.reduce", { state, event });
 export const pickerSections = (core: CoreClient, state: PickerState) => core.call<EntrySection[]>("flow.sections", { state });
 export const pickerReview = (core: CoreClient, state: PickerState) => core.call<ReviewView | null>("flow.review", { state });
 export const pickerCanPlan = (core: CoreClient, state: PickerState) => core.call<boolean>("flow.canPlan", { state });
 export const pickerProgress = (core: CoreClient, state: PickerState) => core.call<number>("flow.progress", { state });
 export const pickerStatus = (core: CoreClient, state: PickerState) => core.call<string | null>("flow.status", { state });
-export const pickerSensitiveOptions = (core: CoreClient, state: PickerState) =>
-  core.call<SensitiveOption[]>("flow.sensitiveOptions", { state });
-export const pickerPlanSensitive = (core: CoreClient, state: PickerState) =>
-  core.call<SensitiveGroup[]>("flow.planSensitive", { state });
+export const pickerSensitiveOptions = (core: CoreClient, state: PickerState) => core.call<SensitiveOption[]>("flow.sensitiveOptions", { state });
+export const pickerPlanSensitive = (core: CoreClient, state: PickerState) => core.call<SensitiveGroup[]>("flow.planSensitive", { state });
 export const pickerConsent = (core: CoreClient, state: PickerState) => core.call<TeleportConsent>("flow.consent", { state });
 
 /** Everything a picker frame draws. */
@@ -76,8 +73,7 @@ export function pickerFrame(core: CoreClient, state: PickerState): PickerFrame {
 /* ---- The core's grid (`teleport::grid`) ----------------------------------- */
 
 export const gridTabs = (core: CoreClient, spaceName: string) => core.call<PickerGridTabItem[]>("grid.tabs", { spaceName });
-export const appGrid = (core: CoreClient, state: PickerState, windows: OpenWindow[]) =>
-  core.call<PickerGrid>("grid.apps", { state, windows });
+export const appGrid = (core: CoreClient, state: PickerState, windows: OpenWindow[]) => core.call<PickerGrid>("grid.apps", { state, windows });
 export const windowGrid = (core: CoreClient, windows: OpenWindow[], query: string, selected: string | null) =>
   core.call<PickerGrid>("grid.windows", { windows, query, selected });
 export const remoteGrid = (core: CoreClient, windows: RemoteWindow[], query: string, selected: string | null) =>
@@ -286,6 +282,25 @@ export class TeleportStore {
     const s = this.session;
     if (!s) return;
     this.patch({ state: pickerReduce(this.core, s.state, event), ...(event.type === "back" && s.setup ? { setup: null } : {}) });
+  }
+
+  /** Adds native picker paths to these options; returns a recoverable error, if any. */
+  async chooseFiles(): Promise<string | null> {
+    const s = this.session;
+    if (s?.state.step !== "options" || s.state.move !== "app_with_files") return null;
+    const opened = this.generation;
+    const live = () =>
+      this.generation === opened &&
+      this.session?.state.step === "options" &&
+      this.session.state.move === "app_with_files" &&
+      this.session.state.entry?.id === s.state.entry?.id;
+    try {
+      const files = await this.adapter.call("spaces.chooseFiles", {});
+      if (live() && files.length) this.send({ type: "files", files });
+    } catch (e) {
+      if (live()) return words(e);
+    }
+    return null;
   }
 
   /** Opens the picker for a Space and reads the catalog and both window
@@ -661,9 +676,7 @@ export class TeleportStore {
   thumbnail(tile: PickerTile): void {
     const s = this.session;
     if (s) {
-      this.loadImage(thumbnailKey(tile.thumbnail), () =>
-        this.adapter.call("teleport.thumbnail", { spaceId: s.spaceId, thumbnail: tile.thumbnail }),
-      );
+      this.loadImage(thumbnailKey(tile.thumbnail), () => this.adapter.call("teleport.thumbnail", { spaceId: s.spaceId, thumbnail: tile.thumbnail }));
     }
   }
 
@@ -741,8 +754,16 @@ export function useTeleport(): TeleportHook {
   const ctx = useContext(BridgeContext);
   if (!ctx) throw new Error("useTeleport needs a <BridgeProvider> above it");
   const t = ctx.store ? teleportStore(ctx.store) : null;
-  const session = useSyncExternalStore(t ? t.subscribe : noop, () => t?.getSession() ?? null, () => null);
-  const images = useSyncExternalStore(t ? t.subscribe : noop, () => t?.getImages() ?? EMPTY, () => EMPTY);
+  const session = useSyncExternalStore(
+    t ? t.subscribe : noop,
+    () => t?.getSession() ?? null,
+    () => null,
+  );
+  const images = useSyncExternalStore(
+    t ? t.subscribe : noop,
+    () => t?.getImages() ?? EMPTY,
+    () => EMPTY,
+  );
   return {
     session,
     images,

@@ -16,6 +16,69 @@ use super::impl_::{
     position_keyboard_cursor, resolve_onscreen_point_with_scroll, ToolState,
 };
 
+/// Resolve only the admitted control's native message target. UIA SetFocus
+/// is not a background preparation step: providers can activate their frame.
+fn native_background_key_target(
+    element: &crate::uia::snapshot::RetainedElement,
+    owner: u64,
+    pid: u32,
+) -> anyhow::Result<u64> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsChild};
+
+    let target = element.native_window_handle().ok_or_else(|| {
+        anyhow::anyhow!("background_unavailable: exact element has no native keyboard target")
+    })?;
+    let native = HWND(target as *mut _);
+    let mut target_pid = 0;
+    let thread = unsafe { GetWindowThreadProcessId(native, Some(&mut target_pid)) };
+    if thread == 0
+        || target_pid != pid
+        || (target != owner && !unsafe { IsChild(HWND(owner as *mut _), native).as_bool() })
+    {
+        anyhow::bail!(
+            "background_unavailable: exact element's native keyboard target is outside the admitted window"
+        );
+    }
+    Ok(target)
+}
+
+/// Whether a background element key belongs to an embedded WebView rather
+/// than a native control beside it. `native` is the element's nearest HWND:
+/// its own, or a windowless element's nearest windowed ancestor. Only an HWND
+/// inside a Chromium window proves WebView content; anything else, including
+/// no HWND at all, keeps the exact-HWND route, which refuses what it cannot
+/// address instead of focus-clicking a native control.
+fn element_in_embedded_webview(
+    native: Option<u64>,
+    owner: u64,
+    is_chromium: impl Fn(u64) -> bool,
+    parent: impl Fn(u64) -> u64,
+) -> bool {
+    let Some(mut current) = native else {
+        return false;
+    };
+    for _ in 0..64 {
+        if current == 0 {
+            return false;
+        }
+        if is_chromium(current) {
+            return true;
+        }
+        if current == owner {
+            return false;
+        }
+        current = parent(current);
+    }
+    false
+}
+
+fn native_parent(hwnd: u64) -> u64 {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_PARENT};
+    unsafe { GetAncestor(HWND(hwnd as *mut _), GA_PARENT) }.0 as usize as u64
+}
+
 fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
     let (origin_x, origin_y) = bitmap_to_screen(hwnd, 0, 0);
     (sx - origin_x, sy - origin_y)
@@ -35,17 +98,21 @@ impl Tool for PressKeyTool {
             name: "press_key".into(),
             // Description ported from Swift `PressKeyTool.swift` with
             // Windows-specific transport note (PostMessage WM_KEYDOWN/UP).
-            description: "Press and release a single key, delivered directly to the target pid's \
-                top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP). The target does NOT need \
-                to be frontmost — no focus steal.\n\n\
+            description: "Press and release a single key. Background delivery uses \
+                PostMessage(WM_KEYDOWN/WM_KEYUP) without fronting the target; explicit \
+                foreground delivery uses SendInput.\n\n\
                 Optional `window_id` selects a specific HWND when the pid owns more than one; \
                 without it the first visible top-level window for the pid is used.\n\n\
                 Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, \
                 end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` \
                 array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a \
                 cleaner surface.\n\n\
-                `element_token` focuses the cached UIA element before sending the key; the \
-                top-level window remains backgrounded when delivery_mode is background.".into(),
+                `element_token` addresses the cached UIA control. Foreground delivery focuses \
+                it before sending the key. Background native-control delivery posts to its \
+                exact HWND without focus preparation, or returns background_unavailable when \
+                no safe exact target exists. Embedded WebView elements retain their background \
+                focus-click route; do not rely on a native background key establishing focus \
+                for later keys without an element_token.".into(),
             input_schema: json!({
                 "type":"object","required":["key"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
@@ -204,16 +271,34 @@ impl Tool for PressKeyTool {
             position_keyboard_cursor(&self.state, &args, hwnd, element_center).await;
         }
 
-        // W1: an element-addressed key needs the control's actual focus
-        // target, not merely its owning top-level HWND. Embedded WebView hosts
+        // Embedded WebView keys need the renderer's actual focus target,
+        // not merely the owning top-level HWND. These hosts
         // can activate their frame from UIA SetFocus even under
         // WS_EX_NOACTIVATE. Their proven-safe pixel route establishes renderer
         // focus with a posted click, so reuse that route at the AX element's
         // cached center.
         let background_webview_focus = elem_idx.is_some()
             && delivery.is_background()
-            && crate::input::has_chromium_descendant(hwnd);
-        let mut noact = if elem_idx.is_some() && delivery.is_background() {
+            && crate::input::has_chromium_descendant(hwnd)
+            && tokio::task::spawn_blocking({
+                let admitted = admitted.clone();
+                move || {
+                    let native = admitted
+                        .as_ref()
+                        .and_then(|element| element.nearest_native_window_handle());
+                    element_in_embedded_webview(
+                        native,
+                        hwnd,
+                        crate::input::is_chromium_target_window,
+                        native_parent,
+                    )
+                }
+            })
+            .await
+            .unwrap_or(false);
+        // Native controls are addressed directly below; only the existing
+        // WebView focus-click route needs an activation guard.
+        let mut noact = if background_webview_focus {
             Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(hwnd as *mut _),
             ))
@@ -259,32 +344,6 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-        } else if elem_idx.is_some() && delivery != DeliveryMode::Foreground {
-            let focused = tokio::task::spawn_blocking({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
-                        admitted
-                            .as_ref()
-                            .ok_or_else(|| anyhow::anyhow!("missing admitted element"))
-                            .and_then(|element| element.focus_element())
-                    })
-                }
-            })
-            .await;
-            match focused {
-                Ok(Ok(())) => {
-                    if delivery.is_background() {
-                        let _ = crate::input::wait_for_focused_descendant(
-                            hwnd,
-                            std::time::Duration::from_millis(500),
-                        );
-                    }
-                }
-                Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                Err(e) => return ToolResult::error(format!("UIA focus task failed: {e}")),
-            }
         }
         let key_display = key.clone();
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
@@ -322,7 +381,15 @@ impl Tool for PressKeyTool {
             move || {
                 let _admission = &admitted;
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                crate::input::post_key(hwnd, &key, &m)
+                if elem_idx.is_some() && delivery.is_background() && !background_webview_focus {
+                    let element = admitted.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("background_unavailable: missing admitted keyboard element")
+                    })?;
+                    let target = native_background_key_target(element, hwnd, pid)?;
+                    crate::input::keyboard::post_key_to_hwnd(target, &key, &m)
+                } else {
+                    crate::input::post_key(hwnd, &key, &m)
+                }
             }
         })
         .await;
@@ -343,8 +410,87 @@ impl Tool for PressKeyTool {
                                with delivery_mode:\"foreground\" if a screenshot shows the key didn't land."
                 },
             })),
+            Ok(Err(e)) if e.to_string().starts_with("background_unavailable:") => {
+                cua_driver_core::delivery::background_unavailable_result(
+                    format!("{e}; no keyboard input was sent"),
+                    "background_unavailable",
+                    "exact-control background keyboard delivery is unavailable; retry with delivery_mode:\"foreground\"",
+                    json!({"window_id": hwnd, "event_kind": event_kind.name()}),
+                )
+            }
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::element_in_embedded_webview;
+
+    const OWNER: u64 = 0x100;
+    const EDIT: u64 = 0x200;
+    const WEBVIEW_HOST: u64 = 0x300;
+    const RENDERER: u64 = 0x400;
+
+    fn is_chromium(hwnd: u64) -> bool {
+        hwnd == WEBVIEW_HOST
+    }
+
+    fn parent(hwnd: u64) -> u64 {
+        match hwnd {
+            EDIT | WEBVIEW_HOST => OWNER,
+            RENDERER => WEBVIEW_HOST,
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn native_control_beside_a_webview_keeps_its_exact_hwnd() {
+        assert!(!element_in_embedded_webview(
+            Some(EDIT),
+            OWNER,
+            is_chromium,
+            parent
+        ));
+        // A windowless native control's nearest HWND is the owner itself.
+        assert!(!element_in_embedded_webview(
+            Some(OWNER),
+            OWNER,
+            is_chromium,
+            parent
+        ));
+    }
+
+    #[test]
+    fn element_without_a_windowed_ancestor_is_not_webview_content() {
+        assert!(!element_in_embedded_webview(
+            None,
+            OWNER,
+            is_chromium,
+            parent
+        ));
+    }
+
+    #[test]
+    fn webview_elements_take_the_focus_click_route() {
+        assert!(element_in_embedded_webview(
+            Some(OWNER),
+            OWNER,
+            |hwnd| hwnd == OWNER,
+            parent
+        ));
+        assert!(element_in_embedded_webview(
+            Some(WEBVIEW_HOST),
+            OWNER,
+            is_chromium,
+            parent
+        ));
+        assert!(element_in_embedded_webview(
+            Some(RENDERER),
+            OWNER,
+            is_chromium,
+            parent
+        ));
     }
 }

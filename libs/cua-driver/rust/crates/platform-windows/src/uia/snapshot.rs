@@ -55,6 +55,66 @@ impl RetainedElement {
         result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
     }
 
+    /// Read the admitted element's own HWND without asking its provider to focus.
+    /// Windowless UIA elements have no native keyboard message target.
+    pub fn native_window_handle(&self) -> Option<u64> {
+        if !self.is_uia() || self.ptr == 0 {
+            return None;
+        }
+        let element = unsafe { IUIAutomationElement::from_raw(self.ptr as *mut _) };
+        let hwnd = unsafe { element.CurrentNativeWindowHandle() }
+            .ok()
+            .map(|handle| handle.0 as usize as u64)
+            .filter(|handle| *handle != 0);
+        std::mem::forget(element);
+        hwnd
+    }
+
+    /// The admitted element's own HWND or, for a windowless UIA element, the
+    /// HWND of its nearest raw-view ancestor that has one.
+    pub fn nearest_native_window_handle(&self) -> Option<u64> {
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+            COINIT_MULTITHREADED,
+        };
+        use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+
+        if !self.is_uia() || self.ptr == 0 {
+            return None;
+        }
+        let handle_of = |element: &IUIAutomationElement| {
+            unsafe { element.CurrentNativeWindowHandle() }
+                .ok()
+                .map(|handle| handle.0 as usize as u64)
+                .filter(|handle| *handle != 0)
+        };
+        let element = unsafe { IUIAutomationElement::from_raw(self.ptr as *mut _) };
+        let hwnd = handle_of(&element).or_else(|| {
+            let com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            // Every COM interface below drops inside this closure, before
+            // CoUninitialize.
+            let hwnd = (|| {
+                let automation: IUIAutomation =
+                    unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok()?;
+                let walker = unsafe { automation.RawViewWalker() }.ok()?;
+                let mut current = unsafe { walker.GetParentElement(&element) }.ok()?;
+                for _ in 0..64 {
+                    if let Some(hwnd) = handle_of(&current) {
+                        return Some(hwnd);
+                    }
+                    current = unsafe { walker.GetParentElement(&current) }.ok()?;
+                }
+                None
+            })();
+            if com.is_ok() {
+                unsafe { CoUninitialize() };
+            }
+            hwnd
+        });
+        std::mem::forget(element);
+        hwnd
+    }
+
     /// The element's live `IsEnabled`. `None` for an MSAA element or when UIA
     /// cannot read it.
     pub fn element_is_enabled(&self) -> Option<bool> {

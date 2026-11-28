@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.65.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.4...cua-driver-rs-v0.65.0) (2026-11-28)
+
+
+### Features
+
+* **cua-driver:** share one local IPC client ([#8448](https://github.com/trycua/cua/issues/8448)) ([03176f4](https://github.com/trycua/cua/commit/03176f41cb60c0bec4a6f4f4cc499b7f88e1937c))
+
+
+### Bug Fixes
+
+* **cua-driver:** accept prompt on Windows, classify refusals, log MCP launch reason ([#8819](https://github.com/trycua/cua/issues/8819)) ([fb24365](https://github.com/trycua/cua/commit/fb24365905cdee0b705241f6846212625e0d7dca))
+
 ## [0.64.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.3...cua-driver-rs-v0.64.4) (2026-11-28)
 
 

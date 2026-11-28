@@ -808,6 +808,14 @@ impl Tool for TypeTextTool {
                 Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
                     return atspi_text_outcome_unknown(delivery, &error);
                 }
+                Ok(Err(error))
+                    if !delivery.is_foreground()
+                        && error.is::<crate::atspi::native::QtLineEditSetsText>() =>
+                {
+                    return crate::input::delivery::background_unavailable_error(
+                        crate::input::delivery::BackgroundUnavailable::QtLineEditSetsText,
+                    );
+                }
                 Ok(Err(_)) | Err(_)
                     if !delivery.is_foreground() && crate::wayland::is_wayland() =>
                 {

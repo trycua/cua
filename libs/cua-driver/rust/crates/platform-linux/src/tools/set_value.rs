@@ -38,7 +38,7 @@ impl Tool for SetValueTool {
                     "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                     "window_id":{"type":"integer","description":"Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "value":{"type":"string","description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
+                    "value":{"type":"string","description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons, and Qt line edits and spin boxes, whose accessibility write would skip their validator) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -113,7 +113,12 @@ impl Tool for SetValueTool {
                         .flatten();
                 return set_value_result(idx, &value, "ax", readback, None);
             }
-            Ok(Err(error)) if crate::atspi::native::is_no_value_route(&error) => error,
+            Ok(Err(error))
+                if crate::atspi::native::is_no_value_route(&error)
+                    || error.is::<crate::atspi::native::QtLineEditSetsText>() =>
+            {
+                error
+            }
             Ok(Err(error)) if crate::atspi::native::is_no_such_option(&error) => {
                 return no_such_option_result(idx, &error)
             }

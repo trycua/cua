@@ -91,6 +91,10 @@ pub enum BackgroundUnavailable {
     /// master keyboard, which this host cannot add; a synthetic chord arrives
     /// and fires nothing (trycua/cua#7370).
     QtInactiveWindowShortcut,
+    /// Qt applies an accessibility write to a single-line field as `setText`,
+    /// which skips its validator and input mask, and background keys reach
+    /// only the field that holds the window's focus (trycua/cua#7327).
+    QtLineEditSetsText,
 }
 
 impl BackgroundUnavailable {
@@ -131,6 +135,11 @@ impl BackgroundUnavailable {
                  one (it needs a writable /dev/uinput, which Xvfb and Xtigervnc never offer); \
                  the synthetic chord would arrive and trigger nothing. For a command that is in \
                  a menu, invoke_menu runs it in the background"
+            }
+            Self::QtLineEditSetsText => {
+                "Qt applies an accessibility write to a single-line field as setText, which \
+                 skips the field's validator and input mask, and background keys reach only the \
+                 field that holds the window's focus; nothing was typed"
             }
         }
     }

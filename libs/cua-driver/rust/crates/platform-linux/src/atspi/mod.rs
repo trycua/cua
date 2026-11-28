@@ -754,8 +754,12 @@ impl TokenElement {
             Ok(done) => return Ok(done),
             Err(error) => error,
         };
-        // Input that may have landed is never sent again by index.
-        if !self.may_reresolve || input_may_have_landed(&error) {
+        // Input that may have landed is never sent again by index, and a Qt
+        // single-line field's refusal is the observed widget's own answer.
+        if !self.may_reresolve
+            || input_may_have_landed(&error)
+            || error.is::<native::QtLineEditSetsText>()
+        {
             return Err(error);
         }
         tracing::debug!(

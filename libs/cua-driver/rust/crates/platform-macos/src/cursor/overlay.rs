@@ -975,25 +975,32 @@ unsafe fn rebuild_surfaces(
     layout: &super::display_layout::DisplayLayout,
     old: Vec<DisplaySurface>,
 ) -> Vec<DisplaySurface> {
-    // Build the replacement before touching the live set. A transient display
-    // reconfiguration or allocation failure must not remove working overlays.
-    let mut surfaces = Vec::new();
-    for d in &layout.displays {
-        let Some(surface) = create_surface(*d, layout.primary_height().unwrap_or(0.0)) else {
-            for surface in surfaces {
-                dispose_surface(surface);
-            }
-            return old;
-        };
-        surfaces.push(surface);
-    }
-    // Main queue is FIFO: pending old-layer presentations finish before disposal.
-    for surface in old {
-        dispose_surface(surface);
-    }
-    *OVERLAY_WINDOW_IDS.lock().unwrap() = surfaces.iter().map(|s| s.window_id).collect();
-    *DISPLAY_LAYOUT.lock().unwrap() = Some(layout.clone());
-    surfaces
+    // Drain AppKit's autoreleased references to newly created and disposed
+    // NSWindows before returning. Without a local pool, the initial
+    // pre-`NSApp.run()` rebuild in `run_appkit` retains the startup window in
+    // the main thread's outer pool, keeping it alive in WindowServer after the
+    // first display reconfiguration disposes it.
+    objc2::rc::autoreleasepool(|_| {
+        // Build the replacement before touching the live set. A transient display
+        // reconfiguration or allocation failure must not remove working overlays.
+        let mut surfaces = Vec::new();
+        for d in &layout.displays {
+            let Some(surface) = create_surface(*d, layout.primary_height().unwrap_or(0.0)) else {
+                for surface in surfaces {
+                    dispose_surface(surface);
+                }
+                return old;
+            };
+            surfaces.push(surface);
+        }
+        // Main queue is FIFO: pending old-layer presentations finish before disposal.
+        for surface in old {
+            dispose_surface(surface);
+        }
+        *OVERLAY_WINDOW_IDS.lock().unwrap() = surfaces.iter().map(|s| s.window_id).collect();
+        *DISPLAY_LAYOUT.lock().unwrap() = Some(layout.clone());
+        surfaces
+    })
 }
 
 unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {

@@ -1064,7 +1064,7 @@ fn extension_root() -> Result<PathBuf> {
     #[cfg(not(windows))]
     let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME not set"))?;
     Ok(PathBuf::from(home)
-        .join(crate::bundle::user_home_subdirectory())
+        .join(format!(".{}", crate::bundle::state_namespace()))
         .join("extensions"))
 }
 

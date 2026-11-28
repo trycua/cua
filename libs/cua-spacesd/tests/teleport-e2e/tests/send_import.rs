@@ -46,16 +46,21 @@ async fn guest() -> Guest {
     // A guest that has never held a Chrome Safe Storage item: reading the
     // secret fails (so the receiver creates one), every other `security`
     // call and the app launch (`open` on macOS) succeed. Only a macOS receiver ever asks.
-    let receiver_host = Arc::new(cua_spacesd_teleport::FakeHost::new().with_responder(|c| {
-        let reads_secret =
-            c.args.iter().any(|a| a == "find-generic-password") && c.args.iter().any(|a| a == "-w");
-        let launches = c.kind == cua_spacesd_teleport::EffectKind::AppLaunch;
-        if (c.program != "security" && !launches) || reads_secret {
-            Ok(cua_spacesd_teleport::HostOutput::failed())
-        } else {
-            Ok(cua_spacesd_teleport::HostOutput::ok(""))
-        }
-    }));
+    // Safe Storage resolves the guest keychain through the injected host home.
+    let receiver_host = Arc::new(
+        cua_spacesd_teleport::FakeHost::new()
+            .with_home(dest_home.path())
+            .with_responder(|c| {
+                let reads_secret = c.args.iter().any(|a| a == "find-generic-password")
+                    && c.args.iter().any(|a| a == "-w");
+                let launches = c.kind == cua_spacesd_teleport::EffectKind::AppLaunch;
+                if (c.program != "security" && !launches) || reads_secret {
+                    Ok(cua_spacesd_teleport::HostOutput::failed())
+                } else {
+                    Ok(cua_spacesd_teleport::HostOutput::ok(""))
+                }
+            }),
+    );
     let receiver = Arc::new(cua_spacesd_teleport::Receiver::with_host(
         dest_home.path().to_path_buf(),
         receiver_host.clone(),

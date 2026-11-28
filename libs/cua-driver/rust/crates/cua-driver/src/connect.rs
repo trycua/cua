@@ -393,11 +393,23 @@ impl Env {
 }
 
 fn run_cli(program: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("could not run {}: {e}", program.display()))?;
+    // A just-written executable is briefly ETXTBSY while a concurrent fork
+    // still holds its write descriptor; that is not an answer, so retry.
+    let mut attempts = 0;
+    let output = loop {
+        match Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+        {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => break result,
+        }
+    }
+    .map_err(|e| format!("could not run {}: {e}", program.display()))?;
     if output.status.success() {
         return Ok(());
     }

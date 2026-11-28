@@ -23,7 +23,11 @@ It exposes `org.cua.WinRects` on the session bus:
 - `Capture() -> png_base64`: capture the compositor stage through Shell's
   screenshot API. cua-driver crops it with the same authoritative geometry.
 - `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()`: position and hide
-  the agent cursor as a Clutter actor on the compositor stage.
+  the agent cursor as a Clutter actor on the compositor stage. From API 13
+  the cursor belongs to the bus client that last drew it (`MoveCursor`,
+  `ClickPulse` or `PlayCursorPath`) and hides when that client leaves the
+  bus, so a cua-driver daemon that exits, crashes or restarts cannot leave
+  its cursor painted.
 - `SetCursorState(action,delivery,target,active)`: render the same 12 semantic
   action states as the cross-platform `cua.default` cursor theme. Delivery and
   target context appears as host-owned chips in the session badge rather than

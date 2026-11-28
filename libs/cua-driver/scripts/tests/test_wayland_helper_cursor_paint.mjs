@@ -92,6 +92,7 @@ globalThis.helperMocks = {
     DBusExportedObject: { wrapJSObject: () => ({ export() {}, unexport() {} }) },
     DBus: { session: {} }, BusType: { SESSION: 0 }, BusNameOwnerFlags: { REPLACE: 0 },
     bus_own_name: () => 1, bus_unown_name() {},
+    BusNameWatcherFlags: { NONE: 0 }, bus_watch_name: () => 1, bus_unwatch_name() {},
   },
   GLib: {
     PRIORITY_DEFAULT: 0,
@@ -137,6 +138,10 @@ export async function load(url, context, next) {
 }
 `)}`);
 
+// Call a cursor-drawing D-Bus method the way GJS dispatches it.
+const draw = (helper, method, ...args) =>
+  helper[`${method}Async`](args, { get_sender: () => ':1.1', return_value() {} });
+
 globalThis.helperClock = 100;
 const { default: Extension } = await import(extension);
 const helper = new Extension();
@@ -177,7 +182,7 @@ helper.SetCursorLook(JSON.stringify({
 }));
 
 // Rest: placed and settled, so the tip is exactly on the point.
-helper.PlayCursorPath(JSON.stringify({ samples: [[0, 300, 200, 0, 0, 0]], arrival: null, rest: [0, 0, 0] }));
+draw(helper, 'PlayCursorPath', JSON.stringify({ samples: [[0, 300, 200, 0, 0, 0]], arrival: null, rest: [0, 0, 0] }));
 const rest = paint(100);
 near(rest.tip, [300, 200], 'at rest');
 
@@ -189,7 +194,7 @@ const samples = [
   [0.4, 900, 600, 0, 0, 0],
   [0.5, 900, 600, 0, 0, 0],
 ];
-helper.PlayCursorPath(JSON.stringify({ samples, arrival: 0.4, rest: [0.5, 0.1, 0] }));
+draw(helper, 'PlayCursorPath', JSON.stringify({ samples, arrival: 0.4, rest: [0.5, 0.1, 0] }));
 const [frameTimer] = [...timers.entries()].at(-1);
 globalThis.helperClock = 100.2;
 timers.get(frameTimer)();
@@ -204,10 +209,10 @@ globalThis.helperClock = 100.5;
 timers.get(frameTimer)();
 
 // The click lands where the tip points, also for a click that snaps.
-helper.ClickPulse(900, 600);
+draw(helper, 'ClickPulse', 900, 600);
 const click = paint(100.55);
 near(click.tip, [900, 600], 'clicking the settled point');
-helper.ClickPulse(1234, 567);
+draw(helper, 'ClickPulse', 1234, 567);
 near(paint(100.6).tip, [1234, 567], 'clicking elsewhere');
 
 // One colour throughout: the arrow and the halo never change from rest,
@@ -227,7 +232,7 @@ const drawOps = () => {
   return currentContext.ops;
 };
 globalThis.helperClock = 101;
-helper.ClickPulse(1234, 567);
+draw(helper, 'ClickPulse', 1234, 567);
 globalThis.helperClock = 101.15;
 near(paint(101.15).tip, [1234, 567], 'mid-squish');
 const selfPlayed = drawOps();

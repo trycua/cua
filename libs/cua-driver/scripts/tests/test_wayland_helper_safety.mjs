@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 const extension = new URL('../../wayland-helper/winrects@cua/extension.js', import.meta.url);
 const counts = {};
+const watches = new Map();
+let nextWatch = 0;
 const bump = key => { counts[key] = (counts[key] ?? 0) + 1; return 1; };
 const stub = new Proxy(function () {}, {
   get: () => stub,
@@ -19,6 +21,12 @@ globalThis.helperMocks = {
     } },
     DBus: { session: {} }, BusType: { SESSION: 0 }, BusNameOwnerFlags: { REPLACE: 0 },
     bus_own_name: () => bump('own'), bus_unown_name: () => bump('unown'),
+    BusNameWatcherFlags: { NONE: 0 },
+    bus_watch_name: (_bus, name, _flags, _appeared, vanished) => {
+      watches.set(++nextWatch, { name, vanished });
+      return nextWatch;
+    },
+    bus_unwatch_name: (id) => { watches.delete(id); },
   },
   GLib: {
     get_monotonic_time: () => (globalThis.helperClock ?? 0) * 1_000_000,
@@ -55,6 +63,11 @@ export async function load(url, context, next) {
 }
 `)}`);
 
+// Call a cursor-drawing D-Bus method the way GJS dispatches it.
+const draw = (helper, method, ...args) => drawAs(':1.1', helper, method, ...args);
+const drawAs = (sender, helper, method, ...args) =>
+  helper[`${method}Async`](args, { get_sender: () => sender, return_value: () => bump('reply') });
+
 for (const version of ['50', '50.1', '50.beta', '50.rc', '51', '45', '46', '47', '48', '49']) {
   globalThis.shellVersion = version;
   const { default: Extension } = await import(`${extension}?${version}`);
@@ -69,7 +82,7 @@ for (const version of ['50', '50.1', '50.beta', '50.rc', '51', '45', '46', '47',
     assert.deepEqual(counts, {});
   } else {
     helper.enable();
-    assert.equal(helper.GetVersion(), 12);
+    assert.equal(helper.GetVersion(), 13);
     assert.equal(counts.export, 1);
     assert.equal(counts.own, 1);
     assert.equal(counts.actor, 5);
@@ -125,7 +138,7 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
   ];
   // The float clock at the last sample: phase 7.3 s, held 0.1 s from 0.
   const rest = [7.3, 0.1, 0];
-  helper.PlayCursorPath(JSON.stringify({ samples, arrival: 0.4, rest }));
+  draw(helper, 'PlayCursorPath', JSON.stringify({ samples, arrival: 0.4, rest }));
   assert.equal(counts.timer, 1, 'one frame timer while the path plays');
   assert.ok(helper._path);
   near(helper._pose(100).dy, -1);
@@ -149,22 +162,22 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
     JSON.stringify({ samples: [[0, 0, 0, 0, 0, 0]], arrival: null }),
     JSON.stringify({ samples: [[0, 0, 0, 0, 0, 0]], arrival: null, rest: [0, -1, 0] }),
   ])
-    helper.PlayCursorPath(bad);
+    draw(helper, 'PlayCursorPath', bad);
   assert.deepEqual(helper._path.samples, samples);
 
   // A click on the point the move settles onto lets it finish.
-  helper.ClickPulse(501, 300);
+  draw(helper, 'ClickPulse', 501, 300);
   assert.ok(helper._path, 'settling move kept');
   near(helper._rest.phase, 7.3);
   // A click elsewhere ends it and snaps.
-  helper.ClickPulse(800, 600);
+  draw(helper, 'ClickPulse', 800, 600);
   assert.equal(helper._path, null);
   assert.equal(helper._cursorX, 800);
   assert.equal(counts.remove, 1);
 
   // At rest the float carries on from the track's clock: still held at 0
   // just after, then eased back in on the same phase (no restart).
-  helper.PlayCursorPath(JSON.stringify({ samples: [[0, 800, 600, 0, 0, 0]], arrival: null, rest }));
+  draw(helper, 'PlayCursorPath', JSON.stringify({ samples: [[0, 800, 600, 0, 0, 0]], arrival: null, rest }));
   near(helper._rest.at, 100);
   assert.equal(helper._pose(100.3).dx, 0);
   assert.equal(helper._pose(100.3).rotation, 0);
@@ -186,7 +199,7 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
   assert.ok(Math.abs(helper._pose(104).dy) > 0.1, 'back in after the hold');
   // And a click at rest holds it at 0 too.
   globalThis.helperClock = 104;
-  helper.ClickPulse(800, 600);
+  draw(helper, 'ClickPulse', 800, 600);
   globalThis.helperClock = 104.3;
   assert.equal(helper._pose(104.3).dx, 0);
 
@@ -195,9 +208,52 @@ assert.deepEqual(metadata['shell-version'], ['45', '46', '47', '48', '49']);
   assert.equal(helper._pose(106.4).dy, 0);
   assert.equal(helper._pose(106.4).rotation, 0);
 
-  helper.PlayCursorPath(JSON.stringify({ samples, arrival: 0.4, rest }));
+  draw(helper, 'PlayCursorPath', JSON.stringify({ samples, arrival: 0.4, rest }));
   helper.HideCursor();
   assert.equal(helper._path, null, 'hiding stops the path');
   helper.disable();
   delete globalThis.helperClock;
+}
+
+// The cursor hides when the bus client that drew it last leaves the bus, so a
+// daemon that exits or restarts cannot leave it painted (#3062).
+{
+  globalThis.shellVersion = '49';
+  const { default: Extension } = await import(`${extension}?owner`);
+  const helper = new Extension();
+  helper.enable();
+  watches.clear();
+  for (const key of Object.keys(counts)) delete counts[key];
+  const hideCursor = helper.HideCursor.bind(helper);
+  helper.HideCursor = () => { bump('hide'); hideCursor(); };
+  const watched = () => [...watches.values()].map((watch) => watch.name);
+  const vanish = (name) => [...watches.values()].find((watch) => watch.name === name).vanished();
+
+  drawAs(':1.7', helper, 'MoveCursor', 10, 20);
+  drawAs(':1.7', helper, 'ClickPulse', 10, 20);
+  assert.deepEqual(watched(), [':1.7'], 'one watch per owner');
+  assert.equal(counts.reply, 2, 'every draw is answered');
+
+  // A malformed track draws nothing, so it does not take the cursor over.
+  drawAs(':1.8', helper, 'PlayCursorPath', '{}');
+  assert.deepEqual(watched(), [':1.7']);
+  assert.equal(counts.reply, 3, 'a refused draw is answered');
+
+  // Another client draws: it owns the cursor now, and the old owner leaving
+  // does not hide it.
+  const stale = [...watches.values()][0];
+  drawAs(':1.9', helper, 'PlayCursorPath', JSON.stringify({ samples: [[0, 5, 5, 0, 0, 0]], arrival: null, rest: [0, 0, 0] }));
+  assert.deepEqual(watched(), [':1.9']);
+  stale.vanished();
+  assert.equal(counts.hide, undefined);
+
+  vanish(':1.9');
+  assert.equal(counts.hide, 1, 'the owner leaving hides the cursor');
+  assert.deepEqual(watched(), []);
+
+  // A new daemon draws again and is watched; disabling drops the watch.
+  drawAs(':1.12', helper, 'MoveCursor', 1, 1);
+  assert.deepEqual(watched(), [':1.12']);
+  helper.disable();
+  assert.deepEqual(watched(), []);
 }

@@ -57,6 +57,9 @@ pub const WINDOW_PREVIEW_API_VERSION: u32 = 10;
 /// `SetCursorLook(json)` / `PlayCursorPath(json)`: the helper plays the
 /// shared planner's poses (float, rotation) and paints the shared halo.
 pub const POSE_CURSOR_API_VERSION: u32 = 11;
+/// The helper hides its cursor when the bus client that drew it last leaves
+/// the bus, so an exiting daemon cannot leave it painted.
+pub const OWNED_CURSOR_API_VERSION: u32 = 13;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -840,6 +843,19 @@ pub fn hide_cursor() {
     let _ = gdbus_call("HideCursor", &[], operation_deadline(CALL_CAP));
 }
 
+/// Hide a cursor an earlier daemon left painted on a helper older than
+/// [`OWNED_CURSOR_API_VERSION`]. A current helper already hid it when that
+/// daemon left the bus, and may be showing another live client's cursor.
+pub fn hide_orphaned_cursor() {
+    let deadline = operation_deadline(CALL_CAP);
+    let Some((owner, version)) = attested_owner_with_version(deadline) else {
+        return;
+    };
+    if version < OWNED_CURSOR_API_VERSION {
+        let _ = transport::call(&owner, PATH, &format!("{IFACE}.HideCursor"), &[], deadline);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1325,9 +1341,10 @@ mod tests {
     #[test]
     fn bundled_helper_uses_host_owned_modifier_badge_chips() {
         assert!(EXTENSION_SOURCE.contains("GetVersion()"));
-        // v12 draws the tip, not the canvas centre, on the cursor point.
-        assert!(EXTENSION_SOURCE.contains("return 12;"));
-        assert!(EXTENSION_SOURCE.contains("PlayCursorPath(trackJson)"));
+        // v13 hides the cursor when the client that drew it leaves the bus.
+        assert!(EXTENSION_SOURCE.contains("return 13;"));
+        assert_eq!(OWNED_CURSOR_API_VERSION, 13);
+        assert!(EXTENSION_SOURCE.contains("PlayCursorPathAsync([trackJson], invocation)"));
         assert!(EXTENSION_SOURCE.contains("SetCursorLook(lookJson)"));
         assert!(EXTENSION_SOURCE.contains("function drawCursorHalo"));
         assert_eq!(POSE_CURSOR_API_VERSION, 11);
@@ -1356,7 +1373,7 @@ mod tests {
         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
         let metadata: serde_json::Value =
             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
-        assert_eq!(metadata["version"], 12);
+        assert_eq!(metadata["version"], 13);
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

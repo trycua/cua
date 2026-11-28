@@ -1108,7 +1108,10 @@ async fn serve_claimed_socket(
     cua_driver_core::authorization::validate_startup_authorization()?;
 
     #[cfg(target_os = "linux")]
-    platform_linux::recover_orphaned_mpx_devices();
+    {
+        platform_linux::recover_orphaned_mpx_devices();
+        platform_linux::recover_orphaned_shell_cursor();
+    }
 
     // Create parent directory.
     if let Some(dir) = std::path::Path::new(socket_path).parent() {

@@ -713,8 +713,12 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(driver, &sp, pid_file, socket_lock);
-                    std::process::exit(0);
+                    // The main thread never returns without the overlay, so
+                    // this thread ends the process, on a panic as well.
+                    let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        serve::run_serve_cmd(driver, &sp, pid_file, socket_lock)
+                    }));
+                    std::process::exit(if served.is_ok() { 0 } else { 1 });
                 })
                 .expect("spawn serve thread");
 
@@ -773,13 +777,15 @@ fn main() {
             //
             // The agent-cursor overlay needs the AppKit main run loop
             // (NSApplication.run() plus the cursor command consumer). Run it
-            // whenever the cursor is enabled; otherwise just join the serve
-            // thread so the process stays up as long as the daemon does.
+            // whenever the cursor is enabled. Otherwise still serve the main
+            // dispatch queue, which tools such as the Finder folder handoff
+            // wait on; the serve thread exits the process when it ends or
+            // panics.
             if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::run_on_main_thread();
                 let _ = serve_handle.join();
             } else {
-                let _ = serve_handle.join();
+                platform_macos::cursor::overlay::serve_main_queue();
             }
         }
         cli::Command::Stop {

@@ -20,7 +20,7 @@ use cua_driver_testkit::e2e::{
     execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Observation, OracleKind,
     Scope, Targeting,
 };
-use cua_driver_testkit::{Driver, McpDriver};
+use cua_driver_testkit::{Driver, InstalledMacosDaemon, McpDriver};
 
 const FINDER_BUNDLE: &str = "com.apple.finder";
 const CALCULATOR_BUNDLE: &str = "com.apple.calculator";
@@ -226,6 +226,86 @@ fn calculator_launch_preserves_finder_frontmost() {
         "Calculator",
         "calculator",
     );
+}
+
+/// Close the Finder windows showing `folder`, waiting briefly for Finder to
+/// open them after the handoff.
+fn close_finder_windows_for(folder: &std::path::Path) {
+    let script = format!(
+        r#"set closed to 0
+tell application "Finder"
+    repeat with w in (every Finder window)
+        try
+            if POSIX path of (target of w as alias) is "{}/" then
+                close w
+                set closed to closed + 1
+            end if
+        end try
+    end repeat
+end tell
+return closed"#,
+        folder.display()
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if osascript(&script).is_some_and(|closed| closed != "0") {
+            return;
+        }
+        sleep(Duration::from_millis(250));
+    }
+}
+
+/// Issue #7613: the Finder folder handoff waits on the main dispatch queue, so
+/// a daemon started with `--no-overlay` must still serve that queue.
+#[test]
+#[ignore]
+fn finder_folder_launch_works_without_overlay() {
+    let case = CaseSpec::delivered(
+        "macos-finder-folder-launch-no-overlay",
+        "finder folder launch without overlay",
+        "appkit",
+        "launch_app",
+        Targeting::NotApplicable,
+        Delivery::Background,
+        Scope::Desktop,
+        DriverRoute::Composite,
+        vec![OracleKind::Protocol],
+    );
+    execute_case(case, |evidence| {
+        let temp = tempfile::tempdir().expect("create temp folder");
+        let folder = temp.path().canonicalize().expect("canonical temp folder");
+        let home = tempfile::tempdir().expect("create daemon home");
+        // A dedicated `--no-overlay` instance of the installed app, so the row
+        // keeps its Screen Recording grant for the behavior video.
+        let daemon = InstalledMacosDaemon::start(home.path());
+        let mut driver = McpDriver::spawn_daemon_proxy_named(
+            daemon.socket(),
+            "macos-finder-folder-launch-no-overlay",
+        )
+        .expect("connect to the dedicated no-overlay daemon");
+        *evidence = recording_evidence(driver.recording_dir());
+        driver.start_behavior_recording();
+
+        let launch = driver.call(
+            "launch_app",
+            serde_json::json!({
+                "bundle_id": FINDER_BUNDLE,
+                "urls": [folder.display().to_string()],
+            }),
+        );
+        close_finder_windows_for(&folder);
+        assert!(
+            !launch.is_error(),
+            "launch_app(Finder, folder) failed without overlay: {}",
+            launch.text()
+        );
+        assert!(
+            launch.structured()["pid"].as_i64().unwrap_or(0) > 0,
+            "launch_app(Finder, folder) returned no pid: {:?}",
+            launch.raw
+        );
+        Observation::delivered(vec![OracleKind::Protocol], Default::default())
+    });
 }
 
 #[test]

@@ -48,6 +48,8 @@ mod daemon;
 mod driver;
 pub mod e2e;
 mod host_state;
+#[cfg(target_os = "macos")]
+mod installed_macos;
 mod journal;
 mod mcp;
 pub mod observer;
@@ -63,6 +65,8 @@ pub use browser_fixture::BrowserFixtureServer;
 pub use cli::CliDriver;
 pub use driver::{BehaviorRecording, Driver};
 pub use host_state::{IsolatedStateRoot, SHARE_HOST_STATE};
+#[cfg(target_os = "macos")]
+pub use installed_macos::{installed_macos_binary, InstalledMacosDaemon};
 pub use journal::FixtureJournal;
 pub use mcp::McpDriver;
 pub use paths::{

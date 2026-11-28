@@ -745,6 +745,26 @@ pub fn render_loop_running() -> bool {
     RENDER_LOOP_RUNNING.load(Ordering::Acquire)
 }
 
+/// Block the calling thread (must be the OS main thread) serving the main
+/// dispatch queue without AppKit. Never returns.
+///
+/// Work such as the Finder folder handoff is sent to the main queue and waits
+/// for it, so a daemon that runs no overlay still has to serve that queue.
+/// `CFRunLoopRun` does so on the real main thread without creating an
+/// `NSApplication`, so the process gets no Dock icon and never registers with
+/// the Window Server.
+pub fn serve_main_queue() -> ! {
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRunLoopRun();
+    }
+    loop {
+        // CFRunLoopRun returns when the run loop has no sources; the main
+        // queue still needs serving, so enter it again.
+        unsafe { CFRunLoopRun() };
+    }
+}
+
 /// Block the calling thread (must be the OS main thread) running the AppKit
 /// event loop and the overlay window.  Never returns normally.
 ///
@@ -754,10 +774,8 @@ pub fn run_on_main_thread() {
     let rx = match CMD_RX_CELL.lock().unwrap().take() {
         Some(r) => r,
         None => {
-            // init() was never called — no overlay, just spin.
-            loop {
-                std::thread::park();
-            }
+            // init() was never called — no overlay.
+            serve_main_queue();
         }
     };
 
@@ -770,9 +788,7 @@ pub fn run_on_main_thread() {
     };
 
     if !cfg.enabled {
-        loop {
-            std::thread::park();
-        }
+        serve_main_queue();
     }
 
     // AppKit's `+[NSApplication sharedApplication]` registers the process with
@@ -780,16 +796,15 @@ pub fn run_on_main_thread() {
     // `_RegisterApplication`) when there's no graphic-session access — e.g.
     // `mcp` run as a stdio child from SSH, a LaunchDaemon, or headless CI.
     // Detect that without touching AppKit and run headless: the MCP server
-    // keeps serving on its background thread while this thread just parks,
-    // exactly as it does when the overlay is disabled. See issue #1724.
+    // keeps serving on its background thread while this thread serves the
+    // main queue, exactly as it does when the overlay is disabled. See issue
+    // #1724.
     if !crate::session::has_graphic_access() {
         tracing::warn!(
             "no Window Server / graphic-session access — skipping cursor \
              overlay and running headless (issue #1724)"
         );
-        loop {
-            std::thread::park();
-        }
+        serve_main_queue();
     }
 
     // ------------------------------------------------------------------

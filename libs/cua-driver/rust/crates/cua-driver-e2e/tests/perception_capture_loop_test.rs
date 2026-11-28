@@ -52,6 +52,8 @@ use cua_driver_testkit::{
     driver_binary, ensure_driver_binary, harness_app, spawn_in_job, Driver, FixtureJournal,
     McpDriver, ToolResponse,
 };
+#[cfg(target_os = "macos")]
+use cua_driver_testkit::{installed_macos_binary, InstalledMacosDaemon};
 use flate2::{write::GzEncoder, Compression};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -349,15 +351,15 @@ fn extension_home() -> tempfile::TempDir {
 struct PerceptionDriver {
     driver: McpDriver,
     #[cfg(target_os = "macos")]
-    _daemon: MacosDaemon,
+    _daemon: InstalledMacosDaemon,
 }
 
 impl PerceptionDriver {
     fn start(label: &str, home: &Path) -> Self {
         #[cfg(target_os = "macos")]
         {
-            let daemon = MacosDaemon::start(home);
-            let driver = McpDriver::spawn_daemon_proxy_named(&daemon.socket, label)
+            let daemon = InstalledMacosDaemon::start(home);
+            let driver = McpDriver::spawn_daemon_proxy_named(daemon.socket(), label)
                 .expect("connect to the dedicated installed Driver daemon");
             Self {
                 driver,
@@ -371,109 +373,6 @@ impl PerceptionDriver {
                 .expect("start the source-built Driver with an isolated extension home");
             Self { driver }
         }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn installed_macos_binary() -> PathBuf {
-    let binary = PathBuf::from(
-        std::env::var_os("CUA_E2E_INSTALLED_DRIVER_BIN")
-            .expect("CUA_E2E_INSTALLED_DRIVER_BIN must identify the installed, TCC-authorized app"),
-    );
-    assert!(binary.is_file(), "installed Driver is missing: {binary:?}");
-    // The Lume runner exports the ~/.local/bin symlink; the daemon is launched
-    // from the app bundle it points to.
-    std::fs::canonicalize(&binary)
-        .unwrap_or_else(|error| panic!("resolve installed Driver {binary:?}: {error}"))
-}
-
-/// A second instance of the installed app, sharing its TCC grants but not its
-/// extension home, socket, or PID file. The canonical shared daemon is left
-/// untouched; this instance is stopped when the row ends.
-#[cfg(target_os = "macos")]
-struct MacosDaemon {
-    binary: PathBuf,
-    socket: String,
-    _socket_dir: tempfile::TempDir,
-}
-
-#[cfg(target_os = "macos")]
-impl MacosDaemon {
-    fn start(home: &Path) -> Self {
-        let binary = installed_macos_binary();
-        let app = binary
-            .ancestors()
-            .nth(3)
-            .filter(|path| path.extension().is_some_and(|ext| ext == "app"))
-            .unwrap_or_else(|| panic!("installed Driver is not inside an app bundle: {binary:?}"))
-            .to_path_buf();
-        // Unix socket paths are short on macOS.
-        let socket_dir = tempfile::Builder::new()
-            .prefix("cua-p-")
-            .tempdir_in("/tmp")
-            .expect("create daemon socket directory");
-        let socket = socket_dir.path().join("d.sock").display().to_string();
-        let pid_file = socket_dir.path().join("d.pid").display().to_string();
-        let log = home.join("daemon.log");
-        let status = Command::new("open")
-            .args(["-n", "-g"])
-            .arg("--env")
-            .arg(format!("CUA_DRIVER_RS_HOME={}", home.display()))
-            .args(["--env", "CUA_DRIVER_RS_TELEMETRY_ENABLED=false"])
-            .arg("--stderr")
-            .arg(&log)
-            .arg(&app)
-            .args(["--args", "--socket", &socket, "--pid-file", &pid_file])
-            .args([
-                "serve",
-                "--permission-mode",
-                "unrestricted",
-                "--dangerously-bypass-approvals",
-                "--no-permissions-gate",
-                "--no-overlay",
-            ])
-            .status()
-            .expect("launch dedicated installed Driver instance");
-        assert!(status.success(), "open failed for {app:?}: {status}");
-        let daemon = Self {
-            binary,
-            socket,
-            _socket_dir: socket_dir,
-        };
-        let deadline = Instant::now() + Duration::from_secs(45);
-        loop {
-            let output = Command::new(&daemon.binary)
-                .args(["--socket", &daemon.socket, "status"])
-                .stdin(Stdio::null())
-                .output();
-            if output.as_ref().is_ok_and(|output| {
-                output.status.success()
-                    && String::from_utf8_lossy(&output.stdout)
-                        .contains("permission mode: unrestricted")
-            }) {
-                return daemon;
-            }
-            if Instant::now() >= deadline {
-                panic!(
-                    "dedicated installed Driver did not become ready: status={:?} log={}",
-                    output.map(|output| String::from_utf8_lossy(&output.stdout).into_owned()),
-                    fs::read_to_string(&log).unwrap_or_default()
-                );
-            }
-            thread::sleep(Duration::from_millis(250));
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for MacosDaemon {
-    fn drop(&mut self) {
-        let _ = Command::new(&self.binary)
-            .args(["--socket", &self.socket, "stop"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
     }
 }
 

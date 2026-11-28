@@ -1041,6 +1041,18 @@ fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> Type
         .count()
         .saturating_sub(before.chars().count())
         .min(text.chars().count());
+    // Chromium stores a trailing space in a contenteditable as U+00A0 and
+    // leaves trailing whitespace out of AXValue, so the read-back of a piece
+    // that ends in whitespace stops short by exactly that whitespace even
+    // when it landed. That shortfall proves nothing about delivery.
+    let shown = text.trim_end();
+    if shown.len() < text.len()
+        && !shown.is_empty()
+        && delivered == shown.chars().count()
+        && after.contains(shown)
+    {
+        return TypedProgress::Unverifiable;
+    }
     if delivered == 0 {
         TypedProgress::Unchanged
     } else {
@@ -2622,6 +2634,20 @@ mod tests {
                 Partial(12),
             ),
             (Some("ab"), Some("ab"), "hi", Unchanged),
+            // A Chromium contenteditable leaves trailing whitespace out of
+            // AXValue: the missing space is not a shortfall.
+            (
+                Some(""),
+                Some("Hello, friends!"),
+                "Hello, friends! ",
+                Unverifiable,
+            ),
+            (
+                Some(""),
+                Some("Hello, fri"),
+                "Hello, friends! ",
+                Partial(10),
+            ),
             (None, None, "", Complete),
             // A submitted field rewrites itself; the shortfall proves nothing.
             (Some("A1"), Some("A1xx"), "$Controls.A1\n", Unverifiable),

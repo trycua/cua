@@ -259,6 +259,10 @@ pub fn truncation_note(
             ),
             "retry in a moment or with a larger timeout_ms (e.g. 5000)".to_owned(),
         ),
+        Some("children_unread") => (
+            "a container's children could not be read from its accessibility API".to_owned(),
+            "retry in a moment or with a larger timeout_ms (e.g. 5000)".to_owned(),
+        ),
         Some("huge_container") => (
             "a container with more children than can be enumerated \
              (e.g. a spreadsheet's cell grid) was not expanded"
@@ -440,6 +444,8 @@ mod tests {
         assert!(note.contains("still be launching"));
         let note = truncation_note(Some("huge_container"), 1000, 1918, 0);
         assert!(note.contains("not expanded"));
+        let note = truncation_note(Some("children_unread"), 1000, 12, 0);
+        assert!(note.contains("children could not be read"));
     }
 
     /// Each cut names the knob that lifts it, and never one that cannot: a
@@ -447,7 +453,7 @@ mod tests {
     /// partial tree back (#4720).
     #[test]
     fn truncation_note_remedy_matches_the_cut() {
-        let cases: [(Option<&str>, &str, &[&str]); 6] = [
+        let cases: [(Option<&str>, &str, &[&str]); 7] = [
             (
                 Some("timeout"),
                 "retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth.",
@@ -465,6 +471,11 @@ mod tests {
             ),
             (
                 Some("app_lookup_timeout"),
+                "retry in a moment or with a larger timeout_ms (e.g. 5000).",
+                &["max_elements", "query"],
+            ),
+            (
+                Some("children_unread"),
                 "retry in a moment or with a larger timeout_ms (e.g. 5000).",
                 &["max_elements", "query"],
             ),

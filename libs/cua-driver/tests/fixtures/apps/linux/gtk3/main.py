@@ -376,7 +376,25 @@ class HarnessWindow(Gtk.Window):
         self.popover_status.set_text("popover_open=True")
 
 
+class SecondWindow(Gtk.Window):
+    """A second top-level of the same process (issue #3812), opened when
+    SECOND_WINDOW_ENV is 1, so a window-scoped snapshot can be told from one
+    of the whole application."""
+
+    def __init__(self):
+        super().__init__(title="CuaTestHarness Second")
+        self.set_default_size(320, 200)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_border_width(12)
+        self.add(box)
+        for n in range(SECOND_WINDOW_BUTTONS):
+            button = aid(Gtk.Button(label=f"Second {n}"), f"second-{n:02}")
+            box.pack_start(button, False, False, 0)
+
+
 DISABLED_CONTROL_ENV = "CUA_GTK3_DISABLED_CONTROL"
+SECOND_WINDOW_ENV = "CUA_GTK3_SECOND_WINDOW"
+SECOND_WINDOW_BUTTONS = 3
 TASK_STATE_ENV = "CUA_GTK3_TASK_STATE"
 TASK_STATE_SCHEMA = "cua.gtk3_task_state_v1"
 TASK_DENSITY_ENV = "CUA_GTK3_TASK_DENSITY"
@@ -579,6 +597,8 @@ def main():
     task_state = os.environ.get(TASK_STATE_ENV, "").strip()
     win = TaskWindow(task_state, task_density()) if task_state else HarnessWindow()
     win.show_all()
+    if os.environ.get(SECOND_WINDOW_ENV, "").strip() == "1":
+        SecondWindow().show_all()
     Gtk.main()
 
 

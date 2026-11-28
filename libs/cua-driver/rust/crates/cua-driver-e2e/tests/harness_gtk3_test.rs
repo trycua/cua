@@ -617,6 +617,84 @@ fn harness_gtk3_disabled_control_is_published_and_its_writers_refused() {
     });
 }
 
+/// `max_elements` bounds the window `window_id` names (#3812): a capped snapshot
+/// of an application's second window lists that window's controls, and when
+/// the cap covers them it is complete, though the main window alone exceeds it.
+#[test]
+#[ignore]
+fn harness_gtk3_capped_second_window_snapshot_is_complete() {
+    let case = native_readonly_case(
+        "gtk3",
+        "capped_second_window_snapshot",
+        Targeting::Ax,
+        DriverRoute::AxRead,
+        vec![OracleKind::AxState],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, main_window_id) =
+            launch_with_env(&mut driver, &[("CUA_GTK3_SECOND_WINDOW", "1")]);
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let second_window_id = loop {
+            let windows = driver.call("list_windows", serde_json::json!({ "pid": pid as i64 }));
+            let found = windows.structured()["windows"]
+                .as_array()
+                .and_then(|windows| {
+                    windows
+                        .iter()
+                        .find(|window| window["title"] == "CuaTestHarness Second")
+                        .and_then(|window| window["window_id"].as_u64())
+                });
+            if let Some(window_id) = found {
+                break window_id;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the second GTK3 window never appeared"
+            );
+            std::thread::sleep(Duration::from_millis(400));
+        };
+        driver.start_behavior_recording();
+        let capped = |driver: &mut McpDriver, window_id: u64| {
+            driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": window_id,
+                    "max_elements": 10,
+                }),
+            )
+        };
+
+        let main = capped(&mut driver, main_window_id);
+        assert_eq!(
+            main.structured()["truncated"],
+            true,
+            "the main window has more than 10 controls, so its capped snapshot is cut: {}",
+            main.raw
+        );
+        let second = capped(&mut driver, second_window_id);
+        for n in 0..3 {
+            element_token(&second, &format!("second-{n:02}"));
+        }
+        assert!(
+            !second.tree_text().contains("btn-increment"),
+            "the second window's snapshot shows the main window:\n{}",
+            second.tree_text()
+        );
+        assert_eq!(second.structured()["truncated"], false, "{}", second.raw);
+        assert_eq!(
+            second.structured()["elements_complete"],
+            true,
+            "{}",
+            second.raw
+        );
+        Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+    });
+}
+
 /// A `GtkOverlay` banner drawn over a button: a foreground element click on the
 /// banner presses the banner, and on X11 a click on the covered button is
 /// refused with the banner named instead of pressing the banner by accident.

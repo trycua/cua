@@ -5869,9 +5869,10 @@ mod tests {
             "bin/cua-perception"
         }));
         assert_eq!(config.args[0], "--manifest");
-        assert!(config.args[1].ends_with("models/model-manifest.json"));
+        // Compare paths, not strings: Windows joins them with backslashes.
+        assert!(std::path::Path::new(&config.args[1]).ends_with("models/model-manifest.json"));
         assert_eq!(config.args[2], "--onnx-runtime-library");
-        assert!(config.args[3].ends_with(&format!("runtime/{runtime_name}")));
+        assert!(std::path::Path::new(&config.args[3]).ends_with(format!("runtime/{runtime_name}")));
         assert_eq!(
             &config.args[4..],
             [

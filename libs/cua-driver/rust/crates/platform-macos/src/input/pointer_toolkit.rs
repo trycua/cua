@@ -112,20 +112,45 @@ pub fn classify_image_path(path: &str) -> Option<PointerReadingToolkit> {
         .map(|_| PointerReadingToolkit::Tk)
 }
 
+/// Return `true` when `path` is macOS Java AWT's Lightweight AWT library
+/// (`libawt_lwawt.dylib`), which reads delivered `NSEvent` coordinates and
+/// accepts background mouse events without Chromium's off-screen activation
+/// primer.
+pub fn classify_java_awt_image_path(path: &str) -> bool {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.eq_ignore_ascii_case("libawt_lwawt.dylib")
+}
+
 /// Return the pointer-reading toolkit mapped into `pid`, if any.
 #[cfg(target_os = "macos")]
 pub fn detect(pid: i32) -> Option<PointerReadingToolkit> {
-    // Prefer the vnode-only flavor, which skips anonymous regions; fall back
-    // to the full walk on kernels that reject it.
-    match walk_regions(pid, PROC_PIDREGIONPATHINFO2) {
-        Some(found) => found,
-        None => walk_regions(pid, PROC_PIDREGIONPATHINFO).flatten(),
-    }
+    detect_matching(pid, classify_image_path)
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn detect(_pid: i32) -> Option<PointerReadingToolkit> {
     None
+}
+
+/// Return `true` when `pid` maps Java AWT's macOS native toolkit (`libawt_lwawt.dylib`).
+#[cfg(target_os = "macos")]
+pub fn is_java_awt(pid: i32) -> bool {
+    detect_matching(pid, |path| classify_java_awt_image_path(path).then_some(())).is_some()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_java_awt(_pid: i32) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn detect_matching<T>(pid: i32, mut matcher: impl FnMut(&str) -> Option<T>) -> Option<T> {
+    // Prefer the vnode-only flavor, which skips anonymous regions; fall back
+    // to the full walk on kernels that reject it.
+    match walk_regions_matching(pid, PROC_PIDREGIONPATHINFO2, &mut matcher) {
+        Some(found) => found,
+        None => walk_regions_matching(pid, PROC_PIDREGIONPATHINFO, &mut matcher).flatten(),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -177,7 +202,11 @@ struct ProcRegionWithPathInfo {
 /// Walk `pid`'s regions with `flavor`. `None` means the flavor was rejected
 /// before any region was read; `Some(result)` is a completed walk.
 #[cfg(target_os = "macos")]
-fn walk_regions(pid: i32, flavor: libc::c_int) -> Option<Option<PointerReadingToolkit>> {
+fn walk_regions_matching<T>(
+    pid: i32,
+    flavor: libc::c_int,
+    matcher: &mut impl FnMut(&str) -> Option<T>,
+) -> Option<Option<T>> {
     let size = std::mem::size_of::<ProcRegionWithPathInfo>();
     let mut address: u64 = 0;
     let mut read_any = false;
@@ -201,8 +230,8 @@ fn walk_regions(pid: i32, flavor: libc::c_int) -> Option<Option<PointerReadingTo
         read_any = true;
         // SAFETY: the kernel NUL-terminates `vip_path` within MAXPATHLEN.
         let path = unsafe { std::ffi::CStr::from_ptr(info.prp_vip_path.as_ptr()) };
-        if let Some(toolkit) = classify_image_path(&path.to_string_lossy()) {
-            return Some(Some(toolkit));
+        if let Some(matched) = matcher(&path.to_string_lossy()) {
+            return Some(Some(matched));
         }
         let region = info.prp_prinfo;
         let next = region.pri_address.saturating_add(region.pri_size);
@@ -301,7 +330,37 @@ mod tests {
         // The test binary maps no Tk image. A completed negative walk proves the
         // region flavor is readable for a same-user process.
         assert_eq!(detect(std::process::id() as i32), None);
-        assert!(walk_regions(std::process::id() as i32, PROC_PIDREGIONPATHINFO).is_some());
+        assert!(walk_regions_matching(
+            std::process::id() as i32,
+            PROC_PIDREGIONPATHINFO,
+            &mut classify_image_path
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn classifies_java_awt_lwawt_and_rejects_siblings() {
+        for path in [
+            "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/lib/libawt_lwawt.dylib",
+            "/Applications/Example.app/Contents/runtime/Contents/Home/lib/libawt_lwawt.dylib",
+        ] {
+            assert!(classify_java_awt_image_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/lib/libawt.dylib",
+            "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/lib/libjawt.dylib",
+            "/Applications/Example.app/Contents/Home/lib/libawt_lwawt.dylib.bak",
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        ] {
+            assert!(!classify_java_awt_image_path(path), "{path}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn is_java_awt_is_negative_for_a_non_java_process() {
+        assert!(!is_java_awt(std::process::id() as i32));
     }
 
     /// Loads `_tkinter` without creating any window. Skips when the host

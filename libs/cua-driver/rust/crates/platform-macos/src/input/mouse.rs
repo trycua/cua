@@ -415,7 +415,11 @@ pub fn click_at_xy_with_window_local(
 ) -> anyhow::Result<()> {
     match delivery {
         WindowClickDelivery::Background => {
-            click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
+            if crate::input::pointer_toolkit::is_java_awt(pid) {
+                click_at_xy_native_mouse(pid, x, y, wx, wy, wid, count, modifiers)
+            } else {
+                click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
+            }
         }
         WindowClickDelivery::Foreground => click_at_xy_inner(
             pid,
@@ -468,6 +472,7 @@ fn click_at_xy_inner(
             window_local,
             wid,
             click_group_id,
+            3,
             post_mode,
         );
         std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
@@ -702,6 +707,93 @@ fn chromium_click_route_plan(
     steps
 }
 
+/// Native mouse route plan for background left-clicks on toolkits that read
+/// delivered `NSEvent` coordinates (such as Java AWT/Swing) and do not need
+/// Chromium's off-screen `(-1, -1)` activation primer or 1 ms tap hold.
+fn native_mouse_click_route_plan(
+    screen_target: (f64, f64),
+    win_local_target: (f64, f64),
+    count: usize,
+    window_local: bool,
+    pacing_ms: (u64, u64, u64),
+) -> Vec<ChromiumClickRouteStep> {
+    let (primer_settle_ms, hold_ms, multi_gap_ms) = pacing_ms;
+    let stamped_target = if window_local {
+        win_local_target
+    } else {
+        screen_target
+    };
+    let click_pairs = count.max(1);
+    let mut steps = Vec::with_capacity(1 + click_pairs * 2);
+    steps.push(ChromiumClickRouteStep {
+        kind: ChromiumClickEventKind::Move,
+        event_location: screen_target,
+        skylight_window_location: stamped_target,
+        public_window_location: stamped_target,
+        click_state: 0,
+        phase: 2,
+        button_number: 0,
+        subtype: 0,
+        delay_after_ms: primer_settle_ms,
+    });
+    for pair_index in 1..=click_pairs {
+        let click_state = pair_index as i64;
+        steps.push(ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Down,
+            event_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
+            click_state,
+            phase: 3,
+            button_number: 0,
+            subtype: 0,
+            delay_after_ms: hold_ms,
+        });
+        steps.push(ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Up,
+            event_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
+            click_state,
+            phase: 3,
+            button_number: 0,
+            subtype: 0,
+            delay_after_ms: if pair_index < click_pairs {
+                multi_gap_ms
+            } else {
+                0
+            },
+        });
+    }
+    steps
+}
+
+/// Post the route plan for a native background mouse left-click (no off-screen
+/// primer, `subtype=0`, pacing-configured down->up hold).
+#[allow(clippy::too_many_arguments)]
+pub fn click_at_xy_native_mouse(
+    pid: i32,
+    screen_x: f64,
+    screen_y: f64,
+    win_local_x: f64,
+    win_local_y: f64,
+    wid: u32,
+    count: usize,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    let primer_ms = cua_driver_core::input_pacing::mouse_primer_settle().as_millis() as u64;
+    let hold_ms = cua_driver_core::input_pacing::click_gap().as_millis() as u64;
+    let multi_ms = cua_driver_core::input_pacing::multi_click_gap().as_millis() as u64;
+    let route_plan = native_mouse_click_route_plan(
+        (screen_x, screen_y),
+        (win_local_x, win_local_y),
+        count,
+        window_location_is_window_local(),
+        (primer_ms, hold_ms, multi_ms),
+    );
+    post_background_click_route_plan(pid, wid, route_plan, modifiers)
+}
+
 /// Post the route plan for the Chromium-compatible background left-click
 /// recipe. `CGEvent::new_mouse_event` starts with the screen-space location.
 /// `CGEventSetWindowLocation` carries the window-local point on macOS 27+ and
@@ -717,10 +809,6 @@ pub fn click_at_xy_chromium(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let route_plan = chromium_click_route_plan(
         screen_x,
         screen_y,
@@ -729,10 +817,23 @@ pub fn click_at_xy_chromium(
         count,
         window_location_is_window_local(),
     );
+    post_background_click_route_plan(pid, wid, route_plan, modifiers)
+}
+
+fn post_background_click_route_plan(
+    pid: i32,
+    wid: u32,
+    route_plan: Vec<ChromiumClickRouteStep>,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let flags = parse_modifier_flags(modifiers);
     let window_id = wid as i64;
 
-    // All 5 events share the same click-group ID so WindowServer / Chromium
+    // All events share the same click-group ID so WindowServer / target views
     // treat the sequence as one gesture (Swift: field 58).
     let click_group_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -749,7 +850,7 @@ pub fn click_at_xy_chromium(
         set(0, step.phase); // kCGMouseEventNumber (gesture phase)
         set(1, step.click_state); // kCGMouseEventClickState
         set(3, step.button_number); // kCGMouseEventButtonNumber (left)
-        set(7, step.subtype); // kCGMouseEventSubtype (NSEventSubtypeTouch)
+        set(7, step.subtype); // kCGMouseEventSubtype
         set(40, pid as i64); // Chromium synthetic-event filter
         if window_id != 0 {
             set(51, window_id); // windowNumber (NSEvent bridge equivalent)
@@ -1597,6 +1698,20 @@ fn right_click_at_xy_inner(
             .subsec_nanos() as i64
     });
 
+    let java_awt = wid.is_some() && crate::input::pointer_toolkit::is_java_awt(pid);
+    let subtype = if java_awt { 0 } else { 3 };
+    let window_local = if java_awt {
+        window_local.map(|(wx, wy)| {
+            if window_location_is_window_local() {
+                (wx, wy)
+            } else {
+                (x, y)
+            }
+        })
+    } else {
+        window_local
+    };
+
     post_mouse_moved_primer(
         pid,
         &source,
@@ -1604,6 +1719,7 @@ fn right_click_at_xy_inner(
         window_local,
         wid,
         click_group_id,
+        subtype,
         MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
@@ -1619,7 +1735,7 @@ fn right_click_at_xy_inner(
         click_group_id,
         1,
         button_number,
-        3,
+        subtype,
         MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(cua_driver_core::input_pacing::click_gap());
@@ -1635,7 +1751,7 @@ fn right_click_at_xy_inner(
         click_group_id,
         1,
         button_number,
-        3,
+        subtype,
         MousePostMode::SkyLightPreferred,
     );
 
@@ -1743,6 +1859,7 @@ fn post_mouse_event_with_mode(
 /// default Rust pixel path had dropped. Click-state 0 / no button (move events
 /// carry no button); window-routing fields still stamped so the move reaches the
 /// right backgrounded window.
+#[allow(clippy::too_many_arguments)]
 fn post_mouse_moved_primer(
     pid: i32,
     source: &CGEventSource,
@@ -1750,6 +1867,7 @@ fn post_mouse_moved_primer(
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     click_group_id: Option<i64>,
+    subtype: i64,
     mode: MousePostMode,
 ) {
     if let Ok(mv) = CGEvent::new_mouse_event(
@@ -1758,7 +1876,17 @@ fn post_mouse_moved_primer(
         point,
         CGMouseButton::Left,
     ) {
-        post_mouse_event_with_mode(pid, &mv, window_local, wid, click_group_id, 0, 0, 3, mode);
+        post_mouse_event_with_mode(
+            pid,
+            &mv,
+            window_local,
+            wid,
+            click_group_id,
+            0,
+            0,
+            subtype,
+            mode,
+        );
     }
 }
 
@@ -1824,6 +1952,7 @@ pub fn scroll_wheel_at_xy(
                 .unwrap_or_default()
                 .subsec_nanos() as i64,
         ),
+        3,
         MousePostMode::Both,
     );
     std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
@@ -2385,6 +2514,71 @@ mod tests {
         let posted = capture.posted();
         assert_eq!(posted.len(), 5);
         assert!(posted.iter().all(|p| p.route == PostRoute::PublicPid));
+    }
+
+    #[test]
+    fn native_mouse_route_skips_offscreen_primer_and_uses_normal_mouse_hold() {
+        let plan =
+            native_mouse_click_route_plan((564.0, 504.0), (394.0, 310.0), 2, true, (12, 28, 80));
+        assert_eq!(
+            plan.len(),
+            5,
+            "move + two down/up pairs without (-1,-1) primer"
+        );
+        assert!(plan
+            .iter()
+            .all(|step| step.event_location == (564.0, 504.0)));
+        assert!(plan
+            .iter()
+            .all(|step| step.skylight_window_location == (394.0, 310.0)));
+        assert!(plan.iter().all(|step| step.subtype == 0));
+        assert_eq!(plan[0].kind, ChromiumClickEventKind::Move);
+        assert_eq!(plan[0].delay_after_ms, 12);
+        assert_eq!(plan[1].kind, ChromiumClickEventKind::Down);
+        assert_eq!(plan[1].click_state, 1);
+        assert_eq!(plan[1].delay_after_ms, 28);
+        assert_eq!(plan[2].kind, ChromiumClickEventKind::Up);
+        assert_eq!(plan[2].delay_after_ms, 80);
+        assert_eq!(plan[3].kind, ChromiumClickEventKind::Down);
+        assert_eq!(plan[3].click_state, 2);
+        assert_eq!(plan[3].delay_after_ms, 28);
+        assert_eq!(plan[4].kind, ChromiumClickEventKind::Up);
+        assert_eq!(plan[4].delay_after_ms, 0);
+
+        let pre27 =
+            native_mouse_click_route_plan((564.0, 504.0), (394.0, 310.0), 1, false, (12, 28, 80));
+        assert_eq!(pre27.len(), 3);
+        assert!(pre27
+            .iter()
+            .all(|step| step.skylight_window_location == (564.0, 504.0)));
+    }
+
+    #[test]
+    fn native_mouse_background_click_posts_once_with_window_routing() {
+        let capture = Capture::start(true);
+        click_at_xy_native_mouse(1, 100.0, 100.0, 10.0, 10.0, 7, 1, &["shift"]).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseDown", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseUp", PostRoute::SkyLight, 0),
+            ]
+        );
+        assert_eq!(capture.locations(), [(100.0, 100.0); 3]);
+        assert!(capture.window_routing().iter().all(|r| r[..3] == [7, 7, 7]));
+        assert!(capture
+            .modifiers()
+            .iter()
+            .all(|flags| *flags == CGEventFlags::CGEventFlagShift.bits()));
+
+        drop(capture);
+        let fallback = Capture::start(false);
+        click_at_xy_native_mouse(1, 100.0, 100.0, 10.0, 10.0, 7, 1, &[]).unwrap();
+        assert!(fallback
+            .posted()
+            .iter()
+            .all(|p| p.route == PostRoute::PublicPid));
     }
 
     #[test]

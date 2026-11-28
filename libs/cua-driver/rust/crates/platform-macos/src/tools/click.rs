@@ -413,18 +413,28 @@ fn settled_value(
     }
 }
 
+fn pixel_activation_policy_for_target(
+    button: &str,
+    effective_foreground: bool,
+    has_window: bool,
+    is_java_awt: bool,
+) -> PixelActivationPolicy {
+    if effective_foreground {
+        PixelActivationPolicy::ForegroundAssist
+    } else if button == "left" && has_window && !is_java_awt {
+        PixelActivationPolicy::AllowTargetWithoutRaise
+    } else {
+        PixelActivationPolicy::SuppressTarget
+    }
+}
+
+#[cfg(test)]
 fn pixel_activation_policy(
     button: &str,
     effective_foreground: bool,
     has_window: bool,
 ) -> PixelActivationPolicy {
-    if effective_foreground {
-        PixelActivationPolicy::ForegroundAssist
-    } else if button == "left" && has_window {
-        PixelActivationPolicy::AllowTargetWithoutRaise
-    } else {
-        PixelActivationPolicy::SuppressTarget
-    }
+    pixel_activation_policy_for_target(button, effective_foreground, has_window, false)
 }
 
 /// Return the prior foreground pid that should be restored after a raw
@@ -1684,10 +1694,18 @@ impl ClickTool {
             // The AppKit-activated route replaces the SkyLight focus prologue:
             // the app is made active in its own eyes, and the suppression
             // lease still undoes any activation the click provokes.
+            let java_awt = if !fg && window_id.is_some() && button_str == "left" {
+                tokio::task::spawn_blocking(move || crate::input::pointer_toolkit::is_java_awt(pid))
+                    .await
+                    .ok()
+                    .unwrap_or(false)
+            } else {
+                false
+            };
             let activation_policy = if route == PixelClickRoute::BackgroundAppKitActivated {
                 PixelActivationPolicy::SuppressTarget
             } else {
-                pixel_activation_policy(&button_str, fg, window_id.is_some())
+                pixel_activation_policy_for_target(&button_str, fg, window_id.is_some(), java_awt)
             };
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -3095,6 +3113,11 @@ mod tests {
         assert_eq!(
             pixel_activation_policy("left", true, true),
             PixelActivationPolicy::ForegroundAssist
+        );
+        assert_eq!(
+            pixel_activation_policy_for_target("left", false, true, true),
+            PixelActivationPolicy::SuppressTarget,
+            "Java AWT receives background clicks without activate-without-raise"
         );
     }
 

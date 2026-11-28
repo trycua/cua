@@ -1092,8 +1092,11 @@ impl Tool for GetWindowStateTool {
                     // `elements_complete` is a real claim now: a native walk that
                     // finished without hitting the deadline / node budget saw
                     // every node the application publishes. Truncated or
-                    // fallback trees keep negative existence unknown.
-                    structured["elements_complete"] = json!(tr.trusted && !tr.truncated);
+                    // fallback trees keep negative existence unknown, and so
+                    // does a tree not bound to this window, which may be
+                    // another window's.
+                    structured["elements_complete"] =
+                        json!(tr.trusted && !tr.truncated && binds_window);
                     structured["truncated"] = json!(tr.truncated);
                     if let Some(reason) = &tr.truncation_reason {
                         structured["truncation_reason"] = json!(reason);

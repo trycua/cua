@@ -80,7 +80,15 @@ fn is_a_client(active: &[Window], clients: &[Window]) -> Option<bool> {
 
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    list_windows_inner(filter_pid).unwrap_or_default()
+    list_windows_inner(filter_pid, false).unwrap_or_default()
+}
+
+/// Every window of `pid` that [`list_windows`] could describe, untitled ones
+/// included, so it can show that a process has no other window. Without an
+/// EWMH client list, `list_windows` hides untitled windows and those whose
+/// owner only XRes knows. `None` when the server cannot be fully listed.
+pub fn window_inventory(pid: u32) -> Option<Vec<WindowInfo>> {
+    list_windows_inner(Some(pid), true).ok()
 }
 
 /// Whether the X server still knows a window by this id.
@@ -116,13 +124,13 @@ fn window_owner_matches(owner: Option<u32>, requested_pid: u32) -> bool {
     owner == Some(requested_pid)
 }
 
-fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
+fn list_windows_inner(filter_pid: Option<u32>, untitled: bool) -> Result<Vec<WindowInfo>> {
     let (conn, screen_num) = RustConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
     // Prefer _NET_CLIENT_LIST_STACKING; an unordered client list reports null z_index.
-    let (windows, source) = get_window_list(&conn, root)?;
+    let (windows, source) = window_list(&conn, root, untitled)?;
 
     let owners = OwnerResolver::new(&conn);
     let mut result = Vec::new();
@@ -135,7 +143,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
         }
 
         let title = get_window_title(&conn, xid).unwrap_or_default();
-        if !window_is_listable(source, &title) {
+        if !untitled && !window_is_listable(source, &title) {
             continue;
         }
         let app_name = get_window_class(&conn, xid)
@@ -207,6 +215,17 @@ pub(crate) fn get_window_list(
     conn: &RustConnection,
     root: Window,
 ) -> Result<(Vec<Window>, WindowSource)> {
+    window_list(conn, root, false)
+}
+
+/// [`get_window_list`], where `untitled` takes every managed window, titled or
+/// not, when no EWMH client list names the clients, and fails rather than
+/// list root children when the window tree is too large to walk.
+fn window_list(
+    conn: &RustConnection,
+    root: Window,
+    untitled: bool,
+) -> Result<(Vec<Window>, WindowSource)> {
     let mut ewmh = false;
     let atoms = [
         ("_NET_CLIENT_LIST_STACKING", WindowSource::ClientList),
@@ -249,19 +268,19 @@ pub(crate) fn get_window_list(
             .into_iter()
             .zip(windows)
             .map(|((attrs, wm, tree), &w)| {
-                let valid = attrs
+                let viewable = attrs
                     .reply()
                     .ok()
-                    .is_some_and(|a| a.map_state == MapState::VIEWABLE)
-                    && wm.reply().ok().is_some_and(|r| {
-                        valid_wm_state(
-                            r.value32()
-                                .map(|v| v.collect::<Vec<_>>())
-                                .unwrap_or_default()
-                                .as_slice(),
-                        )
-                    });
-                let client = if valid {
+                    .is_some_and(|a| a.map_state == MapState::VIEWABLE);
+                let managed = wm.reply().ok().is_some_and(|r| {
+                    valid_wm_state(
+                        r.value32()
+                            .map(|v| v.collect::<Vec<_>>())
+                            .unwrap_or_default()
+                            .as_slice(),
+                    )
+                });
+                let client = walk_takes_client(viewable, managed, untitled, || {
                     let owner = conn.get_property(false, w, pid, AtomEnum::CARDINAL, 0, 1)?;
                     let title = conn.get_property(false, w, name, AtomEnum::ANY, 0, 1024)?;
                     let legacy =
@@ -275,16 +294,17 @@ pub(crate) fn get_window_list(
                         .ok()
                         .filter(|r| !r.value.is_empty())
                         .or_else(|| legacy.reply().ok());
-                    title.is_some_and(|r| {
+                    Ok(title.is_some_and(|r| {
                         client_has_identity(owner, &String::from_utf8_lossy(&r.value))
-                    })
-                } else {
-                    false
-                };
+                    }))
+                })?;
                 Ok((tree.reply().map(|r| r.children).unwrap_or_default(), client))
             })
             .collect()
     })?;
+    if untitled && clients.is_none() {
+        anyhow::bail!("the window tree is too large to list every managed window");
+    }
     if let Some(clients) = clients.filter(|clients| ewmh || !clients.is_empty()) {
         return Ok((clients, WindowSource::ClientList));
     }
@@ -304,6 +324,20 @@ pub(crate) fn get_window_list(
 
 fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Window]> {
     (property_type != x11rb::NONE && !windows.is_empty()).then_some(windows)
+}
+
+/// Whether the `WM_STATE` walk takes a window as a client: a `managed` one
+/// (normal or iconic state), and for a listing also a `viewable` one with a
+/// pid and a title (`identity`). An inventory takes every managed window,
+/// minimized ones included, and leaves its owner to [`OwnerResolver`], which
+/// also knows windows that publish no `_NET_WM_PID`.
+fn walk_takes_client(
+    viewable: bool,
+    managed: bool,
+    untitled: bool,
+    identity: impl FnOnce() -> Result<bool>,
+) -> Result<bool> {
+    Ok(managed && (untitled || (viewable && identity()?)))
 }
 
 fn client_has_identity(pid: Option<u32>, title: &str) -> bool {
@@ -606,6 +640,21 @@ pub fn window_info(xid: u64) -> Option<WindowInfo> {
         width: u32::from(geom.width),
         height: u32::from(geom.height),
     })
+}
+
+/// Whether `xid` is an override-redirect window (a popup menu or tooltip the
+/// window manager never manages). `false` when the server does not answer.
+pub fn is_override_redirect(xid: u64) -> bool {
+    let Ok(window) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    conn.get_window_attributes(window)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some_and(|attributes| attributes.override_redirect)
 }
 
 /// Ask the window manager to close `xid` (EWMH `_NET_CLOSE_WINDOW`, which
@@ -972,6 +1021,20 @@ mod tests {
                     .collect()
             });
         assert_eq!(selected, roots);
+    }
+
+    #[test]
+    fn an_inventory_takes_every_managed_window() {
+        let unread = || -> Result<bool> { panic!("an inventory reads no identity") };
+        assert!(walk_takes_client(true, true, true, unread).unwrap());
+        // A minimized main window still owns the AT-SPI root.
+        assert!(walk_takes_client(false, true, true, unread).unwrap());
+        assert!(!walk_takes_client(true, false, true, unread).unwrap());
+        // A listing keeps its rule: viewable, managed and identified.
+        assert!(walk_takes_client(true, true, false, || Ok(true)).unwrap());
+        assert!(!walk_takes_client(true, true, false, || Ok(false)).unwrap());
+        assert!(!walk_takes_client(false, true, false, || Ok(true)).unwrap());
+        assert!(!walk_takes_client(true, false, false, || Ok(true)).unwrap());
     }
 
     #[test]

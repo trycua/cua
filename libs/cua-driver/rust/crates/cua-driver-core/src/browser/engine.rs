@@ -1843,6 +1843,73 @@ impl BrowserEngine {
         Ok((validated, live_origin))
     }
 
+    /// Open an `about:blank` tab without activating it, prove it landed in
+    /// the bound CDP window, and record it on the target. Returns the new
+    /// tab id and its attached CDP session.
+    pub(crate) async fn open_background_tab(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+    ) -> Result<(String, String), BrowserRefusal> {
+        let record = &validated.record;
+        let bound_window_id = record.cdp_window_id.ok_or_else(|| {
+            refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "this binding has no browser window to open a tab in",
+            )
+        })?;
+        let conn = &validated.conn;
+        let created = conn
+            .call(
+                None,
+                "Target.createTarget",
+                json!({ "url": "about:blank", "background": true }),
+            )
+            .await
+            .map_err(|e| route_err("Target.createTarget failed", e))?;
+        let cdp_target_id = created
+            .get("targetId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "Target.createTarget returned no targetId",
+                )
+            })?;
+        let window = conn
+            .call(
+                None,
+                "Browser.getWindowForTarget",
+                json!({ "targetId": cdp_target_id }),
+            )
+            .await
+            .map_err(|e| route_err("Browser.getWindowForTarget failed for the new tab", e))?;
+        if window.get("windowId").and_then(Value::as_i64) != Some(bound_window_id) {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the browser opened the new tab in a different window than the bound one",
+            )
+            .with_detail(json!({ "reason": "new_tab_window_mismatch" })));
+        }
+        let cdp_session = self.attach(conn, &cdp_target_id).await?;
+        let tab_id = self.store.mint_tab_id();
+        let tab = TabRecord {
+            tab_id: tab_id.clone(),
+            cdp_target_id,
+            title: String::new(),
+            url: "about:blank".into(),
+            active: None,
+            generation: record.generation,
+            snapshots: HashMap::new(),
+        };
+        self.store
+            .update_target(session, &record.target_id, |target| {
+                target.tabs.insert(tab_id.clone(), tab);
+            });
+        Ok((tab_id, cdp_session))
+    }
+
     /// Animate platform-owned browser feedback without coupling it to input
     /// delivery. Only main-frame viewport points are mapped: child-frame CDP
     /// coordinates are not necessarily in the top-level viewport space, and a

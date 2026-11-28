@@ -33,7 +33,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserMotionPolicyTool,
-    BrowserNavigateTool, BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool,
+    BrowserNavigateTool, BrowserNewTabTool, BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool,
     GetBrowserStateTool,
 };
 use super::types::{
@@ -127,6 +127,8 @@ pub(super) struct FixtureState {
     /// Extra page targets living in the bound window, after T1 in the
     /// browser's `Target.getTargets` order.
     sibling_tabs: Vec<Value>,
+    /// The browser window `Target.createTarget` puts a new tab in.
+    created_tab_window_id: i64,
     /// Fail the read-only prepare probe without closing the WebSocket.
     fail_get_targets: bool,
     silent_get_targets: bool,
@@ -172,6 +174,7 @@ impl Default for FixtureState {
             main_url: "https://fixture.test/".into(),
             windowless_targets: Vec::new(),
             sibling_tabs: Vec::new(),
+            created_tab_window_id: 11,
             omit_primary_target: false,
             fail_get_targets: false,
             silent_get_targets: false,
@@ -604,11 +607,24 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     .any(|t| t["targetId"].as_str() == Some(target_id));
                 if windowless {
                     MockReply::err(-32000, "Browser window not found")
+                } else if target_id.starts_with("T_CREATED_") {
+                    MockReply::ok(json!({ "windowId": st.created_tab_window_id }))
                 } else if let Some((code, message)) = st.primary_window_error.clone() {
                     MockReply::err(code, &message)
                 } else {
                     MockReply::ok(json!({ "windowId": 11 }))
                 }
+            }
+            "Target.createTarget" => {
+                let target_id = format!("T_CREATED_{}", st.sibling_tabs.len());
+                st.sibling_tabs.push(json!({
+                    "targetId": target_id,
+                    "type": "page",
+                    "title": "",
+                    "url": "about:blank",
+                    "attached": false,
+                }));
+                MockReply::ok(json!({ "targetId": target_id }))
             }
             "Browser.getWindowBounds" => MockReply::ok(json!({
                 "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
@@ -2045,6 +2061,20 @@ async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() 
         "{}",
         structured(&navigated)
     );
+    let opened = BrowserNewTabTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/policy-check-tab",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&opened)["status"],
+        "ok",
+        "{}",
+        structured(&opened)
+    );
 
     let forbidden = [
         "Runtime.enable",
@@ -3136,6 +3166,92 @@ async fn navigation_targets_an_inactive_tab_without_activating_it() {
     );
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn new_tab_opens_in_the_bound_window_without_activating_it() {
+    let f = fixture().await;
+    let (target, anchor) = bind(&f).await;
+    let result = BrowserNewTabTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": anchor,
+            "url": "https://fixture.test/new-tab",
+            "session": SESSION,
+        }))
+        .await;
+
+    let opened = structured(&result);
+    assert_eq!(opened["status"], "ok", "{opened}");
+    assert_eq!(opened["target_id"], target.as_str());
+    assert_eq!(opened["url"], "https://fixture.test/new-tab");
+    let new_tab = opened["tab_id"].as_str().expect("new tab_id").to_owned();
+    assert_ne!(new_tab, anchor);
+
+    let created = recorded_calls(&f, "Target.createTarget");
+    assert_eq!(created.len(), 1, "{created:?}");
+    assert_eq!(created[0].0, None, "createTarget is a browser-level call");
+    assert_eq!(
+        created[0].1,
+        json!({ "url": "about:blank", "background": true })
+    );
+    let attaches = recorded_calls(&f, "Target.attachToTarget");
+    assert_eq!(
+        attaches.last().map(|(_, p)| p["targetId"].clone()),
+        Some(json!("T_CREATED_0"))
+    );
+    let new_session = format!("tab-sess-{}", f.state.lock().unwrap().tab_sessions);
+    let navigate = recorded_calls(&f, "Page.navigate");
+    assert_eq!(navigate.len(), 1, "{navigate:?}");
+    assert_eq!(navigate[0].0.as_deref(), Some(new_session.as_str()));
+    assert_eq!(navigate[0].1["url"], "https://fixture.test/new-tab");
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+
+    // The new tab is a live capability on the same target.
+    let followed = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": new_tab,
+            "url": "https://fixture.test/after-new-tab",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&followed)["status"],
+        "ok",
+        "{}",
+        structured(&followed)
+    );
+}
+
+#[tokio::test]
+async fn new_tab_in_another_window_refuses_before_navigation() {
+    let f = fixture_with(|st| st.created_tab_window_id = 12).await;
+    let (target, anchor) = bind(&f).await;
+    let result = BrowserNewTabTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": anchor,
+            "url": "https://fixture.test/new-tab",
+            "session": SESSION,
+        }))
+        .await;
+
+    let refused = structured(&result);
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(refused["refusal"]["code"], "browser_wrong_target_refused");
+    assert_eq!(
+        refused["refusal"]["detail"]["reason"],
+        "new_tab_window_mismatch"
+    );
+    assert!(recorded_calls(&f, "Page.navigate").is_empty());
+    let record = f.engine.store.get_target(SESSION, &target).unwrap();
+    assert_eq!(
+        record.tabs.len(),
+        1,
+        "no tab is minted for the stray target"
+    );
 }
 
 #[tokio::test]

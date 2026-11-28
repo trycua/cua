@@ -2323,6 +2323,40 @@
    "read_only": false
   },
   {
+   "description": "Open a new tab in the window of an exactly-bound browser target and navigate it to a URL (http/https/about only), without activating the tab or raising the browser window. tab_id names an existing bound tab of that window. Returns the new tab's tab_id on the same target_id. Refused for heuristic bindings, and when the browser opens the tab in another window.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped) of a tab in the window that gets the new tab.",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "url": {
+      "description": "URL for the new tab (http:, https:, or about:).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "url"
+    ],
+    "type": "object"
+   },
+   "name": "browser_new_tab",
+   "read_only": false
+  },
+  {
    "description": "Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. This is an explicit experimental performance/accessibility policy: it does not inject CSS, freeze timers, video, canvas, or WebGL, and refuses existing user profiles in v0.",
    "destructive": false,
    "idempotent": true,

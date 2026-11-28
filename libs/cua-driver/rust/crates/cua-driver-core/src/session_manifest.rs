@@ -144,7 +144,7 @@ impl SessionManifest {
                     ));
                 }
             }
-            "browser_navigate" => {
+            "browser_navigate" | "browser_new_tab" => {
                 let url = args
                     .get("url")
                     .and_then(serde_json::Value::as_str)
@@ -1810,7 +1810,7 @@ resources:
     origins:
       - https://app.example.com
 allow:
-  tools: [browser_prepare, browser_navigate]
+  tools: [browser_prepare, browser_navigate, browser_new_tab]
 "#,
         )
         .unwrap();
@@ -1853,6 +1853,21 @@ allow:
         assert!(manifest
             .authorize_browser_url("https://evil.example/redirect")
             .is_err());
+        manifest
+            .authorize_call(
+                "browser_new_tab",
+                &serde_json::json!({"url": "https://app.example.com/inbox"}),
+            )
+            .unwrap();
+        assert_eq!(
+            manifest
+                .authorize_call(
+                    "browser_new_tab",
+                    &serde_json::json!({"url": "https://evil.example/"}),
+                )
+                .unwrap_err(),
+            "the live browser origin is outside the capability manifest"
+        );
     }
 
     #[cfg(feature = "yaml")]

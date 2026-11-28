@@ -45,6 +45,7 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
+    registry.register(Box::new(BrowserNewTabTool::new(engine.clone())));
     registry.register(Box::new(BrowserMotionPolicyTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
@@ -340,11 +341,11 @@ pub(crate) async fn browser_protected_resource_scope(
         .await?;
     let target = validated.record;
     let tab = validated.tab;
-    let requested_origin = if tool_name == "browser_navigate" {
+    let requested_origin = if matches!(tool_name, "browser_navigate" | "browser_new_tab") {
         let requested = args
             .get("url")
             .and_then(Value::as_str)
-            .ok_or_else(|| "browser_navigate requires a destination URL".to_owned())?;
+            .ok_or_else(|| format!("{tool_name} requires a destination URL"))?;
         if requested.to_ascii_lowercase().starts_with("about:") {
             Some("about:".to_owned())
         } else {
@@ -357,7 +358,7 @@ pub(crate) async fn browser_protected_resource_scope(
     };
     let action_class = match tool_name {
         "get_browser_state" => "page_observation",
-        "browser_navigate" => "navigation",
+        "browser_navigate" | "browser_new_tab" => "navigation",
         "browser_dialog" => "page_dialog_resolution",
         _ => "page_input",
     };
@@ -1286,14 +1287,8 @@ impl Tool for BrowserNavigateTool {
             Ok(s) => s,
             Err(e) => return e,
         };
-        let lower = url.to_ascii_lowercase();
-        if !(lower.starts_with("http://")
-            || lower.starts_with("https://")
-            || lower.starts_with("about:"))
-        {
-            return ToolResult::error(format!(
-                "browser_navigate only accepts http/https/about URLs, got: {url}"
-            ));
+        if let Err(e) = require_navigable_url("browser_navigate", &url) {
+            return e;
         }
 
         let _mutation = match self
@@ -1340,6 +1335,154 @@ impl Tool for BrowserNavigateTool {
             }
             Err(e) => ToolResult::error(format!("Page.navigate failed: {e}")),
         }
+    }
+}
+
+fn require_navigable_url(tool_name: &str, url: &str) -> Result<(), ToolResult> {
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("about:")
+    {
+        Ok(())
+    } else {
+        Err(ToolResult::error(format!(
+            "{tool_name} only accepts http/https/about URLs, got: {url}"
+        )))
+    }
+}
+
+// ── browser_new_tab ──────────────────────────────────────────────────────────
+
+pub struct BrowserNewTabTool {
+    def: ToolDef,
+    engine: Arc<BrowserEngine>,
+}
+
+impl BrowserNewTabTool {
+    pub fn new(engine: Arc<BrowserEngine>) -> Self {
+        let def = ToolDef {
+            name: "browser_new_tab".into(),
+            description: "Open a new tab in the window of an exactly-bound browser \
+                target and navigate it to a URL (http/https/about only), without \
+                activating the tab or raising the browser window. tab_id names an \
+                existing bound tab of that window. Returns the new tab's tab_id on \
+                the same target_id. Refused for heuristic bindings, and when the \
+                browser opens the tab in another window."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_id": schema_target_id(),
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Opaque tab id from get_browser_state (session-scoped) \
+                            of a tab in the window that gets the new tab."
+                    },
+                    "url": { "type": "string", "description": "URL for the new tab (http:, https:, or about:)." },
+                    "session": schema_session(),
+                },
+                "required": ["target_id", "tab_id", "url"],
+                "additionalProperties": true
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        };
+        Self { def, engine }
+    }
+}
+
+#[async_trait]
+impl Tool for BrowserNewTabTool {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args).await
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_new_tab").await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let (target_id, anchor_tab_id, url) = match (
+            args.require_str("target_id"),
+            args.require_str("tab_id"),
+            args.require_str("url"),
+        ) {
+            (Ok(t), Ok(tab), Ok(u)) => (t, tab, u),
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return e,
+        };
+        let session = match require_explicit_session(&args) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        if let Err(e) = require_navigable_url("browser_new_tab", &url) {
+            return e;
+        }
+
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &anchor_tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let validated = match self
+            .engine
+            .revalidate_for_mutation(&session, &target_id, Some(&anchor_tab_id))
+            .await
+        {
+            Ok(v) => v,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let (tab_id, cdp_session) =
+            match self.engine.open_background_tab(&session, &validated).await {
+                Ok(opened) => opened,
+                Err(refusal) => return refusal.to_tool_result(),
+            };
+
+        let navigated = validated
+            .conn
+            .call(Some(&cdp_session), "Page.navigate", json!({ "url": url }))
+            .await;
+        let failure = match navigated {
+            Ok(result) => result
+                .get("errorText")
+                .and_then(Value::as_str)
+                .map(|err_text| format!("navigation failed: {err_text}")),
+            Err(e) => Some(format!("Page.navigate failed: {e}")),
+        };
+        if let Some(failure) = failure {
+            return ToolResult::error(format!(
+                "{failure}; new tab {tab_id} is open, but its page is unknown"
+            ));
+        }
+        ToolResult::text(format!("opened {tab_id} at {url}")).with_structured(json!({
+            "status": "ok",
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "url": url,
+        }))
     }
 }
 
@@ -3983,6 +4126,10 @@ mod tests {
                 "browser_navigate",
             ),
             (
+                BrowserNewTabTool::new(e.clone()).def().clone(),
+                "browser_new_tab",
+            ),
+            (
                 BrowserMotionPolicyTool::new(e.clone()).def().clone(),
                 "browser_motion_policy",
             ),
@@ -4024,6 +4171,7 @@ mod tests {
         for def in [
             BrowserPrepareTool::new(e.clone()).def().clone(),
             BrowserNavigateTool::new(e.clone()).def().clone(),
+            BrowserNewTabTool::new(e.clone()).def().clone(),
             BrowserMotionPolicyTool::new(e.clone()).def().clone(),
             BrowserClickTool::new(e.clone()).def().clone(),
             BrowserTypeTool::new(e.clone()).def().clone(),
@@ -4050,6 +4198,7 @@ mod tests {
                 "get_browser_state",
                 "browser_prepare",
                 "browser_navigate",
+                "browser_new_tab",
                 "browser_motion_policy",
                 "browser_click",
                 "browser_type",
@@ -4675,6 +4824,12 @@ mod tests {
                     "url": "https://example.test", "_session_id": "run-1"
                 }))
                 .await,
+            BrowserNewTabTool::new(e.clone())
+                .invoke(json!({
+                    "target_id": "bt999", "tab_id": "tab1",
+                    "url": "https://example.test", "_session_id": "run-1"
+                }))
+                .await,
             BrowserClickTool::new(e.clone())
                 .invoke(json!({
                     "target_id": "bt999", "tab_id": "tab1", "ref": "p1:0",
@@ -4706,6 +4861,18 @@ mod tests {
             }))
             .await;
         assert_eq!(nav.is_error, Some(true));
+        let new_tab = BrowserNewTabTool::new(e.clone())
+            .invoke(json!({
+                "target_id": "bt1", "tab_id": "tab1", "url": "javascript:alert(1)",
+                "_session_id": "run-1"
+            }))
+            .await;
+        assert_eq!(new_tab.is_error, Some(true));
+        assert!(matches!(
+            &new_tab.content[0],
+            Content::Text { text, .. }
+                if text == "browser_new_tab only accepts http/https/about URLs, got: javascript:alert(1)"
+        ));
 
         let click = BrowserClickTool::new(e)
             .invoke(json!({

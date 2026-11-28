@@ -2098,6 +2098,51 @@ fn run_roundtrip(spec: &BrowserSpec) {
     });
 }
 
+fn run_new_tab(spec: &BrowserSpec) {
+    let scenario = format!("{}-{}-standalone-new-tab", std::env::consts::OS, spec.name);
+    execute_case(case(&spec.name, "browser_new_tab"), |evidence| {
+        let mut fixture = launch_browser(spec, &scenario);
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-new-tab-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
+        let new_tab_server = BrowserFixtureServer::start(&standalone_fixture_html().replace(
+            "<title>cua-driver Web Harness</title>",
+            "<title>cua-driver New Tab Harness</title>",
+        ));
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let (target, anchor, _) = bind(fixture, &session);
+            let opened = fixture.driver.call(
+                "browser_new_tab",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": anchor,
+                    "url": new_tab_server.page_url(),
+                    "session": session,
+                }),
+            );
+            assert_eq!(opened.structured()["status"], "ok", "{}", opened.raw);
+            let new_tab = opened.structured()["tab_id"]
+                .as_str()
+                .expect("new tab_id")
+                .to_owned();
+            assert_ne!(new_tab, anchor, "{}", opened.raw);
+            wait_for_observed(&new_tab_server, "WEB_HARNESS_MARKER_v1");
+
+            let state = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": new_tab,
+                    "session": session,
+                }),
+            );
+            assert_eq!(state.structured()["status"], "ok", "{}", state.raw);
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
 fn run_trust_gated_dom_click(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-trust-gated-dom-click",
@@ -6168,6 +6213,7 @@ standalone_browser_test!(
 standalone_browser_test!(standalone_browser_stale_ref, run_stale_ref);
 standalone_browser_test!(standalone_browser_frames, run_frame_roundtrip);
 standalone_browser_test!(standalone_browser_multi_tab, run_multi_tab);
+standalone_browser_test!(standalone_browser_new_tab, run_new_tab);
 standalone_browser_test!(standalone_browser_same_title_tabs, run_same_title_tabs);
 standalone_browser_test!(standalone_browser_dialogs, run_dialogs);
 standalone_browser_test!(

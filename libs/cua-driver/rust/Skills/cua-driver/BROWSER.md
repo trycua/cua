@@ -24,7 +24,7 @@ list_windows or launch_app
 get_browser_state(pid, window_id, session?)               # bind
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # snapshot
-browser_navigate / browser_click / browser_type / browser_pointer
+browser_navigate / browser_new_tab / browser_click / browser_type / browser_pointer
 browser_dialog / browser_set_input_files / browser_download
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # verify and refresh refs
@@ -396,6 +396,22 @@ browser_navigate
 
 Only `http:`, `https:`, and `about:` URLs are accepted. Navigation invalidates
 the tab's refs; snapshot again before the next ref-targeted action.
+
+### Open a tab
+
+```text
+browser_new_tab
+  '{"target_id":"<target>","tab_id":"<tab>",
+    "url":"https://example.com","session":"browser-run-1"}'
+```
+
+Opens a tab in the window of `tab_id` without selecting it or raising the
+browser, navigates it to `url` (same schemes as `browser_navigate`), and returns
+its `tab_id` on the same `target_id`. Use it instead of relaunching the browser
+with a URL, which brings the browser to the front. If the browser puts the tab
+in another window, the call refuses with `browser_wrong_target_refused`
+(`detail.reason: "new_tab_window_mismatch"`); that stray tab stays open on
+`about:blank`.
 
 ### Click
 

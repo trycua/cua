@@ -2232,6 +2232,7 @@ mod tests {
         let args = serde_json::json!({"session": "test-session"});
         for tool_name in [
             "browser_navigate",
+            "browser_new_tab",
             "browser_motion_policy",
             "browser_click",
             "browser_type",

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.66.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.65.0...cua-driver-rs-v0.66.0) (2026-11-28)
+
+
+### Features
+
+* **cua-driver:** resolve app paths in one place ([#8453](https://github.com/trycua/cua/issues/8453)) ([b1cb4d9](https://github.com/trycua/cua/commit/b1cb4d9ba54b8a358e38d4659f3e29da7b95c181))
+* **cua-driver:** spawn owned child processes through ManagedChild ([#8456](https://github.com/trycua/cua/issues/8456)) ([416a7c7](https://github.com/trycua/cua/commit/416a7c72d0e7031e06465067581409dc8ef7a7e5))
+
 ## [0.65.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.64.4...cua-driver-rs-v0.65.0) (2026-11-28)
 
 

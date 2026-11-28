@@ -97,7 +97,8 @@ impl PipeStream {
         let waited = loop {
             let left = give_up.saturating_duration_since(Instant::now());
             // SAFETY: `event` stays open for the whole wait.
-            let waited = unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), wait_ms(left)) };
+            let waited =
+                unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), wait_ms(left)) };
             if waited != WAIT_TIMEOUT || left.is_zero() {
                 break waited;
             }

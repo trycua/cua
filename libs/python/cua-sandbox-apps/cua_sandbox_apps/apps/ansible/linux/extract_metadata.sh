@@ -28,7 +28,7 @@ if [ ! -z "$DISPLAY_NAME" ]; then
         if [ ! -z "$icon_file" ]; then
             ICON_PATHS+=("\"$icon_file\"")
         fi
-    done < <(dpkg -L ansible 2>/dev/null | grep -E \"\\.(png|svg|ico)$\" | head -5 || true)
+    done < <(dpkg -L ansible 2>/dev/null | grep -E '\.(png|svg|ico)$' | head -5 || true)
 fi
 
 # Find desktop file

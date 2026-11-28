@@ -10,6 +10,10 @@ default-run = "cua-driver"
 name = "cua-driver"
 path = "src/main.rs"
 
+[[bin]]
+name = "cua-driver-autostart"
+path = "src/bin/autostart_launcher.rs"
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }

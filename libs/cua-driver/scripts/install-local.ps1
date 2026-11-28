@@ -209,6 +209,7 @@ finally {
 }
 $BuiltBinary = Join-Path $RepoRoot "target\$Config\$BuiltBinaryName"
 $BuiltUiaBinary = Join-Path $RepoRoot "target\$Config\cua-driver-uia.exe"
+$BuiltLauncherBinary = Join-Path $RepoRoot "target\$Config\cua-driver-autostart.exe"
 $BuiltThemeBinary = Join-Path $RepoRoot "target\$Config\$ThemeBinaryName"
 if (-not (Test-Path -LiteralPath $BuiltBinary)) {
     Write-Host "Error: build produced no binary at $BuiltBinary" -ForegroundColor Red
@@ -261,6 +262,7 @@ Write-Step "staging into $VersionedDir"
 New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
 Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
 Copy-Item -LiteralPath $BuiltThemeBinary -Destination (Join-Path $VersionedDir $ThemeBinaryName) -Force
+Copy-Item -LiteralPath $BuiltLauncherBinary -Destination (Join-Path $VersionedDir "cua-driver-autostart.exe") -Force
 $DestUiaBinary = Join-Path $VersionedDir $UiaBinaryName
 if (Test-Path -LiteralPath $BuiltUiaBinary) {
     Copy-Item -LiteralPath $BuiltUiaBinary -Destination $DestUiaBinary -Force

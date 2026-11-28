@@ -18,7 +18,7 @@
 #
 # slim: Ubuntu 24.04 + XFCE on Xvfb (:1) + session D-Bus + AT-SPI + headless
 # PipeWire (null sink cua_desktop, virtual source cua_mic)
-# + Chromium (the browser cua-driver's browser tools drive over CDP)
+# + Chromium (Playwright's pinned build; the browser cua-driver's browser tools drive over CDP)
 # + cua-spacesd (3211: gRPC, media, and the HTML5 viewer at /viewer)
 # + the `cua` CLI (child Spaces from inside a Space)
 # + conformance fixtures under
@@ -57,6 +57,53 @@
 # cua-spacesd.service, and /opt/cua/bin/start-<old>.sh links to
 # start-spacesd.sh.
 ARG UBUNTU_VERSION=24.04
+ARG NODE_VERSION=24.21.0
+ARG NODE_SHA256_AMD64=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+ARG NODE_SHA256_ARM64=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+
+# ---------------------------------------------------------------------------
+# playwright-chromium: downloads Playwright's pinned Chromium (the same build on
+# amd64 and arm64). slim checks its version (MIN_CHROMIUM_MAJOR) on the final libraries.
+# Only /opt/chromium is copied into slim; Node and Playwright stay here.
+# Keep PLAYWRIGHT_VERSION in step with libs/cuabot/package.json (CI:
+# Images, Chromium pin, checks that and the minimum). The third-party PPA build this
+# replaced lagged Chrome security releases (156 while 158.0.8127.36 fixed
+# CVE-2026-130959).
+# ---------------------------------------------------------------------------
+FROM ubuntu:${UBUNTU_VERSION} AS playwright-chromium
+ARG TARGETARCH
+ARG NODE_VERSION
+ARG NODE_SHA256_AMD64
+ARG NODE_SHA256_ARM64
+ARG PLAYWRIGHT_VERSION=1.65.1
+ENV DEBIAN_FRONTEND=noninteractive PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) node_arch=x64; node_sha="$NODE_SHA256_AMD64" ;; \
+      arm64) node_arch=arm64; node_sha="$NODE_SHA256_ARM64" ;; \
+      *) echo "unsupported arch $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o /tmp/node.tar.xz \
+      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"; \
+    echo "${node_sha}  /tmp/node.tar.xz" | sha256sum -c -; \
+    mkdir -p /usr/local/lib/nodejs && tar -xJf /tmp/node.tar.xz -C /usr/local/lib/nodejs --strip-components=1; \
+    rm /tmp/node.tar.xz
+# The runtime libraries Chromium needs are installed in slim (the list Playwright
+# prints for ubuntu24.04); slim's own check runs the binary and ldd on it.
+RUN set -eu; \
+    export PATH="/usr/local/lib/nodejs/bin:$PATH"; \
+    for attempt in 1 2 3; do npx --yes "playwright@${PLAYWRIGHT_VERSION}" install chromium && break; \
+      [ "$attempt" = 3 ] && exit 1; sleep $((attempt * 10)); done; \
+    src="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux*/ | head -n 1)"; \
+    test -x "${src}chrome"; \
+    mv "$src" /opt/chromium; \
+    mv /opt/chromium/chrome /opt/chromium/chromium; \
+    chmod -R go-w,a+rX /opt/chromium; \
+    rm -rf /opt/pw-browsers /root/.npm;
+
 FROM ubuntu:${UBUNTU_VERSION} AS slim
 
 ARG TARGETARCH
@@ -112,6 +159,8 @@ RUN apt-get update \
       libpulse0 libopus0 \
       libnss3 libnspr4 libsecret-1-0 libxkbfile1 libgbm1 libasound2t64 libatk-bridge2.0-0t64 \
       libgtk-3-0t64 libcups2t64 libxss1 libcurl3t64-gnutls libegl1 libgl1 libxrender1 xdg-utils \
+      libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libdbus-1-3 libdrm2 libglib2.0-0t64 libpango-1.0-0 \
+      libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libfontconfig1 libfreetype6 \
       && break; echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \
       [ "$attempt" = 3 ] && exit 1; done \
  && rm -rf /var/lib/apt/lists/* \
@@ -132,70 +181,45 @@ RUN apt-get update \
 
 RUN install -d -m 0755 /etc/apt/keyrings
 
-# Chromium from the xtradeb/apps PPA (open-source build, BSD-3-Clause; not
-# Google-branded Chrome): only the chromium packages may come from it, at
-# the pinned major for this arch, and the key must have the pinned fingerprint.
-# The key is vendored (common/apt-keys/xtradeb-apps.asc), not fetched from
-# keyserver.ubuntu.com, so a keyserver outage cannot break the build.
-# cua-driver's browser_prepare launches /usr/lib/chromium/chromium (a
-# root-owned package payload) with a driver-owned throwaway profile. The
-# managed policy turns off first-run noise, sign-in and password saving, and
-# the "unsupported command-line flag" bar: the image picks the sandbox flags
-# per runtime (common/desktop/browser-sandbox.sh), not the user.
-# The PPA keeps only its newest build per arch and prunes the rest, so an
-# exact build pin (155.0.8059.39-1xtradeb1.2404.1) breaks the build as soon as
-# the PPA moves on (it did, repeatedly). Pin the major per arch instead: apt
-# picks the newest <major>.* build the PPA has for that arch. The arches move
-# on separately (amd64 went to 156 while arm64 stayed on 155), so each has its
-# own major. When the PPA has dropped a pinned major for an arch, the build
-# takes the newest build it has for that arch and says so, rather than
-# failing; scripts/images/check-chromium-pin.sh (CI: Images, Chromium pin)
-# fails loudly with what the PPA has, so the bump is still made deliberately.
-# The resolved version is recorded in /etc/cua-image/chromium-version.
-# CHROMIUM_MAJOR, when set, is the major for every arch; CHROMIUM_VERSION, when
-# set, wins over both (an exact build, for a repro).
-ARG CHROMIUM_VERSION=
-ARG CHROMIUM_MAJOR=
-ARG CHROMIUM_MAJOR_AMD64=156
-ARG CHROMIUM_MAJOR_ARM64=156
-ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
-RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
-    gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
- && gpg --show-keys --with-colons /etc/apt/keyrings/xtradeb-apps.gpg | grep -q "^fpr:::::::::${CHROMIUM_PPA_KEY}:" \
- && echo "deb [signed-by=/etc/apt/keyrings/xtradeb-apps.gpg] https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu noble main" \
-      >/etc/apt/sources.list.d/xtradeb-apps.list \
- && printf 'Package: *\nPin: origin ppa.launchpadcontent.net\nPin-Priority: -1\n\nPackage: chromium chromium-common chromium-sandbox\nPin: origin ppa.launchpadcontent.net\nPin-Priority: 1001\n' \
-      >/etc/apt/preferences.d/xtradeb-chromium \
-  && for attempt in 1 2 3 4 5 6; do \
-       apt-get -o Acquire::Retries=3 update || true; \
-       apt-cache madison chromium | grep -q launchpadcontent && break; \
-       echo "the xtradeb PPA index did not download (attempt $attempt; Launchpad answered 5xx or timed out); retrying" >&2; \
-       [ "$attempt" = 6 ] && { echo "ppa.launchpadcontent.net stayed unavailable" >&2; exit 1; }; \
-       sleep $((attempt * 20)); done \
-  && major="${CHROMIUM_MAJOR}" \
-  && if [ -z "$major" ]; then case "$TARGETARCH" in \
-       arm64) major="$CHROMIUM_MAJOR_ARM64" ;; *) major="$CHROMIUM_MAJOR_AMD64" ;; esac; fi \
-  && have="$(apt-cache madison chromium | awk -F'|' '/ppa\.launchpadcontent\.net/ { gsub(/ /, "", $2); print $2 }' | sort -V)" \
-  && test -n "$have" \
-  && if [ -n "$CHROMIUM_VERSION" ]; then pin="$CHROMIUM_VERSION"; \
-     elif printf '%s\n' $have | grep -q "^${major}\."; then pin="${major}.*"; \
-     else pin="$(printf '%s\n' $have | tail -n 1)"; \
-       echo "warning: the PPA has no chromium ${major}.* for ${TARGETARCH} any more (it has: $(echo $have)); using ${pin}. Bump CHROMIUM_MAJOR_$(echo "$TARGETARCH" | tr a-z A-Z)." >&2; fi \
-  && echo "chromium for ${TARGETARCH}: ${pin}" \
-  && for attempt in 1 2 3 4 5; do apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
-      "chromium=${pin}" "chromium-common=${pin}" && break; \
-      echo "apt attempt $attempt failed; reconfiguring, then retrying with backoff" >&2; dpkg --configure -a || true; \
-      [ "$attempt" = 5 ] && exit 1; sleep $((attempt * 15)); done \
- && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /etc/chromium/policies/managed /etc/cua-image \
+# Chromium: Playwright's pinned build (stage playwright-chromium above), the same
+# on amd64 and arm64, installed as the root-owned payload
+# /usr/lib/chromium/chromium (a real file, not a symlink: cua-driver's
+# browser_prepare launches that exact path with a driver-owned throwaway
+# profile and refuses symlinked or non-root-owned browsers). /usr/bin/chromium
+# (and chromium-browser) is the launcher in files/chromium-launcher, which
+# reads /etc/chromium.d like Debian's did, so the sandbox flags the image picks
+# per runtime (common/desktop/browser-sandbox.sh) still apply.
+# The managed policy turns off first-run noise, sign-in and password saving,
+# and the "unsupported command-line flag" bar. Playwright's build is Chrome
+# for Testing (Chrome-branded), which reads /etc/opt/chrome/policies; the
+# Chromium path is kept for drivers and builds that look there.
+# The build fails if a runtime library is missing or the browser is older than
+# MIN_CHROMIUM_MAJOR (the stage above checked it already; this runs it on the
+# final libraries). The resolved version is recorded in
+# /etc/cua-image/chromium-version.
+ARG MIN_CHROMIUM_MAJOR=158
+COPY --from=playwright-chromium /opt/chromium/ /usr/lib/chromium/
+COPY linux/files/chromium-launcher /usr/bin/chromium
+RUN chmod 0755 /usr/bin/chromium \
+ && ln -sf chromium /usr/bin/chromium-browser \
+ && mkdir -p /etc/chromium/policies/managed /etc/opt/chrome/policies/managed /etc/chromium.d /etc/cua-image \
  && printf '%s\n' '{"BrowserSignin":0,"SyncDisabled":true,"PasswordManagerEnabled":false,' \
       '"PromotionsEnabled":false,"DefaultBrowserSettingEnabled":false,"MetricsReportingEnabled":false,' \
       '"PrivacySandboxPromptEnabled":false,"TranslateEnabled":false,' \
       '"CommandLineFlagSecurityWarningsEnabled":false}' \
       >/etc/chromium/policies/managed/cua.json \
  && python3 -m json.tool /etc/chromium/policies/managed/cua.json >/dev/null \
- && test -x /usr/lib/chromium/chromium \
- && chromium --version | tee /etc/cua-image/chromium-version
+ && cp /etc/chromium/policies/managed/cua.json /etc/opt/chrome/policies/managed/cua.json \
+ && printf '[Desktop Entry]\nVersion=1.0\nName=Chromium\nGenericName=Web Browser\nExec=/usr/bin/chromium %%U\nIcon=web-browser\nTerminal=false\nType=Application\nCategories=Network;WebBrowser;\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
+      >/usr/share/applications/chromium.desktop \
+ && test -x /usr/lib/chromium/chromium && ! test -L /usr/lib/chromium/chromium \
+ && if ldd /usr/lib/chromium/chromium | grep 'not found'; then echo "ERROR: Chromium is missing runtime libraries" >&2; exit 1; fi \
+ && ver="$(/usr/lib/chromium/chromium --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" \
+ && echo "chromium: ${ver}" \
+ && test -n "$ver" && [ "${ver%%.*}" -ge "$MIN_CHROMIUM_MAJOR" ] \
+ && /usr/bin/chromium --version | tee /etc/cua-image/chromium-version \
+ && printf '[Default Applications]\ntext/html=chromium.desktop\nx-scheme-handler/http=chromium.desktop\nx-scheme-handler/https=chromium.desktop\n' \
+      >/etc/xdg/mimeapps.list
 
 # Shared desktop plumbing (same files as plain/ubuntu-xfce-vnc).
 COPY common/desktop/ /opt/cua/desktop/
@@ -420,9 +444,9 @@ RUN : >/etc/machine-id && chown root:cua /etc/machine-id && chmod 0664 /etc/mach
 FROM slim AS full
 ARG TARGETARCH
 ARG CUA_IMAGE_SOURCE_REVISION=
-ARG NODE_VERSION=24.21.0
-ARG NODE_SHA256_AMD64=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-ARG NODE_SHA256_ARM64=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+ARG NODE_VERSION
+ARG NODE_SHA256_AMD64
+ARG NODE_SHA256_ARM64
 ARG PNPM_VERSION=12.6.0
 ARG GO_VERSION=1.27.1
 ARG GO_SHA256_AMD64=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445

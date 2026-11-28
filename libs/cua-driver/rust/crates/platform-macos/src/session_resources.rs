@@ -99,6 +99,17 @@ pub fn forget_display(display_id: u32) {
     }
 }
 
+/// True when some session owns `display_id` and will remove it when it ends.
+/// A display created with the daemon lifetime has no owner.
+pub fn is_session_owned(display_id: u32) -> bool {
+    owned().as_ref().is_some_and(|state| {
+        state
+            .displays
+            .values()
+            .any(|displays| displays.contains(&display_id))
+    })
+}
+
 fn release(session: &str) {
     let displays = {
         let mut guard = owned();
@@ -199,6 +210,17 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert!(err.contains("ended while display 9004"), "{err}");
         assert!(owned_by(session).is_empty());
+    }
+
+    #[tokio::test]
+    async fn only_a_display_a_session_created_is_session_owned() {
+        let (release_create, task) = blocked_create("session-owner", 9005);
+        release_create.send(()).unwrap();
+        task.await.unwrap().unwrap();
+        assert!(is_session_owned(9005));
+        assert!(!is_session_owned(9006));
+        forget_display(9005);
+        assert!(!is_session_owned(9005));
     }
 
     #[test]
